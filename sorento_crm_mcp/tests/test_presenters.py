@@ -1067,209 +1067,134 @@ def test_qs_c6_by_product_catalog_accepts_order_status():
     assert "include_summary" in lst.query_params
 
 
-# --- QS-M: the presenter renders `summary_lines` (order-quantity-summary amendment 3) --------
-# The n8n block (sorento_crm_n8n tests/offline/order-quantity-summary/hunk.js @ 16e5853b) is the
-# spec; these are its probe cases on the same captured envelopes. Ids mirror tests/uac/QS.md §QS-M.
+# --- QS-M: the presenter renders `summary_items` (order-quantity-summary amendment 4) -------
+# Same shape as items[]: {title, fields[{key,label,value}]}. Ids mirror tests/uac/QS.md §QS-M.
 
 import json as _json
 import pathlib as _pathlib
 
-from sorento_crm_mcp.presenters import summary_lines
+from sorento_crm_mcp.presenters import summary_items, summary_intro
 
 _QS6 = _json.loads((_pathlib.Path(__file__).parent / "fixtures" / "qs6-envelopes.json").read_text())
 
-
-def _cap(name):
-    e = _QS6[name]["envelope"]
-    return e["summary"], len(e["items"])
-
-
-_SUM_M1 = {
-    "scope": "filter", "row_count": 3, "order_count": 4, "delivered_count": 3, "pending_count": 1,
-    "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
-    "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
-    "products": [{"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12}],
-}
-_M1_LINE = "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026) · 12 pcs pending"
+_G_ECO = {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605", "order_count": 5,
+          "delivered_quantity": 48, "pending_quantity": 17,
+          "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+_P_8605 = {"product_code": "SRTWC8605", "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
+           "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+_SUM_M1 = {"scope": "filter", "row_count": 5, "order_count": 5, "delivered_count": 3, "pending_count": 2,
+           "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
+           "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+           "products": [_P_8605], "groups": [_G_ECO]}
 
 
-def test_qs_m1_header_line_exact():
-    assert summary_lines(_SUM_M1, 3) == [_M1_LINE]
+def _fields(item):
+    return [(f["key"], f["label"], f["value"]) for f in item["fields"]]
 
 
-def test_qs_m3_cap_line_when_more_behind_the_page():
-    lines = summary_lines({**_SUM_M1, "row_count": 35}, 20)
-    assert lines[-1] == "Showing latest 20 of 35 DOs — add a date range for the full list."
-
-
-def test_qs_m4_no_cap_line_when_page_is_complete():
-    assert not any(l.startswith("Showing latest") for l in summary_lines(_SUM_M1, 3))
-
-
-def test_qs_m5_customer_only_counts():
-    s = {"scope": "filter", "row_count": 3, "order_count": 3, "delivered_count": 3, "pending_count": 0,
-         "customers": ["HANLIM TRADING SDN BHD"], "customer_count": 1,
-         "delivered_from": "2026-08-13", "delivered_to": "2026-08-17"}
-    assert summary_lines(s, 3) == ["*HANLIM TRADING SDN BHD:* 3 DOs (3 delivered, 0 pending)"]
-
-
-def test_qs_m6_two_customers_never_a_single_name():
-    s = {**_SUM_M1, "customers": ["A", "B"], "customer_count": 2}
-    assert summary_lines(s, 3)[0].startswith("*2 customers · SRTWC8605:*")
-
-
-def test_qs_m8_missing_fields_never_raise_and_never_print_none():
-    s = {"scope": "filter", "customers": ["X"], "customer_count": 1,
-         "products": [{"product_code": "P1"}]}
-    lines = summary_lines(s, 1)
-    assert lines == ["*X · P1:*"]
-    for hostile in ("not an object", [1, 2], {"customer_count": 1, "customers": "ECO"},
-                    {"products": "nope", "groups": 5}):
-        out = summary_lines(hostile, 1)
-        assert "None" not in " ".join(out) and "nan" not in " ".join(out).lower()
-
-
-def test_qs_m9_zero_pending_is_silent():
-    s = {**_SUM_M1, "pending_count": 0, "order_count": 3}
-    s["products"] = [{"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 0}]
-    assert summary_lines(s, 3) == ["*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"]
-
-
-def test_qs_m10_two_products_span_stated_once():
-    s = {**_SUM_M1, "products": [
-        {"product_code": "SRTWC287-ARL", "delivered_quantity": 6, "pending_quantity": 0},
-        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12},
-    ]}
-    lines = summary_lines(s, 3)
-    assert lines[0] == "*ECO WORLD SDN BHD · SRTWC287-ARL:* *6 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"
-    assert lines[1] == "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* · 12 pcs pending"
-    assert sum("(3 DOs, " in l for l in lines) == 1
-
-
-def test_qs_m12_single_group_is_the_m1_line():
-    s = {**_SUM_M1, "groups": [{"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
-                                "order_count": 3, "delivered_quantity": 48, "pending_quantity": 12}]}
-    assert summary_lines(s, 3) == [_M1_LINE]
-
-
-def test_qs_m11_multi_customer_real_envelope_header_then_one_line_per_group():
-    S, n = _cap("multi68")
-    lines = summary_lines(S, n)
-    p = S["products"][0]
-    assert lines[0].startswith(f"*{S['customer_count']} customers · {p['product_code']}:* *{p['delivered_quantity']} pcs delivered*")
-    groups = [g for g in S["groups"] if isinstance(g.get("customer"), str) and g["customer"].strip()]
-    detail = [l for l in lines[1:] if not l.startswith("Showing latest") and not l.startswith("…and more")]
-    assert len(detail) == len(groups)
-    for l, g in zip(detail, groups):
-        assert l.startswith(f"{g['customer'].strip()}: {g['delivered_quantity']} pcs delivered")
-    # the header total is products[], never a sum over groups: on a truncated list they differ
-    assert str(p["delivered_quantity"]) in lines[0]
-
-
-def test_qs_m13_truncation_notice_only_when_flagged():
-    S, n = _cap("multi68")
-    assert not any(l.startswith("…and more") for l in summary_lines(S, n))
-    S2 = {**S, "groups": S["groups"][:5], "groups_truncated": True}
-    lines = summary_lines(S2, n)
-    assert "…and more — add a customer or a date range." in lines
-    assert lines.index("…and more — add a customer or a date range.") == 1 + 5  # right after the groups
-
-
-def test_qs_m14_groups_bucketed_under_their_product_header():
-    S, n = _cap("twoprod")
-    lines = summary_lines(S, n)
-    headers = [i for i, l in enumerate(lines) if l.startswith("*")]
-    assert len(headers) == len(S["products"])
-    for h_idx, p in zip(headers, S["products"]):
-        nxt = headers[headers.index(h_idx) + 1] if headers.index(h_idx) + 1 < len(headers) else len(lines)
-        block = lines[h_idx + 1:nxt]
-        expected = [g for g in S["groups"] if g["product_code"] == p["product_code"] and isinstance(g.get("customer"), str) and g["customer"].strip()]
-        block = [l for l in block if not l.startswith("Showing latest")]
-        assert len(block) == len(expected), (p["product_code"], block)
-
-
-def test_qs_m15_non_string_names_are_dropped_not_coerced():
-    s = {**_SUM_M1, "customers": [{"name": "X"}], "customer_count": 2,
-         "products": [{"product_code": {}, "delivered_quantity": 5}, {"product_code": "OK", "delivered_quantity": 1}],
-         "groups": [{"customer": {"n": 1}, "product_code": "OK", "delivered_quantity": 1},
-                    {"customer": "REAL", "product_code": "OK", "delivered_quantity": 1}]}
-    lines = summary_lines(s, 1)
-    joined = "\n".join(lines)
-    assert "{" not in joined and "None" not in joined
-    assert lines[0].startswith("*2 customers · OK:*")
-    assert lines[1] == "REAL: 1 pcs delivered"
-
-
-def test_qs_m0_summary_lines_absent_unless_a_real_answer():
-    S, _ = _cap("single")
-    base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
-    out = env("crm_order_management_orders_list", {**base, "summary": S})
-    assert out["summary_lines"][0] == summary_lines(S, len(out["items"]))[0]
-    assert "summary_lines" not in env("crm_order_management_orders_list", base)                       # no summary
-    assert "summary_lines" not in env("crm_order_management_orders_list", {"data": [], "summary": S})  # no rows
-    assert "summary_lines" not in env("crm_order_management_orders_list", {**base, "summary": {"scope": "filter"}})  # degrades to nothing
-
-
-def test_qs_m8b_hostile_numeric_and_date_leaves_never_raise_or_leak(monkeypatch):
-    """Codex pass D: containers were covered, leaves were not."""
-    hostile = {
-        "scope": "filter", "row_count": "1e5000", "order_count": float("nan"), "delivered_count": "inf",
-        "customers": ["X"], "customer_count": True,          # bool is an int in Python - must not read as 1
-        "delivered_from": "not-a-date", "delivered_to": "2026-13-45",
-        "products": [{"product_code": "P", "delivered_quantity": "1e5000", "pending_quantity": "nan"}],
-    }
-    lines = summary_lines(hostile, 1)
-    joined = "\n".join(lines)
-    assert "e+" not in joined and "nan" not in joined.lower() and "inf" not in joined.lower()
-    assert "not-a-date" not in joined and "2026-13-45" not in joined and "None" not in joined
-    # through the envelope path the render must survive whatever summary_lines does
-    base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
-    out = env("crm_order_management_orders_list", {**base, "summary": hostile})
-    assert out["items"] and out["has_result"] is True
-
-    # and if summary_lines itself blows up, the envelope still renders without the key
-    import sorento_crm_mcp.presenters as _p
-    monkeypatch.setattr(_p, "summary_lines", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
-    out2 = env("crm_order_management_orders_list", {**base, "summary": hostile})
-    assert out2["items"] and "summary_lines" not in out2
-
-
-def test_qs_m8c_date_forms_match_the_js_fmtts():
-    from sorento_crm_mcp.presenters import _sl_date
-    assert _sl_date("2026-03-02") == "02/03/2026"
-    assert _sl_date("2026-03-02T00:00:00") == "02/03/2026"           # midnight -> date only
-    assert _sl_date("2026-03-02T09:05:07") == "02/03/2026 09:05:07"  # non-midnight keeps the time
-    assert _sl_date("garbage") is None and _sl_date("") is None and _sl_date(None) is None
-    assert _sl_date("0999-01-01") == "01/01/0999"
-
-
-# --- Review 3 (F-A, F-B): the two gates that survived a mutant --------------------------------
-
-def test_qs_m12b_one_customer_two_products_prints_no_detail_lines():
-    """Plan §3b taken literally (`len(groups) > 1`) would print each header followed by a verbatim
-    duplicate of itself: one customer buying two products carries two groups. The shipped gate is
-    `groups > 1 AND customer_count > 1` - this is the shape that proves the second half."""
-    s = {**_SUM_M1, "products": [
-        {"product_code": "SRTWC287-ARL", "delivered_quantity": 6, "pending_quantity": 0},
-        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12},
-    ], "groups": [
-        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC287-ARL", "order_count": 1, "delivered_quantity": 6, "pending_quantity": 0},
-        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605", "order_count": 3, "delivered_quantity": 48, "pending_quantity": 12},
-    ]}
-    lines = summary_lines(s, 3)
-    assert lines == [
-        "*ECO WORLD SDN BHD · SRTWC287-ARL:* *6 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)",
-        "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* · 12 pcs pending",
+def test_qs_m1_single_customer_single_product_is_one_item_in_the_item_shape():
+    items = summary_items(_SUM_M1)
+    assert len(items) == 1
+    assert items[0]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
+    assert _fields(items[0]) == [
+        ("customer", "Customer", "ECO WORLD SDN BHD"),
+        ("product_code", "Product Code", "SRTWC8605"),
+        ("order_count", "DOs", 5),
+        ("delivered_quantity", "Delivered Qty", 48),
+        ("pending_quantity", "Pending Qty", 17),
+        ("delivered_between", "Delivered", "02/03/2026 – 15/07/2026"),
     ]
-    assert not any(l.startswith("ECO WORLD SDN BHD:") for l in lines)
+    # every field carries a key - consumers match on it, never on the label
+    assert all(set(f) == {"key", "label", "value"} for f in items[0]["fields"])
 
 
-def test_qs_m15b_a_dropped_first_product_does_not_take_the_span_with_it():
-    """§QS-O8f: the span is keyed on the first RENDERED line, not on index 0."""
-    s = {**_SUM_M1, "products": [
-        {"product_code": {}, "delivered_quantity": 5},                       # unnameable -> dropped
-        {"product_code": "OK", "delivered_quantity": 1, "pending_quantity": 0},
-    ]}
-    lines = summary_lines(s, 3)
-    assert lines == ["*ECO WORLD SDN BHD · OK:* *1 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"]
-    assert "(3 DOs, " in lines[0]
+def test_qs_m2_multi_customer_gets_a_leading_total_then_one_item_per_customer():
+    g2 = {**_G_ECO, "customer": "HANLIM TRADING SDN BHD", "order_count": 1, "delivered_quantity": 7,
+          "pending_quantity": 0, "delivered_from": "2026-08-01", "delivered_to": "2026-08-01"}
+    s = {**_SUM_M1, "customer_count": 2, "customers": ["ECO WORLD SDN BHD", "HANLIM TRADING SDN BHD"],
+         "products": [{**_P_8605, "order_count": 6, "delivered_quantity": 55, "delivered_to": "2026-08-01"}],
+         "groups": [_G_ECO, g2]}
+    items = summary_items(s)
+    assert [i["title"] for i in items] == ["All customers (2) · SRTWC8605", "ECO WORLD SDN BHD · SRTWC8605",
+                                           "HANLIM TRADING SDN BHD · SRTWC8605"]
+    total = dict((k, v) for k, _, v in _fields(items[0]))
+    assert total["delivered_quantity"] == 55 and total["order_count"] == 6           # products[], not a sum
+    assert total["delivered_between"] == "02/03/2026 – 01/08/2026"
+    hanlim = dict((k, v) for k, _, v in _fields(items[2]))
+    assert hanlim["delivered_between"] == "01/08/2026"                              # same-day span collapses
+    assert "pending_quantity" in hanlim and hanlim["pending_quantity"] == 0         # 0 is a value, kept
+
+
+def test_qs_m3_two_products_bucket_under_their_own_product():
+    g_b = {**_G_ECO, "product_code": "SRTWC287-ARL", "order_count": 1, "delivered_quantity": 6, "pending_quantity": 0}
+    s = {**_SUM_M1, "products": [{**_P_8605, "product_code": "SRTWC287-ARL", "delivered_quantity": 6}, _P_8605],
+         "groups": [g_b, _G_ECO]}   # CRM order: customer then product
+    items = summary_items(s)
+    assert [i["title"] for i in items] == ["ECO WORLD SDN BHD · SRTWC287-ARL", "ECO WORLD SDN BHD · SRTWC8605"]
+
+
+def test_qs_m4_real_multi68_envelope():
+    S = _QS6["multi68"]["envelope"]["summary"]        # captured before amendment 4: no dates on groups
+    items = summary_items(S)
+    named = [g for g in S["groups"] if isinstance(g.get("customer"), str) and g["customer"].strip()]
+    assert len(items) == 1 + len(named)
+    assert items[0]["title"] == f"All customers ({len(named)}) · {S['products'][0]['product_code']}"
+    total = dict((k, v) for k, _, v in _fields(items[0]))
+    assert total["delivered_quantity"] == S["products"][0]["delivered_quantity"]
+    assert "delivered_between" not in total                # old shape has no per-product dates: dropped, not None
+    for it, g in zip(items[1:], named):
+        assert it["title"] == f"{g['customer'].strip()} · {g['product_code']}"
+
+
+def test_qs_m5_no_groups_still_states_the_product_total():
+    s = {**_SUM_M1, "groups": []}
+    items = summary_items(s)
+    assert len(items) == 1 and items[0]["title"] == "SRTWC8605"
+    assert _fields(items[0])[0] == ("product_code", "Product Code", "SRTWC8605")
+
+
+def test_qs_m6_unnameable_rows_are_dropped_not_coerced():
+    s = {**_SUM_M1, "products": [{"product_code": {}, "delivered_quantity": 5}, _P_8605],
+         "groups": [{"customer": {"n": 1}, "product_code": "SRTWC8605", "delivered_quantity": 1}, _G_ECO]}
+    items = summary_items(s)
+    assert [i["title"] for i in items] == ["ECO WORLD SDN BHD · SRTWC8605"]
+    dumped = _json.dumps(items)
+    assert '"n": 1' not in dumped and "None" not in dumped and "null" not in dumped   # nothing coerced or leaked
+
+
+def test_qs_m7_hostile_leaves_never_raise_or_leak():
+    hostile = {"scope": "filter", "row_count": "1e5000", "customers": ["X"], "customer_count": True,
+               "products": [{"product_code": "P", "order_count": float("nan"), "delivered_quantity": "1e5000",
+                             "pending_quantity": "inf", "delivered_from": "not-a-date", "delivered_to": "2026-13-45"}],
+               "groups": "nope"}
+    items = summary_items(hostile)
+    dumped = _json.dumps(items)
+    assert "e+" not in dumped and "nan" not in dumped.lower() and "inf" not in dumped.lower()
+    assert "not-a-date" not in dumped and "2026-13-45" not in dumped and "None" not in dumped
+    for bad in ("not an object", [1, 2], {"products": "x", "groups": 5}):
+        assert summary_items(bad) == []
+    assert summary_intro(hostile, 3) is None                       # row_count unrenderable -> no intro
+
+
+def test_qs_m8_intro_states_the_page_geometry():
+    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs (showing the latest 2 below)."
+    assert summary_intro({"row_count": 3}, 3) == "Summary over 3 DOs."
+    assert summary_intro({"row_count": 1}, 1) == "Summary over 1 DO."
+    assert summary_intro({"row_count": 700, "groups_truncated": True}, 20) == (
+        "Summary over 700 DOs (showing the latest 20 below). Not every customer breakdown is shown — add a customer or a date range.")
+
+
+def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
+    base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
+    out = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
+    assert out["summary_items"] == summary_items(_SUM_M1)
+    assert out["intro"] == "Summary over 5 DOs (showing the latest 1 below)."
+    assert "summary_lines" not in out
+    assert "summary_items" not in env("crm_order_management_orders_list", base)                        # no summary
+    assert "summary_items" not in env("crm_order_management_orders_list", {"data": [], "summary": _SUM_M1})  # no rows
+    plain = env("crm_order_management_orders_list", {**base, "summary": {"scope": "filter"}})
+    assert "summary_items" not in plain and plain["intro"] == "Here are the orders I found."           # degrades: intro untouched
+    import sorento_crm_mcp.presenters as _p
+    monkeypatch.setattr(_p, "summary_items", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out2 = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
+    assert out2["items"] and "summary_items" not in out2 and out2["intro"] == "Here are the orders I found."

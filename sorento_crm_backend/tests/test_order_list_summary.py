@@ -107,14 +107,16 @@ def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
     assert s["customers"] == ["ECO WORLD SDN BHD"] and s["customer_count"] == 1
     assert s["delivered_from"] == "2026-03-02" and s["delivered_to"] == "2026-07-15"
     assert s["products"] == [
-        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 17}
+        {"product_code": "SRTWC8605", "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
     ]
     # integral quantities are ints, not "48.0000"
     assert isinstance(s["products"][0]["delivered_quantity"], int)
     # customer x product - the unit the question is about (captain 2026-08-25)
     assert s["groups"] == [
         {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
-         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17}
+         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
     ]
     assert "groups_truncated" not in s
 
@@ -151,7 +153,10 @@ def test_qs_c3_no_product_narrower_means_counts_only(db, scenario):
     result = OrderService(db).list_orders(customer_ids=[cust.id], include_summary=True)
 
     s = result["summary"]
-    assert "products" not in s
+    # amendment 4: the breakdown comes with every asked summary - per product, never across
+    assert [p["product_code"] for p in s["products"]] == ["SRTWC8605"]
+    assert s["products"][0]["delivered_quantity"] == 48
+    assert [(g["customer"], g["product_code"]) for g in s["groups"]] == [("ECO WORLD SDN BHD", "SRTWC8605")]
     assert s["order_count"] == 5 and s["delivered_count"] == 3 and s["pending_count"] == 2
 
 
@@ -165,13 +170,16 @@ def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
     assert s["customer_count"] == 2
     assert set(s["customers"]) == {"ECO WORLD SDN BHD", "HANLIM TRADING SDN BHD"}
     assert s["products"][0]["delivered_quantity"] == 55
+    assert s["products"][0]["order_count"] == 6 and s["products"][0]["delivered_to"] == "2026-08-01"
     assert s["delivered_to"] == "2026-08-01"
-    # per customer x product, sorted by customer - each customer sees only its own share
+    # per customer x product, sorted by customer - each customer sees only its own share and span
     assert s["groups"] == [
         {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
-         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17},
+         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"},
         {"customer": "HANLIM TRADING SDN BHD", "product_code": "SRTWC8605",
-         "order_count": 1, "delivered_quantity": 7, "pending_quantity": 0},
+         "order_count": 1, "delivered_quantity": 7, "pending_quantity": 0,
+         "delivered_from": "2026-08-01", "delivered_to": "2026-08-01"},
     ]
 
 
@@ -206,7 +214,8 @@ def test_qs_c1b_delivered_bucket_and_summary_agree(db, scenario):
     assert result["pagination"]["total"] == 3
     s = result["summary"]
     assert s["order_count"] == 3 and s["delivered_count"] == 3 and s["pending_count"] == 0
-    assert s["products"][0] == {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 0}
+    assert s["products"][0] == {"product_code": "SRTWC8605", "order_count": 3, "delivered_quantity": 48,
+                                "pending_quantity": 0, "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
 
 
 # ------------------------------------------------------- list_orders_by_product
@@ -221,7 +230,8 @@ def test_qs_c6_by_product_accepts_delivered_bucket(db, scenario):
     s = result["summary"]
     assert s["delivered_count"] == 3 and s["pending_count"] == 0
     assert s["products"] == [
-        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 0}
+        {"product_code": "SRTWC8605", "order_count": 3, "delivered_quantity": 48, "pending_quantity": 0,
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
     ]
 
 
@@ -235,8 +245,9 @@ def test_qs_c7_by_product_outstanding_bucket_is_the_negation(db, scenario):
     assert s["delivered_count"] == 0 and s["pending_count"] == 2
     assert "delivered_from" not in s and "delivered_to" not in s
     assert s["products"] == [
-        {"product_code": "SRTWC8605", "delivered_quantity": 0, "pending_quantity": 17}
+        {"product_code": "SRTWC8605", "order_count": 2, "delivered_quantity": 0, "pending_quantity": 17}
     ]
+    assert "delivered_from" not in s["groups"][0]  # nothing delivered -> no span on the group either
 
 
 def test_qs_c6b_by_product_summary_without_bucket_matches_list_orders(db, scenario):

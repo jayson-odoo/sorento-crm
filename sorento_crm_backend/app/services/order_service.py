@@ -157,10 +157,10 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
     Computed ONLY when the caller asked for it (``include_summary=true`` on the
     endpoint - n8n sends it when the parser saw a quantity question: "how many",
     "have take", "have sales"). "Any delivery to Hanlim for SRTWC286" wants the
-    DOs, not a headline, and pays no extra query. ``products`` is present only
-    when ``product_ids`` (the product narrower the caller actually applied) is
-    given - a quantity summed across unrelated products is not a number anyone
-    asked for. ``delivered_from/to`` are present only when something was
+    DOs, not a headline, and pays no extra query. ``products`` (per product code) and
+    ``groups`` (customer x product) are ALWAYS emitted with an asked summary
+    (amendment 4); a product narrower restricts them to that product. Nothing is
+    ever summed across products. ``delivered_from/to`` are present only when something was
     delivered. Delivered = the canonical predicate (``_delivered_clause``),
     pending = its negation.
 
@@ -251,32 +251,45 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
             summary["delivered_from"] = d_from.isoformat()
             summary["delivered_to"] = d_to.isoformat()
 
-        if pids:
+        # Amendment 4 (captain, 2026-08-25): per-product totals and customer x product
+        # groups are ALWAYS emitted with an asked summary - a breakdown by product is
+        # meaningful under any filter (it was the cross-product grand total that was
+        # not). When the caller narrowed by product, the lines are restricted to it.
+        _line_scope = OrderLine.product_id.in_(pids) if pids else None
+        if True:
             prod_q = (
                 db.query(
                     Product.product_code,
+                    func.count(func.distinct(Order.id)),
                     func.sum(OrderLine.quantity).filter(delivered),
                     func.sum(OrderLine.quantity).filter(pending),
+                    func.min(Order.actual_delivery_date).filter(delivered),
+                    func.max(Order.actual_delivery_date).filter(delivered),
                 )
                 .select_from(OrderLine)
                 .join(Order, Order.id == OrderLine.order_id)
                 .join(Product, Product.id == OrderLine.product_id)
                 .filter(in_ids)
-                .filter(OrderLine.product_id.in_(pids))
             )
+            if _line_scope is not None:
+                prod_q = prod_q.filter(_line_scope)
             prod_q = _scoped(_scoped(prod_q, _p_order), _p_line)
             prod_rows = (
                 prod_q.group_by(Product.product_code)
                 .order_by(Product.product_code.asc())
+                .limit(GROUPS_CEILING + 1)
                 .all()
             )
             summary["products"] = [
                 {
                     "product_code": code,
+                    "order_count": int(oc or 0),
                     "delivered_quantity": _plain_number(dq) or 0,
                     "pending_quantity": _plain_number(pq) or 0,
+                    **({"delivered_from": pf.isoformat(), "delivered_to": pt.isoformat()}
+                       if (pf is not None and pt is not None) else {}),
                 }
-                for code, dq, pq in prod_rows
+                for code, oc, dq, pq, pf, pt in prod_rows[:GROUPS_CEILING]
             ]
 
             # customer x product: the row the question is about. Same joins, same
@@ -289,14 +302,17 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                     func.count(func.distinct(Order.id)),
                     func.sum(OrderLine.quantity).filter(delivered),
                     func.sum(OrderLine.quantity).filter(pending),
+                    func.min(Order.actual_delivery_date).filter(delivered),
+                    func.max(Order.actual_delivery_date).filter(delivered),
                 )
                 .select_from(OrderLine)
                 .join(Order, Order.id == OrderLine.order_id)
                 .join(Product, Product.id == OrderLine.product_id)
                 .outerjoin(Customer, _cust_on)
                 .filter(in_ids)
-                .filter(OrderLine.product_id.in_(pids))
             )
+            if _line_scope is not None:
+                grp_q = grp_q.filter(_line_scope)
             grp_q = _scoped(_scoped(grp_q, _p_order), _p_line)
             grp_rows = (
                 grp_q.group_by(name_col, Product.product_code)
@@ -311,8 +327,10 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                     "order_count": int(oc or 0),
                     "delivered_quantity": _plain_number(dq) or 0,
                     "pending_quantity": _plain_number(pq) or 0,
+                    **({"delivered_from": gf.isoformat(), "delivered_to": gt.isoformat()}
+                       if (gf is not None and gt is not None) else {}),
                 }
-                for cname, code, oc, dq, pq in grp_rows[:GROUPS_CEILING]
+                for cname, code, oc, dq, pq, gf, gt in grp_rows[:GROUPS_CEILING]
             ]
             if len(grp_rows) > GROUPS_CEILING:
                 # Only the ceiling tells us "more" - the exact remainder would be

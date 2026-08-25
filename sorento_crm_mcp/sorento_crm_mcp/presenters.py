@@ -352,29 +352,29 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 
 
 # ---------------------------------------------------------------------------
-# order quantity summary -> the WhatsApp lines (QS-7, plan §3c)
+# order quantity summary -> summary_items in the ITEM shape (QS-8, plan §3d)
 # ---------------------------------------------------------------------------
-# WHY HERE. This presenter is already the presentation layer for `view=render`
-# (intro, labels, rows). Rendering the summary in n8n meant every future measure
-# with different wording was an n8n LIVE promote, and n8n keying on
-# `delivered_quantity` is the label-table drift class the structurer paid for
-# once. So the consumer gets `summary_lines` - the exact lines - and prints them.
-# This is a line-for-line port of the tested n8n block (QS-6; quoted in
-# sorento_crm_n8n tests/diffs/order-quantity-summary.md, its recorded outputs
-# in tests/offline/order-quantity-summary/fixture-qs6-envelopes.json - the
-# hunk file itself was superseded by the passthrough); its probe cases are
-# the tests below. Numbers come from `summary`, never from
-# a sum over rows (the external page is capped at 20).
-#
-# WHO COMES FROM THE FILTER, NEVER FROM THE PARSER: `summary.customers` /
-# `groups[].customer` are what the backend actually filtered on. An unnameable
-# entry (non-string) is DROPPED, never coerced - "[object Object]" in bold over
-# someone's orders is the one failure a headline must not have.
-# NEVER RAISES: a missing field degrades to the fields that exist.
+# WHY THIS SHAPE. The render envelope already has one shape the consumer knows
+# how to print: items[] {title, fields[{key,label,value}]}. The summary uses the
+# same shape and the same renderer - no sentences composed anywhere, no
+# vocabulary in n8n, and any consumer can match on `key`, never on a label.
+# The numbers come from `summary` (SQL over the WHOLE filter); nothing here
+# adds anything up. Names come from what the backend filtered on, never from
+# the parser; an unnameable entry is dropped, not coerced.
+# NEVER RAISES on its own account - and the render path wraps it anyway.
+
+_SUMMARY_FIELDS = (
+    ("customer", "Customer"),
+    ("product_code", "Product Code"),
+    ("order_count", "DOs"),
+    ("delivered_quantity", "Delivered Qty"),
+    ("pending_quantity", "Pending Qty"),
+    ("delivered_between", "Delivered"),
+)
 
 
 def _sl_num(v: Any):
-    """A renderable number or None. Integral -> int (48.0 -> 48), else float."""
+    """A renderable count or None. Integral -> int (48.0 -> 48), else float."""
     if v is None or isinstance(v, bool) or v == "":
         return None
     try:
@@ -382,14 +382,12 @@ def _sl_num(v: Any):
     except (InvalidOperation, TypeError, ValueError):
         return None
     if not d.is_finite() or abs(d) >= Decimal("1e15"):
-        # A quantity is a count of pieces; anything at or past 1e15 is not one
-        # (JS would print it in exponent form, Python would print 5,000 digits).
         return None
     return int(d) if d == d.to_integral_value() else float(d)
 
 
 def _sl_date(v: Any) -> Optional[str]:
-    """dd/mm/yyyy for a date-only string; date + HH:MM:SS for a non-midnight datetime."""
+    """dd/mm/yyyy for a date-only string; None on anything unparseable."""
     s = str(v or "").strip()
     if not s:
         return None
@@ -399,99 +397,98 @@ def _sl_date(v: Any) -> Optional[str]:
         else:
             d = datetime.fromisoformat(s.replace("Z", "+00:00"))
             if d.tzinfo is not None:
-                d = d.astimezone()  # the JS renders in local time; so do we
+                d = d.astimezone()
     except (ValueError, TypeError, OverflowError):
-        return None  # the JS `fmtTs` returns null on an unparseable value; never echo garbage
+        return None
     out = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
     if d.hour or d.minute or d.second:
         out += f" {d.hour:02d}:{d.minute:02d}:{d.second:02d}"
     return out
 
 
-def _sl_pending(v: Any) -> str:
-    p = _sl_num(v)
-    return f" · {p} pcs pending" if (p is not None and p > 0) else ""
+def _sl_between(row: dict) -> Optional[str]:
+    a, b = _sl_date(row.get("delivered_from")), _sl_date(row.get("delivered_to"))
+    if a and b:
+        return a if a == b else f"{a} – {b}"
+    return a or b
 
 
-def summary_lines(summary: Any, n_items: int) -> list[str]:
-    """The WhatsApp lines for an order-list summary; [] when nothing renders."""
+def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
+    """One render item from a groups[]/products[] row; None when nothing can be named."""
+    code = row.get("product_code")
+    if not isinstance(code, str) or not code.strip():
+        return None
+    code = code.strip()
+    values = {
+        "customer": customer,
+        "product_code": code,
+        "order_count": _sl_num(row.get("order_count")),
+        "delivered_quantity": _sl_num(row.get("delivered_quantity")),
+        "pending_quantity": _sl_num(row.get("pending_quantity")),
+        "delivered_between": _sl_between(row),
+    }
+    fields = [
+        {"key": k, "label": lbl, "value": values[k]}
+        for k, lbl in _SUMMARY_FIELDS
+        if _filled(values[k])
+    ]
+    if len(fields) <= 1:  # the code alone says nothing
+        return None
+    title = f"{customer} · {code}" if customer else code
+    return {"title": title, "fields": fields}
+
+
+def summary_items(summary: Any) -> list[dict]:
+    """The summary as render items: per product, a leading Total when more than one
+    customer took it, then one item per customer x product. [] when nothing renders."""
     if not isinstance(summary, dict):
         return []
-    S = summary
-    cc = _sl_num(S.get("customer_count"))
-    names = [x.strip() for x in (S.get("customers") or []) if isinstance(x, str) and x.strip()] \
-        if isinstance(S.get("customers"), list) else []
-    who = names[0] if (cc == 1 and names) else (f"{cc} customers" if (cc is not None and cc > 1) else "")
+    products = summary.get("products") if isinstance(summary.get("products"), list) else []
+    groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
+    items: list[dict] = []
+    seen_codes: set[str] = set()
+    for p in products:
+        if not isinstance(p, dict) or not isinstance(p.get("product_code"), str):
+            continue
+        code = p["product_code"].strip()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        rows = [
+            g for g in groups
+            if isinstance(g, dict) and isinstance(g.get("product_code"), str)
+            and g["product_code"].strip() == code
+            and isinstance(g.get("customer"), str) and g["customer"].strip()
+        ]
+        if len(rows) > 1:
+            total = _summary_item(f"All customers ({len(rows)})", p)
+            if total:
+                items.append(total)
+        for g in rows:
+            it = _summary_item(g["customer"].strip(), g)
+            if it:
+                items.append(it)
+        if not rows:
+            # no nameable customer row - the product total still says what was asked
+            solo = _summary_item(None, p)
+            if solo:
+                items.append(solo)
+    return items
 
-    dc = _sl_num(S.get("delivered_count"))
-    d_from, d_to = _sl_date(S.get("delivered_from")), _sl_date(S.get("delivered_to"))
-    span_bits: list[str] = []
-    if dc is not None:
-        span_bits.append(f"{dc} DO{'' if dc == 1 else 's'}")
-    if d_from and d_to:
-        span_bits.append(f"{d_from} – {d_to}")
-    elif d_from or d_to:
-        span_bits.append(d_from or d_to)  # type: ignore[arg-type]
-    span = f" ({', '.join(span_bits)})" if span_bits else ""
 
-    prods = S.get("products") if isinstance(S.get("products"), list) else []
-    groups = S.get("groups") if isinstance(S.get("groups"), list) else []
-    detail = len(groups) > 1 and cc is not None and cc > 1
-
-    def detail_line(g: Any) -> str:
-        if not isinstance(g, dict) or not isinstance(g.get("customer"), str):
-            return ""
-        cn = g["customer"].strip()
-        if not cn:
-            return ""
-        cl: list[str] = []
-        gd = _sl_num(g.get("delivered_quantity"))
-        if gd is not None:
-            cl.append(f"{gd} pcs delivered")  # 0 is informative: ordered, nothing arrived yet
-        gp = _sl_num(g.get("pending_quantity"))
-        if gp is not None and gp > 0:
-            cl.append(f"{gp} pcs pending")
-        return f"{cn}: {' · '.join(cl)}" if cl else ""
-
-    lines: list[str] = []
-    if prods:
-        span_used = False
-        for p in prods:
-            if not isinstance(p, dict) or not isinstance(p.get("product_code"), str):
-                continue
-            code = p["product_code"].strip()
-            label = " · ".join(x for x in (who, code) if x)
-            if not label:
-                continue
-            dq = _sl_num(p.get("delivered_quantity"))
-            qty = f" *{dq} pcs delivered*" if dq is not None else ""
-            sp = ""
-            if not span_used:
-                sp, span_used = span, True
-            lines.append(f"*{label}:*{qty}{sp}{_sl_pending(p.get('pending_quantity'))}")
-            if detail:
-                for g in groups:
-                    if isinstance(g, dict) and isinstance(g.get("product_code"), str) \
-                            and g["product_code"].strip() == code:
-                        dl = detail_line(g)
-                        if dl:
-                            lines.append(dl)
-        if detail and lines and S.get("groups_truncated") is True:
-            lines.append("…and more — add a customer or a date range.")
-    elif who:
-        oc, pc = _sl_num(S.get("order_count")), _sl_num(S.get("pending_count"))
-        bits: list[str] = []
-        if dc is not None:
-            bits.append(f"{dc} delivered")
-        if pc is not None:
-            bits.append(f"{pc} pending")
-        tail = f" ({', '.join(bits)})" if bits else ""
-        lines.append(f"*{who}:* {oc} DO{'' if oc == 1 else 's'}{tail}" if oc is not None else f"*{who}:*{tail}")
-
-    rc = _sl_num(S.get("row_count"))
-    if rc is not None and rc > n_items:
-        lines.append(f"Showing latest {n_items} of {rc} DOs — add a date range for the full list.")
-    return lines
+def summary_intro(summary: Any, n_items: int) -> Optional[str]:
+    """Page geometry, said once, in the presenter-owned intro."""
+    if not isinstance(summary, dict):
+        return None
+    rc = _sl_num(summary.get("row_count"))
+    if rc is None:
+        return None
+    n = int(rc)
+    text = f"Summary over {n} DO{'' if n == 1 else 's'}"
+    text += f" (showing the latest {n_items} below)." if n > n_items else "."
+    if summary.get("groups_truncated") is True:
+        text += " Not every customer breakdown is shown — add a customer or a date range."
+    return text
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired
@@ -1138,18 +1135,20 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
-    # QS-7: the lines the consumer prints verbatim. Only over a real answer
-    # (has_result AND rows on the page); absent otherwise, never [].
+    # QS-8: the summary in the ITEM shape, printed by the same renderer as the
+    # rows. Only over a real answer (has_result AND rows on the page); absent
+    # otherwise, never []. Exception boundary: a hostile leaf inside `summary`
+    # must cost the summary, never the envelope the rows already rendered into.
     if has_result and b.items and isinstance(data.get("summary"), dict):
-        # Exception boundary: the headline is an augmentation. A hostile leaf inside
-        # `summary` must cost the headline, never the envelope the rows already
-        # rendered into (cross-model review, 2026-08-25).
         try:
-            _lines = summary_lines(data["summary"], len(b.items))
+            _sitems = summary_items(data["summary"])
+            _sintro = summary_intro(data["summary"], len(b.items))
         except Exception as _exc:  # pragma: no cover - by contract
-            logger.warning("summary_lines skipped: %s", _exc)
-            _lines = []
-        if _lines:
-            envelope["summary_lines"] = _lines
+            logger.warning("summary_items skipped: %s", _exc)
+            _sitems, _sintro = [], None
+        if _sitems:
+            envelope["summary_items"] = _sitems
+            if _sintro:
+                envelope["intro"] = _sintro
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
