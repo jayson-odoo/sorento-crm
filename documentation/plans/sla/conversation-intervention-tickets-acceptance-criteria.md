@@ -816,6 +816,11 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   lane uses - that array exists only to mimic Respond's own webhook shape, which this
   lane does not mirror.
 
+  **Launch wiring (2026-08-25).** URL moved to `system_settings.n8n_close_convo_webhook_url`
+  (Settings > Integrations), env fallback kept; pinned by
+  `test_the_settings_page_url_wins_over_the_env_fallback`. n8n receiving lane built as a
+  draft on `respond-close-convo` (see PLAN S4.5 "LAUNCH"), awaiting publish.
+
 - **AC-M4 [DECIDED 2026-08-14: KEEP]** The contact-facing "your conversation is marked as
   closed and resolved" message stays, gated on "contact has no open tickets" (already the
   CRM close gate). It now reaches the contact for CRM resolves too, via the webhook lane.

@@ -73,6 +73,7 @@ export interface SystemSetting {
   n8nCrmChatOutboundWebhookUrl?: string | null;
   /** Webhook for public rejected stock inquiry revise requests. */
   n8nStockInquiryReviseWebhookUrl?: string | null;
+  n8nCloseConvoWebhookUrl?: string | null;
 
   socialFacebook?: string | null;
   socialTwitter?: string | null;

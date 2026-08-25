@@ -426,6 +426,31 @@ def test_an_unconfigured_webhook_url_skips_silently_and_warns(db, monkeypatch, c
     ), "an unwired webhook must be visible in the log, not silent"
 
 
+def test_the_settings_page_url_wins_over_the_env_fallback(db, monkeypatch):
+    """Launch wiring: the operator sets the URL on Settings > Integrations. The
+    system_settings column is read first; the env var stays only as a fallback."""
+    from app.config import settings
+    from app.models.user import SystemSetting
+
+    settings_url = "https://n8n.test/webhook/from-settings-page"
+    row = db.query(SystemSetting).first() or SystemSetting()
+    row.n8n_close_convo_webhook_url = settings_url
+    db.add(row)
+    db.commit()
+
+    seed = _seed(db)
+    t1 = _create_ticket(db, seed, source_message_id="wamid.close-settings-1")
+    _resolve(db, t1.id)
+    assert [row.endpoint for row in _close_logs(db)] == [settings_url]
+
+    # And with the env unset entirely, the settings column alone is enough.
+    monkeypatch.setattr(settings, "n8n_close_convo_webhook_url", None, raising=False)
+    monkeypatch.delenv("N8N_CLOSE_CONVO_WEBHOOK_URL", raising=False)
+    t2 = _create_ticket(db, seed, source_message_id="wamid.close-settings-2")
+    _resolve(db, t2.id)
+    assert [row.endpoint for row in _close_logs(db)] == [settings_url, settings_url]
+
+
 def test_a_notifier_explosion_never_fails_the_resolve(db, caplog):
     seed = _seed(db)
     t1 = _create_ticket(db, seed, source_message_id="wamid.close-1")

@@ -168,11 +168,12 @@ def notify_ticket_resolved_close(
     failed to enqueue.
     """
     try:
-        url = get_n8n_close_convo_webhook_url()
+        url = get_n8n_close_convo_webhook_url(db)
         if not url:
             logger.warning(
-                "respond-close-convo webhook skipped for tracking %s: "
-                "N8N_CLOSE_CONVO_WEBHOOK_URL is not configured",
+                "respond-close-convo webhook skipped for tracking %s: the close "
+                "webhook URL is not set (Settings > Integrations, or "
+                "N8N_CLOSE_CONVO_WEBHOOK_URL)",
                 tracking_id,
             )
             return False

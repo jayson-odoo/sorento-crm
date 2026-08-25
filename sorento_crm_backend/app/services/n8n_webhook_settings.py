@@ -77,17 +77,25 @@ def crm_webhook_auth_headers() -> dict[str, str]:
     return {CRM_WEBHOOK_SECRET_HEADER: secret}
 
 
-def get_n8n_close_convo_webhook_url() -> str:
+def get_n8n_close_convo_webhook_url(db: Optional[Session] = None) -> str:
     """Direct ``respond-close-convo`` webhook the CRM calls on a resolve (AC-M3).
 
-    Env / settings only, same family as the shared secret: it is deployment
-    wiring for a specific n8n workflow, not an operator-editable business
-    setting. An empty value means "not wired yet" and the caller skips the call
-    with a warning - a resolve must never depend on it.
+    Operator-set on the Integrations settings page (``system_settings``
+    column, like the chat outbound webhook); the ``N8N_CLOSE_CONVO_WEBHOOK_URL``
+    env / settings value is the fallback from the inert-launch era. An empty
+    value means "not wired yet" and the caller skips the call with a warning -
+    a resolve must never depend on it.
     """
     from app.config import settings
 
-    configured = (getattr(settings, "n8n_close_convo_webhook_url", None) or "").strip()
+    configured = ""
+    if db is not None:
+        row = db.query(SystemSetting).first()
+        configured = (
+            (getattr(row, "n8n_close_convo_webhook_url", None) or "").strip() if row else ""
+        )
+    if not configured:
+        configured = (getattr(settings, "n8n_close_convo_webhook_url", None) or "").strip()
     if not configured:
         configured = os.getenv("N8N_CLOSE_CONVO_WEBHOOK_URL", "").strip()
     return _normalize_webhook_url(configured) if configured else ""
