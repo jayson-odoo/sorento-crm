@@ -324,6 +324,26 @@ a dependency, behind `next/dynamic` with `ssr: false`.
 
 ### S4.5 Post-resolve reassurance + close semantics (UAC M) [FE coder + BE coder + n8n peer]
 
+**LAUNCH (2026-08-25, user direction: "no longer inert, launch on deploy").** Supersedes the
+inert-launch procedure below. (1) The close webhook URL is now a `system_settings` column
+(`n8n_close_convo_webhook_url`, migration `420_close_convo_webhook_setting`), set on
+Settings > Integrations ("Ticket resolve close webhook URL"); the env var is only the
+fallback. (2) The CRM lane is built INSIDE `respond-close-convo` (-WkzJMQZHmsFQm6A2abLJ)
+as a draft: plain `Webhook` (POST `/webhook/crm-close-convo-c1f4e0b2-5a7d-4b8e-9c3f-2e6a8d0b4f17`)
+and the Respond trigger both feed `close-envelope` (one shape, every downstream node reads it
+by name), then `close-seen` (Redis GET `close:evt:<event_id>`) -> `close-decide` ->
+`close-gate?` -> `close-stamp` (Redis INCR, TTL 600 s) -> the existing chain. Gate, fail
+closed: Respond lane runs for `closedBySource` `user` and `n8n` (today's behaviour kept for
+bot closes), SKIPS `api` (that is the CRM's own RQ Developer-API close echoing a resolve the
+webhook lane already announced) and anything unknown; CRM lane runs only for
+`event == ticket_resolved && closedBySource == crm`; a repeated `event_id` within 10 min is
+skipped as `duplicate-event`. Deviation from AC-M3 as written: `n8n` closes stay allowed, not
+just `user`, so the "close resolves all open tickets" behaviour bot flows rely on is unchanged.
+Not verified live: the MCP publish was blocked by the tool permission gate, so the draft is
+unpublished; rollback after publish = republish version `4a2e963d`. Cutover: deploy CRM ->
+set the URL in Settings -> publish the draft -> resolve a ticket for a test contact and check
+the execution took the `crm` lane once and the following Respond `api` close was skipped.
+
 **LAUNCH PROCEDURE (user decision via n8n session 2026-08-15, inert launch):** the CRM
 close lane is a SEPARATE n8n workflow (inactive at launch); `respond-close-convo`
 (Respond trigger, `eventSource: ["user"]`, resolve-all under the inert semantic) stays

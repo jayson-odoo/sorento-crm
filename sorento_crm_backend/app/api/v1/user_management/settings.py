@@ -75,6 +75,7 @@ class SystemSettingUpdate(BaseModel):
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
+    n8n_close_convo_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
     # AI assistant trace (M2) retention + payload caps.
@@ -252,6 +253,11 @@ async def get_settings(
                 else None,
                 "n8n_stock_inquiry_revise_webhook_url": getattr(
                     settings, "n8n_stock_inquiry_revise_webhook_url", None
+                )
+                if settings
+                else None,
+                "n8n_close_convo_webhook_url": getattr(
+                    settings, "n8n_close_convo_webhook_url", None
                 )
                 if settings
                 else None,

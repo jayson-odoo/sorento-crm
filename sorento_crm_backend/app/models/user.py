@@ -407,6 +407,8 @@ class SystemSetting(Base):
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
     n8n_stock_inquiry_revise_webhook_url = Column(Text, nullable=True)
+    # CRM -> n8n respond-close-convo signal on a ticket resolve (AC-M3). Env fallback.
+    n8n_close_convo_webhook_url = Column(Text, nullable=True)
 
     # Procurement: when set, "Send for approval" can skip the approver dialog and email the default user.
     purchase_request_default_approver_user_id = Column(
