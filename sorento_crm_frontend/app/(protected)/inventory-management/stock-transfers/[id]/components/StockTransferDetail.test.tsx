@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StockTransfer } from '../../types/stockTransfer.types';
 
@@ -25,7 +25,8 @@ const push = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/inventory-management/stock-transfers/tr-1',
-  useSearchParams: () => new URLSearchParams('page=1&limit=25'),
+  useSearchParams: () =>
+    new URLSearchParams('page=1&limit=25&state=proposed&from_warehouse_id=w-brw'),
 }));
 
 vi.mock('sonner', () => ({
@@ -84,6 +85,9 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
     moved_by: null,
     moved_by_name: null,
     moved_at: null,
+    cancelled_by: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     cancelled_reason: null,
     autocount_ref: null,
     created_at: '2026-08-25T08:42:00',
@@ -116,18 +120,28 @@ describe('StockTransferDetail - header', () => {
   it('carries the transfer number, the state and the verbs the state allows', async () => {
     renderDetail();
 
-    expect(await screen.findByText('TR-000001')).toBeInTheDocument();
+    // Twice, deliberately: the record header and the breadcrumb's leaf. The leaf is the
+    // NUMBER rather than the id, because no UUID reaches a screen.
+    expect(await screen.findAllByText('TR-000001')).toHaveLength(2);
+    expect(
+      within(screen.getByRole('navigation', { name: 'breadcrumb' })).getByText('TR-000001'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Proposed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Mark moved' })).toBeNull();
   });
 
-  it('offers prev/next over the list the reader came from', async () => {
+  it('offers prev/next over the same filtered list the reader came from', async () => {
     renderDetail();
 
-    await screen.findByText('TR-000001');
+    await screen.findAllByText('TR-000001');
     expect(await screen.findByText('1 / 2')).toBeInTheDocument();
+    // The filters in the URL are forwarded to the list read, so the chevrons walk the set
+    // the reader narrowed to rather than the unfiltered book.
+    expect(listStockTransfers).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'proposed', from_warehouse_id: 'w-brw' }),
+    );
   });
 
   it('a moved transfer says so as its state and adds no sentence', async () => {

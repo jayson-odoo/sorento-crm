@@ -1,12 +1,4 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { StockTransferDetail } from './components/StockTransferDetail';
@@ -23,27 +15,12 @@ export default async function StockTransferDetailPage({
 }) {
   const { id } = await params;
 
+  // The breadcrumb lives INSIDE the detail component, not here: its leaf is the transfer
+  // NUMBER, and this server component holds only the id - which is a UUID and may never
+  // reach a screen.
   return (
     <RequireAccess permission="inventory.stock_transfers.view">
       <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/inventory-management/stock-transfers">
-                Stock Transfers
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Detail</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-
         <StockTransferDetail id={id} />
       </Container>
     </RequireAccess>

@@ -314,6 +314,12 @@ class ConfirmResult(BaseModel):
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
     lines_decided: int = 0
     lines_undecided: int = 0
+    #: The physical movements this confirmation raised, and how many it could NOT write
+    #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
+    #: failure cannot fail a promise already made, but a movement nobody was told about is
+    #: a movement nobody makes - so the count reaches the screen rather than a server log.
+    transfers_written: int = 0
+    transfers_failed: int = 0
 
 
 # ------------------------------------------------------------------- the Plans page (D1)

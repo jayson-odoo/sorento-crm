@@ -2789,7 +2789,9 @@ class ProjectSupplyService:
                     "carried": True,
                 }
             )
-        self._write_transfers(order, decision, previous, snapshots)
+        transfers_written, transfers_failed = self._write_transfers(
+            order, decision, snapshots
+        )
         self.db.flush()
 
         from app.services.project_order_inquiry_service import (
@@ -2818,6 +2820,11 @@ class ProjectSupplyService:
             # this order rather than being stopped from committing what is not.
             "lines_decided": decided,
             "lines_undecided": max(len(self.lines_of(str(order.id))) - decided, 0),
+            # What this confirmation asked a warehouse to physically carry, and how much of
+            # it could not be written down (PLAN section E). `transfers_failed > 0` is the
+            # only sign a planner gets that a movement is missing, so it reaches the screen.
+            "transfers_written": transfers_written,
+            "transfers_failed": transfers_failed,
         }
 
     def _auto_place_after_confirm(
@@ -3266,9 +3273,8 @@ class ProjectSupplyService:
         self,
         order: ProjectSalesOrder,
         decision: SOSupplyDecision,
-        previous: Optional[SOSupplyDecision],
         snapshots: Sequence[Dict[str, Any]],
-    ) -> None:
+    ) -> Tuple[int, int]:
         """The physical movements this revision implies (PLAN section E, Q2 ruled).
 
         A reserve or a borrow drawn from a warehouse that is not the line's own location
@@ -3287,32 +3293,45 @@ class ProjectSupplyService:
         reason: the decision and the holds are already written by the time this runs, so a
         failure here must not turn a confirmation the planner was told succeeded into a
         500 - and without the savepoint the failed statement would poison the transaction
-        the promise itself is in, so catching the exception alone would not save it. The
-        next reconfirm rewrites the rows.
+        the promise itself is in, so catching the exception alone would not save it.
+
+        **The failure is reported, not swallowed.** Returns `(written, failed)`, which the
+        confirm result carries to the planner (`transfers_written` / `transfers_failed`):
+        a movement nobody was told about is a movement nobody makes, and a silent log line
+        on a server is not telling anybody. `failed` is the number of components that
+        SHOULD have raised a row, so the planner knows how many are missing and can
+        reconfirm.
         """
         from app.services import stock_transfer_service as transfers
 
         try:
             with self.db.begin_nested():
-                if previous is not None:
-                    transfers.cancel_open_for_decision(
-                        self.db,
-                        str(previous.id),
-                        f"Superseded by revision {decision.revision_no}",
-                    )
-                transfers.write_for_decision(
+                # Keyed on the ORDER, never on the revision this one supersedes: a
+                # confirmation whose transfer write failed leaves its predecessor's rows
+                # open, and sweeping only `previous.id` would strand them forever.
+                transfers.cancel_open_for_order(
+                    self.db,
+                    str(order.id),
+                    keep_decision_id=str(decision.id),
+                    reason=f"Superseded by revision {decision.revision_no}",
+                )
+                written = transfers.write_for_decision(
                     self.db,
                     order,
                     decision,
                     snapshots,
                     warehouse_id_for_code=self.warehouse_id_for_code,
                 )
+            return len(written), 0
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "supply confirmed, but the stock transfers for revision %s were not "
                 "written (%s)",
                 decision.revision_no,
                 exc,
+            )
+            return 0, transfers.movements_implied(
+                snapshots, warehouse_id_for_code=self.warehouse_id_for_code
             )
 
     def _write_allocations(

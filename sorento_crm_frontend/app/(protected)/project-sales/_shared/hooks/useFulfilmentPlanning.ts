@@ -32,6 +32,9 @@ import {
   ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
 } from './useOrderInquiry';
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
+// The confirmation is what RAISES a stock transfer, so the Transfers page and the two
+// detail tabs reading it must not keep showing the previous revision's movements.
+import { STOCK_TRANSFERS_KEY } from '@/app/(protected)/inventory-management/stock-transfers/hooks/useStockTransfers';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
@@ -202,12 +205,17 @@ export function useReconciliationMutations() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
       queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_TRANSFERS_KEY] });
       const rows = result.inquiry_rows_created;
       toast.success(
         `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
           rows === 1 ? '' : 's'
         } handed over.`,
       );
+      // Only when something went wrong. The successful count is on the Transfers page and
+      // does not need saying twice; an unwritten movement has no other way to be noticed.
+      const failed = result.transfers_failed ?? 0;
+      if (failed > 0) toast.warning(`Transfers not written: ${failed}`);
     },
     onError: (error: Error) => toast.error(error.message),
   });

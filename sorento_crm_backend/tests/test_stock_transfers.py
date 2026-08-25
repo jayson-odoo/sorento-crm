@@ -119,6 +119,10 @@ def _one_line_order(world, *, qty="71"):
     return order, core_so, core_line, line
 
 
+def qty_of(row) -> Decimal:
+    return Decimal(str(row.qty)).normalize()
+
+
 def _transfers(db, order_id):
     return (
         db.query(StockTransfer)
@@ -393,6 +397,235 @@ def test_a_moved_transfer_survives_a_reconfirm(api):
     assert kept.cancelled_reason is None
 
 
+# ---------------------------------------------- AC-E3b: stock that has already moved
+
+
+def _move(client, transfer_id, ref="ZZT-TR-MOVED"):
+    assert client.post(f"{TRANSFERS}/{transfer_id}/approve").status_code == 200
+    moved = client.post(f"{TRANSFERS}/{transfer_id}/mark-moved", json={"autocount_ref": ref})
+    assert moved.status_code == 200, moved.text
+
+
+def test_a_carried_line_whose_transfer_already_moved_raises_no_second_one(api):
+    """The blocker: a line carried through an unrelated reconfirm re-proposed a movement
+    the warehouse had already made, so the stock would have been carried twice."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_a = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    core_b = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line_a = _project_line(db, order, line_no=10, product=world.product, core_line=core_a)
+    line_b = _project_line(db, order, line_no=20, product=world.product, core_line=core_b)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_a.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}]
+                )
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+    _move(client, _transfers(db, order.id)[0].id)
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_b.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}]
+                )
+            ]
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["transfers_written"] == 1, "line B's move, and line A's not again"
+
+    db.expire_all()
+    rows = _transfers(db, order.id)
+    assert len(rows) == 2
+    assert sorted((r.state, qty_of(r)) for r in rows) == [
+        ("moved", Decimal("10")),
+        ("proposed", Decimal("20")),
+    ]
+
+
+def test_reconfirming_the_same_composition_after_a_move_raises_nothing(api):
+    """Same line, same source, same quantity, already carried: nothing left to move."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order, _core_so, _core_line_row, line = _one_line_order(world, qty="71")
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+    _move(client, _transfers(db, order.id)[0].id)
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["transfers_written"] == 0
+
+    db.expire_all()
+    rows = _transfers(db, order.id)
+    assert len(rows) == 1
+    assert rows[0].state == "moved"
+
+
+def test_a_larger_quantity_after_a_move_raises_the_difference_only(api):
+    """71 moved, then the book grows the line to 100: the warehouse is asked for the 29 it
+    has not carried, never for the whole 100 again."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order, _core_so, core_line, line = _one_line_order(world, qty="71")
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+    _move(client, _transfers(db, order.id)[0].id)
+
+    # The book comes back with the line grown, which is the case that produces a bigger
+    # composition over stock that has already been carried.
+    core_line.qty_ordered = Decimal("100")
+    line.qty = Decimal("100")
+    db.flush()
+    db.commit()
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "100"}]
+                )
+            ]
+        },
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["transfers_written"] == 1
+
+    db.expire_all()
+    rows = _transfers(db, order.id)
+    assert sorted((r.state, qty_of(r)) for r in rows) == [
+        ("moved", Decimal("71")),
+        ("proposed", Decimal("29")),
+    ]
+
+
+def test_the_supersede_sweeps_every_open_row_on_the_order_not_only_the_last_revisions(api):
+    """Item 2: keyed on the ORDER. A row left open under an older revision - which is what
+    a failed best-effort write leaves behind - must not survive a later confirmation."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order, _core_so, _core_line_row, line = _one_line_order(world, qty="71")
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert first.status_code == 200, first.text
+    stranded = _transfers(db, order.id)[0]
+    # A row from a revision two supersedes ago, as a failed write would have left it.
+    stranded.supply_decision_id = None
+    db.flush()
+    db.commit()
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="71", buy_reason="changed mind")]},
+    )
+    assert second.status_code == 200, second.text
+
+    db.expire_all()
+    kept = db.query(StockTransfer).filter(StockTransfer.id == stranded.id).one()
+    assert kept.state == "cancelled"
+    assert kept.cancelled_reason == "Superseded by revision 2"
+
+
+def test_the_confirm_result_says_how_many_movements_it_raised(api):
+    """Item 3: the count is on the WIRE, so a planner is told rather than a server log."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order, _core_so, _core_line_row, line = _one_line_order(world, qty="71")
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["transfers_written"] == 1
+    assert body["transfers_failed"] == 0
+
+
+def test_a_failed_transfer_write_is_reported_rather_than_swallowed(api, monkeypatch):
+    """The confirmation still succeeds - the promise is already made - but the planner is
+    told how many movements went unwritten."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=900)
+    order, _core_so, _core_line_row, line = _one_line_order(world, qty="71")
+
+    from app.services import stock_transfer_service
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("zzt-transfer-write-failed")
+
+    monkeypatch.setattr(stock_transfer_service, "write_for_decision", _boom)
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "71"}])
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["revision_no"] == 1, "the promise itself still stands"
+    assert body["transfers_written"] == 0
+    assert body["transfers_failed"] == 1
+
+    db.expire_all()
+    assert _transfers(db, order.id) == []
+
+
 # ---------------------------------------------------------------- the state machine
 
 
@@ -527,6 +760,48 @@ def test_bulk_approve_approves_what_it_can_and_names_what_it_skipped(api):
     assert "cancelled" in body["skipped"][0]["reason"].lower()
 
 
+def test_bulk_approve_refuses_a_malformed_id_and_an_oversized_selection(api):
+    """A bad id is a client bug worth naming, not a row that "does not exist"; a body
+    longer than a page is not a selection."""
+    client, _world = api
+
+    bad = client.post(f"{TRANSFERS}/bulk-approve", json={"ids": ["not-a-uuid"]})
+    assert bad.status_code == 422, bad.text
+
+    too_many = client.post(
+        f"{TRANSFERS}/bulk-approve", json={"ids": [_uid() for _ in range(201)]}
+    )
+    assert too_many.status_code == 422, too_many.text
+
+    empty = client.post(f"{TRANSFERS}/bulk-approve", json={"ids": []})
+    assert empty.status_code == 422, empty.text
+
+
+def test_cancelling_records_who_did_it(one_transfer):
+    """Item 9: History names the person, not only the reason."""
+    client, _world, transfer = one_transfer
+
+    cancelled = client.post(
+        f"{TRANSFERS}/{transfer.id}/cancel", json={"reason": "Customer collected it"}
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    body = cancelled.json()
+    assert body["cancelled_by"] is not None
+    assert body["cancelled_by_name"] is not None
+    assert body["cancelled_at"] is not None
+
+
+def test_the_route_sort_literal_matches_the_service(api):
+    """The two are written twice because FastAPI cannot build a `Literal` from a runtime
+    set, so a test keeps them equal - the same guard the order-inquiry worklist has."""
+    from typing import get_args
+
+    from app.api.v1.inventory.stock_transfers import TransferSort
+    from app.services.stock_transfer_service import SORTABLE_FIELDS
+
+    assert set(get_args(TransferSort)) == set(SORTABLE_FIELDS)
+
+
 # ------------------------------------------------------------------- the list and filters
 
 
@@ -560,6 +835,12 @@ def test_the_list_carries_every_declared_field_on_the_wire(one_transfer):
         "revision_no",
         "proposed_at",
         "autocount_ref",
+        "approved_by_name",
+        "moved_by_name",
+        "cancelled_by",
+        "cancelled_by_name",
+        "cancelled_at",
+        "cancelled_reason",
     ):
         assert field in row, f"{field} was dropped by the response model"
     assert row["item_code"] == world.product.product_code

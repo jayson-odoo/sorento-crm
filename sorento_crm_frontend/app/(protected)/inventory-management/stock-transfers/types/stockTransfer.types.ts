@@ -45,6 +45,9 @@ export interface StockTransfer {
   moved_by: string | null;
   moved_by_name: string | null;
   moved_at: string | null;
+  cancelled_by: string | null;
+  cancelled_by_name: string | null;
+  cancelled_at: string | null;
   cancelled_reason: string | null;
   autocount_ref: string | null;
   created_at: string | null;
