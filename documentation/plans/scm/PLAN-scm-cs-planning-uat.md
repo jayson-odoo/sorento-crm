@@ -51,7 +51,7 @@ rung order. The vocabulary itself is right: SRTWT165-QT line 4 on the same order
 
 | Fact | Where |
 | --- | --- |
-| The ladder (rung 0 coverage date, 1 incoming, 2 site pools own-site first then every other active pool, 3 group take at sibling `*-BB`, 4 group borrow from lower-ranked SOs, 5 cross-group borrow, 6 whole-line-or-Buy). The line's own location is never a reserve source (rule 7). | `app/services/scm/front_planning_engine.py` `propose_line`, `project_supply_service.py` `_pool_chain` / `_group_take_candidates` |
+| The v2 ladder AS IT WAS before this plan (rung 0 coverage date, 1 incoming, 2 site pools own-site first then every other active pool, 3 group take at sibling `*-BB`, 4 group borrow from lower-ranked SOs, 5 cross-group borrow, 6 whole-line-or-Buy), with the line's own location never a reserve source (rule 7). Section 1b replaces it. | `app/services/scm/front_planning_engine.py` `propose_line`, `project_supply_service.py` `_pool_chain` / `_group_take_candidates` |
 | Every active pool IS walked (`_site_pool_warehouses` = every warehouse that is some location's `pool_warehouse_id`: BRW, MWH, DC1, WH3, RSW). For SRT382-6-DIY the own-site pool BRW covered all 71 so the walk stopped there. The popover's location table lists only the agent group's members plus the own pool, so the other pools look "not considered". | `_pool_chain`, `BoardCellBreakdownDialog` location table |
 | The FE labels split own/shared by SITE PREFIX: source `BRW` vs line `BRW-BB` share the site, so a pool draw reads "Use own location". That is the mislabel. | `project-sales/_shared/lib/boardSuggestion.ts` `rowOf` |
 | `BoardContribution` already carries `sources[]` (proposal, with `rung`) and `decision` (`reserve[]`, `borrow[]`, `buy_qty`). The cell can be coloured client-side with no new endpoint. | `_shared/types/fulfilmentPlanning.types.ts` |
@@ -72,19 +72,19 @@ rung order. The vocabulary itself is right: SRTWT165-QT line 4 on the same order
 
 | Rung | v2 today | v3 |
 | --- | --- | --- |
-| 0 | beyond `reorder_coverage_until` -> Buy; beyond the ATP window -> surplus rungs only | beyond `as_of + lead time + buffer` -> **Buy the whole line, nothing else tried** (coverage date folds into the same rule) |
+| 0 | beyond `reorder_coverage_until` -> Buy; beyond the ATP window -> surplus rungs only | beyond `as_of + lead time + buffer` (or the coverage date, which folds into the same rule) -> **rung 1 runs and NOTHING ELSE: incoming supply covering the whole open quantity is proposed as it stands, and anything short of that is a whole-line Buy naming the window. No stock rung is walked, however much sits beside the line; incoming is not a stock rung, because it is already bought and buying it again is a double purchase.** |
 | 1 | timely incoming (SPO by required date) | unchanged; reads `spo_allocations` (section K) |
 | 2 | site pools, own site first | becomes rung 3 |
-| 3 | group take: `*-<group>` siblings at OTHER sites, own location never | becomes rung 2: **own group first, own location included**, available quantity only (`max(min(free, available), 0)`), own location then siblings by site |
+| 3 | group take: `*-<group>` siblings at OTHER sites, own location never | becomes rung 2: **own group first, own location included**, own location then siblings by site. Siblings are capped at `max(min(free, available), 0)`; **the OWN location is capped at `available_to_this_line` instead**, because `available` nets every open sales order at a location including this line's own, so a line standing alone on exactly the stock it needs would read zero available and buy it. |
 | 4 | group borrow from lower-ranked SOs' committed qty | **not proposed automatically**; ruled 25 Aug: stays as a manual pick in Amend / BorrowAddDialog |
 | 5 | cross-group borrow, capped | rung 4: other locations' AVAILABLE quantity, cap kept |
 | 6 | whole-line rule | unchanged, and EXTENDED to Amend (captain 25 Aug): a line is either wholly covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy; `_check_line` refuses a reserve/borrow + Buy mix on one line; the Amend dialog's Buy is a whole-line switch |
 
-Engine change is confined to `propose_line` (rung order + the window short-circuit) and the callers that pass `outside_reserve_window`; `pool_reserve_capacity` / `_group_take_candidates` are reused as they are. `_group_sibling_warehouses` drops the `code != fact.own_code` exclusion. Golden set `tests/scm` expectations change with it; the parity test over singleton pools must stay byte-identical.
+Engine change is confined to `propose_line` (rung order + the rung-0 short-circuit, which runs rung 1 and nothing else) and the callers that pass `outside_reserve_window`; `pool_reserve_capacity` is reused as it is, and `_group_take_candidates` gains the own-location cap above. `_group_sibling_warehouses` drops the `code != fact.own_code` exclusion. The service still reads `timely_qty` / `timely_refs` for a line beyond its window, because rung 1 runs for it. Golden set `tests/scm` expectations change with it; the parity test over singleton pools must stay byte-identical.
 
 ### 1c. Urgent order borrows from the same agent's other order (captain 25 Aug)
 Covered today: rung 4 group borrow. Amend -> BorrowAddDialog lists donor lines at the group's locations; a donor sharing the line's sales agent is offered at ANY rank ("she can authorise"), another agent's order only when ranked below. Confirm writes `so_line_allocations` source `order` and raises the order-back for the donor line as an OI row (verb `BORROW_SHORTFALL`, due = donor's date). Same location, so no transfer.
-Align with the rest of this plan: (1) manual only, never auto-proposed (ruled); (2) the order-back verb becomes `ORDER_BACK` (one verb with part 2 4b; `BORROW_SHORTFALL` renamed), so it links to SPO/PO like any order-back; (3) Amend requires a reason "Authorised by agent ..." on a same-agent borrow, stored in `so_line_allocations.reason`; (4) the donor's board cell reads "71 lent to SO415472". Mockup M2b.
+Align with the rest of this plan: (1) manual only, never auto-proposed (ruled); (2) the order-back verb becomes `ORDER_BACK` (one verb with part 2 4b; `BORROW_SHORTFALL` renamed), so it links to SPO/PO like any order-back - BUILT as a DISPLAY rename only ("ORDER BACK" on screen), the column value waiting for section I's migration so no live row is stranded; (3) Amend requires a reason "Authorised by agent ..." on a same-agent borrow, stored in `so_line_allocations.reason`; (4) the donor's board cell reads "71 lent to SO415472". Mockup M2b.
 
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 
@@ -209,6 +209,19 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
 - **Q7 cascade date:** PO document date first, then line expected date, then document number.
 - **Group borrow from another SO:** manual Amend pick only.
 - **Style:** keep it simple and straight; no over-explaining.
+
+### Open, found while building ladder v3 (25 Aug)
+
+- **RELEASE can no longer raise an order-inquiry row.** `planning_change_service._suggestion`
+  offers `release` only when the held composition carries a RESERVE, and `_release_rows` then
+  needs `buy_qty > 0` on that SAME composition - which is exactly the stock-and-Buy mix AC-L5
+  abolished. Measured: a wholly bought line delayed 197 days suggests `keep` ("Only a Buy is
+  held ..."), and a wholly reserved one releases with nothing to tell purchasing. So the verb
+  fires only on revisions frozen before AC-L5. Needs a ruling: either a release of a bought
+  line should move its ORDER row to the pool (today it stays put with a DELAY row beside it),
+  or RELEASE retires with the mixes that justified it.
+- **AC-A1 needs a ruling on PLAN 3.3a, not on the rung order** - see the trail reading in the
+  status block at the top of this file.
 
 All ruled. Go/no-go on the order in section 4.
 
