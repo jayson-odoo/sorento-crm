@@ -149,3 +149,16 @@ against the selling prices to catch discrepancies before print.
 
 - **AC-K.1** `[BE][M]` Permissions seeded: `dealer_kit.price_tag_requests.view`, `dealer_kit.price_tag_requests.create` (portal only, implicit for linked contacts), `dealer_kit.price_tag_requests.process` (CRM marketing), `dealer_kit.tag_templates.view`, `dealer_kit.tag_templates.manage`.
 - **AC-K.2** `[BE]` Routes guarded by `require_module_enabled_with_api_key("dealer_kit")`.
+
+### L. S3b - canvas enriched with the catalogue builder's data layer
+
+- **AC-L.1** `[FE][T]` `price_badge` layer renders `list_only` as `RM 1,599` and `promo` as struck `LP: RM 1,599` above `SP RM 599 NETT`; colours/size/radius editable, composition fixed. Print renderer output matches the editor.
+- **AC-L.2** `[BE][T]` `GET /dealer-kit/products/search?q=` returns id, code, name for a staff user; `GET /dealer-kit/products/{id}/tag-data` returns code, name, dimensions, spec lines (flyer-spec first, description fallback), gated image attachments, and `list_price` / `offer_price` from `resolve_prices()`.
+- **AC-L.3** `[FE]` "Add product" opens a product search select and drops a bound group (image, code, name, dimensions, spec lines, price badge) at the canvas centre. Editing a bound text unlinks it; "Relink" restores the resolved value. The group's binding can be switched to another product and every still-linked layer updates.
+- **AC-L.4** `[BE][FE][T]` "Add set" drops a set-members list bound to a Product Set: one line per member `- CODE (NAME) LxWxH`.
+- **AC-L.5** `[FE]` "Add alternatives row" places N chosen products with `OR` connectors and a leading `+`; "Add accessories strip" places N products/assets as small image + caption. Resulting layers are ordinary layers.
+- **AC-L.6** `[FE]` Badge and image layers pick from `dealer_kit.asset` (tags badge/icon/diagram/logo) with upload-in-place; image layers can also pick any of the bound product's attachments (primary first).
+- **AC-L.7** `[BE][FE][T]` A woff2/ttf uploaded as `Asset.kind='font'` appears in the inspector font list and renders in both editor and print page via `@font-face`.
+- **AC-L.8** `[BE][T]` `resolve_prices_for_lines` and `/tag-templates/resolve-preview` return prices from `resolve_prices()`; the Phase 1 mock is gone.
+- **AC-L.9** `[BE][T]` `scripts/seed_tag_templates.py` inserts eight templates (sink combo, sink ala carte, art basin, mirror + mirror cabinet, shower set, WC, urinal, bathroom furniture set) and their badge assets; rerunning changes nothing.
+- **AC-L.10** `[Browser]` Each seeded template opens in the editor with live product data and is screenshotted next to its page of `Sorento Pricetag Template.pdf`; the reviewer can name no element on the PDF page that the template cannot express.

@@ -386,3 +386,80 @@ feat/product-sets merges to main
 
 S1 and S3 can run in parallel after S0. S4 needs both S2 (request lines to bind) and S3
 (canvas to compose on). S5 needs S4. S6 is Phase 2, independent sprint.
+
+---
+
+## 8. S3b - Enrich the tag canvas with the catalogue builder's data layer
+
+**Status:** APPROVED 2026-08-25 (5 decisions, one round). Builds on S3/S4/S5 as merged in PR #289.
+
+### Why
+
+The canvas is the right editing model for a print tag (free-form, mm, layers); the grid builder
+is the right model for a responsive web catalogue. What the canvas lacks is not editing but the
+data plumbing the catalogue builder already has: product binding, product images, the asset
+library, viewer-resolved prices. S3b reuses that plumbing so every tag in
+`Sorento Pricetag Template.pdf` can be designed in the system. No second copy of the data logic;
+the grid builder is untouched.
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D26 | **`price_badge` is a dedicated layer type**, not free text. Variants `list_only` (plain `RM 1,599`) and `promo` (struck `LP: RM 1,599` + `SP RM 599 NETT`). Colours, size, radius editable; composition fixed. Bound to the tag's product/set; marketing override wins. |
+| D27 | **"Add product" drops a product block**: a group of layers (image, code, name, dimensions, spec lines, price badge) bound to one product picked from a product search select. Spec lines: `product_specifications.rendered_text` / `product_flyer_text.lines` when present, else product description. Every text layer is override-able (unlink / relink). **"Add set"** drops a set-members list bound to a Product Set (`- CODE (NAME) LxWxH` per member). |
+| D28 | **Presets**: "Add alternatives row" (N products, `OR` connectors, leading `+`) and "Add accessories strip" (N products or assets, small image + caption). Layers stay free after drop. |
+| D29 | **Assets**: `badge` / `image` layers pick from `dealer_kit.asset` (tags `badge`, `icon`, `diagram`, `logo`) with upload-in-place. **Fonts**: `Asset.kind = 'font'` (woff2/ttf) loaded via `@font-face` in the editor and on the print page; the inspector font list = Google fallbacks + uploaded brand fonts. |
+| D30 | **Product images**: image layer picker shows the product's own attachments first (primary + secondary: accessories, callouts, inside views), asset library second. Same `access_levels` gate as `primary_image_urls`. |
+| D31 | **Editor price preview calls the real resolver.** `POST /price-tag-requests/{id}/resolve-prices` and a new `POST /tag-templates/resolve-preview` wrap `resolve_prices()`; the S4 mock is removed. |
+| D32 | **Eight starter templates seeded from the PDF** (sink combo, sink ala carte, art basin, mirror + mirror cabinet, shower set, WC, urinal, bathroom furniture set) plus the badge assets, as a seed script, not hardcoded. Each is verified side by side with its PDF page. This is the acceptance test. |
+
+### Layer model additions (`lib/dealer-kit/tag-template-types.ts`)
+
+```ts
+type TagLayerType = ... | 'price_badge';
+{ kind: 'price_badge'; variant: 'list_only' | 'promo'; fill: string; textColor: string;
+  cornerRadius: number; showNett: boolean }
+// image props gain a source discriminator
+{ kind: 'image'; source: { type: 'asset'; assetId } | { type: 'product_attachment'; attachmentId } | null; fit; cropRect; maskShape?: 'none'|'circle' }
+// a group carries its binding so a whole product block can be re-bound or relinked at once
+{ kind: 'group'; children: string[]; binding?: { product_id?: string; product_set_id?: string } }
+```
+
+### Backend
+
+- `GET /api/v1/dealer-kit/products/search?q=` - lightweight product search (id, code, name) for the
+  editor select. Reuse the master-data product query; do not build a new index.
+- `GET /api/v1/dealer-kit/products/{id}/tag-data` - code, name, dimensions, spec lines, image
+  attachments (gated), list price, offer price via `resolve_prices()` for the staff viewer.
+- `GET /api/v1/dealer-kit/product-sets/{id}/tag-data` - members with code, name, dimensions.
+- Assets: reuse the existing asset list/upload; add `kind='font'` to the allowed kinds and serve
+  font files through the same signed-URL path. Print page and editor load `@font-face` from the
+  page payload's `fonts[]`.
+- `POST /tag-templates/resolve-preview` - resolve a template's bindings for preview.
+- Remove the Phase 1 mock in `resolve_prices_for_lines`; wire `resolve_prices()`.
+- Seed script `scripts/seed_tag_templates.py`: uploads badge assets from
+  `documentation/plans/dealer-kit/seed-assets/` and inserts the eight templates (idempotent by name).
+
+### Frontend
+
+- Toolbar gains: Add product, Add set, Add alternatives row, Add accessories strip, Add badge
+  (asset picker), Upload asset, Upload font.
+- `KonvaTagLayer` renders `price_badge`, real product images, real asset images (signed URLs).
+- Inspector: binding panel on a group (which product / set, relink all), font list from assets.
+- `TagSheetRenderer` (print) renders `price_badge` and `@font-face` fonts identically.
+
+### Slice order
+
+1. Types + `price_badge` (editor + print renderer)
+2. Product search + tag-data endpoints; Add product / Add set with live data
+3. Asset + product-image pickers, font assets
+4. Presets (alternatives row, accessories strip)
+5. Seed the eight templates; side-by-side verification against the PDF
+
+### Tests
+
+pytest: tag-data endpoints (gating, price via `resolve_prices`, set members), font kind accepted,
+seed idempotency. vitest: `price_badge` render both variants, product block drop creates bound
+group, relink restores slot text. Browser: each seeded family opened and screenshotted next to its
+PDF page.
