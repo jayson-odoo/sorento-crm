@@ -106,11 +106,29 @@ export function isMoneyZero(value: string | null | undefined): boolean {
 }
 
 /**
- * `RM 1,810,640.62`, grouped from the STRING. Nothing is parsed as a float on the way to the
- * screen either, so a value the backend sent as `1810640.62` is never rendered as
- * `1810640.6200000001`.
+ * The glyph a currency code is written with: ringgit reads `RM`, anything else reads its
+ * own code. A blank code predates the book having more than one currency, so it already
+ * meant ringgit. Same rule as `scm/lib/format.ts`'s own label, restated here rather than
+ * imported because a shared project-sales helper must not reach into an SCM screen.
  */
-export function formatMyrExact(value: string | null | undefined): string {
+function currencyLabel(currency: string | null | undefined): string {
+  const code = (currency || '').trim().toUpperCase();
+  return code === '' || code === 'MYR' ? 'RM' : code;
+}
+
+/**
+ * `RM 1,810,640.62` / `USD 12.50`, grouped from the STRING. Nothing is parsed as a float on
+ * the way to the screen either, so a value the backend sent as `1810640.62` is never
+ * rendered as `1810640.6200000001`.
+ *
+ * `currency` is a PARAMETER rather than a second formatter because the purchase-order book
+ * is mostly USD (8,438 lines against 4,186 MYR), and printing a USD line as `RM 12.50` is a
+ * wrong number stated as a fact next to a document that says otherwise.
+ */
+export function formatMoneyExact(
+  value: string | null | undefined,
+  currency?: string | null,
+): string {
   const parsed = parseScaled(value, MONEY_DP);
   if (!parsed) return value ? String(value) : '-';
   const negative = parsed.units < 0;
@@ -118,7 +136,12 @@ export function formatMyrExact(value: string | null | undefined): string {
   const whole = digits.slice(0, digits.length - MONEY_DP);
   const fraction = digits.slice(digits.length - MONEY_DP);
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `${negative ? '-' : ''}RM ${grouped}.${fraction}`;
+  return `${negative ? '-' : ''}${currencyLabel(currency)} ${grouped}.${fraction}`;
+}
+
+/** The same figure in the currency everything in project sales is quoted in. */
+export function formatMyrExact(value: string | null | undefined): string {
+  return formatMoneyExact(value, 'MYR');
 }
 
 /** A quantity as written, with trailing decimal zeros dropped: `927`, not `927.0000`. */

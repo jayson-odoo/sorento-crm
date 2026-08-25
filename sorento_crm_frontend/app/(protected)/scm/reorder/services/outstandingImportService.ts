@@ -135,6 +135,19 @@ export interface OutstandingPreview {
   resolution_issues: OutstandingResolutionIssue[];
   samples: OutstandingSamples;
   unmapped_agents: OutstandingAgentNotice[];
+  /**
+   * File-level notices that belong to no single row: "N rows carry a date the reader could
+   * not read", "N rows are shipping orders". Already written as sentences a person reads,
+   * so the verdict prints them as they are.
+   */
+  warnings?: string[];
+  /**
+   * How many rows of a PURCHASE book belong to shipping orders (`SPO-...`), which this
+   * channel does not write. Its own number rather than a fact buried in a warning string,
+   * because "would import" is a count and a book that is half SPO would otherwise claim to
+   * import twice what it will.
+   */
+  shipping_order_rows?: number;
   /** Absent (not just `null`) on every Phase 1 response - Phase 2 wires the real preview. */
   planning_change_batch?: OutstandingPlanningChangeBatch | null;
 }

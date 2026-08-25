@@ -389,6 +389,20 @@ class SystemSetting(Base):
     )
     default_product_standard_lead_time_days = Column(Integer, nullable=False, server_default="90", default=90)
 
+    # The unit a product gets when the source states none - a product-import row with no
+    # UOM cell, and any other create that leaves it out. NULL means "no admin has said", and
+    # the code falls back to `EA` (`ProductService.DEFAULT_UOM_CODE`).
+    #
+    # A setting rather than a constant because the constant was WRONG: an older fallback
+    # took whatever unit the database returned first and stamped 11,415 products with `L`.
+    # A backfill script would have to guess the same thing this column lets somebody state,
+    # and a re-import of the product list then applies it.
+    default_uom_id = Column(
+        PG_UUID(as_uuid=False),
+        ForeignKey("units_of_measure.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # n8n integration (optional; attachment URL falls back to N8N_WEBHOOK_URL env if unset)
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)

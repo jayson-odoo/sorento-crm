@@ -3,10 +3,14 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   annotateSalesAgent,
+  bulkAnnotateSalesAgents,
   getSalesAgent,
   getSalesAgents,
 } from '../services/salesAgentService';
-import type { MirrorAnnotationPayload } from '../types/salesAgent.types';
+import type {
+  MirrorAnnotationPayload,
+  SalesAgentBulkAnnotatePayload,
+} from '../types/salesAgent.types';
 
 export function useSalesAgents(params: DataGridApiFetchParams) {
   return useQuery({
@@ -25,10 +29,7 @@ export function useSalesAgents(params: DataGridApiFetchParams) {
   });
 }
 
-/**
- * One agent by id. Unused by the list + modal this slice ships, and kept because the
- * AutoCount branch's `[id]` detail page imports exactly this symbol (see PLAN amendment 11).
- */
+/** One agent by id, for the record page at `/master-data-management/sales-agents/{id}`. */
 export function useSalesAgent(id: string | null) {
   return useQuery({
     queryKey: ['sales-agent', id],
@@ -38,6 +39,20 @@ export function useSalesAgent(id: string | null) {
     },
     enabled: !!id,
     retry: 1,
+  });
+}
+
+/** Set one annotation across a selection. Toasts the COUNT, because the whole point of the
+ *  action is that it touched more than the row the user is looking at. */
+export function useBulkAnnotateSalesAgents() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: SalesAgentBulkAnnotatePayload) => bulkAnnotateSalesAgents(data),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['sales-agents'] });
+      toast.success(`${res.updated} sales agent${res.updated === 1 ? '' : 's'} updated`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update the selected agents'),
   });
 }
 

@@ -50,6 +50,14 @@ vi.mock('next/navigation', async (importOriginal) => ({
 
 
 
+// The Plan action asks whether this user may open the fulfilment board. `useHasPermission`
+// reaches for the NextAuth session, which is not mounted under jsdom, so it is stubbed the
+// same way the proforma-invoice view's own suite stubs it.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 // The grid asks for the user's saved column order via this hook, which reads the route to
 // build its listing key. With `next/navigation` mocked the hook goes down its fetching path
 // and the grid sits on its loading skeleton, so it is stubbed the same way the detail suite
@@ -132,11 +140,13 @@ describe('SalesOrdersList - where an order came from', () => {
   });
 
   it('labels an order CS uploaded differently', async () => {
-    // The distinction IS the feature: it decides whose figures win.
+    // The distinction IS the feature: it decides whose figures win. Named after the upload
+    // as the toolbar names it - "Sales order upload", never "Outstanding upload": the file
+    // carries the whole book, completed orders included.
     stub([order({ source: 'upload' })]);
     renderList();
 
-    expect(await screen.findByText('Outstanding upload')).toBeInTheDocument();
+    expect(await screen.findByText('Sales order upload')).toBeInTheDocument();
   });
 
   it('defaults to Manual when the backend says nothing', async () => {
@@ -147,14 +157,45 @@ describe('SalesOrdersList - where an order came from', () => {
   });
 });
 
-describe('SalesOrdersList - location and linkage', () => {
-  it('shows where the order lands', async () => {
+describe('SalesOrdersList - location is a line-level fact, not a header one', () => {
+  it('does not carry a Location column at all', async () => {
+    // One order routinely lands in two warehouses, so a header cell showing "BRW-IB, KL-01"
+    // says less than the lines grid on the detail page, which says WHICH line goes where.
     stub([order()]);
     renderList();
 
-    expect(await screen.findByText('BRW-IB')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    expect(screen.queryByText('BRW-IB')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
+  });
+});
+
+describe('SalesOrdersList - the row actions', () => {
+  it('offers delete only - the row itself is the way into the order', async () => {
+    // Create DO and the pencil both went: the whole row already opens the detail page, where
+    // editing happens in place, and raising a delivery is a delivery decision rather than a
+    // list one.
+    stub([order()]);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create DO/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
+  it('confirms before deleting, rather than deleting on the click', async () => {
+    stub([order()]);
+    renderList();
+
+    await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText(/This action cannot be undone/i)).toBeInTheDocument();
+  });
+});
+
+describe('SalesOrdersList - linkage', () => {
   it('shows only the purchase orders still being waited on', async () => {
     // "Which of my orders is stuck behind a PO we have not received" is the question, and
     // listing the matched ones alongside would bury the answer.
@@ -201,6 +242,65 @@ describe('SalesOrdersList - a long wait list stays readable', () => {
   });
 });
 
+describe('SalesOrdersList - the pills follow the sales-agents master', () => {
+  /**
+   * The captain's reference for a pill is the sales-agents page: a light filled chip. The
+   * status used to be the exception - a ghost chip with a dot, on the theory that a STATE is
+   * a different kind of thing from an ENUM - and that exception is gone: "pure green
+   * bulleted point word is a no-no". One pill family on the screen, colour carried by the
+   * chip.
+   *
+   * The WORDS follow AutoCount, the system this book is exported from and the one the client
+   * reads all day: `open` is Outstanding, `closed` is Completed. The stored values are
+   * untouched - only the label is.
+   */
+  const badgeFor = (label: string) =>
+    screen.getByText(label).closest('[data-slot="badge"]') as HTMLElement | null;
+
+  it('words an open order "Outstanding" and a closed one "Completed"', async () => {
+    stub([order({ status: 'open' }), order({ so_number: 'SO2', status: 'closed' })]);
+    renderList();
+
+    await screen.findByText('Outstanding');
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('Open')).not.toBeInTheDocument();
+    expect(screen.queryByText('Closed')).not.toBeInTheDocument();
+  });
+
+  it('paints a status as a light chip - no dot, and no ghost', async () => {
+    // It WAS a ghost chip with a dot. The captain's verdict on a bare green dot beside a
+    // word ("pure green bulleted point word is a no-no") is what retired it: the status now
+    // wears the same light family as every other pill in the table, and the colour is
+    // carried by the chip rather than by a dot floating in a transparent box.
+    stub([order({ status: 'open' })]);
+    renderList();
+
+    await screen.findByText('Outstanding');
+    const badge = badgeFor('Outstanding');
+    expect(badge).not.toBeNull();
+    expect(badge?.className).not.toContain('bg-transparent');
+    expect(badge?.className).toContain('--color-success-soft');
+    expect(badge?.querySelector('[data-slot="badge-dot"]')).toBeNull();
+  });
+
+  it('paints the priority from the priority table: normal is neutral, urgent shouts', async () => {
+    // The system status table calls 'normal' a success and 'low' destructive, which is
+    // stock-health semantics. Priority keeps its own variants, on a light filled chip.
+    stub([order({ priority: 'normal' }), order({ so_number: 'SO2', priority: 'urgent' })]);
+    renderList();
+
+    await screen.findByText('Normal');
+    const normal = badgeFor('Normal');
+    expect(normal).not.toBeNull();
+    expect(normal?.className).toContain('bg-secondary');
+
+    const urgent = badgeFor('Urgent');
+    expect(urgent).not.toBeNull();
+    // The light palette, the same one the sales-agents master's enum pills wear.
+    expect(urgent?.className).toContain('soft');
+  });
+});
+
 describe('SalesOrdersList - the empty book', () => {
   it('names the step that fills it rather than saying no data', async () => {
     // An order book is empty because nobody has uploaded the sheet yet, and "No data
@@ -221,7 +321,7 @@ describe('SalesOrdersList - the empty book', () => {
     stub([]);
     renderList();
 
-    fireEvent.change(screen.getByPlaceholderText('Search SO or customer...'), {
+    fireEvent.change(screen.getByPlaceholderText('Search SO, customer, product or agent...'), {
       target: { value: 'SO999999' },
     });
 

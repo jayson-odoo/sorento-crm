@@ -2,14 +2,17 @@
  * SalesOrderDetail - the demand-side twin of `PurchaseOrderDetail`.
  *
  * Two things this file is here to hold. The first is the CRUD standard: every section is
- * rendered on every state, with an explicit empty message, so a panel that is missing means
- * something rather than reading as "not loaded yet".
+ * rendered, with an explicit empty message, so a panel that is missing means something rather
+ * than reading as "not loaded yet". The record is TABBED now (General / Lines / Delivery, the
+ * same shape as the user detail page), so "rendered" means "reachable on its tab" - which is
+ * why almost every assertion below opens the tab it is about first.
  *
  * The second is specific to this screen. 11,006 of the sales orders in the system were
  * absorbed from a six-year AutoCount export and are closed history; the rest are live
- * commitments the plan is computed from. A screen that showed a delivered 2020 order and an
- * open one the same way would be actively misleading, so "committed" and its reason are
- * asserted for both.
+ * commitments the plan is computed from. What the header used to carry - a "Committed demand"
+ * / "Not committed (...)" line beside the status - is gone at the captain's request: the
+ * status, the Source field and the Delivery tab already say all three of those things, and it
+ * was a fourth restatement in the one place with least room for it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,17 +59,7 @@ vi.mock('../../../hooks/useSalesOrders', () => ({
   useUpdateSalesOrder: () => ({ mutateAsync: updateSalesOrderMutateAsync, isPending: false }),
 }));
 
-const EMPTY_OPTS = { data: [], isLoading: false };
 vi.mock('../../../hooks/useScmOptions', () => ({
-  useOrderTypeOptions: () => ({
-    data: [{ value: 'dealer', label: 'Dealer' }, { value: 'project', label: 'Project' }],
-    isLoading: false,
-  }),
-  useCustomerOptions: () => ({
-    data: [{ value: '300-R009', label: 'Rowenda Kitchen Sdn Bhd' }],
-    isLoading: false,
-  }),
-  useProductOptions: () => EMPTY_OPTS,
   useWarehouseOptions: () => ({
     data: [
       { value: 'BRW-BB', label: 'Brickworks Batu Berendam' },
@@ -75,6 +68,19 @@ vi.mock('../../../hooks/useScmOptions', () => ({
     ],
     isLoading: false,
   }),
+}));
+
+// The Customer and Product selects are SERVER-SEARCHED now - `fetchOptions`, not a static
+// array - because the two masters behind them hold 6,397 and ~22,000 rows. Mocked as the
+// component calls them: `(query, pageIndex) => Promise<Option[]>`.
+vi.mock('../../../services/scmOptionsService', () => ({
+  SELECT_PAGE_SIZE: 50,
+  searchCustomerOptions: vi.fn(async () => [
+    { value: '300-R009', label: 'Rowenda Kitchen Sdn Bhd' },
+  ]),
+  searchProductOptions: vi.fn(async () => [
+    { value: 'CW-BASIN-450', label: 'CW-BASIN-450 · Ceramic Wash Basin 450mm' },
+  ]),
 }));
 
 vi.mock('../../hooks/useSalesAgentOptions', () => ({
@@ -106,6 +112,9 @@ function so(over: Partial<SalesOrder> = {}): SalesOrder {
     so_number: 'SO-2026/07-0042',
     order_type: 'project',
     order_type_label: 'Project',
+    // The PLANNING CLASS, which is what the screen both renders and edits. `order_type` is
+    // the ERP document type and is NULL on 96% of this book.
+    demand_class: 'project',
     customer_code: '300-R009',
     customer_name: 'Rowenda Kitchen Sdn Bhd',
     market_segment: 'Project',
@@ -115,6 +124,7 @@ function so(over: Partial<SalesOrder> = {}): SalesOrder {
     requested_delivery_date: '2026-08-30',
     total_qty: 320,
     committed_qty: 320,
+    total_amount: '31985.00',
     line_count: 1,
     open_line_count: 1,
     stock_locations: ['BRW-BB'],
@@ -128,6 +138,9 @@ function so(over: Partial<SalesOrder> = {}): SalesOrder {
         qty_ordered: 320,
         qty_delivered: 0,
         uom: 'PCS',
+        unit_price: '100.00',
+        discount: '15.00',
+        line_total: '31985.00',
         warehouse_code: 'BRW-BB',
         line_status: 'open',
         required_date: '2026-08-30',
@@ -148,6 +161,16 @@ function renderDetail() {
       <SalesOrderDetail id="so-1" />
     </QueryClientProvider>,
   );
+}
+
+/**
+ * Open one of the record's tabs. Every section still exists; this is where it lives.
+ *
+ * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down (a plain `click` event
+ * in jsdom leaves the tab strip exactly where it was, which reads as a section that vanished).
+ */
+function openTab(name: 'General' | 'Lines' | 'Delivery') {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
 beforeEach(() => {
@@ -181,12 +204,89 @@ describe('SalesOrderDetail - states', () => {
     expect(screen.getByText('SO-2026/07-0042')).toBeInTheDocument();
     expect(screen.getByText('Rowenda Kitchen Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('300-R009')).toBeInTheDocument();
-    for (const label of [
-      'Customer', 'Customer code', 'Order type', 'Market segment', 'Order date',
-      'Requested delivery', 'Priority', 'Locations', 'Total qty', 'Lines', 'Source',
-    ]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+    // Per card, because "Customer" is now both a card TITLE and a field label inside it.
+    const fields: Record<string, string[]> = {
+      Order: ['Order type', 'Priority', 'Order date', 'Delivery date', 'Agent', 'Source'],
+      Customer: ['Customer', 'Customer code'],
+      Totals: ['Total amount', 'Total qty', 'Lines'],
+    };
+    for (const [card, labels] of Object.entries(fields)) {
+      const region = screen.getByRole('region', { name: card });
+      for (const label of labels) {
+        expect(within(region).getByText(label)).toBeInTheDocument();
+      }
     }
+  });
+
+  it('groups the summary into three cards of at most two columns each', () => {
+    // One eleven-field grid four across reads as a wall. These are the three things a person
+    // asks about an order separately - what it is, who it is for, what it comes to.
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    for (const name of ['Order', 'Customer', 'Totals']) {
+      const region = screen.getByRole('region', { name });
+      expect(region).toBeInTheDocument();
+      // Never a third column: `lg:grid-cols-4` is what made it a wall.
+      expect(region.className).toContain('sm:grid-cols-2');
+      expect(region.className).not.toMatch(/grid-cols-[34]/);
+    }
+    expect(screen.queryByRole('region', { name: 'Order summary' })).not.toBeInTheDocument();
+  });
+
+  it('drops Market segment - the customer record is where a segment is read', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.queryByText('Market segment')).not.toBeInTheDocument();
+  });
+
+  it('states what the order is worth, in ringgit, and a dash when nobody priced it', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    const { unmount } = renderDetail();
+    const totals = () => screen.getByRole('region', { name: 'Totals' });
+    expect(within(totals()).getByText('RM 31,985.00')).toBeInTheDocument();
+    unmount();
+
+    // Not RM 0.00: an order nobody priced is not an order worth nothing, and 15,000 of the
+    // absorbed rows are exactly that.
+    useSalesOrder.mockReturnValue({
+      data: so({ total_amount: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    const amount = screen.getByText('Total amount').closest('div');
+    expect(within(amount as HTMLElement).getByText('-')).toBeInTheDocument();
+  });
+
+  it('carries one tab per concern of the order, General first', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'General',
+      'Lines',
+      'Delivery',
+    ]);
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('does not restate the order LOCATIONS on the header - a location belongs to a line', () => {
+    // One order routinely ships from two warehouses, so "BRW-BB, KL-01" on the header said
+    // less than the Lines tab, which says which line goes where.
+    useSalesOrder.mockReturnValue({
+      data: so({ stock_locations: ['BRW-BB', 'KL-01'] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByText('Locations')).not.toBeInTheDocument();
+    expect(screen.queryByText('BRW-BB, KL-01')).not.toBeInTheDocument();
   });
 
   it('shows each line\'s Location, falling back to "-" only for a line the API sent none for', () => {
@@ -214,6 +314,7 @@ describe('SalesOrderDetail - states', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Lines');
 
     const openRow = screen.getByText('SKU-OPEN').closest('tr');
     const closedRow = screen.getByText('SKU-CLOSED').closest('tr');
@@ -227,7 +328,8 @@ describe('SalesOrderDetail - states', () => {
 
   it('renders every section even when the record is bare', () => {
     // The CRUD standard, asserted on the emptiest record the API can return: a section that
-    // disappears on missing data reads as a page that failed to load.
+    // disappears on missing data reads as a page that failed to load. Tabbed now, so each one
+    // is opened rather than expected to be on screen at once.
     useSalesOrder.mockReturnValue({
       data: so({ lines: [], total_qty: 0, committed_qty: 0, line_count: 0, open_line_count: 0 }),
       isLoading: false,
@@ -235,23 +337,65 @@ describe('SalesOrderDetail - states', () => {
     });
     renderDetail();
 
-    expect(screen.getByText('Order lines')).toBeInTheDocument();
-    expect(screen.getByText('This sales order has no lines.')).toBeInTheDocument();
-    expect(screen.getByText('Delivery')).toBeInTheDocument();
-    expect(screen.getByText(/Nothing delivered yet/)).toBeInTheDocument();
     expect(screen.getByText('Note')).toBeInTheDocument();
     expect(screen.getByText(/No note\./)).toBeInTheDocument();
+
+    openTab('Lines');
+    expect(screen.getByText('Order lines')).toBeInTheDocument();
+    expect(screen.getByText('This sales order has no lines.')).toBeInTheDocument();
+
+    openTab('Delivery');
+    expect(screen.getByText(/Nothing delivered yet/)).toBeInTheDocument();
   });
 });
 
-describe('SalesOrderDetail - committed or not, and why', () => {
-  it('reads as committed demand while quantity is still owed', () => {
+describe('SalesOrderDetail - the header says what the order IS, once', () => {
+  it('states the status as a standard pill and nothing about "committed demand"', () => {
+    // The indicator beside the status is gone: the status, the Source field and the Delivery
+    // tab each already answer "is this still owed", and a fourth phrasing of it was the
+    // captain's complaint about this header.
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
-    expect(screen.getByText('Committed demand')).toBeInTheDocument();
+
+    // Worded the way AutoCount words it - `open` is Outstanding - and shaped like every
+    // other pill on the page: a light chip, no dot and no ghost.
+    const badge = screen.getByText('Outstanding').closest('[data-slot="badge"]');
+    expect(badge).not.toBeNull();
+    expect(badge?.className).not.toContain('bg-transparent');
+    expect(badge?.className).toContain('--color-success-soft');
+    expect(badge?.querySelector('[data-slot="badge-dot"]')).toBeNull();
+    expect(screen.queryByText('Open')).not.toBeInTheDocument();
+    expect(screen.queryByText('Committed demand')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not committed/)).not.toBeInTheDocument();
   });
 
-  it('says absorbed history rather than delivered on a closed imported order', () => {
+  it('words a closed order "Completed", on the header and on its lines', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({
+        status: 'closed',
+        committed_qty: 0,
+        open_line_count: 0,
+        lines: [
+          {
+            id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+            qty_ordered: 320, qty_delivered: 320, uom: 'PCS',
+            warehouse_code: 'BRW-BB', line_status: 'closed', required_date: '2020-03-15',
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    openTab('Lines');
+    // Header and line both, from the one helper - the two cannot drift into two words.
+    expect(screen.getAllByText('Completed').length).toBe(2);
+    expect(screen.queryByText('Closed')).not.toBeInTheDocument();
+  });
+
+  it('still says an absorbed order is absorbed - on the Source field, where it belongs', () => {
     // The distinction that matters on this database: 11,006 of these orders were read off a
     // 2020-2026 spreadsheet. Calling one "delivered" claims a delivery this system recorded,
     // when it only ever read one.
@@ -274,30 +418,37 @@ describe('SalesOrderDetail - committed or not, and why', () => {
     });
     renderDetail();
 
-    expect(screen.getByText('Not committed (absorbed history)')).toBeInTheDocument();
     expect(screen.getByText('Absorbed history')).toBeInTheDocument();
-    expect(screen.queryByText('Committed demand')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not committed/)).not.toBeInTheDocument();
   });
 
-  it('says cancelled rather than "nothing outstanding" on a cancelled order', () => {
+  it('keeps the system-wide colour for a status the sales book does not rename', () => {
+    // Only `open` and `closed` are reworded; `cancelled` keeps its own word AND its own
+    // colour, read off the system table rather than invented here.
     useSalesOrder.mockReturnValue({
       data: so({ status: 'cancelled', committed_qty: 0, open_line_count: 0 }),
       isLoading: false,
       isError: false,
     });
     renderDetail();
-    expect(screen.getByText('Not committed (cancelled)')).toBeInTheDocument();
+
+    const badge = screen.getByText('Cancelled').closest('[data-slot="badge"]');
+    expect(badge).not.toBeNull();
+    // The light family's destructive, since every pill on this page is now a light chip.
+    expect(badge?.className).toContain('--color-destructive-soft');
   });
 
-  it('hides "Still owed" when it would just repeat the total', () => {
-    // A wholly open order has committed == total, and a second identical figure beside the
-    // first is noise. On a part-delivered one the gap is the answer, so it appears.
-    // Scoped to the summary, because the lines grid carries a column of the same name -
+  it('shows "Outstanding qty" ALWAYS, even when it repeats the total', () => {
+    // It used to appear only when it differed from the total, on the grounds that a repeated
+    // figure is noise. A field that comes and goes is worse: on a wholly open order the
+    // reader has to work out from its ABSENCE that nothing has shipped, and a section that
+    // hides on some records teaches nobody where anything lives.
+    // Scoped to the Totals card, because the lines grid carries a column of the same name -
     // deliberately, since it is the same quantity once per order and once per line.
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     const { unmount } = renderDetail();
-    const summary = () => screen.getByRole('region', { name: 'Order summary' });
-    expect(within(summary()).queryByText('Still owed')).not.toBeInTheDocument();
+    const summary = () => screen.getByRole('region', { name: 'Totals' });
+    expect(within(summary()).getByText('Outstanding qty')).toBeInTheDocument();
     unmount();
 
     useSalesOrder.mockReturnValue({
@@ -306,7 +457,8 @@ describe('SalesOrderDetail - committed or not, and why', () => {
       isError: false,
     });
     renderDetail();
-    expect(within(summary()).getByText('Still owed')).toBeInTheDocument();
+    expect(within(summary()).getByText('Outstanding qty')).toBeInTheDocument();
+    expect(within(summary()).getByText('120')).toBeInTheDocument();
   });
 });
 
@@ -318,8 +470,9 @@ describe('SalesOrderDetail - delivery panel', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Delivery');
     expect(screen.getByText(/200 of 320 delivered/)).toBeInTheDocument();
-    expect(screen.getByText(/120 still owed across 2 lines/)).toBeInTheDocument();
+    expect(screen.getByText(/120 outstanding across 2 lines/)).toBeInTheDocument();
   });
 
   it('reports a full delivery once nothing is owed', () => {
@@ -329,6 +482,7 @@ describe('SalesOrderDetail - delivery panel', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Delivery');
     expect(screen.getByText('delivered in full')).toBeInTheDocument();
   });
 });
@@ -375,6 +529,7 @@ describe('SalesOrderDetail - sorting the lines', () => {
 
   it('orders by quantity, ascending then descending, when the header is clicked', () => {
     renderDetail();
+    openTab('Lines');
     expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
 
     // 45 < 320 < 1200 - a numeric order, not the alphabetical one a formatted string gives.
@@ -387,18 +542,20 @@ describe('SalesOrderDetail - sorting the lines', () => {
 
   it('orders by what has been delivered', () => {
     renderDetail();
+    openTab('Lines');
     fireEvent.click(screen.getByRole('button', { name: 'Qty delivered' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
   });
 
-  it('orders "Still owed" by the figure it shows, not by the order the lines arrived in', () => {
+  it('orders "Outstanding qty" by the figure it shows, not by the order the lines arrived in', () => {
     // The computed column: 20, 45, 100 owed. Its order differs from every other column's,
     // so this fails if the header sorts on anything but the number in the cell.
     renderDetail();
-    fireEvent.click(screen.getByRole('button', { name: 'Still owed' }));
+    openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Outstanding qty' }));
     expect(skuOrder()).toEqual(['SKU-B', 'SKU-C', 'SKU-A']);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Still owed' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Outstanding qty' }));
     expect(skuOrder()).toEqual(['SKU-A', 'SKU-C', 'SKU-B']);
   });
 
@@ -406,8 +563,302 @@ describe('SalesOrderDetail - sorting the lines', () => {
     // Printed as 04 Jul / 15 Aug / 01 Sep, so a sort on the displayed text would read
     // 01, 04, 15 and put September first.
     renderDetail();
+    openTab('Lines');
     fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-A', 'SKU-B']);
+  });
+});
+
+describe('SalesOrderDetail - finding one product on a long order', () => {
+  /**
+   * A contract order runs to a couple of hundred lines and the question asked of it is almost
+   * always "is this item on here, and how many": scrolling for it is the whole cost. The
+   * search is over the lines already loaded - the order is the unit, so there is no request
+   * and no paging to work across.
+   */
+  const LINES: SalesOrderLine[] = [
+    {
+      id: 'l-basin', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+      qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+      line_status: 'open', required_date: '2026-08-30',
+    },
+    {
+      id: 'l-tap', sku: 'TAP-CHR-12', product_name: 'Chrome pillar tap',
+      qty_ordered: 45, qty_delivered: 0, uom: 'PCS', warehouse_code: 'KL-01',
+      line_status: 'open', required_date: '2026-09-04',
+    },
+  ];
+
+  beforeEach(() => {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it('filters the lines by product code', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'tap-chr' } });
+
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+    expect(screen.queryByText('CW-BASIN-450')).not.toBeInTheDocument();
+  });
+
+  it('filters by the description too - the code is not always what is remembered', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.queryByText('TAP-CHR-12')).not.toBeInTheDocument();
+  });
+
+  it('says the search found nothing, rather than claiming the order has no lines', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'zzz' } });
+
+    expect(screen.getByText(/No line on this order matches that product/i)).toBeInTheDocument();
+    expect(screen.queryByText('This sales order has no lines.')).not.toBeInTheDocument();
+  });
+
+  it('restores every line when the search is cleared', () => {
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear line search' }));
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+  });
+
+  it('offers the standard Columns control, so the chosen columns survive the visit', () => {
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByRole('button', { name: /Columns/ })).toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - the lines say what the customer was charged', () => {
+  /**
+   * The grid printed quantities and nothing else, on a book whose own export states a unit
+   * price, a discount and a line total for every row. "Who ordered it and at what price" is
+   * the question a buyer opens this screen with, and it could not be answered here.
+   */
+  const TWO_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-a', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 10,
+      qty_delivered: 4, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-08-15', unit_price: '100.00', discount: '15.00',
+      line_total: '985.00',
+    },
+    {
+      id: 'l-b', sku: 'SKU-B', product_name: 'Beta basin', qty_ordered: 2,
+      qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-09-01', unit_price: '10.00', discount: null,
+      line_total: null,
+    },
+  ];
+
+  function renderLines(over: Partial<SalesOrder> = {}) {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: TWO_LINES, line_count: 2, open_line_count: 2, ...over }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+  }
+
+  it('names the first column Product and the computed one Outstanding qty', () => {
+    // "SKU" is the code; the column shows the code AND the description. "Still owed" was the
+    // same figure under a phrase nobody in the warehouse uses.
+    renderLines();
+
+    expect(screen.getByRole('button', { name: 'Product' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Outstanding qty' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'SKU' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Still owed' })).not.toBeInTheDocument();
+  });
+
+  it('prints the price, the discount and the total, and a dash where nobody priced it', () => {
+    renderLines();
+
+    const rowA = screen.getByText('SKU-A').closest('tr') as HTMLElement;
+    expect(within(rowA).getByText('RM 100.00')).toBeInTheDocument();
+    expect(within(rowA).getByText('RM 15.00')).toBeInTheDocument();
+    expect(within(rowA).getByText('RM 985.00')).toBeInTheDocument();
+
+    // No stated total on line B, so the total is its parts: 2 x 10.00, no discount.
+    const rowB = screen.getByText('SKU-B').closest('tr') as HTMLElement;
+    expect(within(rowB).getByText('RM 20.00')).toBeInTheDocument();
+    // And no discount at all reads "-", never RM 0.00, which would claim one was given.
+    expect(within(rowB).getAllByText('-').length).toBeGreaterThan(0);
+  });
+
+  it('carries a totals row INSIDE the table, under the columns it sums', () => {
+    renderLines();
+
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(foot).not.toBeNull();
+    expect(within(foot).getByText('12')).toBeInTheDocument(); // 10 + 2 ordered
+    expect(within(foot).getByText('4')).toBeInTheDocument(); // delivered
+    expect(within(foot).getByText('8')).toBeInTheDocument(); // outstanding: 6 + 2
+    expect(within(foot).getByText('RM 1,005.00')).toBeInTheDocument(); // 985 + 20
+  });
+
+  it('carries the standard pagination footer, so the line count is on the screen', () => {
+    renderLines();
+
+    expect(screen.getByText('1 - 2 of 2')).toBeInTheDocument();
+  });
+
+  /**
+   * SO397450: a book re-upload closed 306 lines by absence ("no longer on the uploaded
+   * book"). Each read `1,500 ordered / 0 delivered / 1,500 outstanding / Completed`, and the
+   * footer summed 39,008 outstanding on an order that is done. A closed line has nothing
+   * outstanding by definition, and `qty_delivered` is NOT back-filled to make the
+   * subtraction come out - what shipped before the book dropped the line is unknown.
+   */
+  it('reads 0 outstanding on a CLOSED line, however little was delivered', () => {
+    renderLines({
+      lines: [
+        {
+          id: 'l-closed', sku: 'CB6633', product_name: 'Closed board', qty_ordered: 1500,
+          qty_delivered: 0, outstanding_qty: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+          line_status: 'closed', required_date: '2026-08-15',
+        },
+        ...TWO_LINES,
+      ],
+      line_count: 3,
+      open_line_count: 2,
+    });
+
+    const closed = screen.getByText('CB6633').closest('tr') as HTMLElement;
+    expect(within(closed).getByText('1,500')).toBeInTheDocument();
+    // Delivered stays 0: inventing a delivery to balance the row would be worse than the
+    // figure being unknown.
+    expect(within(closed).getAllByText('0').length).toBeGreaterThan(0);
+
+    // ... and the footer sums the two OPEN lines only, not 1,508.
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(within(foot).getByText('8')).toBeInTheDocument();
+    expect(within(foot).queryByText('1,508')).not.toBeInTheDocument();
+  });
+
+  it('recomputes Outstanding qty live while a quantity is being typed', () => {
+    // A row that states 10 ordered, 4 delivered and 6 outstanding must not keep saying 6
+    // while the quantity box reads 20. Two figures contradicting each other on one row is
+    // read as a broken screen, not as an unsaved edit.
+    renderLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    // In an edit session the Product cell is a select, so the row is found by one of its
+    // own inputs rather than by the SKU text, which is no longer a plain span.
+    const rowA = () =>
+      screen.getByLabelText('Unit price on SKU-A').closest('tr') as HTMLElement;
+    expect(within(rowA()).getByText('6')).toBeInTheDocument();
+
+    fireEvent.change(within(rowA()).getByDisplayValue('10'), { target: { value: '20' } });
+
+    expect(within(rowA()).getByText('16')).toBeInTheDocument();
+    // ... and the footer moves with it: 16 + 2.
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(within(foot).getByText('18')).toBeInTheDocument();
+  });
+
+  it('sends an edited price and discount with the line', async () => {
+    renderLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Unit price on SKU-A'), {
+      target: { value: '88.50' },
+    });
+    fireEvent.change(screen.getByLabelText('Discount on SKU-A'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines[0]).toMatchObject({
+      id: 'l-a',
+      unit_price: '88.50',
+      // Cleared, which is an explicit null - not "leave the stored figure alone".
+      discount: null,
+    });
+    // `line_total` is what the source document charged, so it is never written back.
+    expect(body.lines[0]).not.toHaveProperty('line_total');
+  });
+});
+
+describe('SalesOrderDetail - the order type round trip', () => {
+  /**
+   * The view rendered `demand_class` while the edit form seeded from `order_type`, which is
+   * NULL on 96% of this book - and `handleSave` then refused an empty order type, so most
+   * orders could not be header-edited at all.
+   */
+  it('seeds the select from the same value the pill shows, and saves it as the class', async () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getByText('Project')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Order type' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Retail' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body).toMatchObject({ demand_class: 'retail' });
+    // `order_type` is a different column and this screen no longer writes it.
+    expect(body).not.toHaveProperty('order_type');
+  });
+
+  it('saves an unclassified order rather than refusing it', async () => {
+    // 96% of the book. Refusing the save on an empty class made those orders un-editable,
+    // and an empty class means "leave the stored classification alone", not "clear it".
+    useSalesOrder.mockReturnValue({
+      data: so({ demand_class: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent(
+      'Unclassified',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    expect(screen.queryByText('Select an order type.')).not.toBeInTheDocument();
+    expect(updateSalesOrderMutateAsync.mock.calls[0][0].data).toMatchObject({
+      demand_class: null,
+    });
+  });
+
+  it('sends a corrected order date', async () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    expect(updateSalesOrderMutateAsync.mock.calls[0][0].data).toMatchObject({
+      order_date: '2026-05-04',
+    });
   });
 });
 
@@ -448,10 +899,52 @@ describe('SalesOrderDetail - the agent', () => {
       isError: false,
     });
     renderDetail();
-    const summary = screen.getByRole('region', { name: 'Order summary' });
+    const orderCard = screen.getByRole('region', { name: 'Order' });
     const agentValue = screen.getByText('Agent').closest('div');
     expect(within(agentValue as HTMLElement).getByText('-')).toBeInTheDocument();
-    expect(summary).toContainElement(agentValue);
+    expect(orderCard).toContainElement(agentValue);
+  });
+
+  it('names the order inquiries raised against it, and links to them', () => {
+    // The business sees sales orders and order inquiries and nothing between them, so this
+    // is where the order says what purchasing has been told to do about it.
+    useSalesOrder.mockReturnValue({
+      data: so({
+        order_inquiries: [
+          {
+            inquiry_no: 'OI-000007',
+            state: 'raised',
+            raised_at: '2026-07-18T09:00:00',
+            raised_by_name: 'Yana',
+            rows_total: 3,
+            rows_placed: 2,
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const orderCard = screen.getByRole('region', { name: 'Order' });
+    const link = within(orderCard).getByRole('link', { name: 'OI-000007' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/project-sales/order-inquiries?query=SO-2026%2F07-0042',
+    );
+    expect(link.getAttribute('title')).toContain('2/3 placed');
+  });
+
+  it('shows the Order inquiries field even when there are none - never hidden', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ order_inquiries: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const value = screen.getByText('Order inquiries').closest('div');
+    expect(within(value as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });
 
@@ -474,10 +967,17 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
+    // Field labels only, across all three cards in order. A pill is a VALUE and happens to
+    // be a `span.text-xs` too, so it is excluded by its slot rather than by being kept a
+    // different size than every other pill.
     const labelOrder = () =>
-      Array.from(
-        screen.getByRole('region', { name: 'Order summary' }).querySelectorAll('label, span.text-xs'),
-      ).map((el) => el.textContent);
+      ['Order', 'Customer', 'Totals'].flatMap((name) =>
+        Array.from(
+          screen
+            .getByRole('region', { name })
+            .querySelectorAll('label, span.text-xs:not([data-slot="badge"])'),
+        ).map((el) => el.textContent),
+      );
 
     const before = labelOrder();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
@@ -486,14 +986,15 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     // Same labels, in the same order - editing swaps a value for an input, nothing moves.
     expect(after).toEqual(before);
 
-    // The five editable fields are now real inputs, preloaded with the stored values.
+    // The six editable fields are now real inputs, preloaded with the stored values.
     expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveTextContent(
       'Rowenda Kitchen Sdn Bhd',
     );
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent('Project');
     expect(screen.getByRole('combobox', { name: 'Priority' })).toHaveTextContent('Normal');
     expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveTextContent('JR001 · JEREMY');
-    expect(screen.getByLabelText('Requested delivery')).toHaveValue('2026-08-30');
+    expect(screen.getByLabelText('Order date')).toHaveValue('2026-07-16');
+    expect(screen.getByLabelText('Delivery date')).toHaveValue('2026-08-30');
 
     // Save / Cancel replace the pager and the way out; nothing else changed shape.
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
@@ -528,7 +1029,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
-    fireEvent.change(screen.getByLabelText('Requested delivery'), {
+    fireEvent.change(screen.getByLabelText('Delivery date'), {
       target: { value: '2026-09-15' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -570,6 +1071,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     const qtyInputs = screen.getAllByDisplayValue('320');
     fireEvent.change(qtyInputs[0], { target: { value: '400' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -585,6 +1087,8 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
       warehouse_code: 'BRW-BB',
       required_date: '2026-08-30',
       uom: 'PCS',
+      unit_price: '100.00',
+      discount: '15.00',
     }]);
   });
 
@@ -593,6 +1097,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     const locationCombo = screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' });
     // Code-first, same as the read view's Location cell (`BRW-BB` above) - a code review
     // nit found this select's option label was the bare warehouse NAME, so the same value
@@ -609,6 +1114,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Location on CW-BASIN-450' }));
     fireEvent.click(await screen.findByRole('option', { name: 'BRW-IB - Brickworks Iskandar' }));
@@ -631,6 +1137,8 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
       warehouse_code: 'BRW-IB',
       required_date: '2026-10-05',
       uom: 'BOX',
+      unit_price: '100.00',
+      discount: '15.00',
     }]);
   });
 
@@ -642,6 +1150,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     // The options load async (`getSalesOrderUoms`) - the trigger shows the placeholder
     // until they resolve and the value's label can be matched. Re-queried each poll
     // (not a captured reference) since the resolved options swap this node out.
@@ -662,6 +1171,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
     await waitFor(() =>
       expect(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' })).toHaveTextContent(
         'Pieces',
@@ -698,5 +1208,85 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     // A fresh edit session clears the stale notice - it describes the LAST save, not this one.
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     expect(screen.queryByText('Planning changes raised on 2 lines')).not.toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - what has already been planned about a line', () => {
+  /**
+   * The header names the inquiries raised on the ORDER. That cannot answer the question a
+   * planner asks at the line: a confirmation covers the SUBSET of lines somebody chose
+   * (PLAN-fulfilment-planning-from-autocount-so.md 13.4), so an order carrying an inquiry
+   * and an active revision still holds lines neither touches.
+   *
+   * Both columns therefore state their own absence rather than inheriting the header's
+   * answer, and "-" is what that absence looks like on this grid.
+   */
+  function planned(over: Partial<SalesOrderLine> = {}): SalesOrder {
+    return so({
+      lines: [
+        {
+          id: 'l-planned',
+          sku: 'SKU-PLANNED',
+          product_name: 'Planned line',
+          qty_ordered: 10,
+          qty_delivered: 0,
+          uom: 'PCS',
+          warehouse_code: 'BRW-BB',
+          line_status: 'open',
+          required_date: '2026-08-30',
+          order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' },
+          decision_revision: 2,
+          ...over,
+        } as SalesOrderLine,
+      ],
+      line_count: 1,
+    });
+  }
+
+  it('names the inquiry, its state and the revision that decided the line', () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('OI-000123')).toBeInTheDocument();
+    // The same pill wording the order-inquiry worklist uses, so "Placed" cannot mean two
+    // things on two screens.
+    expect(within(row).getByText('Placed')).toBeInTheDocument();
+    expect(within(row).getByText('Rev 2')).toBeInTheDocument();
+  });
+
+  it('prints a dash on a line nothing has been raised or decided on', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({ order_inquiry: null, decision_revision: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('OI-000123')).not.toBeInTheDocument();
+    expect(within(row).queryByText(/^Rev /)).not.toBeInTheDocument();
+    // One dash for each of the two columns, beside whatever other empty cells the row has.
+    expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('offers both columns to the Columns menu, so a planner who never plans can drop them', async () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    // Radix opens its menu on POINTER-down; a plain click leaves the trigger closed, which
+    // reads in a failure message as a menu that has no items rather than one never opened.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Columns' }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: 'mouse',
+    });
+    expect(
+      await screen.findByRole('menuitemcheckbox', { name: 'Order inquiry' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Decision' })).toBeInTheDocument();
   });
 });

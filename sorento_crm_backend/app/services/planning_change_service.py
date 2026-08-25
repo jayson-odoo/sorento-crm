@@ -96,6 +96,7 @@ from app.services.scm.outstanding_diff import (
     DATE_MOVED,
     QTY_CHANGED,
     Diff,
+    states_settled,
 )
 from app.services.project_so_delta_service import RESERVE_WINDOW_DAYS
 
@@ -337,6 +338,12 @@ def build_batch(
     changed = []
     for c in diff.changes:
         if c.kind == "unchanged":
+            continue
+        if c.kind == ADDED and states_settled(c.after):
+            # A line that ARRIVES already delivered asks for no reaction: there is nothing
+            # left to plan, source or promise. It is only reachable since the upload became
+            # the whole order book, and without this a completed year would raise a batch of
+            # thousands of "added" rows about deliveries that happened months ago.
             continue
         if _is_null_anchored_date_move(c):
             logger.debug(

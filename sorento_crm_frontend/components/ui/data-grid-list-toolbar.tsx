@@ -493,7 +493,13 @@ export function DataGridListToolbar<TData extends object>({
                     <DropdownMenuItem
                       key={action.key}
                       disabled={action.disabled}
-                      onClick={action.onClick}
+                      // Not wired at all while disabled. Radix only suppresses its own
+                      // `onSelect` for a disabled item; a plain `onClick` still fires, and
+                      // the ONLY thing stopping it is the `data-disabled:pointer-events-none`
+                      // class - so a disabled action was one missing stylesheet away from
+                      // running. The single-button path next door is a real `<button
+                      // disabled>`, which the DOM itself refuses to click.
+                      onClick={action.disabled ? undefined : action.onClick}
                       className={action.destructive ? 'text-destructive' : undefined}
                       asChild={Boolean(action.href && !action.disabled)}
                       data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}

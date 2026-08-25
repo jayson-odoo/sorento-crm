@@ -81,6 +81,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOAmendment,
     SOLineAllocation,
+    next_inquiry_no as _next_inquiry_no,
 )
 from app.models.projects import (
     TASK_LINK_ORDER_INQUIRY,
@@ -168,6 +169,21 @@ _DELTA_VERB_CHANGE = {
     "ORDER": CHANGE_QTY_INCREASE,
     "RESERVE & ORDER": CHANGE_QTY_INCREASE,
 }
+
+
+def next_inquiry_no(db: Session, company_id: str) -> str:
+    """`OI-000001` for this company, from the ONE minting function (`app.models.project_so`).
+
+    Re-exported here rather than reimplemented: the `before_insert` stamp on the model
+    already guarantees every inquiry gets a number, and a second series generator in this
+    file would be a second answer to the same question the day the two drifted.
+
+    Deliberately NOT routed through `NumberingService` the way `PSO-000001` optionally is:
+    nothing seeds a rule for this document type, so that branch would be a configuration
+    surface with no configuration behind it. If a client ever wants to word their own
+    inquiry numbers, that is the moment to add it.
+    """
+    return _next_inquiry_no(db, company_id)
 
 
 def _dec(value: Any, default: Decimal = _ZERO) -> Decimal:
@@ -288,6 +304,10 @@ class ProjectOrderInquiryService:
                 amendment_id=None,
                 state=INQUIRY_RAISED,
                 raised_by=actor_user_id,
+                # The number is stamped by the model's own `before_insert` (there is one
+                # minting path, so no writer can forget). Numbered ONCE, on the header this
+                # order keeps: a re-confirm reuses the same inquiry (`_existing` above), so
+                # purchasing keeps quoting one number through every revision.
             )
             self.db.add(inquiry)
             self.db.flush()
@@ -657,6 +677,8 @@ class ProjectOrderInquiryService:
             amendment_id=amendment.id if amendment else None,
             state=INQUIRY_RAISED,
             raised_by=actor_user_id,
+            # An amendment raises its OWN inquiry, so the stamp gives it its own number: it
+            # is a separate instruction to purchasing and gets referred to as one.
         )
         self.db.add(inquiry)
         self.db.flush()
@@ -1310,6 +1332,8 @@ class ProjectOrderInquiryService:
         task = self.task_for(inquiry.id)
         return {
             "id": inquiry.id,
+            # What the screen prints. The id is addressing; this is the name.
+            "inquiry_no": inquiry.inquiry_no,
             "project_sales_order_id": inquiry.project_sales_order_id,
             "amendment_id": inquiry.amendment_id,
             "state": inquiry.state,

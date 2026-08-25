@@ -1792,12 +1792,14 @@ describe('rankingNote', () => {
     expect(note).toBeNull();
   });
 
-  it('says a single line is simply the only one here', () => {
-    // Nothing was ranked because there was nothing to rank against. Calling that a policy
-    // failure is the wording that read wrong.
+  it('still says Not ranked for one line, but carries no sentence about it', () => {
+    // Nothing was ranked because there was nothing to rank against, and "Only line in this
+    // cell" said that back to a reader who could already see the single row underneath it.
+    // Removed 25 August 2026: a sentence that restates the screen is a sentence to skip past.
+    // The Rank column keeps "Not ranked" - a flat 0.00 there would claim a ranking nobody ran.
     const note = rankingNote(cellOf(1, { rank_separates: false, distinct_order_count: 1 }));
     expect(note?.cell).toBe('Not ranked');
-    expect(note?.note).toBe('Only line in this cell');
+    expect(note?.note).toBeNull();
   });
 
   it('names line order when the tie is one order competing with itself', () => {

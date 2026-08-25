@@ -59,6 +59,9 @@ class OrderInquiryRowOut(BaseModel):
 
 class OrderInquiryDetail(BaseModel):
     id: str
+    #: `OI-000001` - what a person calls this inquiry. Optional only so a record written
+    #: before the column existed still reads; everything created since carries one.
+    inquiry_no: Optional[str] = None
     project_sales_order_id: str
     amendment_id: Optional[str] = None
     state: str
@@ -87,6 +90,11 @@ class OrderInquiryWorklistRow(BaseModel):
     """
 
     id: str
+    #: `OI-000123` - the number of the inquiry this row belongs to, off its own header.
+    #: Optional only so a record written before the column existed still reads; every
+    #: inquiry raised since carries one. The S/O no beside it does not answer the same
+    #: question: an amendment raises a SECOND inquiry on the same sales order.
+    inquiry_no: Optional[str] = None
     so_date: Optional[date] = None
     so_number: Optional[str] = None
     item_code: Optional[str] = None

@@ -80,6 +80,7 @@ INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
 #: runtime set) and a test asserts the two agree.
 SORTABLE_FIELDS = frozenset(
     {
+        "inquiry_no",
         "so_date",
         "so_number",
         "item_code",
@@ -205,6 +206,7 @@ _RAISED_DAY = cast(
 _LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_code)
 
 _SORT_EXPRESSIONS = {
+    "inquiry_no": OrderInquiry.inquiry_no,
     "so_date": _SO_DATE,
     "so_number": _SO_NUMBER,
     "item_code": OrderInquiryRow.item_code,
@@ -222,6 +224,10 @@ _SORT_EXPRESSIONS = {
 
 _COLUMNS = (
     OrderInquiryRow.id.label("id"),
+    # `OI-000123`, off the header this row already joins to - no second query, and no
+    # second opinion about which inquiry a row belongs to. The S/O no cannot stand in for
+    # it: an amendment raises a SECOND inquiry on the same sales order.
+    OrderInquiry.inquiry_no.label("inquiry_no"),
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
@@ -383,6 +389,9 @@ class OrderInquiryWorklistService:
                 or_(
                     OrderInquiryRow.item_code.ilike(like),
                     OrderInquiryRow.spo_ref.ilike(like),
+                    # Purchasing is asked about "OI-000123" by name; without this the row is
+                    # reachable only by knowing which sales order raised it.
+                    OrderInquiry.inquiry_no.ilike(like),
                     cast(_SO_NUMBER, String).ilike(like),
                     Product.product_name.ilike(like),
                     Product.product_code.ilike(like),
@@ -539,6 +548,7 @@ class OrderInquiryWorklistService:
         line_flow = (flow or {}).get(row.so_line_id, {})
         return {
             "id": row.id,
+            "inquiry_no": row.inquiry_no,
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,

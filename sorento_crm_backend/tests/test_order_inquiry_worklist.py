@@ -508,6 +508,69 @@ def test_the_per_project_list_agrees_with_the_worklist_on_the_customer_label(api
     assert mine["project_customer"] == theirs["project_customer"]
 
 
+# ----------------------------------------------------------- the inquiry number
+
+
+def _inquiry_no_of(db, row: OrderInquiryRow) -> str:
+    return (
+        db.query(OrderInquiry.inquiry_no)
+        .filter(OrderInquiry.id == row.order_inquiry_id)
+        .scalar()
+    )
+
+
+def test_every_row_names_the_inquiry_it_belongs_to(api):
+    """`OI-000123`, off the row's own header - the number a person quotes.
+
+    The S/O no beside it cannot answer "which instruction was I given": an amendment
+    raises a SECOND inquiry on the same sales order, and both rows print the same
+    sales-order number.
+    """
+    client, db, _company_id, seeded = api
+
+    body = client.get(LIST).json()
+    by_id = {row["id"]: row for row in body["data"]}
+
+    # It survives `response_model`, which silently drops anything undeclared.
+    assert "inquiry_no" in by_id[seeded["authored_row"].id], by_id[
+        seeded["authored_row"].id
+    ].keys()
+    assert by_id[seeded["authored_row"].id]["inquiry_no"] == _inquiry_no_of(
+        db, seeded["authored_row"]
+    )
+    assert by_id[seeded["adopted_row"].id]["inquiry_no"] == _inquiry_no_of(
+        db, seeded["adopted_row"]
+    )
+    # The stamp is real, not a test fixture's invention.
+    assert by_id[seeded["authored_row"].id]["inquiry_no"].startswith("OI-")
+
+
+def test_the_query_box_matches_the_inquiry_number(api):
+    """Purchasing is asked about "OI-000123" by name, so the one search box has to find
+    it - the row is otherwise reachable only by knowing which sales order raised it."""
+    client, db, _company_id, seeded = api
+
+    number = _inquiry_no_of(db, seeded["authored_row"])
+    body = client.get(LIST, params={"query": number}).json()
+
+    assert [row["id"] for row in body["data"]] == [seeded["authored_row"].id]
+
+
+def test_the_list_sorts_by_the_inquiry_number(api):
+    """Nulls last in both directions, and the order is total, like every other column."""
+    client, db, _company_id, seeded = api
+
+    ascending = client.get(LIST, params={"sort": "inquiry_no", "dir": "asc"}).json()
+    descending = client.get(LIST, params={"sort": "inquiry_no", "dir": "desc"}).json()
+
+    numbers = [row["inquiry_no"] for row in ascending["data"]]
+    assert numbers == sorted(numbers)
+    assert [row["inquiry_no"] for row in descending["data"]] == sorted(
+        numbers, reverse=True
+    )
+    assert _inquiry_no_of(db, seeded["adopted_row"]) in numbers
+
+
 # ---------------------------------------------------------------- the filters
 
 

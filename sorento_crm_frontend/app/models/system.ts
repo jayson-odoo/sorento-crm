@@ -31,6 +31,20 @@ export interface SystemSetting {
   defaultProductSupplierId?: string | null;
   defaultProductStandardLeadTimeDays?: number;
 
+  /**
+   * The unit a product gets when nobody states one - a product import row with no UOM
+   * cell, and any other create that leaves it out.
+   *
+   * A SETTING rather than a constant because the constant was wrong: the code falls back
+   * to `EA`, an older fallback took whatever unit the database happened to return first,
+   * and 11,415 products were stamped `L` by it. The admin names the right one here and a
+   * re-import fixes them; a backfill script would have to guess the same thing this
+   * setting lets somebody state.
+   */
+  defaultUomId?: string | null;
+  /** The code of the unit above, resolved by the backend - never a bare UUID on screen. */
+  defaultUomCode?: string | null;
+
   /** Takeover cooldown window in seconds (0 = instant takeover). */
   takeoverCooldownSeconds?: number;
   /** Global default undo grace window for form-SLA actions, in seconds. */

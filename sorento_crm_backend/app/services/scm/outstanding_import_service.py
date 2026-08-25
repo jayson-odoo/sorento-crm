@@ -39,6 +39,7 @@ from app.services.scm.outstanding_diff import (
     Diff,
     Line,
     diff_lines,
+    states_settled,
 )
 from app.services.scm import plan_exception_service
 from app.services.scm import reorder_run_service
@@ -143,7 +144,11 @@ class _Binding:
     # so the diff saw a document with no lines and inserted them all again, doubling on-order.
     write_status: str
     live_statuses: tuple[str, ...]
-    # Line columns fed from the file's money columns, when it has any.
+    # Line columns the file RESTATES on every upload, as (line column, extras key). Named
+    # for the money it started with, and it carries the non-money columns of the same shape
+    # too (the PO currency, the SO per-line UoM): what the pairs share is the rule, not the
+    # datatype - a value the file states is written on insert and refreshed on update, and a
+    # value it omits leaves the column alone rather than blanking what we already hold.
     money_cols: tuple[tuple[str, str], ...] = ()
     # Header columns fed from the file, per document. Same (column, extras key) shape.
     header_cols: tuple[tuple[str, str], ...] = ()
@@ -208,7 +213,18 @@ _BINDINGS: dict[str, _Binding] = {
         # whose whole job is "who ordered it and at what price", quoted a blank on every real
         # row. Same shape and same rule as the PO side's cost: an absent price stays NULL
         # rather than becoming a 0 that reads as goods given away.
-        money_cols=(("unit_price", "unit_price"),),
+        # `discount` and `total_inc` are the rest of the same money line, added the day the
+        # detail page started printing them: a unit price beside a quantity is not what the
+        # customer was charged. `uom` rides the same mechanism although it is not money at
+        # all - the PO side already carries `currency` here for exactly that reason - because
+        # what this tuple actually declares is "a line column the file restates and a
+        # re-upload must refresh", and the per-line UoM override is one.
+        money_cols=(
+            ("unit_price", "unit_price"),
+            ("discount", "discount"),
+            ("line_total", "total_inc"),
+            ("uom", "uom"),
+        ),
         # OPTIONAL in the file and FILL-only on the header: no export carries an order type
         # today, so this is the column that lets a differently-worded export classify its own
         # documents the day it does, without a release. A value already on the header wins,
@@ -241,7 +257,21 @@ _BINDINGS: dict[str, _Binding] = {
         live_statuses=("active", "received", "partial", "closed"),
         # (line column, extras key). Cost is what the cash co-pilot ranks on, so an absent
         # cost stays absent rather than becoming a zero that reads as free goods.
-        money_cols=(("unit_cost", "unit_cost"), ("currency", "currency")),
+        # `discount` and `total_inc` are the REST of the same money line, added the day the
+        # purchase-order detail page started printing them: a unit cost beside a quantity is
+        # not what the supplier charged. `uom` rides the same mechanism although it is not
+        # money at all - `currency` already does, for exactly that reason - because what this
+        # tuple actually declares is "a line column the file restates and a re-upload must
+        # refresh", and the per-line UoM override is one. Same four, in the same order, as
+        # the sales book above: the two feeds must not diverge on which of the columns their
+        # shared reader carries they choose to keep.
+        money_cols=(
+            ("unit_cost", "unit_cost"),
+            ("discount", "discount"),
+            ("line_total", "total_inc"),
+            ("uom", "uom"),
+            ("currency", "currency"),
+        ),
         # `scm.receipt_lead_v` measures lead days from `po.issue_date`, so an order imported
         # without it contributes nothing to the measured supplier lead time.
         header_cols=(("issue_date", "order_date"), ("currency", "currency")),
@@ -299,12 +329,16 @@ class PreviewResult:
     # Agent codes in this file that carry no demand class, so the client can see which of his
     # master rows still need one. Same key on both responses, same reason as above.
     unmapped_agents: list[AgentNotice] = field(default_factory=list)
-    # Additive safety notices that do not map to a single row or document - today, only
-    # "N rows carry a date the reader could not read". The operator reads `row_problems`
-    # for WHICH rows; this is the one-line summary that says the write will leave those
-    # rows' dates exactly as they already are, rather than the operator having to infer
-    # that from the per-row reasons.
+    # Additive safety notices that do not map to a single row or document: "N rows carry a
+    # date the reader could not read", and "N rows are shipping orders". The operator reads
+    # `row_problems` for WHICH rows; this is the one-line summary that says what the write
+    # will do about them, rather than leaving them to infer it from the per-row reasons.
     warnings: list[str] = field(default_factory=list)
+    # How many rows this PURCHASE book spent on shipping orders, which this channel does not
+    # write. Its own figure rather than one warning string the screen would have to parse:
+    # "would import" is a count, and a book that is half SPO would otherwise claim to import
+    # twice what it will.
+    shipping_order_rows: int = 0
 
     @property
     def ok(self) -> bool:
@@ -325,6 +359,7 @@ class PreviewResult:
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
             "warnings": self.warnings,
+            "shipping_order_rows": self.shipping_order_rows,
         }
 
 
@@ -929,21 +964,54 @@ def _honesty_issues(diff: Diff, fulfilled_by_line: dict[str, float],
     return out
 
 
+#: What a document with nothing left owed on it is stamped. The same word on both books -
+#: `sales_orders` holds it on 11,006 rows and `purchase_orders` on 8,760 - and both screens
+#: word it Completed.
+_COMPLETE_STATUS = "closed"
+
+
+def _complete_documents(diff: Diff) -> set[str]:
+    """In-scope documents this upload leaves with no open line at all.
+
+    Read from the DIFF, because that is where the whole answer already is: every open line of
+    an in-scope document is in it (`_existing_lines` fetches them all, and a line the file has
+    stopped stating closes by absence), so a document whose every change either closes a line
+    or adds one that arrives already settled has nothing owed on it.
+
+    Its header follows its lines. Left `open`, a fully delivered order reads as a live
+    commitment on every screen and in the status filter, which is exactly the complaint that
+    made the two books word `closed` as Completed in the first place.
+    """
+    with_open_lines = {
+        c.doc_number for c in diff.changes
+        if c.kind != CLOSED and not (c.after is not None and states_settled(c.after))
+    }
+    return {number for number in diff.scope_documents if number not in with_open_lines}
+
+
 def _to_activate(diff: Diff, header_state: dict[str, tuple[str, Optional[str]]],
-                 bind: _Binding) -> list[str]:
+                 bind: _Binding, complete: set[str]) -> list[str]:
     """In-scope documents whose header is not live and therefore has to be lifted.
 
-    An outstanding-orders extract is a book of documents already placed, and AutoCount is the
+    An order-book extract is a book of documents already placed, and AutoCount is the
     system of record for that, so a document it names is by definition no longer a draft.
     Leaving it as one imports the lines and then hides them: `scm.on_order_v` ignores drafts
     (M4-D5), so on-order stays 0 while the response still reports `added: N` - a silent no-op
     reporting success. Reported rather than merely done, because changing a document's status
     crosses a decision boundary a person should see.
+
+    A document the file states COMPLETE is never lifted: it is not a draft waiting to be
+    placed, it is an order that finished. Without this exclusion re-uploading a completed
+    sales book flips every one of its documents back to `open` on every run, because `closed`
+    is not among the sales book's live statuses. The reverse case is the last clause: a
+    document that is `closed` and has an open line again really has come back, and on the
+    purchase book - where `closed` IS a live status - nothing else would notice.
     """
     return [
         number for number in diff.scope_documents
-        if (state := header_state.get(number)) is not None
-        and state[0] not in bind.live_statuses
+        if number not in complete
+        and (state := header_state.get(number)) is not None
+        and (state[0] not in bind.live_statuses or state[0] == _COMPLETE_STATUS)
     ]
 
 
@@ -982,6 +1050,8 @@ class _Plan:
     issues: list[ResolutionIssue] = field(default_factory=list)
     # Documents that would be (preview) or were (apply) lifted to the live write status.
     activate: list[str] = field(default_factory=list)
+    # Documents this upload leaves with nothing owed, whose header is therefore closed.
+    complete: set[str] = field(default_factory=set)
     # Document number -> the demand class this upload could decide. A document absent from
     # this map is one nothing could classify, and it is reported rather than defaulted.
     demand: dict[str, str] = field(default_factory=dict)
@@ -1020,13 +1090,15 @@ def _build(db: Session, file_data: bytes, doc_type: str,
     demand, demand_problems = _classify_demand(
         db, diff, resolved, _demand_state(db, diff.scope_documents, bind), bind,
         agent_classes)
+    complete = _complete_documents(diff)
     return _Plan(
         read=read,
         resolved=resolved,
         diff=diff,
         issues=resolved.issues + _honesty_issues(diff, fulfilled, header_state,
                                                  resolved, bind),
-        activate=_to_activate(diff, header_state, bind),
+        activate=_to_activate(diff, header_state, bind, complete),
+        complete=complete,
         demand=demand,
         problems=demand_problems,
         agent_notices=agent_notices,
@@ -1070,6 +1142,20 @@ def _unreadable_date_warning(problems: list[RowProblem]) -> list[str]:
     ]
 
 
+def _shipping_order_warning(read: ReadResult) -> list[str]:
+    """The purchase book states two families and this channel writes one. Said once, up
+    front: a file whose rows are half shipping orders imports half of itself, and an
+    operator who is not told reads the difference as loss."""
+    n = len(read.shipping_order_row_numbers)
+    if not n:
+        return []
+    row = "row" if n == 1 else "rows"
+    return [
+        f"{n} {row} are shipping orders (SPO), which this book does not carry; they are "
+        "left out"
+    ]
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -1094,12 +1180,14 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
-        warnings=_unreadable_date_warning(row_problems),
+        warnings=_unreadable_date_warning(row_problems) + _shipping_order_warning(read),
+        shipping_order_rows=len(read.shipping_order_row_numbers),
     )
 
 
 def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Optional[str],
-                 warehouse_id: Optional[str], when: Optional[date]):
+                 warehouse_id: Optional[str], when: Optional[date],
+                 exclude_ids: Optional[set[str]] = None):
     """A closed line on this document matching the incoming row exactly, if there is one.
 
     An explicit lookup rather than widening `_existing_lines`: the diff must stay open-only,
@@ -1119,6 +1207,12 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
     Only reachable since S5, which is what makes the guard necessary now: history lines used
     to carry NULL `warehouse_id` and NULL `expected_date`, so the equality below could not
     match a row that stated either. The structured PO + SPO export states both.
+
+    `exclude_ids` are lines THIS run has already claimed. A settled row leaves its line
+    closed, so it stays matchable, and two byte-identical rows of a completed book ("totally
+    acceptable in 1 SO") would otherwise both land on the first line and the second quantity
+    would disappear. The revive path never needed it - flipping the line to `open` took it
+    out of this query by itself.
     """
     if product_id is None:
         return None
@@ -1131,6 +1225,8 @@ def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Option
                 sa.or_(line.source_system.is_(None),
                        line.source_system.notin_(list(HISTORY_SOURCE_SYSTEMS))))
     )
+    if exclude_ids:
+        q = q.filter(line.id.notin_(list(exclude_ids)))
     q = q.filter(line.warehouse_id.is_(None) if warehouse_id is None
                  else line.warehouse_id == warehouse_id)
     dated = getattr(line, bind.date)
@@ -1194,6 +1290,46 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
             setattr(line, col, value)
 
 
+def _settled_quantities(after: Line, extra: dict) -> tuple[float, float]:
+    """(ordered, already delivered/received) for a line the file states as SETTLED.
+
+    Taken from the file rather than computed from what we hold, because on a settled line
+    the file is the only thing that knows either figure: the row states what was ordered and
+    what went out, and the diff's own `qty` is the nothing that is left. A row that somehow
+    reaches here without an ordered figure falls back to the outstanding quantity, which is
+    the same answer the open path would have written.
+    """
+    stated_ordered = extra.get("qty_ordered")
+    ordered = float(stated_ordered) if stated_ordered is not None else float(after.qty)
+    stated_fulfilled = extra.get("qty_fulfilled")
+    # No progress column at all: everything ordered has gone, which is what "nothing
+    # remaining" means. A 0 here would close a line claiming it delivered none of it.
+    fulfilled = (float(stated_fulfilled) if stated_fulfilled is not None
+                 else ordered - float(after.qty))
+    return ordered, fulfilled
+
+
+def _settled_qty_differs(line, ordered: float, fulfilled: float, bind: _Binding) -> bool:
+    """Whether a closed line already holds the quantities this row states."""
+    return (abs(float(line.qty_ordered or 0) - ordered) > _QTY_EPSILON
+            or abs(float(getattr(line, bind.fulfilled) or 0) - fulfilled) > _QTY_EPSILON)
+
+
+def _write_settled(line, after: Line, extra: dict, bind: _Binding,
+                   fallback_date: Optional[date]) -> None:
+    """Bring a line the file states as settled up to what the row says, and close it.
+
+    The quantities, the date and the money together: a completed line is a record of what
+    happened, and half a record is what makes an imported year unreadable a month later.
+    """
+    ordered, fulfilled = _settled_quantities(after, extra)
+    line.qty_ordered = ordered
+    setattr(line, bind.fulfilled, fulfilled)
+    setattr(line, bind.date, _write_date(after, fallback_date))
+    _refresh_money(line, extra, bind)
+    line.line_status = "closed"
+
+
 def _write_date(change_after: Optional[Line], fallback: Optional[date]) -> Optional[date]:
     """The date to WRITE for a changed line: the incoming date, unless the reader could not
     read it - in which case the stored date must not be overwritten with `None`.
@@ -1230,6 +1366,8 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
         outcome.skip(row=row_number, code=oc.NOT_A_LINE)
     for row_number in read.settled_row_numbers:
         outcome.skip(row=row_number, code=oc.NOTHING_OUTSTANDING)
+    for row_number in read.shipping_order_row_numbers:
+        outcome.skip(row=row_number, code=oc.SHIPPING_ORDER)
 
     for problem in read.problems:
         if str(problem.row_number) in read_rows:
@@ -1402,12 +1540,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
 
     _record_rows_never_written(read, resolved, outcome)
 
-    # What this JOB accounts for, which is more than the file states. A closed line is reached
-    # by its ABSENCE from the upload, so it carries an outcome and no source row: with the
-    # file's own row count as the total, a five-row file that closes one line finishes
-    # "6 / 5" with a progress bar past 100%. Published again here - the diff is known and
-    # nothing has been written yet - so the denominator is right before the first write.
-    closed_rows = sum(1 for c in diff.changes if c.kind == CLOSED)
+    # What this JOB accounts for, which is more than the file states. A line closed by its
+    # ABSENCE from the upload carries an outcome and no source row: with the file's own row
+    # count as the total, a five-row file that closes one line finishes "6 / 5" with a
+    # progress bar past 100%. Published again here - the diff is known and nothing has been
+    # written yet - so the denominator is right before the first write. A line the file
+    # STATES settled is not counted here: it has a source row of its own, and counting it
+    # would push the total past the number of outcomes there are to record.
+    closed_rows = sum(1 for c in diff.changes if c.kind == CLOSED and c.after is None)
     total_rows = read.total_rows + closed_rows
     if on_total_rows is not None:
         on_total_rows(total_rows)
@@ -1571,13 +1711,22 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         if header is None:
             header = bind.header(**{
                 bind.number: number,
-                "status": bind.write_status,
+                # A document the file states COMPLETE is born closed. Created live and
+                # closed a moment later it would be the same row, but a whole-year book
+                # would first announce thousands of live orders to every listener on the
+                # status column.
+                "status": (_COMPLETE_STATUS if number in plan.complete
+                           else bind.write_status),
                 "source_system": "scm_upload",
                 "source_ref": doc_type,
             })
             db.add(header)
             db.flush()
         else:
+            if number in plan.complete:
+                # Nothing is owed on it any more. The header follows its lines: left open, a
+                # fully delivered order reads as a live commitment on every screen.
+                header.status = _COMPLETE_STATUS
             if number in lift:
                 # The extract is evidence the document has been placed, and AutoCount is the
                 # system of record for that. Left as a draft the lines land and the supply is
@@ -1652,6 +1801,11 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # ADDED change's own `row_ref` is the source ROW NUMBER, not a line id: there is no id
     # to have until the insert below runs.
     applied_line_ids: dict[int, str] = {}
+    #: Closed lines this run has already written or restated. A settled row leaves its line
+    #: closed, so it stays matchable by `_closed_line` - without this, two identical rows of
+    #: a completed book would both land on the first line and the second quantity would
+    #: simply vanish.
+    settled_line_ids: set[str] = set()
     for c in diff.changes:
         source_row = (int(c.after.row_ref)
                       if c.after is not None and (c.after.row_ref or "").isdigit() else None)
@@ -1659,19 +1813,37 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         if c.kind == CLOSED:
             line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
             if line is not None:
-                # A status change, never a delete, and never a fabricated receipt: the line
-                # was planned against, and inventing a receipt no GRN supports would corrupt
-                # lead-time measurement and the picking reconciliation.
-                line.line_status = "closed"
+                if c.after is None:
+                    # Closed by ABSENCE: the file has stopped stating this line. A status
+                    # change, never a delete, and never a fabricated receipt - the line was
+                    # planned against, and inventing a receipt no GRN supports would corrupt
+                    # lead-time measurement and the picking reconciliation.
+                    line.line_status = "closed"
+                else:
+                    # Closed by STATEMENT: the row is in the file and says the line is
+                    # finished. Here the delivered figure is not invented, it is quoted -
+                    # so it is written, along with the date and the money the same row
+                    # carries. Anything less leaves a completed line claiming it shipped
+                    # nothing, on the only record of that order this system will ever have.
+                    _write_settled(line, c.after,
+                                   read.extras.get(str(c.after.row_ref), {}), bind,
+                                   c.before.required_date)
                 applied["closed"] += 1
-                # No source row on purpose: a closed line is reached by its ABSENCE from the
-                # file, so there is no row in the upload to point at. It is recorded all the
-                # same - it is the destructive half, and the job detail is where somebody
-                # goes to find out what an upload took away.
-                outcome.updated(code=oc.LINE_CLOSED, identity=identity,
+                # `source_row` is None for the absence half - there is no row in the upload
+                # to point at - and the row number itself for a stated settlement. Recorded
+                # either way: it is the destructive half, and the job detail is where
+                # somebody goes to find out what an upload took away.
+                outcome.updated(row=source_row, code=oc.LINE_CLOSED, identity=identity,
                                 value=c.doc_number, entity_type="order_line",
                                 entity_id=c.before.row_ref)
                 applied_line_ids[id(c)] = str(c.before.row_ref)
+            elif source_row is not None:
+                # The line has gone since the diff was read, and this half came from a real
+                # source row - so it needs its own outcome or the job finishes short of its
+                # own total. Same answer the update branch gives.
+                outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
+                             value=c.doc_number,
+                             message="the line this row settles no longer exists")
             continue
 
         if c.kind == ADDED:
@@ -1679,13 +1851,36 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             product_id = resolved.product_by_code.get(_norm(c.item_code))
             warehouse_id = (resolved.warehouse_by_code.get(_norm(c.location))
                             if c.location else None)
+            settled = states_settled(c.after)
             # A line that comes back is the SAME line, and the receipt already booked against
             # it belongs to it. Inserting a second row would leave that receipt stranded on
             # the old one while the new row starts at zero received, so the two together claim
             # the full ordered quantity is still at sea - overstated for good, and stable, so
             # re-uploading never corrects it.
             revived = _closed_line(db, bind, order_ids[c.doc_number], product_id,
-                                   warehouse_id, c.after.required_date)
+                                   warehouse_id, c.after.required_date,
+                                   exclude_ids=settled_line_ids)
+            if revived is not None and settled:
+                # NOT a revival: the file states this line finished, and the line is already
+                # closed. This is what a re-upload of a completed book runs into on every
+                # row, so it has to leave the database exactly as it found it - reopening
+                # here would make a delivered order read as stock on its way in, and adding
+                # the quantity on top would do it twice.
+                held = {col: getattr(revived, col) for col, _key in bind.money_cols}
+                ordered, fulfilled = _settled_quantities(c.after, extra)
+                moved = (_settled_qty_differs(revived, ordered, fulfilled, bind)
+                         or _money_differs(held, extra, bind))
+                _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date))
+                settled_line_ids.add(str(revived.id))
+                applied_line_ids[id(c)] = str(revived.id)
+                if moved:
+                    applied["updated"] += 1
+                    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                                    entity_type="order_line", entity_id=revived.id)
+                else:
+                    applied["unchanged"] += 1
+                    outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
+                continue
             if revived is not None:
                 already = float(getattr(revived, bind.fulfilled) or 0)
                 revived.line_status = "open"
@@ -1703,19 +1898,29 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             # wrote, and that default is a client-side callable SQLAlchemy would not
             # resolve onto this instance until the flush at the end of this loop.
             new_line_id = str(uuid.uuid4())
+            # A completed document this database has never seen: the whole line is written
+            # from the file, closed, with the order and the quantity that went out both
+            # intact. Ordered and fulfilled come from the row rather than from `c.after.qty`,
+            # which on a settled line is the nothing that is left.
+            ordered, fulfilled = (_settled_quantities(c.after, extra) if settled
+                                  else (c.after.qty, 0))
             fields = {
                 "id": new_line_id,
                 bind.header_fk: order_ids[c.doc_number],
                 "product_id": product_id,
                 "warehouse_id": warehouse_id,
-                "qty_ordered": c.after.qty,
-                bind.fulfilled: 0,
+                "qty_ordered": ordered,
+                bind.fulfilled: fulfilled,
                 bind.date: c.after.required_date,
-                "line_status": "open",
+                "line_status": _COMPLETE_STATUS if settled else "open",
             }
             for col, key in bind.money_cols:
                 fields[col] = extra.get(key)
             db.add(bind.line(**fields))
+            if settled:
+                # Claimed for this run, so a second identical row of the same completed book
+                # inserts its own line instead of landing on this one.
+                settled_line_ids.add(new_line_id)
             applied["added"] += 1
             applied_line_ids[id(c)] = new_line_id
             outcome.success(row=source_row, code=oc.CREATED, identity=identity,

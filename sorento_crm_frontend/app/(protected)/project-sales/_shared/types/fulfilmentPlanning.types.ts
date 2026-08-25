@@ -990,6 +990,23 @@ export interface BoardContribution {
   covered?: boolean;
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
+  /**
+   * The order inquiry purchasing was given for this line, reached through the planning
+   * record's mirror line, and the state that instruction is in.
+   *
+   * `null` when there is none - which is most of the board: an inquiry exists only once
+   * somebody has confirmed supply on the order. Never an empty object, because "nobody has
+   * been told about this line" and "told, about nothing" are different answers.
+   */
+  order_inquiry?: BoardLineOrderInquiry | null;
+}
+
+/** The order inquiry a board row belongs to, in the two words a person reads it by. */
+export interface BoardLineOrderInquiry {
+  /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
+  inquiry_no?: string | null;
+  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
+  state: string;
 }
 
 /**
@@ -1120,8 +1137,20 @@ export interface BoardIncomingLeg {
  * null as "0" would tell the planner there is nothing in stock when the truth is that nobody
  * said where to look, and those are opposite instructions.
  */
+/**
+ * Where a location stands relative to the cell, as the server tags it.
+ *
+ * The table lists every location the LADDER consulted, not only the agent's ownership group,
+ * so the reader has to be able to tell them apart: `BRW` (a site pool holding 1716) and
+ * `DC1-BB` (a group warehouse holding nothing) were two identical-looking rows, and the card
+ * quoted a figure only one of them could explain.
+ */
+export type BoardLocationWhere = 'own' | 'group' | 'site_pool' | 'other_group';
+
 export interface BoardCellLocation {
   location: string | null;
+  /** Own location / ownership group / site pool / outside the group. Defaults to `own`. */
+  where?: BoardLocationWhere;
   /**
    * The product and warehouse this position is about, for the drill-down only, never rendered.
    *
@@ -1174,8 +1203,22 @@ export interface BoardCell {
   bucket_key: string;
   /** Summed across every contributing line, including the unplannable ones (13.7). */
   total_qty: string;
-  /** One entry per distinct source location; more than one is normal, not exotic. */
+  /**
+   * One entry per location. More than one is normal, not exotic, and now for two reasons: the
+   * cell's own lines can name several, AND the whole of the sales agent's ownership group is
+   * listed beside them (see `location_group`). A group entry carries a demand of `0` - no line
+   * of this cell sits there - and the stock facts that are the reason it is listed.
+   */
   locations: BoardCellLocation[];
+  /**
+   * The agents' warehouse-suffix ownership group whose locations are listed above alongside
+   * the ones this cell's lines name (`BB` for BRW-BB / MWH-BB / DC1-BB). Several, joined by
+   * " / ", when the cell holds orders of agents in different groups. Null when none could be
+   * resolved, and `location_group_note` then says why.
+   */
+  location_group?: string | null;
+  /** Why only the line's own location is listed. Set ONLY when `location_group` is null. */
+  location_group_note?: string | null;
   contributions: BoardContribution[];
   /** Contributions whose sales order states no location for them. */
   unplannable_count: number;
