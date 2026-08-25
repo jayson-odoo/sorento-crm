@@ -54,6 +54,7 @@ class WarehouseService:
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = None,
         warehouse_ids: Optional[list[str]] = None,
+        segment: Optional[str] = None,
     ):
         """List warehouses. Supports sort by warehouse_code, warehouse_name, location, is_active, created_at, updated_at, zones_count, stock_count."""
         from sqlalchemy import select
@@ -83,6 +84,9 @@ class WarehouseService:
 
         if warehouse_ids is not None:
             q = q.filter(Warehouse.id.in_(warehouse_ids))
+
+        if segment:
+            q = q.filter(Warehouse.segment == segment)
 
         if query:
             q = q.filter(
@@ -626,6 +630,9 @@ class StockService:
         status: Optional[str] = None,
         entities: Optional[list[str]] = None,
         exclude_zero_system_adjustment: bool = False,
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+        requested_qty: Optional[int] = None,
     ):
         """List stock with product and warehouse info.
 
@@ -638,8 +645,33 @@ class StockService:
                 only product matches translate into a filter (Stock.product_id IN ...). Any
                 other resolved type is echoed back but does not narrow the listing because
                 stock rows are keyed by product + warehouse only.
+            contact_id: The contact this question is being asked ON BEHALF OF. Its
+                presence is what switches the stock-visibility policy ON - the staff
+                web grid calls with no contact and is deliberately untouched, so
+                flipping the DEFAULT policy row to `compact` for the chatbot cannot
+                break /inventory/stock (PLAN "Enforcement", AC-A7).
+            space_id: Respond.io workspace id, only to disambiguate `contact_id` when
+                it is a Respond.io id.
+            requested_qty: How many units the contact asked for. Only read in
+                `availability` mode, where it turns "needs_quantity" into a yes/no.
         """
-        from sqlalchemy import or_, func
+        from sqlalchemy import false as sa_false, or_, func
+        from app.services.stock_visibility import resolve_policy
+
+        # --- stock visibility policy (chatbot path only) ----------------------
+        # Resolved FIRST so an unresolvable contact costs nothing: same fail-closed
+        # answer company scope already gives when contact params name nobody, and
+        # with NO `stock_visibility` block, which would otherwise claim a policy was
+        # applied when none resolved (AC-A5).
+        policy = None
+        if contact_id:
+            policy = resolve_policy(self.db, contact_id, space_id)
+            if policy is None:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
         from sqlalchemy.orm import selectinload
         from app.models.product import Product, ProductCategory
         from app.services.entity_resolver import (
@@ -689,6 +721,15 @@ class StockService:
 
         if warehouse_ids:
             q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
+
+        # The policy narrows what company scope already allowed; it never widens.
+        # An empty allow-list is a real configuration ("this contact is told about
+        # no stock at all"), so it filters to nothing rather than being ignored.
+        if policy is not None and policy.warehouse_ids is not None:
+            if policy.warehouse_ids:
+                q = q.filter(Stock.warehouse_id.in_(list(policy.warehouse_ids)))
+            else:
+                q = q.filter(sa_false())
 
         resolved_wh_ids = resolve_identifier(
             self.db,
@@ -802,6 +843,13 @@ class StockService:
                 )
             )
 
+        # Snapshot of the FILTERED query before the sort block adds its joins and
+        # ordering. The compact / availability blocks aggregate over exactly the
+        # rows this listing would have returned - same company scope, same policy
+        # warehouses, same product filters - without paging or re-deriving any of
+        # it, which is what keeps the two answers from ever disagreeing.
+        policy_q = q
+
         sort_col = None
         if sort and dir in ('asc', 'desc'):
             if sort_key in ('product_code', 'product_name', 'category_name', 'reorder_level'):
@@ -853,7 +901,8 @@ class StockService:
         # over row `updated_at`, so this makes the MCP report the last real import
         # globally. FE never renders `updated_at` (type-only field), so this override
         # is invisible there.
-        if stock_items:
+        last_import_at = None
+        if stock_items or policy is not None:
             last_import_at = (
                 self.db.query(func.max(StockLedger.created_at))
                 .filter(StockLedger.transaction_type == "BULK_IMPORT")
@@ -895,7 +944,147 @@ class StockService:
             if alternatives:
                 payload["alternatives"] = alternatives
                 payload["relaxed_axis"] = "entity"
+
+        if policy is not None:
+            self._apply_stock_visibility(
+                payload,
+                policy=policy,
+                policy_q=policy_q,
+                last_import_at=last_import_at,
+                requested_qty=requested_qty,
+                page=page,
+                limit=limit,
+            )
         return payload
+
+    # ------------------------------------------------------ stock visibility
+
+    def _apply_stock_visibility(
+        self,
+        payload: dict,
+        *,
+        policy,
+        policy_q,
+        last_import_at,
+        requested_qty: Optional[int],
+        page: int,
+        limit: int,
+    ) -> None:
+        """Attach the visibility block(s) and, for the two summary modes, empty `data`.
+
+        `compact` and `availability` return NO rows at all rather than rows with the
+        quantity stripped: a stripped row still names every location it was found in
+        and how many there were, and the raw (non-render) response is readable by any
+        direct MCP caller, so empty is the only shape that cannot leak.
+        """
+        from sqlalchemy import func
+
+        # NULL stays null on the wire: "every location" is a different answer from
+        # "these named ones", and collapsing it to a list would make the admin card
+        # show a snapshot that silently stops tracking new warehouses.
+        warehouse_codes = None
+        if policy.warehouse_ids is not None:
+            warehouse_codes = sorted(
+                code
+                for (code,) in self.db.query(Warehouse.warehouse_code)
+                .filter(Warehouse.id.in_(list(policy.warehouse_ids)))
+                .all()
+            ) if policy.warehouse_ids else []
+
+        payload["stock_visibility"] = {
+            "mode": policy.mode,
+            "warehouse_codes": warehouse_codes,
+            "source": policy.source,
+        }
+        # n8n's "_Data last updated_" footer reads the MCP envelope's
+        # `last_updated_at`, which is walked out of the body. The summary modes
+        # carry no rows to walk, so the payload states it directly.
+        payload["last_updated_at"] = last_import_at
+
+        if policy.mode == "detailed":
+            return
+
+        rows = (
+            policy_q.with_entities(
+                Stock.product_id.label("product_id"),
+                Warehouse.warehouse_code.label("warehouse_code"),
+                func.sum(Stock.quantity_on_hand).label("on_hand"),
+            )
+            .join(Warehouse, Warehouse.id == Stock.warehouse_id)
+            .group_by(Stock.product_id, Warehouse.warehouse_code)
+            .all()
+        )
+        product_ids = {str(row.product_id) for row in rows}
+        products = (
+            self.db.query(Product)
+            .filter(Product.id.in_(product_ids))
+            .all()
+            if product_ids
+            else []
+        )
+        products_by_id = {str(p.id): p for p in products}
+
+        per_product: dict[str, list] = {}
+        for row in rows:
+            per_product.setdefault(str(row.product_id), []).append(row)
+
+        ordered_ids = sorted(
+            per_product,
+            key=lambda pid: (
+                getattr(products_by_id.get(pid), "product_code", None) or "",
+                pid,
+            ),
+        )
+
+        payload["data"] = []
+        payload["pagination"] = {"total": 0, "page": page, "limit": limit}
+        payload["empty"] = True
+
+        if policy.mode == "compact":
+            payload["stock_summary"] = [
+                {
+                    "product_id": pid,
+                    "product_code": getattr(products_by_id.get(pid), "product_code", None),
+                    "product_name": getattr(products_by_id.get(pid), "product_name", None),
+                    "total_on_hand": sum(int(r.on_hand or 0) for r in per_product[pid]),
+                    "locations": [
+                        {
+                            "warehouse_code": r.warehouse_code,
+                            "quantity_on_hand": int(r.on_hand or 0),
+                        }
+                        for r in sorted(
+                            per_product[pid], key=lambda r: r.warehouse_code or ""
+                        )
+                    ],
+                    "flags": {
+                        "discontinued": bool(
+                            getattr(products_by_id.get(pid), "is_discontinued", False)
+                        )
+                    },
+                }
+                for pid in ordered_ids
+            ]
+            return
+
+        # availability: a yes/no judged against the allowed locations only. No
+        # quantity of any kind reaches the block - not the total, not the
+        # per-location split - because a number here is exactly what the dealer
+        # policy exists to withhold.
+        payload["stock_availability"] = [
+            {
+                "product_id": pid,
+                "product_code": getattr(products_by_id.get(pid), "product_code", None),
+                "product_name": getattr(products_by_id.get(pid), "product_name", None),
+                "needs_quantity": requested_qty is None,
+                "requested_qty": requested_qty,
+                "available": (
+                    None
+                    if requested_qty is None
+                    else sum(int(r.on_hand or 0) for r in per_product[pid]) >= requested_qty
+                ),
+            }
+            for pid in ordered_ids
+        ]
 
     def _stock_entity_alternatives(self, product_ids: set[str]) -> list[dict]:
         """Data-bearing variant/neighbour alternatives for an empty stock result.

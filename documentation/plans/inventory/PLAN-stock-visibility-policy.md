@@ -1,6 +1,6 @@
 # PLAN: Stock visibility policy (per contact, per access type)
 
-**Status:** Approved 2026-08-25. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 next.
+**Status:** Approved 2026-08-25. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 next.
 **UAC:** `stock-visibility-policy-acceptance-criteria.md` (alongside)
 **Domain:** inventory / chatbot (n8n `sub-get-results` `Fss5aAaXthJSWpZCgKiKR`, MCP `crm_inventory_stock_balance_list`)
 
@@ -230,7 +230,7 @@ block (`stock_visibility`, `stock_summary`, `stock_availability`) or they are si
 |---|---|---|---|
 | S0 | Plan + UAC (this file) | - | done |
 | S1 | FE mock: `StockVisibilitySection` against a mocked service, three states, 375 / 1280 | Phase 1 | done (browser run deferred to S6) |
-| S2 | Backend: migration + model + `stock_visibility.py` resolver + enforcement in `list_stock` + CRUD routes; pytest first (resolution tiers, most-restrictive merge, fail-closed, empty `data` in compact/availability, staff path untouched, `response_model` fields present) | Phase 2 | Postgres only, seed own chain, never `LIMIT 1` |
+| S2 | Backend: migration + model + `stock_visibility.py` resolver + enforcement in `list_stock` + CRUD routes; pytest first (resolution tiers, most-restrictive merge, fail-closed, empty `data` in compact/availability, staff path untouched, `response_model` fields present) | Phase 2 | done - `tests/test_stock_visibility_policy.py`, 34 passed |
 | S3 | MCP: catalog param + presenter branches; pytest on envelope shapes | Phase 2 | restart MCP session |
 | S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | |
 | S5 | n8n: transformer + structurer + pending-quantity turn; live-envelope harness capture | separate n8n plan-build-test-promote; promote = user's call | |
