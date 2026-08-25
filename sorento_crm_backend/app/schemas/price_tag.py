@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -42,10 +42,25 @@ class PriceTagRequestLineResponse(BaseModel):
     alternatives: list[Any] = []
     included_accessories: Optional[str] = None
     sort_order: int
-    marketing_price_override: Optional[Decimal] = None
+    # float, not Decimal, on every money field a CLIENT reads. Pydantic
+    # serialises a Decimal as a JSON string, and the detail page does
+    # `marketing_price_override.toFixed(2)` - which on a string is not a
+    # function, so the page threw the moment a line carried an override.
+    # ``ResolvedLineData`` already answers in float; these now agree with it.
+    marketing_price_override: Optional[float] = None
     marketing_override_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+    # Resolved, not stored. A line row holds a product id and nothing a person
+    # can read, so the CRM detail page draws these four - and it drew four
+    # blanks until they were declared here, because ``response_model`` removes
+    # an undeclared field without a word. Filled by the detail route from
+    # ``tag_data_service``; the DOCUMENT still stores no figures (ADR 0008).
+    code: str = ""
+    name: str = ""
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +127,202 @@ class PriceTagRequestListItem(BaseModel):
 class TransitionPayload(BaseModel):
     status: str
     note: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Tag template document (the layer model, in Python)
+#
+# The document itself is JSONB and the API takes it as a plain ``dict``, on
+# purpose: the editor owns the shape and a template saved by an older build has
+# to keep opening. What needs a schema is the SEED - eight documents nobody
+# typed into the editor, written by hand from a PDF, whose only reader is a
+# renderer that draws nothing at all for a layer kind it does not recognise. A
+# mistyped ``price_badge`` would ship as a tag with no price on it and look like
+# a pricing bug.
+#
+# Mirrors `lib/dealer-kit/tag-template-types.ts`. ``extra='forbid'`` throughout,
+# because the error worth catching is a key spelled ``asset_id`` where the
+# renderer reads ``assetId`` - which a permissive model accepts in silence.
+# ---------------------------------------------------------------------------
+
+
+SLOT_BINDINGS = (
+    "product_image",
+    "code",
+    "name",
+    "dimensions",
+    "spec_lines",
+    "included_accessories",
+    "list_price",
+    "sell_price",
+    "badges",
+    "alternatives",
+    "accessories",
+    "set_members",
+)
+
+
+class _StrictProps(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ImageSourceAsset(_StrictProps):
+    type: Literal["asset"]
+    assetId: str
+
+
+class ImageSourceAttachment(_StrictProps):
+    type: Literal["product_attachment"]
+    attachmentId: str
+
+
+class CropRect(_StrictProps):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class ImageLayerPropsDoc(_StrictProps):
+    kind: Literal["image"]
+    source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
+    fit: Literal["cover", "contain"] = "contain"
+    cropRect: Optional[CropRect] = None
+    maskShape: Optional[Literal["none", "circle"]] = "none"
+
+
+class TextLayerPropsDoc(_StrictProps):
+    kind: Literal["text"]
+    text: str
+    fontFamily: str
+    fontSize: float
+    fontWeight: int
+    color: str
+    align: Literal["left", "center", "right"]
+    lineHeight: float
+    letterSpacing: float
+
+
+class ShapeLayerPropsDoc(_StrictProps):
+    kind: Literal["shape"]
+    shape: Literal["rect", "rounded_rect", "ellipse", "line"]
+    fill: str
+    stroke: str
+    strokeWidth: float
+    cornerRadius: float
+
+
+class ProductSlotLayerPropsDoc(_StrictProps):
+    kind: Literal["product_slot"]
+    fieldKey: str
+
+
+class PriceFieldLayerPropsDoc(_StrictProps):
+    kind: Literal["price_field"]
+    priceType: Literal["list", "sell", "both"]
+    format: str
+
+
+class PriceBadgeLayerPropsDoc(_StrictProps):
+    kind: Literal["price_badge"]
+    variant: Literal["list_only", "promo"]
+    fill: str
+    textColor: str
+    cornerRadius: float
+    showNett: bool
+
+
+class BadgeLayerPropsDoc(_StrictProps):
+    kind: Literal["badge"]
+    assetId: str
+
+
+class GroupBindingDoc(_StrictProps):
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+
+
+class GroupLayerPropsDoc(_StrictProps):
+    kind: Literal["group"]
+    children: list[str]
+    binding: Optional[GroupBindingDoc] = None
+
+
+TagLayerPropsDoc = Annotated[
+    Union[
+        ImageLayerPropsDoc,
+        TextLayerPropsDoc,
+        ShapeLayerPropsDoc,
+        ProductSlotLayerPropsDoc,
+        PriceFieldLayerPropsDoc,
+        PriceBadgeLayerPropsDoc,
+        BadgeLayerPropsDoc,
+        GroupLayerPropsDoc,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class TagLayerDoc(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    type: Literal[
+        "image", "text", "shape", "product_slot", "price_field", "price_badge",
+        "badge", "group",
+    ]
+    x_mm: float
+    y_mm: float
+    width_mm: float
+    height_mm: float
+    rotation_deg: float = 0
+    z_index: int
+    locked: bool = False
+    visible: bool = True
+    slot_binding: Optional[Literal[SLOT_BINDINGS]] = None  # type: ignore[valid-type]
+    text_override: Optional[str] = None
+    props: TagLayerPropsDoc
+
+    @model_validator(mode="after")
+    def _type_agrees_with_props(self) -> "TagLayerDoc":
+        """``type`` and ``props.kind`` are the same fact written twice.
+
+        The renderers switch on ``props.kind`` and the inspector switches on
+        ``type``; a layer where the two disagree draws as one thing and edits as
+        another, which is not a state any code downstream checks for.
+        """
+        if self.type != self.props.kind:
+            raise ValueError(
+                f"layer type '{self.type}' does not match props kind '{self.props.kind}'"
+            )
+        return self
+
+
+class TagTemplateDocModel(BaseModel):
+    """The whole document, with every internal reference checked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    layers: list[TagLayerDoc]
+    width_mm: float
+    height_mm: float
+
+    @model_validator(mode="after")
+    def _references_resolve(self) -> "TagTemplateDocModel":
+        ids = [layer.id for layer in self.layers]
+        duplicates = {value for value in ids if ids.count(value) > 1}
+        if duplicates:
+            raise ValueError(f"duplicate layer ids: {sorted(duplicates)}")
+
+        known = set(ids)
+        for layer in self.layers:
+            if isinstance(layer.props, GroupLayerPropsDoc):
+                missing = [child for child in layer.props.children if child not in known]
+                if missing:
+                    raise ValueError(
+                        f"group '{layer.id}' names layers that are not in the document: {missing}"
+                    )
+        return self
 
 
 # ---------------------------------------------------------------------------

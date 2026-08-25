@@ -52,10 +52,18 @@ const SLOT_BINDING_OPTIONS = [
  * The fonts every install has. Brand fonts uploaded as `Asset.kind='font'` are
  * appended to this list by the editor, so the inspector offers both without the
  * two lists having to know about each other.
+ *
+ * `Bebas Neue` and `Jost` are the seeded templates' stand-ins for the flyer's
+ * licensed Century Gothic and Myriad Pro (D32). They are here because a select
+ * that cannot display its own current value reads as a bug: without them the
+ * font box on every seeded text layer would show blank, and picking anything
+ * would silently restyle the tag. They are loaded by `TAG_FONT_STYLESHEET`.
  */
 export const STATIC_FONT_OPTIONS: SearchableSelectOption[] = [
   { value: 'DM Sans', label: 'DM Sans' },
   { value: 'Inter', label: 'Inter' },
+  { value: 'Bebas Neue', label: 'Bebas Neue' },
+  { value: 'Jost', label: 'Jost' },
   { value: 'Arial', label: 'Arial' },
   { value: 'Georgia', label: 'Georgia' },
   { value: 'Times New Roman', label: 'Times New Roman' },

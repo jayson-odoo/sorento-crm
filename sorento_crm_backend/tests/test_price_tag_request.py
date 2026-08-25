@@ -28,6 +28,7 @@ from app.models.price_tag import (
     PriceTagRequestLine,
 )
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product_set import ProductSet, ProductSetMember
 from app.models.sales_agent import SalesAgent
 
 # Service under test.
@@ -174,6 +175,37 @@ def _make_customer(
     db.add(cust)
     db.flush()
     return cust
+
+
+def _make_product_set(db: Session, *, member: Product | None = None) -> ProductSet:
+    """Seed a ProductSet holding one member.
+
+    A real row, not a fabricated uuid: ``price_tag_request_lines.product_set_id``
+    is a foreign key, so an invented id is refused by Postgres before the guard
+    under test ever runs.
+    """
+    product = member or _make_product(db, class_label="Bathroom Furniture")
+    product_set = ProductSet(
+        id=str(uuid.uuid4()),
+        set_code=unique_code("set"),
+        name=unique_code("Set"),
+        company_id=_SORENTO_COMPANY_ID,
+    )
+    db.add(product_set)
+    db.flush()
+
+    db.add(
+        ProductSetMember(
+            id=str(uuid.uuid4()),
+            product_set_id=product_set.id,
+            product_id=product.id,
+            quantity=1,
+            contributes_to_price=True,
+            sort_order=0,
+        )
+    )
+    db.flush()
+    return product_set
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +487,7 @@ class TestSetGuard:
     def test_bathroom_furniture_as_set_allowed(self, db: Session):
         """Product with class 'Bathroom Furniture' submitted as product_set line is allowed."""
         contact = _make_contact(db)
+        product_set = _make_product_set(db)
 
         # No actual set guard check for product_set lines, so this should succeed.
         req = PriceTagRequestService.submit_request(
@@ -467,7 +500,7 @@ class TestSetGuard:
                 "lines": [
                     {
                         "line_type": "product_set",
-                        "product_set_id": str(uuid.uuid4()),
+                        "product_set_id": product_set.id,
                     },
                 ],
             },

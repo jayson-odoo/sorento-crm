@@ -203,16 +203,30 @@ export interface TagLayer {
 export type TagTemplateFamily =
   | 'sink_combo'
   | 'ala_carte'
+  | 'art_basin'
   | 'wc'
+  | 'urinal'
   | 'shower'
   | 'mirror'
   | 'mirror_cabinet'
   | 'furniture_set';
 
+/**
+ * The families a tag can belong to, in catalogue order.
+ *
+ * `art_basin` and `urinal` joined the list when the eight starter templates
+ * were seeded from `Sorento Pricetag Template.pdf` (D32): the PDF prints a tag
+ * for each and neither fits any of the others - an art basin carries no
+ * warranty badges at all, and a urinal's spec line is an inlet position rather
+ * than a trap. Without them both seeded templates would show their raw family
+ * key in the listing and neither could be picked in the dialog.
+ */
 export const TAG_TEMPLATE_FAMILIES: { value: TagTemplateFamily; label: string }[] = [
   { value: 'sink_combo', label: 'Sink Combo' },
   { value: 'ala_carte', label: 'Ala Carte' },
+  { value: 'art_basin', label: 'Art Basin' },
   { value: 'wc', label: 'WC' },
+  { value: 'urinal', label: 'Urinal' },
   { value: 'shower', label: 'Shower' },
   { value: 'mirror', label: 'Mirror' },
   { value: 'mirror_cabinet', label: 'Mirror Cabinet' },

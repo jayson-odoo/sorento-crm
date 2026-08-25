@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from typing import Iterable, NamedTuple, Optional
+from typing import Iterable, Iterator, NamedTuple, Optional
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -445,10 +445,27 @@ class StoredObject(NamedTuple):
     key: str
 
 
+def _tag_layer_shapes(value: str) -> Iterator[dict]:
+    """The jsonb containment shapes that mean "a tag layer names this asset".
+
+    Two per document shape, because a layer carries its asset id in one of two
+    places and both are live: a ``badge`` layer (and an ``image`` layer saved
+    before S3b) puts it straight on ``props.assetId``, while an ``image`` layer
+    saved since puts it under ``props.source``. Missing either would fail the
+    guard OPEN - see the docstring below for why that is the direction that
+    costs artwork.
+    """
+    for holder in ({"assetId": value}, {"source": {"type": "asset", "assetId": value}}):
+        # A tag TEMPLATE is layers all the way down; a tag SHEET wraps the same
+        # layers in sheets and placed tags.
+        yield {"layers": [{"props": holder}]}
+        yield {"sheets": [{"tags": [{"layers": [{"props": holder}]}]}]}
+
+
 def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     """Of these assets, the ones something can still show.
 
-    Two things name an asset:
+    Four things name an asset:
 
     * a ``page_version.doc`` binding it as ``style.backgroundAssetId`` - ANY
       version, published, staging or an unlabelled draft. Rollback is a label
@@ -458,6 +475,12 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     * a ``flyer_reading.reading_json`` still claiming it as a page banner, which
       is what lets a brochure be deleted before its reading without stranding
       the artwork.
+    * a ``tag_template.doc`` drawing it as a badge or an image layer. The eight
+      starter templates are almost nothing BUT badge layers, so for every badge
+      the seed uploads this is the ONLY thing that names it.
+    * a ``page_version.doc`` holding a TAG SHEET - the same layers, wrapped in
+      ``sheets -> tags``, which the background containment test above cannot see
+      because it is a different document shape entirely.
 
     A jsonb containment test per candidate, OR'd into ONE statement, so the
     database hands back only documents that really name one of them; which ids
@@ -487,7 +510,7 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     if not ids:
         return set()
 
-    from app.models.dealer_kit import FlyerReadingRecord, PageVersion
+    from app.models.dealer_kit import FlyerReadingRecord, PageVersion, TagTemplate
 
     # Local: ``flyer_reading_service`` imports this module, and the reading's
     # JSON shape belongs to it rather than to the library.
@@ -495,8 +518,11 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
 
     referenced: set[str] = set()
 
+    tag_shapes = [shape for value in ids for shape in _tag_layer_shapes(value)]
+
     # None = every company. See the docstring: scoping this read is what turns
-    # a fail-closed guard into a fail-open one.
+    # a fail-closed guard into a fail-open one. ``TagTemplate`` is scoped, so it
+    # needs this as much as the reading does.
     with company_scope(db, None):
         docs = (
             db.query(PageVersion.doc)
@@ -507,13 +533,25 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
                             {"sections": [{"style": {"backgroundAssetId": value}}]}
                         )
                         for value in ids
-                    ]
+                    ],
+                    *[PageVersion.doc.contains(shape) for shape in tag_shapes],
                 )
             )
             .all()
         )
         for (doc,) in docs:
-            referenced |= background_asset_ids(doc) & ids
+            # Both readers, on every hit: one page_version row is a sectioned
+            # page OR a tag sheet, and asking which it is would be a third
+            # answer to a question these two already answer.
+            referenced |= (background_asset_ids(doc) | tag_sheet_asset_ids(doc)) & ids
+
+        templates = (
+            db.query(TagTemplate.doc)
+            .filter(or_(*[TagTemplate.doc.contains(shape) for shape in tag_shapes]))
+            .all()
+        )
+        for (doc,) in templates:
+            referenced |= tag_sheet_asset_ids(doc) & ids
 
         readings = (
             db.query(FlyerReadingRecord.reading_json)

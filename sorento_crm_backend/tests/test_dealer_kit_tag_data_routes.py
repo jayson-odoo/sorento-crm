@@ -530,3 +530,156 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     assert row["sell_price"] == 599.0
     assert row["dimensions"] == "800 x 500 x 220 mm"
     assert row["spec_lines"] == "One line\nAnother line"
+
+
+# ---------------------------------------------------------------------------
+# Request DETAIL lines carry what the detail page draws
+# ---------------------------------------------------------------------------
+
+
+def test_request_detail_lines_carry_code_name_and_prices(api):
+    """The CRM detail page draws `line.code`, `line.name` and both prices.
+
+    None of the four is a column on ``price_tag_request_lines`` - a line stores
+    a product id and nothing else - so a response model that declares only the
+    columns hands the page four blanks and the grid reads as a request with no
+    products in it. Asserted ON THE WIRE because ``response_model`` drops an
+    undeclared field silently.
+    """
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    promotion = _promotion(db, product)
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "needed_by_date": date.today() + timedelta(days=7),
+            "promotion_id": promotion.id,
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": product.id,
+                    "show_promo_price": True,
+                    "quantity": 1,
+                }
+            ],
+        },
+    )
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/dealer-kit/price-tag-requests/{request.id}")
+
+    assert res.status_code == 200, res.text
+    line = res.json()["lines"][0]
+    assert line["code"] == product.product_code
+    assert line["name"] == product.product_name
+    assert line["list_price"] == 1599.0
+    assert line["sell_price"] == 599.0
+
+
+def test_request_detail_line_for_a_set_carries_the_set_code_and_name(api):
+    """A set line names the SET, not one of its members."""
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product_set = _product_set(db, [_product(db, list_price="300.00")])
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "needed_by_date": date.today() + timedelta(days=7),
+            "lines": [
+                {
+                    "line_type": "product_set",
+                    "product_set_id": product_set.id,
+                    "quantity": 1,
+                }
+            ],
+        },
+    )
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/dealer-kit/price-tag-requests/{request.id}")
+
+    assert res.status_code == 200, res.text
+    line = res.json()["lines"][0]
+    assert line["code"] == product_set.set_code
+    assert line["name"] == product_set.name
+    assert line["list_price"] == 300.0
+    assert line["sell_price"] is None
+
+
+def test_request_detail_line_survives_a_product_that_is_gone(api):
+    """A line the resolver cannot answer for still appears, with blank text.
+
+    The resolver SKIPS a line whose product has disappeared. Dropping the line
+    from the detail response too would make a request look shorter than it is,
+    so the line is returned with what the row itself knows.
+    """
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "needed_by_date": date.today() + timedelta(days=7),
+            "lines": [
+                {"line_type": "product", "product_id": product.id, "quantity": 1}
+            ],
+        },
+    )
+    db.commit()
+
+    from app.models.product import Product
+
+    db.query(Product).filter(Product.id == product.id).update({"is_active": False})
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/dealer-kit/price-tag-requests/{request.id}")
+
+    assert res.status_code == 200, res.text
+    lines = res.json()["lines"]
+    assert len(lines) == 1
+    assert lines[0]["product_id"] == product.id

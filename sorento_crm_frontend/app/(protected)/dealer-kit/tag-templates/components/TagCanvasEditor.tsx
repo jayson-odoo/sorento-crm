@@ -503,10 +503,26 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
       const group = layers.find((layer) => layer.id === groupId);
       const binding =
         group && group.props.kind === 'group' ? group.props.binding : undefined;
+
+      // What the block is FOR, not only what it already holds. Asking the
+      // binding alone works for a block the editor built - "Add set" leaves a
+      // set id behind - but not for a TEMPLATE, which ships unbound on purpose:
+      // the seeded bathroom-furniture tag is entirely about a set, and it could
+      // only ever be offered a product picker, so the one thing it exists to be
+      // bound to was unreachable. A `set_members` slot is the block saying so.
+      const childIds =
+        group && group.props.kind === 'group' ? new Set(group.props.children) : null;
+      const aboutASet =
+        Boolean(binding?.product_set_id) ||
+        (childIds != null &&
+          layers.some(
+            (layer) => childIds.has(layer.id) && layer.slot_binding === 'set_members',
+          ));
+
       setPicker({
         kind: 'rebind',
         groupId,
-        mode: binding?.product_set_id ? 'set' : 'product',
+        mode: aboutASet ? 'set' : 'product',
       });
     },
     [layers],

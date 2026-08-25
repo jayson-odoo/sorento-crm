@@ -24,7 +24,7 @@ import type {
   TagBindingData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
-import { ensureFontsLoaded } from '@/lib/dealer-kit/fonts';
+import { ensureFontsLoaded, ensureSeedFontsLoaded } from '@/lib/dealer-kit/fonts';
 import {
   getProductSetTagData,
   getProductTagData,
@@ -141,6 +141,15 @@ export function useKitLibrary(): KitLibrary {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // The seeded templates' stand-in faces (D32). Loaded unconditionally rather
+  // than off the asset list, because they come from a stylesheet rather than
+  // from the library - and every one of the eight starter templates is set in
+  // them, so a canvas drawn before they arrive lays out in a system sans and
+  // never re-measures.
+  useEffect(() => {
+    void ensureSeedFontsLoaded();
+  }, []);
 
   // Konva measures text against the fonts loaded AT THAT MOMENT, so the faces
   // have to reach the document before a layer using one is drawn.

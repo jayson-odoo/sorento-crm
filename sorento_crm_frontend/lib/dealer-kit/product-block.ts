@@ -34,6 +34,7 @@ import {
   imageSourceOf,
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
+import { formatTagPrice } from './price-badge';
 
 // ---------------------------------------------------------------------------
 // Reading a bound value
@@ -57,6 +58,19 @@ export function resolveSlotText(
   data: TagBindingData | null | undefined,
 ): string | null {
   if (!layer.slot_binding || !data) return null;
+
+  // A price on a TEXT layer, which is not the same thing as a price badge and
+  // does not replace it. The flyer prints `LP: RM 1,550` as an ordinary line
+  // above the promotional block on five of its eight tags, and a template that
+  // could not resolve that line would print the placeholder it was seeded with
+  // - a made-up figure on a real tag, which is the worst failure available
+  // here. The BADGE stays the way a promotional price is drawn (D26); this is
+  // the plain line beside it.
+  if (layer.slot_binding === 'list_price' || layer.slot_binding === 'sell_price') {
+    const { listPrice, offerPrice } = priceBadgeInput(data);
+    const amount = layer.slot_binding === 'list_price' ? listPrice : offerPrice;
+    return amount == null ? null : formatTagPrice(amount);
+  }
 
   if (data.kind === 'line') {
     switch (layer.slot_binding) {

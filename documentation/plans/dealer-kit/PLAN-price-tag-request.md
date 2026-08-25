@@ -391,9 +391,19 @@ S1 and S3 can run in parallel after S0. S4 needs both S2 (request lines to bind)
 
 ## 8. S3b - Enrich the tag canvas with the catalogue builder's data layer
 
-**Status:** Slices 1-4 BUILT 2026-08-25 (types + `price_badge`, tag-data endpoints and bound
-blocks, assets/product images/fonts, presets). Slice 5 (seed the eight templates) and AC-L.9/L.10
-are outstanding. Builds on S3/S4/S5 as merged in PR #289.
+**Status:** Slices 1-5 BUILT 2026-08-25 (types + `price_badge`, tag-data endpoints and bound
+blocks, assets/product images/fonts, presets, and the eight seeded starter templates).
+AC-L.9 and AC-L.10 are met: `scripts/seed_tag_templates.py` uploads the 28 manifest assets and
+inserts the eight templates idempotently, and each family is screenshotted beside its PDF page in
+`seed-assets/verification/` with the gap list in that folder's README. Builds on S3/S4/S5 as
+merged in PR #289.
+
+**Deviation recorded during slice 5.** The eight families use the EXISTING
+`TagTemplateFamily` keys where one fits (`sink_combo`, `ala_carte`, `mirror_cabinet`, `shower`,
+`wc`, `furniture_set`) and add the two the list genuinely lacked, `art_basin` and `urinal`. The
+alternative - seeding keys outside the list - would have shown the raw key in the listing and made
+neither pickable in the template dialog. `lineFamily` in `TagSheetDesigner` still never selects the
+two new families; that is named in the verification README as outstanding.
 
 ### Why
 

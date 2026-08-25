@@ -17,7 +17,11 @@
 import { use, useEffect, useState } from 'react';
 
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
-import { ensureFontsLoaded, type TagFont } from '@/lib/dealer-kit/fonts';
+import {
+  ensureFontsLoaded,
+  ensureSeedFontsLoaded,
+  type TagFont,
+} from '@/lib/dealer-kit/fonts';
 import TagSheetRenderer, {
   type ResolvedLineData,
 } from './components/TagSheetRenderer';
@@ -92,8 +96,14 @@ export default function TagSheetPrintPage({
       .then(async (body) => {
         // Fonts BEFORE the ready flag. Chromium prints whatever is loaded at
         // that moment, and a brand face that arrives afterwards prints as the
-        // fallback typeface with nothing on screen to say so.
-        await ensureFontsLoaded(body.fonts ?? []);
+        // fallback typeface with nothing on screen to say so. The seeded
+        // templates' stand-in faces come from a stylesheet rather than the
+        // library, so they are waited for alongside the uploaded brand fonts
+        // and not instead of them.
+        await Promise.all([
+          ensureFontsLoaded(body.fonts ?? []),
+          ensureSeedFontsLoaded(),
+        ]);
         if (live) setPayload(body);
       })
       .catch((error: unknown) => {

@@ -35,8 +35,21 @@ export type { TagLayerDisplay };
  *
  * Konva needs a real HTMLImageElement rather than a URL, and re-rendering with
  * a half-loaded one paints nothing, so the element only reaches the stage once
- * it has decoded. `crossOrigin` is anonymous because the bytes come from the
- * CDN through a signed URL.
+ * it has decoded.
+ *
+ * **No `crossOrigin`.** It used to be `anonymous`, for a reason that does not
+ * hold: a signed URL needs no CORS, and `anonymous` makes the browser DISCARD
+ * an image whose response carries no `Access-Control-Allow-Origin`. The R2
+ * bucket serving library assets sends none, so every badge, icon and diagram on
+ * a tag failed to decode and sat on "Loading" forever - which is exactly what
+ * the eight seeded templates showed, all 28 pieces of artwork, on a canvas that
+ * was otherwise correct.
+ *
+ * What `anonymous` would buy is an UNTAINTED canvas, and nothing here wants
+ * one: the tag PDF is rendered by headless Chromium against the print page, not
+ * by `stage.toDataURL()`, and there is no `toDataURL` anywhere under
+ * `dealer-kit/`. Bring it back only alongside a client-side canvas export - and
+ * with a CORS rule on the bucket, or the export will draw blanks instead.
  */
 function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -48,7 +61,6 @@ function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
     }
     let live = true;
     const element = new window.Image();
-    element.crossOrigin = 'anonymous';
     element.src = url;
     element.onload = () => {
       if (live) setImage(element);
