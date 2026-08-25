@@ -54,6 +54,7 @@ listeners record the policy row change like any other master-data edit.
 | B10 | Any mode | list | `last_updated_at` present and equals the BULK_IMPORT ledger timestamp, same as today | `test_last_updated_carried_on_every_mode` |
 | B11 | `response_model` for the list route | schema | declares `stock_visibility`, `stock_summary`, `stock_availability` (lesson: undeclared fields vanish) | `test_response_model_declares_blocks` |
 | B12 | Company scope: contact belongs to company C1; stock in C2 warehouses | list, any mode | C2 stock never in rows, summaries or availability sums | `test_policy_composes_with_company_scope` |
+| B13 | `compact` / `availability`, a product named in `product_ids` has NO stock row in any allowed warehouse (out of stock, or its stock sits only in a location the policy hides) | list | the product STILL gets its block: `total_on_hand: 0` with `locations: []`, or `needs_quantity: true` / `available: false`. Silence is unreadable - "none left" and "I never found your product" arrive as the same empty reply. An id that names no product at all is still dropped | `test_compact_names_a_product_with_no_stock`, `test_availability_says_no_for_a_product_with_no_stock`, `test_availability_still_asks_for_a_product_with_no_stock` |
 
 ## C. CRUD API (backend)
 
@@ -76,6 +77,9 @@ listeners record the policy row change like any other master-data edit.
 | D4 | `availability` needs_quantity -> `result_type=stock_availability`, intro "How many units do you need?", item `flags.needs_quantity=true`, no field with a numeric value | `test_render_availability_ask` |
 | D5 | `availability` available true/false -> intro "Yes, we have stock." / "Sorry, we do not have enough stock for that quantity." | `test_render_availability_answer` |
 | D6 | `stock_visibility` block passes through on every envelope | `test_envelope_passthrough` |
+| D7 | `availability`, several products that disagree -> intro is the ask if ANY still needs a quantity, else "Here is the stock availability for the requested products." and the items carry their own flags (one yes/no would be a lie about one of them) | `test_render_availability_several_products_that_disagree`, `test_render_availability_ask_wins_over_a_mixed_answer` |
+| D8 | The three policy blocks reach the presenter as the backend declared them: `available` survives `_STOCK_HIDDEN_FIELDS` (where it means quantity_available on a ROW) and `warehouse_code` survives the Sage relabel. Stock ROWS keep every sanitizer they have today | `test_sanitizer_keeps_the_availability_answer`, `test_sanitizer_keeps_the_compact_location_codes`, `test_sanitizer_still_relabels_the_detailed_rows` |
+| D9 | `last_updated_at` on the summary modes is Malaysia time, like every row `updated_at` (the footer would otherwise read 8 hours early for exactly the contacts on the new formats) | `test_sanitizer_puts_last_updated_at_in_malaysia_time` |
 
 ## E. Frontend (vitest + agent-browser evidence)
 

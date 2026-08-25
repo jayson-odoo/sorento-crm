@@ -926,9 +926,28 @@ class StockService:
         )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
+        if policy is not None:
+            self._apply_stock_visibility(
+                payload,
+                policy=policy,
+                policy_q=policy_q,
+                last_import_at=last_import_at,
+                requested_qty=requested_qty,
+                requested_product_ids=resolved_input_product_ids,
+                page=page,
+                limit=limit,
+            )
+
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
         # rows. Offer data-bearing variant/neighbour alternatives on the empty path
         # ONLY - a non-empty result is byte-identical to before (AC-R1).
+        #
+        # LAST, and after the visibility blocks on purpose. The probe is best-effort
+        # by intent but not by mechanism: its trigram/variant queries swallow their
+        # own exceptions, and on Postgres a failed statement aborts the transaction,
+        # so every query AFTER it raises InFailedSqlTransaction. With the blocks
+        # built first, a probe that trips can lose only its own suggestions instead
+        # of taking the contact's whole stock answer down with it.
         if total == 0:
             # Best-effort: a suggestion probe must never turn a legitimately-empty
             # listing into a 500 (AC-R1). The pre-lookup + neighbour query run after
@@ -944,17 +963,6 @@ class StockService:
             if alternatives:
                 payload["alternatives"] = alternatives
                 payload["relaxed_axis"] = "entity"
-
-        if policy is not None:
-            self._apply_stock_visibility(
-                payload,
-                policy=policy,
-                policy_q=policy_q,
-                last_import_at=last_import_at,
-                requested_qty=requested_qty,
-                page=page,
-                limit=limit,
-            )
         return payload
 
     # ------------------------------------------------------ stock visibility
@@ -967,6 +975,7 @@ class StockService:
         policy_q,
         last_import_at,
         requested_qty: Optional[int],
+        requested_product_ids: set[str],
         page: int,
         limit: int,
     ) -> None:
@@ -1014,7 +1023,17 @@ class StockService:
             .group_by(Stock.product_id, Warehouse.warehouse_code)
             .all()
         )
-        product_ids = {str(row.product_id) for row in rows}
+        # The products to answer for = the ones with stock, PLUS every product the
+        # contact actually named. A product with no row in any allowed location
+        # would otherwise vanish, and its absence is unreadable: "we have none
+        # left" and "I never found what you asked for" arrive as the same silence,
+        # which is precisely the question a dealer asks. A named id that resolves
+        # to no product at all still gets nothing - it is dropped by the lookup
+        # below, because inventing a block would answer about a product that does
+        # not exist.
+        product_ids = {str(row.product_id) for row in rows} | {
+            str(pid) for pid in (requested_product_ids or set()) if pid
+        }
         products = (
             self.db.query(Product)
             .filter(Product.id.in_(product_ids))
@@ -1024,7 +1043,7 @@ class StockService:
         )
         products_by_id = {str(p.id): p for p in products}
 
-        per_product: dict[str, list] = {}
+        per_product: dict[str, list] = {pid: [] for pid in products_by_id}
         for row in rows:
             per_product.setdefault(str(row.product_id), []).append(row)
 

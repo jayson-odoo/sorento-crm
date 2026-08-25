@@ -474,6 +474,47 @@ def test_compact_multi_product_blocks(db):
     assert blocks["ZZT-SKU-B"]["total_on_hand"] == 2
 
 
+def test_compact_names_a_product_with_no_stock(db):
+    """B13. A product the contact NAMED still gets a block when it has no stock
+    in any allowed location.
+
+    Grouping only over the rows that came back drops that product silently, and
+    silence is the one answer the reader cannot interpret: "we have none left"
+    and "I never found what you asked for" arrive as the same empty reply. An
+    id that names no product at all is still dropped - inventing a block for it
+    would answer a question about a product that does not exist.
+    """
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    stocked = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-HAS")
+    bare = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-NONE")
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=stocked.id, warehouse_id=brw.id, on_hand=7
+    )
+    # `bare` HAS stock - just nowhere this contact is allowed to look.
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=bare.id, warehouse_id=dc1.id, on_hand=999
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="compact", warehouse_ids=[brw.id, brw_bb.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[stocked.id, bare.id, str(uuid.uuid4())], contact_id=contact.id
+    )
+
+    blocks = {b["product_code"]: b for b in result["stock_summary"]}
+    assert list(blocks) == ["ZZT-SKU-HAS", "ZZT-SKU-NONE"]
+    assert blocks["ZZT-SKU-HAS"]["total_on_hand"] == 7
+    assert blocks["ZZT-SKU-NONE"] == {
+        "product_id": bare.id,
+        "product_code": "ZZT-SKU-NONE",
+        "product_name": bare.product_name,
+        "total_on_hand": 0,
+        "locations": [],
+        "flags": {"discontinued": False},
+    }
+
+
 def test_compact_uses_on_hand_not_available(db):
     """B5. The basis is `quantity_on_hand` (today's answer); reserved is ignored,
     or the compact block would silently disagree with the detailed one."""
@@ -594,6 +635,63 @@ def test_availability_no_ignores_disallowed_warehouses(db):
     entry = result["stock_availability"][0]
     assert entry["available"] is False
     _assert_no_quantity_anywhere(result, {40, 500})
+
+
+def test_availability_says_no_for_a_product_with_no_stock(db):
+    """B13, dealer side. Nothing in the allowed pool is a NO, not a missing
+    entry: the dealer asked about this product and has to be told something."""
+    brw, _, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=500
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_qty=50
+    )
+
+    assert result["stock_availability"] == [
+        {
+            "product_id": p.id,
+            "product_code": p.product_code,
+            "product_name": p.product_name,
+            "needs_quantity": False,
+            "requested_qty": 50,
+            "available": False,
+        }
+    ]
+    _assert_no_quantity_anywhere(result, {500})
+
+
+def test_availability_still_asks_for_a_product_with_no_stock(db):
+    """B13. With no number given yet it is still the ask, even for a product
+    with nothing in the pool: "how many do you need" is the only reply that
+    does not disclose the (empty) quantity."""
+    brw, _, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=dc1.id, on_hand=500
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert result["stock_availability"] == [
+        {
+            "product_id": p.id,
+            "product_code": p.product_code,
+            "product_name": p.product_name,
+            "needs_quantity": True,
+            "requested_qty": None,
+            "available": None,
+        }
+    ]
+    _assert_no_quantity_anywhere(result, {500})
 
 
 def test_last_updated_carried_on_every_mode(db):

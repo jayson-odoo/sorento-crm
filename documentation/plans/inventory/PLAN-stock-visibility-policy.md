@@ -1,6 +1,6 @@
 # PLAN: Stock visibility policy (per contact, per access type)
 
-**Status:** Approved 2026-08-25. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 next.
+**Status:** Approved 2026-08-25. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 next.
 **UAC:** `stock-visibility-policy-acceptance-criteria.md` (alongside)
 **Domain:** inventory / chatbot (n8n `sub-get-results` `Fss5aAaXthJSWpZCgKiKR`, MCP `crm_inventory_stock_balance_list`)
 
@@ -110,6 +110,12 @@ Apply the policy **after** company scope, **before** serialisation, inside `Stoc
 | `compact` | **no `data` rows** (`data: []`, `total: 0`) | `stock_visibility` + `stock_summary: [{product_id, product_code, product_name, total_on_hand, locations: [{warehouse_code, quantity_on_hand}], flags: {discontinued}}]` grouped per product over allowed warehouses, locations ordered by warehouse_code |
 | `availability` | **no `data` rows** | `stock_visibility` + `stock_availability: [{product_id, product_code, product_name, needs_quantity: bool, requested_qty, available: bool|null}]`. `needs_quantity=true, available=null` when `requested_qty` is absent; else `available = sum(on_hand over allowed) >= requested_qty`. **No quantity field of any kind on this block.** |
 
+**Every product NAMED in the request gets an entry**, including one with no stock row in any
+allowed warehouse (`total_on_hand: 0` / `available: false`, or `needs_quantity` when no quantity
+was given). Grouping only over the rows that came back drops it, and the absence is unreadable:
+"none left" and "I never found your product" arrive as the same silence, which is exactly the
+question a dealer asks. An id that names no product at all is still dropped (AC-B13).
+
 Why empty `data` rather than stripped rows: a row with the quantity removed still tells you the
 location list and count; the raw non-render shape is readable by the dead n8n AI-agent branch and
 by any direct MCP caller. Empty is the only shape that cannot leak.
@@ -138,8 +144,19 @@ and asserted by a test.
     "Sorry, we do not have enough stock for that quantity."
 - `stock_visibility` passes through on the envelope (same as `field_access`, `lookup_companies`)
   so n8n can branch without re-deriving.
-- Vocabulary relabel is unaffected (compact/availability blocks use `warehouse_code` verbatim as
-  the label; that is the "system location" the user asked for: `BRW`, `BRW-BB`).
+- **The three blocks sit out the stock sanitizers** (`_STOCK_POLICY_BLOCK_KEYS` in `server.py`:
+  popped before `_strip_stock_hidden_fields` / `_relabel_warehouse_keys` /
+  `_slim_stock_nested_warehouse`, restored verbatim). Found in S3, and not optional:
+  `_STOCK_HIDDEN_FIELDS` contains `available`, which on a stock ROW means quantity_available but
+  on the availability block is the ENTIRE answer, so the recursive strip deleted every dealer's
+  reply. The Sage relabel would likewise rename `warehouse_code` to `system_location` inside each
+  summary location, where that key is the label the reader sees. Row sanitization is unchanged.
+- Vocabulary: the compact block's labels are the `warehouse_code` VALUES (`BRW`, `BRW-BB`) - the
+  "system location" the user asked for. The presenter also reads `system_location` as a fallback
+  so a future relabel cannot silently blank the labels.
+- `last_updated_at` joins `_MALAYSIA_TIME_KEYS`. It is a payload-level stamp, and the summary
+  modes carry no rows, so untouched it would have made n8n's footer read 8 hours early for
+  exactly the contacts on the new formats.
 
 ### n8n (three edits, promoted only on the user's call)
 
@@ -231,7 +248,7 @@ block (`stock_visibility`, `stock_summary`, `stock_availability`) or they are si
 | S0 | Plan + UAC (this file) | - | done |
 | S1 | FE mock: `StockVisibilitySection` against a mocked service, three states, 375 / 1280 | Phase 1 | done (browser run deferred to S6) |
 | S2 | Backend: migration + model + `stock_visibility.py` resolver + enforcement in `list_stock` + CRUD routes; pytest first (resolution tiers, most-restrictive merge, fail-closed, empty `data` in compact/availability, staff path untouched, `response_model` fields present) | Phase 2 | done - `tests/test_stock_visibility_policy.py`, 34 passed |
-| S3 | MCP: catalog param + presenter branches; pytest on envelope shapes | Phase 2 | restart MCP session |
+| S3 | MCP: catalog param + presenter branches; pytest on envelope shapes | Phase 2 | done - `sorento_crm_mcp/tests/test_presenters_stock.py` (25) + backend B13 (zero-stock products still answered). Restart the MCP session to pick it up |
 | S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | |
 | S5 | n8n: transformer + structurer + pending-quantity turn; live-envelope harness capture | separate n8n plan-build-test-promote; promote = user's call | |
 | S6 | Browser verification via agent-browser from `/` by sidebar; `/code-review`; DoD gate; PR | Phase 3 | |
