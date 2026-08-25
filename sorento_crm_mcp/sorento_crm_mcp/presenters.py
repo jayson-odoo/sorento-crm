@@ -28,8 +28,9 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Optional
 
 # Tools that support `view=render`. Used by server._compile_tool to inject the
 # `view` param into the generated input schema, and by the dispatcher below.
@@ -345,6 +346,143 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
                 ("Products", prods),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# order quantity summary -> the WhatsApp lines (QS-7, plan §3c)
+# ---------------------------------------------------------------------------
+# WHY HERE. This presenter is already the presentation layer for `view=render`
+# (intro, labels, rows). Rendering the summary in n8n meant every future measure
+# with different wording was an n8n LIVE promote, and n8n keying on
+# `delivered_quantity` is the label-table drift class the structurer paid for
+# once. So the consumer gets `summary_lines` - the exact lines - and prints them.
+# This is a line-for-line port of the tested n8n block
+# (sorento_crm_n8n tests/offline/order-quantity-summary/hunk.js @ 16e5853b);
+# its probe cases are the tests below. Numbers come from `summary`, never from
+# a sum over rows (the external page is capped at 20).
+#
+# WHO COMES FROM THE FILTER, NEVER FROM THE PARSER: `summary.customers` /
+# `groups[].customer` are what the backend actually filtered on. An unnameable
+# entry (non-string) is DROPPED, never coerced - "[object Object]" in bold over
+# someone's orders is the one failure a headline must not have.
+# NEVER RAISES: a missing field degrades to the fields that exist.
+
+
+def _sl_num(v: Any):
+    """A renderable number or None. Integral -> int (48.0 -> 48), else float."""
+    if v is None or isinstance(v, bool) or v == "":
+        return None
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not d.is_finite():
+        return None
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+def _sl_date(v: Any) -> Optional[str]:
+    """dd/mm/yyyy for a date-only string; date + HH:MM:SS for a non-midnight datetime."""
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        if len(s) == 10:
+            d = datetime.strptime(s, "%Y-%m-%d")
+        else:
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return s
+    out = d.strftime("%d/%m/%Y")
+    if d.hour or d.minute or d.second:
+        out += d.strftime(" %H:%M:%S")
+    return out
+
+
+def _sl_pending(v: Any) -> str:
+    p = _sl_num(v)
+    return f" · {p} pcs pending" if (p is not None and p > 0) else ""
+
+
+def summary_lines(summary: Any, n_items: int) -> list[str]:
+    """The WhatsApp lines for an order-list summary; [] when nothing renders."""
+    if not isinstance(summary, dict):
+        return []
+    S = summary
+    cc = _sl_num(S.get("customer_count"))
+    names = [x.strip() for x in (S.get("customers") or []) if isinstance(x, str) and x.strip()] \
+        if isinstance(S.get("customers"), list) else []
+    who = names[0] if (cc == 1 and names) else (f"{cc} customers" if (cc is not None and cc > 1) else "")
+
+    dc = _sl_num(S.get("delivered_count"))
+    d_from, d_to = _sl_date(S.get("delivered_from")), _sl_date(S.get("delivered_to"))
+    span_bits: list[str] = []
+    if dc is not None:
+        span_bits.append(f"{dc} DO{'' if dc == 1 else 's'}")
+    if d_from and d_to:
+        span_bits.append(f"{d_from} – {d_to}")
+    elif d_from or d_to:
+        span_bits.append(d_from or d_to)  # type: ignore[arg-type]
+    span = f" ({', '.join(span_bits)})" if span_bits else ""
+
+    prods = S.get("products") if isinstance(S.get("products"), list) else []
+    groups = S.get("groups") if isinstance(S.get("groups"), list) else []
+    detail = len(groups) > 1 and cc is not None and cc > 1
+
+    def detail_line(g: Any) -> str:
+        if not isinstance(g, dict) or not isinstance(g.get("customer"), str):
+            return ""
+        cn = g["customer"].strip()
+        if not cn:
+            return ""
+        cl: list[str] = []
+        gd = _sl_num(g.get("delivered_quantity"))
+        if gd is not None:
+            cl.append(f"{gd} pcs delivered")  # 0 is informative: ordered, nothing arrived yet
+        gp = _sl_num(g.get("pending_quantity"))
+        if gp is not None and gp > 0:
+            cl.append(f"{gp} pcs pending")
+        return f"{cn}: {' · '.join(cl)}" if cl else ""
+
+    lines: list[str] = []
+    if prods:
+        span_used = False
+        for p in prods:
+            if not isinstance(p, dict) or not isinstance(p.get("product_code"), str):
+                continue
+            code = p["product_code"].strip()
+            label = " · ".join(x for x in (who, code) if x)
+            if not label:
+                continue
+            dq = _sl_num(p.get("delivered_quantity"))
+            qty = f" *{dq} pcs delivered*" if dq is not None else ""
+            sp = ""
+            if not span_used:
+                sp, span_used = span, True
+            lines.append(f"*{label}:*{qty}{sp}{_sl_pending(p.get('pending_quantity'))}")
+            if detail:
+                for g in groups:
+                    if isinstance(g, dict) and isinstance(g.get("product_code"), str) \
+                            and g["product_code"].strip() == code:
+                        dl = detail_line(g)
+                        if dl:
+                            lines.append(dl)
+        if detail and lines and S.get("groups_truncated") is True:
+            lines.append("…and more — add a customer or a date range.")
+    elif who:
+        oc, pc = _sl_num(S.get("order_count")), _sl_num(S.get("pending_count"))
+        bits: list[str] = []
+        if dc is not None:
+            bits.append(f"{dc} delivered")
+        if pc is not None:
+            bits.append(f"{pc} pending")
+        tail = f" ({', '.join(bits)})" if bits else ""
+        lines.append(f"*{who}:* {oc} DO{'' if oc == 1 else 's'}{tail}" if oc is not None else f"*{who}:*{tail}")
+
+    rc = _sl_num(S.get("row_count"))
+    if rc is not None and rc > n_items:
+        lines.append(f"Showing latest {n_items} of {rc} DOs — add a date range for the full list.")
+    return lines
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired
@@ -991,5 +1129,11 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    # QS-7: the lines the consumer prints verbatim. Only over a real answer
+    # (has_result AND rows on the page); absent otherwise, never [].
+    if has_result and b.items and isinstance(data.get("summary"), dict):
+        _lines = summary_lines(data["summary"], len(b.items))
+        if _lines:
+            envelope["summary_lines"] = _lines
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)

@@ -1065,3 +1065,146 @@ def test_qs_c6_by_product_catalog_accepts_order_status():
     assert "include_summary" in spec.query_params
     lst = next(s for s in CATALOG if s.name == "crm_order_management_orders_list")
     assert "include_summary" in lst.query_params
+
+
+# --- QS-M: the presenter renders `summary_lines` (order-quantity-summary amendment 3) --------
+# The n8n block (sorento_crm_n8n tests/offline/order-quantity-summary/hunk.js @ 16e5853b) is the
+# spec; these are its probe cases on the same captured envelopes. Ids mirror tests/uac/QS.md §QS-M.
+
+import json as _json
+import pathlib as _pathlib
+
+from sorento_crm_mcp.presenters import summary_lines
+
+_QS6 = _json.loads((_pathlib.Path(__file__).parent / "fixtures" / "qs6-envelopes.json").read_text())
+
+
+def _cap(name):
+    e = _QS6[name]["envelope"]
+    return e["summary"], len(e["items"])
+
+
+_SUM_M1 = {
+    "scope": "filter", "row_count": 3, "order_count": 4, "delivered_count": 3, "pending_count": 1,
+    "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
+    "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+    "products": [{"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12}],
+}
+_M1_LINE = "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026) · 12 pcs pending"
+
+
+def test_qs_m1_header_line_exact():
+    assert summary_lines(_SUM_M1, 3) == [_M1_LINE]
+
+
+def test_qs_m3_cap_line_when_more_behind_the_page():
+    lines = summary_lines({**_SUM_M1, "row_count": 35}, 20)
+    assert lines[-1] == "Showing latest 20 of 35 DOs — add a date range for the full list."
+
+
+def test_qs_m4_no_cap_line_when_page_is_complete():
+    assert not any(l.startswith("Showing latest") for l in summary_lines(_SUM_M1, 3))
+
+
+def test_qs_m5_customer_only_counts():
+    s = {"scope": "filter", "row_count": 3, "order_count": 3, "delivered_count": 3, "pending_count": 0,
+         "customers": ["HANLIM TRADING SDN BHD"], "customer_count": 1,
+         "delivered_from": "2026-08-13", "delivered_to": "2026-08-17"}
+    assert summary_lines(s, 3) == ["*HANLIM TRADING SDN BHD:* 3 DOs (3 delivered, 0 pending)"]
+
+
+def test_qs_m6_two_customers_never_a_single_name():
+    s = {**_SUM_M1, "customers": ["A", "B"], "customer_count": 2}
+    assert summary_lines(s, 3)[0].startswith("*2 customers · SRTWC8605:*")
+
+
+def test_qs_m8_missing_fields_never_raise_and_never_print_none():
+    s = {"scope": "filter", "customers": ["X"], "customer_count": 1,
+         "products": [{"product_code": "P1"}]}
+    lines = summary_lines(s, 1)
+    assert lines == ["*X · P1:*"]
+    for hostile in ("not an object", [1, 2], {"customer_count": 1, "customers": "ECO"},
+                    {"products": "nope", "groups": 5}):
+        out = summary_lines(hostile, 1)
+        assert "None" not in " ".join(out) and "nan" not in " ".join(out).lower()
+
+
+def test_qs_m9_zero_pending_is_silent():
+    s = {**_SUM_M1, "pending_count": 0, "order_count": 3}
+    s["products"] = [{"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 0}]
+    assert summary_lines(s, 3) == ["*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"]
+
+
+def test_qs_m10_two_products_span_stated_once():
+    s = {**_SUM_M1, "products": [
+        {"product_code": "SRTWC287-ARL", "delivered_quantity": 6, "pending_quantity": 0},
+        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12},
+    ]}
+    lines = summary_lines(s, 3)
+    assert lines[0] == "*ECO WORLD SDN BHD · SRTWC287-ARL:* *6 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"
+    assert lines[1] == "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* · 12 pcs pending"
+    assert sum("(3 DOs, " in l for l in lines) == 1
+
+
+def test_qs_m12_single_group_is_the_m1_line():
+    s = {**_SUM_M1, "groups": [{"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
+                                "order_count": 3, "delivered_quantity": 48, "pending_quantity": 12}]}
+    assert summary_lines(s, 3) == [_M1_LINE]
+
+
+def test_qs_m11_multi_customer_real_envelope_header_then_one_line_per_group():
+    S, n = _cap("multi68")
+    lines = summary_lines(S, n)
+    p = S["products"][0]
+    assert lines[0].startswith(f"*{S['customer_count']} customers · {p['product_code']}:* *{p['delivered_quantity']} pcs delivered*")
+    groups = [g for g in S["groups"] if isinstance(g.get("customer"), str) and g["customer"].strip()]
+    detail = [l for l in lines[1:] if not l.startswith("Showing latest") and not l.startswith("…and more")]
+    assert len(detail) == len(groups)
+    for l, g in zip(detail, groups):
+        assert l.startswith(f"{g['customer'].strip()}: {g['delivered_quantity']} pcs delivered")
+    # the header total is products[], never a sum over groups: on a truncated list they differ
+    assert str(p["delivered_quantity"]) in lines[0]
+
+
+def test_qs_m13_truncation_notice_only_when_flagged():
+    S, n = _cap("multi68")
+    assert not any(l.startswith("…and more") for l in summary_lines(S, n))
+    S2 = {**S, "groups": S["groups"][:5], "groups_truncated": True}
+    lines = summary_lines(S2, n)
+    assert "…and more — add a customer or a date range." in lines
+    assert lines.index("…and more — add a customer or a date range.") == 1 + 5  # right after the groups
+
+
+def test_qs_m14_groups_bucketed_under_their_product_header():
+    S, n = _cap("twoprod")
+    lines = summary_lines(S, n)
+    headers = [i for i, l in enumerate(lines) if l.startswith("*")]
+    assert len(headers) == len(S["products"])
+    for h_idx, p in zip(headers, S["products"]):
+        nxt = headers[headers.index(h_idx) + 1] if headers.index(h_idx) + 1 < len(headers) else len(lines)
+        block = lines[h_idx + 1:nxt]
+        expected = [g for g in S["groups"] if g["product_code"] == p["product_code"] and isinstance(g.get("customer"), str) and g["customer"].strip()]
+        block = [l for l in block if not l.startswith("Showing latest")]
+        assert len(block) == len(expected), (p["product_code"], block)
+
+
+def test_qs_m15_non_string_names_are_dropped_not_coerced():
+    s = {**_SUM_M1, "customers": [{"name": "X"}], "customer_count": 2,
+         "products": [{"product_code": {}, "delivered_quantity": 5}, {"product_code": "OK", "delivered_quantity": 1}],
+         "groups": [{"customer": {"n": 1}, "product_code": "OK", "delivered_quantity": 1},
+                    {"customer": "REAL", "product_code": "OK", "delivered_quantity": 1}]}
+    lines = summary_lines(s, 1)
+    joined = "\n".join(lines)
+    assert "{" not in joined and "None" not in joined
+    assert lines[0].startswith("*2 customers · OK:*")
+    assert lines[1] == "REAL: 1 pcs delivered"
+
+
+def test_qs_m0_summary_lines_absent_unless_a_real_answer():
+    S, _ = _cap("single")
+    base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
+    out = env("crm_order_management_orders_list", {**base, "summary": S})
+    assert out["summary_lines"][0] == summary_lines(S, len(out["items"]))[0]
+    assert "summary_lines" not in env("crm_order_management_orders_list", base)                       # no summary
+    assert "summary_lines" not in env("crm_order_management_orders_list", {"data": [], "summary": S})  # no rows
+    assert "summary_lines" not in env("crm_order_management_orders_list", {**base, "summary": {"scope": "filter"}})  # degrades to nothing
