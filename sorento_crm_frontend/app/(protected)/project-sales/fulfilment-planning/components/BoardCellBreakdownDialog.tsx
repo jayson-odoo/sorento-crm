@@ -17,16 +17,20 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
 import {
   SHORT_LABELS,
+  contributionSuggestion,
+  decisionBreakdown,
   rowOf,
   rowText,
   suggestionBreakdown,
 } from '../../_shared/lib/supplyVocabulary';
+import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -104,6 +108,26 @@ export function BoardCellBreakdownDialog({
   );
   /** What the ladder proposes for the whole cell, by kind of source. */
   const suggestion = React.useMemo(() => suggestionBreakdown(cell), [cell]);
+  /**
+   * What was DECIDED for it, in the same rows and the same words (AC-D3).
+   *
+   * Empty until somebody decides something - confirmed on the order, or ticked into this
+   * session's draft - and the card is not rendered then: a Decision card reading nothing
+   * claims a decision was taken to do nothing.
+   */
+  const decision = React.useMemo(() => decisionBreakdown(cell, draft), [cell, draft]);
+  /**
+   * Did ANY contributing line record what the engine suggested?
+   *
+   * A revision frozen before `proposed_components` existed (AC-D1) recorded none, and an
+   * empty Suggestion card would then read as "the engine proposed nothing for this" - which
+   * is a claim about the ladder rather than about the record. Verified live on SO324132 rev
+   * 1, whose four lines all predate the field.
+   */
+  const suggestionRecorded = React.useMemo(
+    () => cell.contributions.some((entry) => contributionSuggestion(entry) !== null),
+    [cell.contributions],
+  );
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -494,7 +518,12 @@ export function BoardCellBreakdownDialog({
           <DialogDescription className="sr-only">
             {`${cell.total_qty} outstanding, ${decided} decided`}
           </DialogDescription>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div
+            className={cn(
+              'grid grid-cols-1 gap-3',
+              decision.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
+            )}
+          >
             <div
               data-testid="cell-quantity-needed"
               className="rounded-lg border border-border p-3"
@@ -506,42 +535,31 @@ export function BoardCellBreakdownDialog({
               </p>
             </div>
 
-            <div data-testid="cell-suggestion" className="rounded-lg border border-border p-3">
-              <p className="mb-1.5 text-xs text-muted-foreground">Suggestion</p>
-              {/* Only the kinds the ladder actually proposes something for, in one fixed order
-                  (`suggestionBreakdown`), so Buy still sits above the stock rows wherever it
-                  appears. The empty ones used to be listed and muted, and on a real cell that
-                  was three lines of nothing around the one line that said what to do. */}
-              <div className="space-y-1">
-                {suggestion.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Nothing proposed for this cell
-                  </p>
-                ) : null}
-                {suggestion.map((row) => (
-                  <div
-                    key={row.key}
-                    data-testid={`suggestion-${row.key}`}
-                    className="flex flex-wrap items-center gap-1.5 text-sm"
-                  >
-                    <Badge variant="primary" appearance="light" size="sm">
-                      {row.label}
-                    </Badge>
-                    {/* The quantity PER LOCATION ("454 from DC1-BB, 267 from MWH-BB"), not a
-                        total beside a bare list of codes: the split IS the instruction, and
-                        somebody has to key each movement of it. */}
-                    <span className="min-w-0 break-words tabular-nums">{rowText(row)}</span>
-                    {/* The engine's own sentence, and only when every source on the row
-                        gives the same one: a Buy for "nothing free anywhere" and a Buy for
-                        "beyond the lead time window" are the same number for opposite
-                        reasons, and this card is where that is decided. */}
-                    {row.note ? (
-                      <span className="w-full text-xs text-muted-foreground">{row.note}</span>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CompositionCard
+              testId="cell-suggestion"
+              rowTestId="suggestion"
+              title="Suggestion"
+              rows={suggestion}
+              empty={
+                suggestionRecorded
+                  ? 'Nothing proposed for this cell'
+                  : 'Not recorded for this revision'
+              }
+            />
+
+            {/* Beside the suggestion, never instead of it (AC-D3). SAME component, two
+                inputs: two cards that merely resembled each other would drift, and the whole
+                point is that a planner compares them at a glance. Rendered only once
+                something IS decided. */}
+            {decision.length > 0 ? (
+              <CompositionCard
+                testId="cell-decision"
+                rowTestId="decision"
+                title="Decision"
+                rows={decision}
+                empty=""
+              />
+            ) : null}
           </div>
 
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
@@ -672,6 +690,66 @@ const VERDICT_PALETTE: Record<string, string> = {
  * and writes only what it is sent), and Undo undoes a draft entry that does not exist. The row
  * states which revision decided it and what that revision froze.
  */
+/**
+ * ONE composition, as the dialog's header states it: a badge per kind and the quantity per
+ * location beside it (AC-D3).
+ *
+ * One component for BOTH the suggestion and the decision, because the two are read against
+ * each other: a second card that merely looked like this one would drift the first time
+ * either changed, and the comparison is the whole reason they sit side by side.
+ *
+ * Only the kinds with a quantity, in one fixed order, so Buy sits above the stock rows
+ * wherever it appears. The empty kinds used to be listed and muted, and on a real cell that
+ * was three lines of nothing around the one line that said what to do.
+ */
+function CompositionCard({
+  testId,
+  rowTestId,
+  title,
+  rows,
+  empty,
+}: {
+  testId: string;
+  /** Prefix for the per-kind rows: `suggestion-buy`, `decision-shared`. */
+  rowTestId: string;
+  title: string;
+  rows: SuggestionRow[];
+  empty: string;
+}) {
+  return (
+    <div data-testid={testId} className="rounded-lg border border-border p-3">
+      <p className="mb-1.5 text-xs text-muted-foreground">{title}</p>
+      <div className="space-y-1">
+        {rows.length === 0 && empty ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : null}
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            data-testid={`${rowTestId}-${row.key}`}
+            className="flex flex-wrap items-center gap-1.5 text-sm"
+          >
+            <Badge variant="primary" appearance="light" size="sm">
+              {row.label}
+            </Badge>
+            {/* The quantity PER LOCATION ("454 from DC1-BB, 267 from MWH-BB"), not a total
+                beside a bare list of codes: the split IS the instruction, and somebody has
+                to key each movement of it. */}
+            <span className="min-w-0 break-words tabular-nums">{rowText(row)}</span>
+            {/* The rule's own sentence, and only when every source on the row gives the same
+                one: a Buy for "nothing free anywhere" and a Buy for "beyond the lead time
+                window" are the same number for opposite reasons, and this card is where that
+                is decided. */}
+            {row.note ? (
+              <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DecisionCell({
   contribution,
   decision,

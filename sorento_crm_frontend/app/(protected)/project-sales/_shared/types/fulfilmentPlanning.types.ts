@@ -958,6 +958,17 @@ export interface BoardContribution {
   /** The default rule's proposal for this row, in the order the engine proposes them. */
   sources: BoardSource[];
   /**
+   * What the ENGINE suggested for this line, beside what was decided (AC-D2).
+   *
+   * The live ladder on an undecided line - the same list as `sources` there - and the
+   * composition FROZEN at confirm on a covered one, where `sources` states the decision and
+   * the suggestion would otherwise be lost the moment somebody amended it.
+   *
+   * `null` on a revision written before the proposal was frozen. "Not recorded" and "the
+   * engine suggested nothing" are different answers and the screen says which.
+   */
+  proposed?: BoardProposed | null;
+  /**
    * HOW that proposal was arrived at: the ladder, rung by rung, in the order it was walked.
    *
    * The sources say what the answer is; this says what was checked to get there, including the
@@ -1006,6 +1017,11 @@ export interface BoardContribution {
    * An empty list when nothing was lent, never absent, so the cell has one shape to read.
    */
   lent_to?: BoardLineLending[];
+}
+
+/** What the engine suggested for one line, in the same shape a source is stated in. */
+export interface BoardProposed {
+  components: BoardSource[];
 }
 
 /** One borrow taken OFF a board row by another sales order (AC-L6). */
@@ -1379,6 +1395,13 @@ export interface BoardReserveComponent {
   /** The warehouse CODE, for the pill and the editor. Never the id. */
   location?: string | null;
   qty: string;
+  /**
+   * Which rung the confirmation froze this share under. Server-supplied on a FROZEN
+   * decision only; the Amend editor never sets it, and the confirmation ignores it coming
+   * back. Read rather than inferred: `BRW-BB` and the pool `BRW` share a site prefix and are
+   * not the same kind of supply, so the code cannot answer this question.
+   */
+  rung?: string | null;
 }
 
 /** One donor an amendment borrows from. The confirm body's borrow component, plus its code. */

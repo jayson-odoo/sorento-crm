@@ -1316,4 +1316,62 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     ).toBeInTheDocument();
     expect(screen.getByRole('menuitemcheckbox', { name: 'Decision' })).toBeInTheDocument();
   });
+
+  /**
+   * AC-D4: the SECONDARY surface for the board's two compositions. The board is where the
+   * decision is taken; this is where somebody looking at the order alone can read it, in the
+   * SAME words - `supplyVocabulary.describe`, imported, never restated.
+   */
+  it('states what was suggested and what was decided, in the board\'s words', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        supply_proposed: [
+          { kind: 'reserve', qty: '10', source_location: 'BRW', rung: 'pool' },
+        ],
+        supply_decided: [{ kind: 'buy', qty: '10', source_location: null, rung: 'buy' }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Shared 10 (BRW)')).toBeInTheDocument();
+    expect(within(row).getByText('Buy 10')).toBeInTheDocument();
+  });
+
+  it('says Not recorded for a decided line whose revision froze no proposal', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        supply_proposed: null,
+        supply_decided: [{ kind: 'buy', qty: '10', source_location: null, rung: 'buy' }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    // Not "-": the revision predates the field, which is a different statement from "the
+    // engine suggested nothing".
+    expect(within(row).getByText('Not recorded')).toBeInTheDocument();
+  });
+
+  it('offers the two new columns to the Columns menu as well', async () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Columns' }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: 'mouse',
+    });
+    expect(
+      await screen.findByRole('menuitemcheckbox', { name: 'Suggested' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Decided' })).toBeInTheDocument();
+  });
 });

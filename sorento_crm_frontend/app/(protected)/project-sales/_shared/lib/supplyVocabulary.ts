@@ -349,26 +349,38 @@ export function rowText(row: SuggestionRow): string {
   return row.places.map((place) => `${place.qty} from ${place.location}`).join(', ');
 }
 
-export function suggestionBreakdown(cell: Pick<BoardCell, 'contributions'>): SuggestionRow[] {
-  // Resolved PER CONTRIBUTION, because a cell spans lines whose own locations need not agree:
-  // `DC1-BB` is the agent's own group on a `BRW-BB` line and somebody else's on a `BRW-IB` one.
-  // Each part is re-stamped with the rung its own line resolved it at, so everything below can
-  // aggregate the flat list without needing to know which line each part came from.
+/**
+ * The cell's rows for ONE side of the question, given a reader that turns a contributing
+ * line into its parts. `suggestionBreakdown` and `decisionBreakdown` are the two readers;
+ * the aggregation below is identical for both, and having it once is what keeps the
+ * Suggestion and Decision cards the same shape rather than two shapes that resemble one
+ * another.
+ *
+ * Resolved PER CONTRIBUTION, because a cell spans lines whose own locations need not agree:
+ * `DC1-BB` is the agent's own group on a `BRW-BB` line and somebody else's on a `BRW-IB` one.
+ * Each part is re-stamped with the rung its own line resolved it at, so everything below can
+ * aggregate the flat list without needing to know which line each part came from.
+ */
+function breakdown(
+  cell: Pick<BoardCell, 'contributions'>,
+  partsOf: (contribution: BoardContribution) => SupplyPart[] | null,
+): SuggestionRow[] {
   const parts: SupplyPart[] = [];
   const why = new Map<SupplyKind, Set<string>>();
   for (const contribution of cell.contributions) {
-    for (const source of contribution.sources) {
+    for (const source of partsOf(contribution) ?? []) {
       const kind = rowOf(source, contribution.fulfilment_location);
       if (!kind) continue;
       parts.push({
         kind: source.kind,
         rung: rungFor(kind),
         qty: source.qty,
-        location: source.location ?? null,
+        location: source.location ?? source.source_location ?? null,
       });
-      if (!source.reason) continue;
+      const reason = (source as { reason?: string | null }).reason;
+      if (!reason) continue;
       const seen = why.get(kind) ?? new Set<string>();
-      seen.add(source.reason);
+      seen.add(reason);
       why.set(kind, seen);
     }
   }
@@ -384,6 +396,33 @@ export function suggestionBreakdown(cell: Pick<BoardCell, 'contributions'>): Sug
       ...(reasons.length === 1 ? { note: reasons[0] } : {}),
     };
   });
+}
+
+/**
+ * What the LADDER proposes for a whole cell.
+ *
+ * The proposal, never the decision: on a covered line `sources` is the frozen composition
+ * rebuilt, so reading it here printed every decided cell's decision as its own suggestion
+ * and an amendment looked like it had changed nothing.
+ */
+export function suggestionBreakdown(cell: Pick<BoardCell, 'contributions'>): SuggestionRow[] {
+  return breakdown(cell, (contribution) => contributionSuggestion(contribution));
+}
+
+/**
+ * What was DECIDED for a whole cell, in the SAME shape (AC-D3): same rows, same words, same
+ * per-location quantities, so the two cards are read side by side rather than compared.
+ *
+ * Empty while nothing is decided - the card is not rendered then, because a Decision card of
+ * nothing says a decision was taken to do nothing.
+ */
+export function decisionBreakdown(
+  cell: Pick<BoardCell, 'contributions'>,
+  draft: Record<string, BoardDecision>,
+): SuggestionRow[] {
+  return breakdown(cell, (contribution) =>
+    contributionDecision(contribution, draft[contribution.key] ?? null),
+  );
 }
 
 /**
@@ -405,7 +444,12 @@ export function decisionParts(
   decision: BoardLineDecision | BoardDecision,
 ): SupplyPart[] {
   /** The two decision shapes' reserve and borrow rows, read on what they have in common. */
-  type ReserveRow = { warehouse_id?: string | null; location?: string | null; qty: string };
+  type ReserveRow = {
+    warehouse_id?: string | null;
+    location?: string | null;
+    qty: string;
+    rung?: string | null;
+  };
   type BorrowRow = {
     qty: string;
     location?: string | null;
@@ -433,6 +477,11 @@ export function decisionParts(
     // none - which is EVERY covered line, since the board rebuilds a frozen composition without
     // it - the row is left unrunged and `rowOf` resolves it on the ownership group.
     const rung =
+      // The rung the SERVER froze with the row, when it has one. A frozen decision now
+      // carries it on every kind, so a covered line no longer relies on the group reading
+      // below - which was right, but was a second opinion about a question the engine had
+      // already answered.
+      row.rung ??
       (row.warehouse_id ? rungByWarehouse.get(row.warehouse_id) : undefined) ??
       (row.location ? rungByLocation.get(row.location) : undefined) ??
       null;
@@ -457,6 +506,51 @@ export function decisionParts(
   }
 
   return parts;
+}
+
+/**
+ * What the ENGINE suggested for one line, as supply parts - never what was decided.
+ *
+ * `proposed` when the server recorded one: the live ladder on an undecided line, the
+ * composition frozen at confirm on a covered one. `null` on a covered line whose revision
+ * predates the frozen proposal, which the screen says as "Not recorded" rather than as
+ * "nothing was suggested".
+ *
+ * The fallback to `sources` is for an UNCOVERED line only, and it is a safety net rather
+ * than the design: on a covered line `sources` is the DECISION rebuilt from the snapshot, so
+ * reading it as the suggestion would print every decided line as its own suggestion and no
+ * amendment would ever appear to have changed anything.
+ */
+export function contributionSuggestion(
+  contribution: Pick<BoardContribution, 'proposed' | 'sources' | 'covered'>,
+): SupplyPart[] | null {
+  if (contribution.proposed) return contribution.proposed.components;
+  return contribution.covered ? null : contribution.sources;
+}
+
+/**
+ * What was DECIDED for one line, as supply parts, or `null` while nothing is.
+ *
+ * The draft leads, exactly as `contributionSupply` has it: a line amended in this session is
+ * decided even though nothing has been posted, and a rejection decides no supply at all.
+ */
+export function contributionDecision(
+  contribution: BoardContribution,
+  drafted?: BoardDecision | null,
+): SupplyPart[] | null {
+  if (drafted) {
+    if (drafted.verdict === 'rejected') return null;
+    const composed = drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
+    // An APPROVAL composes nothing of its own: it takes the proposal as it stands, so what
+    // was decided is what was suggested.
+    return composed
+      ? decisionParts(contribution, drafted)
+      : contributionSuggestion(contribution) ?? contribution.sources;
+  }
+  if (contribution.covered && contribution.decision) {
+    return decisionParts(contribution, contribution.decision);
+  }
+  return null;
 }
 
 /**

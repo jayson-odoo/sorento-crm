@@ -74,7 +74,15 @@ import {
   salesOrderStatusLabel,
   salesOrderStatusVariant,
 } from '../../../lib/salesOrderStatus';
-import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../types/scm.types';
+import type {
+  SalesOrder,
+  SalesOrderLine,
+  SalesOrderLineSupplyComponent,
+  SalesOrderPriority,
+} from '../../../types/scm.types';
+// ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
+// with the planning board rather than restated here.
+import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -295,6 +303,35 @@ function productFallback(
     value: row.sku,
     label: row.product_name ? `${row.sku} · ${row.product_name}` : row.sku,
   };
+}
+
+/**
+ * One frozen composition, in the planning board's own words (AC-D4).
+ *
+ * `describe` is the SAME function the board, its list view and the cell popover render with,
+ * imported rather than restated: PLAN section 2 is one vocabulary, and a second phrasing of
+ * "Shared 71 (BRW)" on this page is how two screens start disagreeing about one decision.
+ *
+ * `ownLocation` is what tells the agent's own group from the shared pool on a component
+ * frozen before the rung was recorded.
+ */
+function SupplyText({
+  parts,
+  ownLocation,
+  absent,
+}: {
+  parts?: SalesOrderLineSupplyComponent[] | null;
+  ownLocation?: string | null;
+  absent: string;
+}) {
+  if (!parts) return <span className="text-muted-foreground">{absent}</span>;
+  const text = describeSupply(parts, ownLocation);
+  if (!text) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
 }
 
 export function SalesOrderDetail({ id }: { id: string }) {
@@ -836,6 +873,37 @@ export function SalesOrderDetail({ id }: { id: string }) {
         },
         size: 200,
         meta: { headerTitle: 'Order inquiry' },
+      },
+      {
+        // AC-D4: the board's two compositions, on the order they belong to. The SECONDARY
+        // surface for the same question - the board is where the decision is taken, this is
+        // where somebody looking at the order alone can see what was taken.
+        id: 'supply_suggested',
+        accessorFn: (row) => row.supply_proposed ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
+        cell: ({ row }) => (
+          <SupplyText
+            parts={row.original.supply_proposed}
+            ownLocation={row.original.warehouse_code}
+            absent={row.original.decision_revision == null ? '-' : 'Not recorded'}
+          />
+        ),
+        size: 220,
+        meta: { headerTitle: 'Suggested' },
+      },
+      {
+        id: 'supply_decided',
+        accessorFn: (row) => row.supply_decided ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
+        cell: ({ row }) => (
+          <SupplyText
+            parts={row.original.supply_decided}
+            ownLocation={row.original.warehouse_code}
+            absent="-"
+          />
+        ),
+        size: 220,
+        meta: { headerTitle: 'Decided' },
       },
       {
         id: 'decision_revision',

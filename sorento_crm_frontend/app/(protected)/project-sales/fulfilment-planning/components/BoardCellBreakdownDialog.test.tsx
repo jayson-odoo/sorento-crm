@@ -2158,7 +2158,13 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     const base = cellOf([demand({ qty: '932' })]);
     const cell: BoardCell = {
       ...base,
-      contributions: base.contributions.map((entry) => ({ ...entry, sources })),
+      // BOTH, the way the server sends them on an undecided line: `sources` is the live
+      // proposal and `proposed` is the same list under the key the Suggestion card reads.
+      contributions: base.contributions.map((entry) => ({
+        ...entry,
+        sources,
+        proposed: { components: sources },
+      })),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     render(
@@ -2218,5 +2224,128 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     const card = screen.getByTestId('cell-suggestion');
     expect(card).toHaveTextContent('Borrow from another order');
     expect(card).toHaveTextContent('Borrow other location');
+  });
+});
+
+/**
+ * AC-D3: a Decision card BESIDE the Suggestion card, same shape, same words.
+ *
+ * The captain, on the board: "one page that shows what was SUGGESTED and what was DECIDED, in
+ * the same words". Before this, a covered cell showed its frozen composition under the word
+ * "Suggestion" - so an amended line looked as though the engine had suggested exactly what
+ * somebody had changed it to.
+ */
+describe('BoardCellBreakdownDialog: the Decision card', () => {
+  function renderComposition(
+    over: Partial<BoardContribution>,
+    draft: BoardDraft = {},
+  ) {
+    const base = cellOf([demand({ qty: '71' })]);
+    const cell: BoardCell = {
+      ...base,
+      contributions: base.contributions.map((entry) => ({ ...entry, ...over })),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={draft}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    return cell;
+  }
+
+  it('says Not recorded, never "nothing proposed", on a revision that froze no proposal', () => {
+    // Verified live on SO324132 rev 1, whose four lines all predate the field: the card read
+    // "Nothing proposed for this cell", which is a claim about the LADDER rather than about
+    // the record, and it is not true - the ladder proposed plenty, nobody kept it.
+    renderComposition({
+      covered: true,
+      // Null, the way the server sends a revision written before the field existed.
+      proposed: null,
+      sources: [
+        { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+      ],
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '71',
+      },
+    });
+
+    expect(screen.getByTestId('cell-suggestion')).toHaveTextContent(
+      'Not recorded for this revision',
+    );
+  });
+
+  it('is absent while nothing on the cell is decided', () => {
+    renderComposition({
+      proposed: {
+        components: [
+          { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'pool' },
+        ],
+      },
+    });
+
+    expect(screen.getByTestId('cell-suggestion')).toBeInTheDocument();
+    expect(screen.queryByTestId('cell-decision')).not.toBeInTheDocument();
+  });
+
+  it('appears beside the suggestion once a line is confirmed, and states the decision', () => {
+    renderComposition({
+      covered: true,
+      proposed: {
+        components: [
+          { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+        ],
+      },
+      sources: [
+        { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+      ],
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '71',
+      },
+    });
+
+    const suggestion = screen.getByTestId('cell-suggestion');
+    const decision = screen.getByTestId('cell-decision');
+    expect(suggestion).toHaveTextContent('Use shared stock');
+    expect(suggestion).toHaveTextContent('71 from BRW');
+    expect(decision).toHaveTextContent('Buy');
+    expect(decision).toHaveTextContent('71');
+    // Beside it, not under it: the two are read against each other.
+    expect(suggestion.compareDocumentPosition(decision)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('appears on a line merely ticked into this session draft, before anything is posted', () => {
+    const cell = cellOf([demand({ qty: '71' })]);
+    const key = cell.contributions[0].key;
+    renderComposition(
+      {
+        proposed: {
+          components: [
+            { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'pool' },
+          ],
+        },
+      },
+      { [key]: { verdict: 'approved' } },
+    );
+
+    // An approval takes the proposal as it stands, so the two cards agree - which is itself
+    // the answer to "did we do what the engine said".
+    expect(screen.getByTestId('cell-decision')).toHaveTextContent('Use shared stock');
   });
 });
