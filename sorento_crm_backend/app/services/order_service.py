@@ -265,10 +265,14 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                     func.sum(OrderLine.quantity).filter(pending),
                     func.min(Order.actual_delivery_date).filter(delivered),
                     func.max(Order.actual_delivery_date).filter(delivered),
+                    # exact per-product customer count - the presenter must not derive
+                    # it from a groups[] slice that the ceiling may have cut
+                    func.count(func.distinct(name_col)),
                 )
                 .select_from(OrderLine)
                 .join(Order, Order.id == OrderLine.order_id)
                 .join(Product, Product.id == OrderLine.product_id)
+                .outerjoin(Customer, _cust_on)
                 .filter(in_ids)
             )
             if _line_scope is not None:
@@ -284,13 +288,16 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 {
                     "product_code": code,
                     "order_count": int(oc or 0),
+                    "customer_count": int(cc or 0),
                     "delivered_quantity": _plain_number(dq) or 0,
                     "pending_quantity": _plain_number(pq) or 0,
                     **({"delivered_from": pf.isoformat(), "delivered_to": pt.isoformat()}
                        if (pf is not None and pt is not None) else {}),
                 }
-                for code, oc, dq, pq, pf, pt in prod_rows[:GROUPS_CEILING]
+                for code, oc, dq, pq, pf, pt, cc in prod_rows[:GROUPS_CEILING]
             ]
+            if len(prod_rows) > GROUPS_CEILING:
+                summary["products_truncated"] = True
 
             # customer x product: the row the question is about. Same joins, same
             # scope predicates, same delivered/pending clauses; grouped one level

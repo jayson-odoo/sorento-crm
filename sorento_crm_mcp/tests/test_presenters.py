@@ -1177,18 +1177,34 @@ def test_qs_m7_hostile_leaves_never_raise_or_leak():
 
 
 def test_qs_m8_intro_states_the_page_geometry():
-    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs (showing the latest 2 below)."
+    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs (showing 2 of them below)."
     assert summary_intro({"row_count": 3}, 3) == "Summary over 3 DOs."
     assert summary_intro({"row_count": 1}, 1) == "Summary over 1 DO."
     assert summary_intro({"row_count": 700, "groups_truncated": True}, 20) == (
-        "Summary over 700 DOs (showing the latest 20 below). Not every customer breakdown is shown — add a customer or a date range.")
+        "Summary over 700 DOs (showing 20 of them below). Not every breakdown is shown — add a customer, a product or a date range.")
+    assert "Not every breakdown" in summary_intro({"row_count": 9, "products_truncated": True}, 9)
+
+
+def test_qs_m9_total_uses_the_crm_customer_count_not_the_visible_slice():
+    """Codex F: after the 500-row ceiling groups[] may hold ONE row for a product that 68 customers
+    took - the Total must still appear and say 68, from products[].customer_count."""
+    s = {**_SUM_M1, "customer_count": 68, "groups_truncated": True,
+         "products": [{**_P_8605, "customer_count": 68, "order_count": 187, "delivered_quantity": 32649}],
+         "groups": [_G_ECO]}
+    items = summary_items(s)
+    assert items[0]["title"] == "All customers (68) · SRTWC8605"
+    assert dict((k, v) for k, _, v in _fields(items[0]))["delivered_quantity"] == 32649
+    assert items[1]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
+    # and with no customer_count on the product (older CRM) it falls back to the visible rows
+    s2 = {**_SUM_M1, "groups": [_G_ECO]}
+    assert [i["title"] for i in summary_items(s2)] == ["ECO WORLD SDN BHD · SRTWC8605"]
 
 
 def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
     out = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out["summary_items"] == summary_items(_SUM_M1)
-    assert out["intro"] == "Summary over 5 DOs (showing the latest 1 below)."
+    assert out["intro"] == "Summary over 5 DOs (showing 1 of them below)."
     assert "summary_lines" not in out
     assert "summary_items" not in env("crm_order_management_orders_list", base)                        # no summary
     assert "summary_items" not in env("crm_order_management_orders_list", {"data": [], "summary": _SUM_M1})  # no rows

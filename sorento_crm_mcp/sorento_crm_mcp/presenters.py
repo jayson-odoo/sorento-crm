@@ -460,8 +460,12 @@ def summary_items(summary: Any) -> list[dict]:
             and g["product_code"].strip() == code
             and isinstance(g.get("customer"), str) and g["customer"].strip()
         ]
-        if len(rows) > 1:
-            total = _summary_item(f"All customers ({len(rows)})", p)
+        # N is the CRM's exact per-product customer count when it has one; the visible
+        # groups[] slice can be short of it after the ceiling (cross-model review F).
+        n_cust = _sl_num(p.get("customer_count"))
+        n_cust = int(n_cust) if (n_cust is not None and n_cust >= 0) else len(rows)
+        if n_cust > 1 or (summary.get("groups_truncated") is True and rows):
+            total = _summary_item(f"All customers ({max(n_cust, len(rows))})", p)
             if total:
                 items.append(total)
         for g in rows:
@@ -485,9 +489,10 @@ def summary_intro(summary: Any, n_items: int) -> Optional[str]:
         return None
     n = int(rc)
     text = f"Summary over {n} DO{'' if n == 1 else 's'}"
-    text += f" (showing the latest {n_items} below)." if n > n_items else "."
-    if summary.get("groups_truncated") is True:
-        text += " Not every customer breakdown is shown — add a customer or a date range."
+    # "showing N of them" - never "latest": the presenter cannot see the sort.
+    text += f" (showing {n_items} of them below)." if n > n_items else "."
+    if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
+        text += " Not every breakdown is shown — add a customer, a product or a date range."
     return text
 
 
