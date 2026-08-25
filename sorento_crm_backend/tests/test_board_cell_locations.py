@@ -23,6 +23,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -137,12 +138,14 @@ def _po_line(
     received: str = "0",
     po_number: str | None = None,
     source_system: str | None = None,
+    status: str = "active",
+    line_status: str = "open",
 ) -> PurchaseOrderLine:
     po = PurchaseOrder(
         id=_uid(),
         po_number=po_number or f"ZZT-PO-{_uid()[:8]}",
         issue_date=date(2026, 7, 1),
-        status="active",
+        status=status,
         source_system=source_system,
     )
     db.add(po)
@@ -150,7 +153,7 @@ def _po_line(
     line = PurchaseOrderLine(
         id=_uid(), purchase_order_id=po.id, product_id=product.id,
         warehouse_id=warehouse.id, qty_ordered=Decimal(ordered),
-        qty_received=Decimal(received), line_status="open",
+        qty_received=Decimal(received), line_status=line_status,
         expected_date=date(2026, 8, 25), source_system=source_system,
     )
     db.add(line)
@@ -393,3 +396,133 @@ def test_po_open_qty_reaches_the_wire():
         own = next(entry for entry in on_wire if entry["location"] == "BRW-BB")
         assert own["po_open_qty"] == "500"
         assert own["where"] == "own"
+
+
+def test_po_open_qty_excludes_a_draft_recommendation_and_a_closed_line():
+    """`decision_service` writes a `draft_recommendation` PO per supplier per run, and a
+    recommendation nobody has confirmed is not on order - `on_order_v` leaves it out for the
+    same reason. A closed line has nothing left to come either."""
+    with blank_session() as db:
+        product = _product(db)
+        _pools, bins = _sites(db, ["BRW"], "BB")
+        _stock(db, product, bins["BRW"], on_hand="40")
+        _po_line(db, product, bins["BRW"], ordered="500", status="draft_recommendation")
+        _po_line(db, product, bins["BRW"], ordered="300", status="draft")
+        _po_line(db, product, bins["BRW"], ordered="200", line_status="closed")
+        _po_line(db, product, bins["BRW"], ordered="70", status="partial")
+        agent = _agent(db, group="BB")
+        order = _order(db, agent=agent)
+        _line(db, order, product, bins["BRW"])
+
+        entry = _by_code(_cell(db, order, product))["BRW-BB"]
+
+        # Only the `partial` document with an open line survives.
+        assert Decimal(entry["po_open_qty"]) == Decimal("70")
+
+
+# --------------------------------------------------------------------------- #
+# what was READ, and what was merely cited
+# --------------------------------------------------------------------------- #
+
+
+def test_a_location_outside_the_fetched_read_set_keeps_its_nulls():
+    """`_cited_locations` discovers a cross-group Borrow donor off the engine's own components,
+    AFTER `_pressure` / `_incoming` / `_po_open` were asked their question - so that warehouse
+    was never counted. Zeroing it would print "SO qty 0, PO qty 0, Available = on hand" for a
+    location the whole book owes against, which is a lie a dash is not.
+
+    Driven through `_location` directly, because the ladder has to actually PROPOSE a
+    cross-group borrow to emit such a row, and a fixture that stages the whole borrow rung
+    would be testing the ladder rather than this rule.
+
+    ON HAND still reads: `stock_levels_by_location` is keyed by product across every warehouse
+    and was never warehouse-filtered, so an absent row there is a real zero.
+    """
+    with blank_session() as db:
+        from app.services.project_fulfilment_board_service import FulfilmentBoardService
+
+        product = _product(db)
+        _pools, bins = _sites(db, ["BRW"], "BB")
+        outside = _warehouse(db, "BRW-IR")
+        board = FulfilmentBoardService(db)
+        board._counted_warehouses = {str(bins["BRW"].id)}
+
+        counted = board._location(
+            "BRW-BB", (), product_id=str(product.id),
+            warehouse_id=str(bins["BRW"].id), where="own",
+        )
+        cited = board._location(
+            "BRW-IR", (), product_id=str(product.id),
+            warehouse_id=str(outside.id), where="other_group",
+        )
+
+        # Counted, and the answer is zero.
+        assert counted["so_qty"] == "0"
+        assert counted["spo_qty"] == "0"
+        assert counted["po_open_qty"] == "0"
+        assert counted["available_qty"] == "0"
+        # Never looked, so never answered.
+        assert cited["so_qty"] is None
+        assert cited["spo_qty"] is None
+        assert cited["po_open_qty"] is None
+        assert cited["available_qty"] is None
+        assert cited["qty_incoming"] is None
+        # Still addressable, and its on-hand is a real read.
+        assert cited["warehouse_id"] == str(outside.id)
+        assert cited["qty_on_hand"] == "0"
+
+
+# --------------------------------------------------------------------------- #
+# which cells get pool rows at all
+# --------------------------------------------------------------------------- #
+
+
+def test_a_cell_holding_two_products_lists_no_pool_rows():
+    """`_group_locations`' rule, for `_pool_locations`' own reason: a pivoted cell can span
+    several products, and a pool row would then have to say WHICH one it counts. This table
+    has no column for that, so a cell that cannot answer honestly says nothing extra.
+
+    Driven through `_pool_locations` directly rather than through a seeded board: two products
+    under one item code is a state `uq_products_company_product_code` forbids within a company,
+    and the live `B2155-NL-BLUE` pair predates it. Faking the row would test the fixture."""
+    with blank_session() as db:
+        from app.services.project_fulfilment_board_service import FulfilmentBoardService
+
+        product = _product(db)
+        other = _product(db)
+        pools, bins = _sites(db, ["BRW"], "BB")
+        board = FulfilmentBoardService(db)
+        board._pool_warehouses = {str(pools["BRW"].id): "BRW"}
+        board._pool_of = {str(bins["BRW"].id): str(pools["BRW"].id)}
+
+        one = SimpleNamespace(product_id=str(product.id), warehouse_id=str(bins["BRW"].id))
+        two = SimpleNamespace(product_id=str(other.id), warehouse_id=str(bins["BRW"].id))
+
+        # One product behind the cell: the pool is listed.
+        assert [entry["location"] for entry in board._pool_locations([one], [])] == ["BRW"]
+        # Two: nothing extra, because no row could say which product it counts.
+        assert board._pool_locations([one, two], []) == []
+
+
+def test_a_cell_whose_lines_sit_at_two_sites_leads_with_both_own_pools():
+    """The own pool is read off the FK per line, so a cell spanning BRW-BB and MWH-BB leads
+    with BRW and MWH before the pools nothing on it draws from."""
+    with blank_session() as db:
+        product = _product(db)
+        pools, bins = _sites(db, ["BRW", "MWH", "DC1"], "BB")
+        _stock(db, product, bins["BRW"], on_hand="40")
+        agent = _agent(db, group="BB")
+        order = _order(db, agent=agent)
+        _line(db, order, product, bins["BRW"], qty="10")
+        _line(db, order, product, bins["MWH"], qty="30")
+
+        pool_codes = [
+            entry["location"]
+            for entry in _cell(db, order, product)["locations"]
+            if entry["where"] == "site_pool"
+        ]
+
+        # MWH leads: its line carries the larger demand, so its own location sorts first and
+        # the pool order follows the locations the cell's lines actually named.
+        assert set(pool_codes[:2]) == {"BRW", "MWH"}
+        assert pool_codes[2:] == ["DC1"]

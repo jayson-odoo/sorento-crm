@@ -64,11 +64,8 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * word by word to compare. The same facts as a row each, under AutoCount's own headers, are read
  * by running an eye down a column.
  *
- * RESERVED MOVED OUT OF A TOOLTIP AND INTO THE TABLE, unreachable as it was on a touch screen
- * and invisible to anyone who did not hover. Free came with it and has since gone again: it is
- * `On hand - Reserved`, both of which are columns, so it restated what the reader could already
- * see. The incoming legs were in that tooltip too, and they are SPO rows in the expansion, which
- * is where the document that carries them already lives.
+ * The incoming legs were in a tooltip once, and they are SPO rows in the row's own expansion
+ * now, which is where the document that carries them already lives.
  *
  * NOT a DataGrid, and this is the carve-out `FulfilmentBoardMatrix` documents and PLAN 13.10
  * states: this is a fixed matrix of eight named figures, not a listing - no column config, sort,
@@ -374,10 +371,9 @@ const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-
  * twice, in a word this screen no longer uses. What this table is for is what is AT each
  * location, which is the one thing that table cannot say.
  *
- * EVERY column totals. The rows are now a whole ownership group rather than the one warehouse
- * a line named, and "what does the group hold" is the question the group was listed to answer -
- * so Reserved is summed too. It was left out when a "total" could only ever add a location to
- * itself.
+ * EVERY column totals. The rows are a whole ownership group and every site pool rather than the
+ * one warehouse a line named, and "what does the group hold" is the question they were listed to
+ * answer. Totals were left out when a "total" could only ever add a location to itself.
  */
 const NUMERIC_COLUMNS: {
   key: string;
@@ -389,10 +385,10 @@ const NUMERIC_COLUMNS: {
   signed?: boolean;
 }[] = [
   { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
-  // No Reserved column, and no Free one. Free is `On hand - Reserved`, and Reserved itself was
-  // read by nothing else on this screen: `Available` is `On hand - SO + SPO` and does not use
-  // it. Both went to make room for the two columns below, which answer questions no other
-  // number here does. Reserved is still on the wire and still in the row's own expansion.
+  // No Reserved column, and no Free one. Free was `On hand - Reserved`, and Reserved itself is
+  // read by nothing on this screen: `Available` is `On hand - SO + SPO` and does not use it.
+  // Both went to make room for the two columns below, which answer questions no other number
+  // here does. Reserved is still on the wire and still in the row's own expansion.
   { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
   { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
   {

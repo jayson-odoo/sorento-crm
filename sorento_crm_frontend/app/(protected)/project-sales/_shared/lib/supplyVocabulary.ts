@@ -658,6 +658,13 @@ export function contributionParts(
  * Only a RESERVE or a BORROW is drawn from somewhere. A Buy is not held anywhere yet and an
  * incoming arrives on somebody else's document, so neither takes anything off a location's
  * pile - the same rule `movesOf` applies for the same reason.
+ *
+ * KEYED BY WAREHOUSE CODE, so a quantity only shows up if the server listed that warehouse as
+ * a row. The group's siblings and every site pool are always listed, so a suggestion can never
+ * fall through; a drafted Amend that hand-picks a cross-group donor CAN, because such a
+ * location reaches the table only when a component already cited it. The Taken then sums to
+ * less than the quantity needed, which is the honest reading: the table is not showing the row
+ * that stock came off.
  */
 export function takenByLocation(
   cell: Pick<BoardCell, 'contributions'>,
