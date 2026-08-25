@@ -399,6 +399,49 @@ function breakdown(
 }
 
 /**
+ * The physical movements a DECISION implies, as one line: "454 DC1-BB -> BRW-BB · 267
+ * MWH-BB -> BRW-BB" (`PLAN-scm-cs-planning-uat.md` section E).
+ *
+ * Stock decided from anywhere other than the line's own location has to be carried there
+ * before anything can be delivered, and until the transfer entity existed nothing on the
+ * board said so. This is the same set of rows the backend writes at confirm, derived here
+ * from the decision the planner is looking at - so the card says what Approve will ask for
+ * BEFORE it is pressed, with no second call.
+ *
+ * Same-location components contribute nothing (that stock is already where it has to be),
+ * and neither do Buy or Incoming: one is not held anywhere yet and the other arrives at the
+ * line's own location on somebody else's document. Aggregated per (from, to) pair, because
+ * two lines drawing from one warehouse to one location is ONE movement to key.
+ */
+export function movesOf(
+  cell: Pick<BoardCell, 'contributions'>,
+  draft: Record<string, BoardDecision>,
+): { from: string; to: string; qty: string }[] {
+  const byPair = new Map<string, number>();
+  for (const contribution of cell.contributions) {
+    const own = contribution.fulfilment_location ?? null;
+    if (!own) continue;
+    for (const part of contributionDecision(contribution, draft[contribution.key] ?? null) ??
+      []) {
+      if (part.kind !== 'reserve' && part.kind !== 'borrow') continue;
+      const from = part.location ?? part.source_location ?? null;
+      if (!from || from === own) continue;
+      const key = `${from}\u0000${own}`;
+      byPair.set(key, (byPair.get(key) ?? 0) + toMinor(part.qty));
+    }
+  }
+  return [...byPair].map(([key, qty]) => {
+    const [from, to] = key.split('\u0000');
+    return { from, to, qty: fromMinor(qty) };
+  });
+}
+
+/** "454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB", or "" when nothing has to move. */
+export function movesText(moves: { from: string; to: string; qty: string }[]): string {
+  return moves.map((move) => `${move.qty} ${move.from} -> ${move.to}`).join(' · ');
+}
+
+/**
  * What the LADDER proposes for a whole cell.
  *
  * The proposal, never the decision: on a covered line `sources` is the frozen composition

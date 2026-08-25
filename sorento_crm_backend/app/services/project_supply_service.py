@@ -2789,6 +2789,7 @@ class ProjectSupplyService:
                     "carried": True,
                 }
             )
+        self._write_transfers(order, decision, previous, snapshots)
         self.db.flush()
 
         from app.services.project_order_inquiry_service import (
@@ -3260,6 +3261,59 @@ class ProjectSupplyService:
         if item.source == ALLOC_SOURCE_OTHER_PROJECT and donor is not None:
             return f"borrowed from {donor.project_code} at {where}"
         return f"borrowed from free stock at {where}"
+
+    def _write_transfers(
+        self,
+        order: ProjectSalesOrder,
+        decision: SOSupplyDecision,
+        previous: Optional[SOSupplyDecision],
+        snapshots: Sequence[Dict[str, Any]],
+    ) -> None:
+        """The physical movements this revision implies (PLAN section E, Q2 ruled).
+
+        A reserve or a borrow drawn from a warehouse that is not the line's own location
+        has to be carried there before anything can be delivered, and until this existed
+        nothing in the product said so - the captain's third finding of 25 August. One
+        `proposed` row per such component; the Transfers page is where a person approves
+        it deliberately.
+
+        Read off `snapshots` rather than off `checked`, so a NAMED line and a CARRIED one
+        are written by the same loop: a carried line's components are the previous
+        revision's frozen dicts in the same shape, its transfers were just cancelled with
+        that revision, and it therefore needs fresh ones or the movement it still implies
+        would vanish because an unrelated line was reconfirmed.
+
+        Best-effort in a SAVEPOINT, mirroring `_auto_place_after_confirm` and for its
+        reason: the decision and the holds are already written by the time this runs, so a
+        failure here must not turn a confirmation the planner was told succeeded into a
+        500 - and without the savepoint the failed statement would poison the transaction
+        the promise itself is in, so catching the exception alone would not save it. The
+        next reconfirm rewrites the rows.
+        """
+        from app.services import stock_transfer_service as transfers
+
+        try:
+            with self.db.begin_nested():
+                if previous is not None:
+                    transfers.cancel_open_for_decision(
+                        self.db,
+                        str(previous.id),
+                        f"Superseded by revision {decision.revision_no}",
+                    )
+                transfers.write_for_decision(
+                    self.db,
+                    order,
+                    decision,
+                    snapshots,
+                    warehouse_id_for_code=self.warehouse_id_for_code,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "supply confirmed, but the stock transfers for revision %s were not "
+                "written (%s)",
+                decision.revision_no,
+                exc,
+            )
 
     def _write_allocations(
         self,

@@ -18,6 +18,7 @@ import {
   FileText,
   ListOrdered,
   LoaderCircleIcon,
+  Move,
   Search,
   SquarePen,
   Truck,
@@ -42,6 +43,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -1142,6 +1144,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
             <Truck />
             <span>Delivery</span>
           </TabsTrigger>
+          <TabsTrigger value="transfers">
+            <Move />
+            <span>Transfers</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1519,6 +1525,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
               )}
             </div>
           </Card>
+        </TabsContent>
+
+        {/* AC-E6: the movements this order's supply decision asked for. The SAME grid the
+            Transfers page is, pinned to this order - so a transfer cannot read one way here
+            and another way there. Always rendered; it carries its own empty state. */}
+        <TabsContent value="transfers" className="mt-0 focus-visible:outline-none">
+          <StockTransfersPanel
+            salesOrderId={so.id}
+            listingKey="scm.sales_orders.view::stock-transfers"
+            showFilters={false}
+          />
         </TabsContent>
       </Tabs>
     </div>

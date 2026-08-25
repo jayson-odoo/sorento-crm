@@ -20,6 +20,8 @@ import {
   rowText,
   segmentsOf,
   decisionBreakdown,
+  movesOf,
+  movesText,
   suggestionBreakdown,
 } from './supplyVocabulary';
 import type {
@@ -661,5 +663,94 @@ describe('what the bar is drawn from', () => {
       b: { verdict: 'approved' },
     });
     expect(whole.decided).toBe(true);
+  });
+});
+
+/**
+ * The Moves line under the Decision card (`PLAN-scm-cs-planning-uat.md` section E).
+ *
+ * What Approve will ask a warehouse to physically carry, said before it is pressed.
+ */
+describe('movesOf', () => {
+  const covered = (over: Partial<BoardLineDecision> = {}) =>
+    line({
+      covered: true,
+      decision: {
+        reserve: [
+          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
+          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+        timely_spo_qty: '0',
+        ...over,
+      } as BoardLineDecision,
+    });
+
+  it('names every movement the decision implies, per (from, to) pair', () => {
+    const moves = movesOf(cell([covered()]), {});
+
+    expect(moves).toEqual([
+      { from: 'DC1-BB', to: 'BRW-BB', qty: '454' },
+      { from: 'MWH-BB', to: 'BRW-BB', qty: '267' },
+    ]);
+    expect(movesText(moves)).toBe('454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB');
+  });
+
+  it('says nothing about stock already at the line\'s own location', () => {
+    const moves = movesOf(
+      cell([
+        covered({
+          reserve: [
+            { warehouse_id: 'wh-brw-bb', location: 'BRW-BB', qty: '40', rung: 'group_take' },
+          ],
+        } as Partial<BoardLineDecision>),
+      ]),
+      {},
+    );
+
+    expect(moves).toEqual([]);
+    expect(movesText(moves)).toBe('');
+  });
+
+  it('says nothing about a Buy or about incoming supply', () => {
+    const moves = movesOf(
+      cell([
+        covered({
+          reserve: [],
+          buy_qty: '71',
+          timely_spo_qty: '30',
+        } as Partial<BoardLineDecision>),
+      ]),
+      {},
+    );
+
+    expect(moves).toEqual([]);
+  });
+
+  it('sums two lines drawing the same way into ONE movement to key', () => {
+    const moves = movesOf(cell([covered(), { ...covered(), key: 'so-1:20' }]), {});
+
+    expect(moves).toEqual([
+      { from: 'DC1-BB', to: 'BRW-BB', qty: '908' },
+      { from: 'MWH-BB', to: 'BRW-BB', qty: '534' },
+    ]);
+  });
+
+  it('follows the DRAFT, so the line changes the moment a tick lands', () => {
+    const proposal = line({
+      sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })],
+    });
+    const draft: Record<string, BoardDecision> = {
+      [proposal.key]: {
+        verdict: 'amended',
+        reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' }],
+        borrow: [],
+        buy_qty: '0',
+      } as BoardDecision,
+    };
+
+    expect(movesText(movesOf(cell([proposal]), draft))).toBe('71 BRW -> BRW-BB');
+    expect(movesText(movesOf(cell([proposal]), {}))).toBe('');
   });
 });

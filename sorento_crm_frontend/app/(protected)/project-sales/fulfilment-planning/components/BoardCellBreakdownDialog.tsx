@@ -26,6 +26,8 @@ import {
   SHORT_LABELS,
   contributionSuggestion,
   decisionBreakdown,
+  movesOf,
+  movesText,
   rowOf,
   rowText,
   suggestionBreakdown,
@@ -116,6 +118,13 @@ export function BoardCellBreakdownDialog({
    * claims a decision was taken to do nothing.
    */
   const decision = React.useMemo(() => decisionBreakdown(cell, draft), [cell, draft]);
+  /**
+   * What has to physically MOVE for that decision, before Approve is pressed (section E).
+   *
+   * Derived from the same decision the card above renders, so the planner sees the
+   * transfers their tick is about to raise rather than discovering them on another page.
+   */
+  const moves = React.useMemo(() => movesText(movesOf(cell, draft)), [cell, draft]);
   /**
    * Did ANY contributing line record what the engine suggested?
    *
@@ -558,6 +567,7 @@ export function BoardCellBreakdownDialog({
                 title="Decision"
                 rows={decision}
                 empty=""
+                moves={moves}
               />
             ) : null}
           </div>
@@ -708,6 +718,7 @@ function CompositionCard({
   title,
   rows,
   empty,
+  moves,
 }: {
   testId: string;
   /** Prefix for the per-kind rows: `suggestion-buy`, `decision-shared`. */
@@ -715,6 +726,12 @@ function CompositionCard({
   title: string;
   rows: SuggestionRow[];
   empty: string;
+  /**
+   * The movements this composition implies ("454 DC1-BB -> BRW-BB"), on the Decision card
+   * only. Empty when nothing has to move, and the line is not drawn then: a Moves row
+   * reading nothing claims a decision was taken to carry nothing.
+   */
+  moves?: string;
 }) {
   return (
     <div data-testid={testId} className="rounded-lg border border-border p-3">
@@ -746,6 +763,12 @@ function CompositionCard({
           </div>
         ))}
       </div>
+      {moves ? (
+        <p data-testid={`${rowTestId}-moves`} className="mt-2 border-t border-border pt-1.5 text-xs">
+          <span className="text-muted-foreground">Moves: </span>
+          <span className="break-words tabular-nums">{moves}</span>
+        </p>
+      ) : null}
     </div>
   );
 }

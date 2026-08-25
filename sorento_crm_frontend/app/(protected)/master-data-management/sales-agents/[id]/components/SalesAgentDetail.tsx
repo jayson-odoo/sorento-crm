@@ -3,7 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ArrowLeft, FileText, ListOrdered, LoaderCircleIcon, SquarePen } from 'lucide-react';
+import {
+  ArrowLeft,
+  FileText,
+  ListOrdered,
+  LoaderCircleIcon,
+  Move,
+  SquarePen,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import SalesOrdersGrid from '@/app/(protected)/scm/sales-orders/components/SalesOrdersGrid';
@@ -241,6 +249,10 @@ export function SalesAgentDetail({ id }: { id: string }) {
             <ListOrdered />
             <span>Sales orders</span>
           </TabsTrigger>
+          <TabsTrigger value="transfers">
+            <Move />
+            <span>Transfers</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -381,6 +393,16 @@ export function SalesAgentDetail({ id }: { id: string }) {
             // A real key, not the route: the path carries the agent's id, so keying off it
             // would give every agent their own saved column layout.
             listingKey="master_data.sales_agents.view::sales-orders"
+          />
+        </TabsContent>
+
+        {/* AC-E6: every stock movement raised for this agent's orders. The SAME grid the
+            Transfers page is, pinned to this agent, so the two cannot word a state twice. */}
+        <TabsContent value="transfers" className="mt-0 focus-visible:outline-none">
+          <StockTransfersPanel
+            salesAgentId={agent.id}
+            listingKey="master_data.sales_agents.view::stock-transfers"
+            showFilters={false}
           />
         </TabsContent>
       </Tabs>
