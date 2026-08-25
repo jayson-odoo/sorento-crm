@@ -801,20 +801,37 @@ class ProjectOrderInquiryService:
         ]
 
     def _inbound_pools(self, product_ids: set) -> List[CoveringPool]:
-        """SPO allocations on shipments that have not landed: stock already on the water."""
+        """Open SPO lines that have not landed: stock already on the water.
+
+        Outer-joined to the shipment since migration 420: an SPO document exists before
+        anybody books a container for it, and an inner join here counted only the ones that
+        had one. A row with no shipment offers its own `expected_date` as the arrival, and a
+        CLOSED line offers nothing - history is written closed for exactly that reason.
+        """
         rows = (
             self.db.query(
                 SPOAllocation.spo_number,
                 SPOAllocation.product_id,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
-                InboundShipment.estimated_arrival_date,
+                func.coalesce(
+                    InboundShipment.estimated_arrival_date, SPOAllocation.expected_date
+                ).label("eta"),
             )
-            .join(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
             .filter(
                 SPOAllocation.product_id.in_(list(product_ids)),
                 SPOAllocation.spo_number.isnot(None),
-                InboundShipment.actual_arrival_date.is_(None),
+                or_(
+                    InboundShipment.id.is_(None),
+                    InboundShipment.actual_arrival_date.is_(None),
+                ),
+                or_(
+                    SPOAllocation.line_status.is_(None),
+                    SPOAllocation.line_status == "open",
+                ),
                 or_(
                     SPOAllocation.receipt_status.is_(None),
                     SPOAllocation.receipt_status != "received",

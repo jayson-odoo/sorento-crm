@@ -7,11 +7,13 @@ PREFIX and never on AutoCount's own `Shipping Order` flag - nine rows of the cap
 book disagree with their own flag, and a misfiled row is the one thing this channel must not
 produce (ADR 337).
 
-Both families land in `purchase_orders` / `purchase_order_lines`, discriminated by
-`source_system` (`scm_po_history` / `scm_spo_history`). They are the same thing to this
-schema: a creditor document with dated item lines. The SPO half is deliberately NOT written
-to `spo_allocations` - see the S5 amendment in the plan and the `SPO_SOURCE_SYSTEM` note
-below.
+The two families land in DIFFERENT tables, and that is the whole point of the split: a
+purchase order is written to `purchase_orders` / `purchase_order_lines`, a shipping order to
+`spo_allocations`, one row per SPO line. `scm.on_order_v` reads `spo_allocations` and nothing
+else, so a shipping order filed as a purchase order was supply the module could not see.
+See `PLAN-scm-cs-planning-uat.md` section K and migration `420_spo_docs_in_allocations`,
+which moved the 3,983 SPO documents already held across and reversed the S5 amendment that
+had kept them here.
 
 One rule governs everything else:
 
@@ -45,7 +47,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.services import import_outcome_codes as oc
@@ -73,15 +80,13 @@ logger = logging.getLogger(__name__)
 #: back to open) has to recognise them, and it must not import this module's write path.
 SOURCE_SYSTEM = PO_HISTORY_SOURCE
 
-#: The same, for the SHIPPING-ORDER family (`SPO-2023/01-0001`). Both families land in
-#: `purchase_orders` / `purchase_order_lines` - they are the same thing to this schema, a
-#: creditor document with dated item lines - and the stamp is what lets a later reader tell
-#: them apart without re-parsing the number. See the S5 amendment in
-#: `documentation/plans/scm/PLAN-scm-order-import-feedback.md` for why the SPO half is NOT
-#: written to `spo_allocations`: that table is the SUPPLY read model behind `scm.on_order_v`,
-#: its warehouse is NOT NULL (578 rows of the captain's book name a location we do not hold),
-#: and its `(spo_number, product, warehouse)` unique key forbids the 2,253 repeated
-#: item-on-one-SPO groups the file actually contains.
+#: The same, for the SHIPPING-ORDER family (`SPO-2023/01-0001`), stamped on the
+#: `spo_allocations` rows this feed writes. It is what lets a later reader tell an imported
+#: shipping order from one this system raised, and it is what migration 420's downgrade
+#: moves back. The three objections that once kept this family in `purchase_orders` are all
+#: answered by that migration: `spo_allocations.warehouse_id` is nullable with the raw code
+#: kept beside it, and the unique key is the LINE, so repeated item-on-one-SPO groups are
+#: ordinary data rather than a collision.
 SPO_SOURCE_SYSTEM = SPO_HISTORY_SOURCE
 
 #: `source_ref` per file shape, so the two exports are distinguishable on the row.
@@ -198,6 +203,142 @@ def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
     return out
 
 
+def _allocations_by_line(db: Session, spo_numbers: set[str]) -> dict[str, dict[int, SPOAllocation]]:
+    """The SPO rows already held, keyed the way this feed writes them: document, then line.
+
+    The same shape as `existing_lines` on the purchase-order side, and for the same reason: a
+    re-upload of a book somebody re-exported over a wider date range must refresh what it
+    already holds instead of doubling every historical quantity.
+    """
+    if not spo_numbers:
+        return {}
+    out: dict[str, dict[int, SPOAllocation]] = {}
+    for row in (
+        db.query(SPOAllocation)
+        .filter(SPOAllocation.spo_number.in_(sorted(spo_numbers)))
+        .all()
+    ):
+        out.setdefault(str(row.spo_number), {})[row.spo_line_number] = row
+    return out
+
+
+def _write_shipping_order(
+    db: Session,
+    parsed_order,
+    *,
+    product_by_code: dict[str, str],
+    warehouse_by_code: dict[str, str],
+    supplier: Optional[Supplier],
+    existing: dict[str, dict[int, SPOAllocation]],
+    outcome: ImportOutcome,
+    company_id: Optional[str],
+    claimed: set,
+    now: datetime,
+) -> int:
+    """One shipping order, as `spo_allocations` rows. Returns how many rows were created.
+
+    Upserted on `(company, spo_number, spo_line_number)` - the line, not the
+    (document, product, location) triple, because the book states the same product on one
+    SPO 13,305 times over and every one of those is a real second container.
+
+    Written CLOSED and fully received, which is this whole service's governing rule: history
+    must never read as incoming supply. `scm.on_order_v` counts a row only while it is open
+    AND still has quantity to come, so 3,517 shipping orders from 2020 are excluded by
+    construction rather than by a filter somebody has to remember.
+    """
+    lines_created = 0
+    held = existing.setdefault(parsed_order.po_number, {})
+    for index, parsed_line in enumerate(parsed_order.lines, start=1):
+        identity = {"doc_no": parsed_order.po_number,
+                    "item_code": parsed_line.item_code,
+                    "line_no": parsed_line.line_no}
+        if not parsed_line.is_stock_item:
+            outcome.skip(row=parsed_line.source_row, code=oc.CHARGE_LINE,
+                         identity=identity, value=parsed_line.description or None)
+            continue
+        product_id = product_by_code.get(parsed_line.item_code)
+        if product_id is None:
+            outcome.skip(row=parsed_line.source_row, code=oc.PRODUCT_NOT_FOUND,
+                         identity=identity, value=parsed_line.item_code)
+            continue
+
+        # The book's own line number where it states one, else this line's position in the
+        # document. Position is only a fallback: the export that states none also states its
+        # lines in a fixed order, so the same file re-uploaded lands on the same numbers.
+        line_no = parsed_line.line_no or index
+        code = parsed_line.location.upper() if parsed_line.location else None
+        warehouse_id = warehouse_by_code.get(code) if code else None
+
+        if parsed_line.so_number:
+            # Claimed for every line the file states, whoever ends up owning the row below:
+            # "this shipping order carries that sales order" is a fact about the DOCUMENT,
+            # and the claim holds both numbers as text so it survives either way.
+            _claim_so_link(db, parsed_order.po_number, parsed_line.so_number, now,
+                           item_code=parsed_line.item_code, seen=claimed,
+                           company_id=company_id)
+
+        row = held.get(line_no)
+        if row is not None and (row.source_system or "") not in (SOURCE_SYSTEM, SPO_SOURCE_SYSTEM):
+            # Somebody else owns this line: the live outstanding book, or an SPO this system
+            # raised from a draft shipment. Those rows carry the OPEN balance that is the
+            # module's only incoming supply, and closing them because a history export also
+            # mentions the document would delete that supply on a re-upload.
+            outcome.skip(row=parsed_line.source_row, code=oc.DOCUMENT_OWNED_ELSEWHERE,
+                         identity=identity, value=parsed_order.po_number)
+            continue
+
+        quantity = int(round(parsed_line.qty_ordered or 0))
+        if row is None:
+            row = SPOAllocation(
+                spo_number=parsed_order.po_number,
+                spo_line_number=line_no,
+                product_id=product_id,
+                warehouse_id=warehouse_id,
+                # The code as the book spelled it, held or not. On 6,520 lines this is the
+                # only record of where the goods were meant to go.
+                location_code=code,
+                allocated_quantity=quantity,
+                quantity_received=quantity,
+                receipt_status="fully_received",
+                line_status="closed",
+                source_system=SPO_SOURCE_SYSTEM,
+                issue_date=parsed_order.order_date,
+                expected_date=parsed_line.expected_date,
+                supplier_id=str(supplier.id) if supplier else None,
+                unit_cost=parsed_line.unit_price,
+                currency=parsed_order.currency or None,
+            )
+            db.add(row)
+            held[line_no] = row
+            lines_created += 1
+            outcome.success(row=parsed_line.source_row, code=oc.CREATED,
+                            identity=identity, value=parsed_order.po_number)
+            continue
+
+        row.product_id = product_id
+        row.allocated_quantity = quantity
+        row.quantity_received = quantity
+        row.receipt_status = "fully_received"
+        row.line_status = "closed"
+        row.unit_cost = parsed_line.unit_price
+        row.currency = parsed_order.currency or row.currency
+        row.issue_date = parsed_order.order_date or row.issue_date
+        if code is not None:
+            row.location_code = code
+        if warehouse_id is not None:
+            row.warehouse_id = warehouse_id
+        if parsed_line.expected_date is not None:
+            row.expected_date = parsed_line.expected_date
+        if supplier is not None:
+            row.supplier_id = str(supplier.id)
+        # `updated`, not `unchanged`, whatever the values were: this feed's rule is that the
+        # file is the record of what was ordered, so the write happened.
+        outcome.updated(row=parsed_line.source_row, identity=identity,
+                        value=parsed_order.po_number, entity_type="spo_allocation",
+                        entity_id=row.id)
+    return lines_created
+
+
 def _parse(db: Session, file_data: bytes) -> PoListingResult:
     """Read the book, whichever of the two exports it is.
 
@@ -215,12 +356,23 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
     }
     known = _products_by_code(db, stock_codes)
     unmatched = sorted(stock_codes - set(known))
-    existing = {
+    # Both tables, because the two families live in different ones. Asking only
+    # `purchase_orders` would report every shipping order in the file as new, and the
+    # "already held - they will be refreshed" warning is the operator's own check that they
+    # are re-uploading the book they think they are.
+    numbers = [o.po_number for o in parsed.orders]
+    existing = ({
         n
         for (n,) in db.query(PurchaseOrder.po_number)
-        .filter(PurchaseOrder.po_number.in_([o.po_number for o in parsed.orders]))
+        .filter(PurchaseOrder.po_number.in_(numbers))
         .all()
-    } if parsed.orders else set()
+    } | {
+        n
+        for (n,) in db.query(SPOAllocation.spo_number)
+        .filter(SPOAllocation.spo_number.in_(numbers))
+        .distinct()
+        .all()
+    }) if parsed.orders else set()
 
     # The creditor names and stock locations only the structured export states. Both are
     # reported rather than allowed to fail a line: a purchase we cannot attribute to a
@@ -326,7 +478,8 @@ def validate(db: Session, file_data: bytes) -> dict:
             many="columns we could not place, so nothing in them is read",
         ),
         (f"{out['orders_spo']:,} of these documents are shipping orders (SPO) and "
-         f"{out['orders_po']:,} are purchase orders; both are loaded as history")
+         f"{out['orders_po']:,} are purchase orders; the shipping orders are loaded as SPO "
+         f"allocations, the purchase orders as purchase-order history")
         if out["orders_spo"] else None,
     ]
     return val.envelope(
@@ -408,6 +561,9 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
         .filter(PurchaseOrder.po_number.in_([o.po_number for o in parsed.orders]))
         .all()
     }
+    existing_allocations = _allocations_by_line(
+        db, {o.po_number for o in parsed.orders if o.doc_family == FAMILY_SPO}
+    )
 
     orders_created = 0
     lines_created = 0
@@ -449,6 +605,23 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
         # a property of the document rather than of the file it arrived in, so a shipping
         # order in the banded report is filed the same way as one in the structured export.
         is_shipping_order = parsed_order.doc_family == FAMILY_SPO
+        if is_shipping_order:
+            document_is_new = parsed_order.po_number not in existing_allocations
+            lines_created += _write_shipping_order(
+                db, parsed_order,
+                product_by_code=product_by_code,
+                warehouse_by_code=warehouse_by_code,
+                supplier=supplier,
+                existing=existing_allocations,
+                outcome=outcome,
+                company_id=claim_company_id,
+                claimed=claimed,
+                now=now,
+            )
+            orders_created += 1 if document_is_new else 0
+            _claim_so_links(db, parsed_order.po_number, parsed_order.so_numbers, now,
+                            seen=claimed, company_id=claim_company_id)
+            continue
 
         order = existing_orders.get(parsed_order.po_number)
         if order is None:

@@ -68,6 +68,17 @@ SRT382-6-DIY is classified DEALER HOT-SELLING at BRW, so PLAN 3.3a keeps the poo
 and offers rung 3 nothing - see the trail reading below. Everything from item 3 down is still
 to do.
 
+Section 4 item 4's first half, **K (SPO documents live in `spo_allocations`)**, is BUILT on
+`feat/scm-uat-spo-allocations` (stacked on the plan-page lane): migration
+`420_spo_docs_in_allocations` widens the table and moves all 3,983 `SPO-` documents
+(79,968 lines) across, the purchase-history import writes the SPO family there instead of
+`purchase_orders`, and `on_order_v` plus the two incoming readers stop dropping a row that has
+no shipment. AC-K1/K2/K3/K4 pass on the scratch schema. See the BUILT block under section K
+for the six ways the build differs from the paragraphs above, the `order_link_claim` decision,
+and the open gap (no feed refreshes a live SPO balance). **The migration is NOT yet applied to
+the shared dev database**, so every `pg_session` test touching `spo_allocations` reads
+`UndefinedColumn` until it is.
+
 Lane: `.claude/worktrees/scm-uat` (FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
 
@@ -232,6 +243,45 @@ Captain: "SC is a product, not a set". Withdrawn: nothing about sets. The real q
 - Change: the import writes each SPO line as one `spo_allocations` row (`spo_number`, `spo_line_number`, `product_id`, `warehouse_id`, `allocated_quantity`, `quantity_received`, `receipt_status`, `po_line_id` when the SPO names its PO), upserted on `(spo_number, spo_line_number)`. `purchase_orders` stops receiving SPO documents; the existing SPO rows there are migrated across once (data migration, reversible) and deleted.
 - Consequences, all intended: SPO becomes incoming supply in `on_order_v` and in rung 1; the PO book page no longer needs its SPO filter; Link SPO (section I) has real rows to link; `spo_conversion_service` (draft shipment -> SPO) already writes this table, so the two writers meet on one shape.
 - Tests: import round trip on the 2026 PO & SPO book; `on_order_v` totals before/after; rung 1 fires for a line whose SPO arrives before the required date.
+
+**BUILT on `feat/scm-uat-spo-allocations`** (stacked on the plan page lane, PR #311), migration
+`420_spo_docs_in_allocations`. What the build found, and where it differs from the paragraphs
+above:
+
+- **Three families move, not one.** By the `SPO-` NUMBER rather than the stamp: 3,517 documents
+  (74,016 lines) under `scm_spo_history`, 414 (5,237) under `scm_po_history`, and 52 (715) under
+  `scm_upload`. The last group is the whole of the OPEN balance: everything else is closed and
+  fully received history, so the `scm_upload` documents are the only rows that can ever read as
+  incoming supply, and AC-K3's SPO-2026/08-0061 is one of them.
+- **Schema.** `inbound_shipment_id` and `warehouse_id` become nullable, `location_code` keeps the
+  book's raw spelling for the 6,520 lines naming a location we do not hold, and the unique key
+  moves to `(company_id, spo_number, spo_line_number)` (the old triple forbade 13,305 real
+  repeated groups). Added beside them: `source_system`, `issue_date`, `expected_date`,
+  `supplier_id`, `unit_cost`, `currency`, `line_status`.
+- **`po_line_id` is NULL on every migrated row.** The plan expected "when the SPO names its PO":
+  neither export carries a PO reference column (checked against the 27-header alias table), so
+  there is nothing to resolve it from. Section I is where an SPO gets linked to a PO.
+- **`scm.order_link_claim` is the one reference that had to give.** 12,390 claims point their
+  `po_line_id` at an SPO line and no table has a column that could name an allocation instead.
+  The claim holds both document numbers as TEXT, so the cache and its `resolved_at` are cleared
+  and the claim keeps saying what it said; the downgrade re-resolves them by the resolver's own
+  rule. Every other foreign key into an SPO document measured 0, and the migration REFUSES with
+  its counts rather than letting `ON DELETE SET NULL` orphan one silently.
+- **`on_order_v` changes twice**: LEFT JOIN to the shipment (an SPO exists before a container is
+  booked, and the inner join is what made every one of them invisible) and `warehouse_id IS NOT
+  NULL` (supply we cannot place is counted nowhere rather than everywhere). `line_status = open`
+  joins the predicate, so history is excluded by construction, as it already was.
+- **The PO book page has no SPO filter to remove** (measured: no document-family parameter on
+  `GET /purchase-orders` and no such control on the list). The FE change is the SPO Allocations
+  page reading `location_code` where there is no warehouse.
+- **Open gap, named rather than fixed: nothing refreshes a live SPO balance.**
+  `outstanding_reader` already SKIPS every `SPO-` row of the purchase book ("this book does not
+  carry them") and the history channel writes closed rows, so after this migration the 715 open
+  lines are a snapshot that no upload updates. Whoever takes section I should decide which feed
+  owns them.
+- **Also unchanged: `coverage_service`'s dated in-transit timeline** still drives off
+  `inbound_shipment_lines`, so an SPO with no shipment does not appear on it. AC-K3 is about
+  `on_order_v`, which it does.
 
 ## 4. Order of work (UAT-driven)
 

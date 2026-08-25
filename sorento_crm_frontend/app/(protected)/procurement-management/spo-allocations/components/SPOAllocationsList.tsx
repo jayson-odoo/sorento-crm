@@ -35,6 +35,7 @@ import type {
 } from '../types/spoAllocation.types';
 import Link from 'next/link';
 import React from 'react';
+import { allocationLocation } from '../lib/allocationLocation';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type ViewMode = 'none' | 'spo_number';
@@ -263,8 +264,7 @@ export default function SPOAllocationsList() {
       {
         id: 'location',
         header: 'Location',
-        cell: ({ row }) =>
-          row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '-',
+        cell: ({ row }) => allocationLocation(row.original),
         size: 100,
         meta: { headerTitle: 'Location' },
       },
@@ -674,7 +674,7 @@ export default function SPOAllocationsList() {
                                             )}
                                           </td>
                                           <td className="p-1.5">
-                                            {allocation.warehouse?.warehouse_code ?? allocation.warehouse?.warehouse_name ?? '-'}
+                                            {allocationLocation(allocation)}
                                           </td>
                                           <td className="p-1.5">
                                             {allocation.allocated_quantity}

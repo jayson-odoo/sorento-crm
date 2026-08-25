@@ -1485,3 +1485,72 @@ def test_a_same_agent_donor_ranked_BELOW_this_line_needs_no_authorisation_either
             actor_user_id=eling,
         )
         assert result["revision_no"] == 1
+
+
+# --------------------------------------------------------------------------- rung 1
+
+
+def _spo_line(db, product, warehouse, *, qty, arrives, spo_number=None, line_no=1):
+    """One open SPO line: a shipping order with no container booked, which is what every
+    SPO document is until somebody books one (section K, migration 420)."""
+    from app.models.procurement import SPOAllocation
+
+    row = SPOAllocation(
+        id=_uid(),
+        spo_number=spo_number or f"SPO-2026/08-{_uid()[:4]}",
+        spo_line_number=line_no,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=qty,
+        quantity_received=0,
+        receipt_status="pending",
+        line_status="open",
+        source_system="scm_spo_history",
+        expected_date=arrives,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_an_spo_arriving_before_the_required_date_is_proposed_on_rung_1():
+    """AC-K4. The SPO has no shipment and no ETA of its own beyond the line's
+    `expected_date`, which is the only date an imported shipping order carries - and the
+    thing that made rung 1 unfireable while SPO documents sat in `purchase_orders`."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        spo_number = _spo_line(
+            db, product, own, qty=40, arrives=REQUIRED_DATE - timedelta(days=5)
+        ).spo_number
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = _components(proposal)
+
+    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert components[0]["qty"] == "40"
+    assert components[0]["rung"] == "incoming"
+    assert spo_number in components[0]["reason"]
+
+
+def test_an_spo_arriving_after_the_required_date_is_not_timely():
+    """The other half of the same rule: incoming that lands too late is not cover, and the
+    line falls through the ladder to a Buy rather than promising a date it cannot keep."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _spo_line(db, product, own, qty=40, arrives=REQUIRED_DATE + timedelta(days=5))
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["buy"]

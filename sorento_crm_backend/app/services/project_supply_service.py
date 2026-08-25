@@ -58,7 +58,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 
 from sqlalchemy import func, nullslast, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -4302,12 +4302,18 @@ class ProjectSupplyService:
 
         `eta_delay_date` wins over `estimated_arrival_date` because the revised date is
         the accurate one, and a line promised against a date that has already slipped is
-        the promise this whole contract is trying not to make.
+        the promise this whole contract is trying not to make. Where there is no shipment
+        at all - a shipping order nobody has booked a container for, which is every SPO
+        document since migration 420 - the SPO line's own `expected_date` stands in, and
+        that is what rung 1 compares against the sales line's required date.
         """
         pids = [pid for pid in product_ids if pid]
         wids = [wid for wid in warehouse_ids if wid]
         if not pids or not wids:
             return {}
+        # Two ways a row can name a factory: through its shipment, or on the SPO line
+        # itself for a document nobody has booked a container for yet.
+        DirectSupplier = aliased(Supplier)
         rows = (
             self.db.query(
                 SPOAllocation.id,
@@ -4317,18 +4323,33 @@ class ProjectSupplyService:
                 SPOAllocation.warehouse_id,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
+                SPOAllocation.expected_date,
                 InboundShipment.eta_delay_date,
                 InboundShipment.estimated_arrival_date,
-                Supplier.supplier_name,
+                Supplier.supplier_name.label("shipment_supplier_name"),
+                DirectSupplier.supplier_name.label("spo_supplier_name"),
             )
-            .join(
+            # OUTER, since migration 420: an SPO document has no shipment until somebody
+            # books a container for it, and an inner join dropped every one of them - which
+            # is the whole of the incoming supply this ladder's rung 1 exists to offer.
+            .outerjoin(
                 InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
             )
             .outerjoin(Supplier, Supplier.id == InboundShipment.supplier_id)
+            .outerjoin(DirectSupplier, DirectSupplier.id == SPOAllocation.supplier_id)
             .filter(
                 SPOAllocation.product_id.in_(pids),
                 SPOAllocation.warehouse_id.in_(wids),
-                InboundShipment.actual_arrival_date.is_(None),
+                or_(
+                    InboundShipment.id.is_(None),
+                    InboundShipment.actual_arrival_date.is_(None),
+                ),
+                # A closed SPO line has left the book, the same way a closed purchase line
+                # has. History is written closed, so it can never read as supply here.
+                or_(
+                    SPOAllocation.line_status.is_(None),
+                    SPOAllocation.line_status == "open",
+                ),
                 or_(
                     SPOAllocation.receipt_status.is_(None),
                     SPOAllocation.receipt_status != "received",
@@ -4346,9 +4367,13 @@ class ProjectSupplyService:
                     spo_number=str(row.spo_number or ""),
                     spo_line_no=row.spo_line_number,
                     allocation_id=str(row.id),
-                    arrival_date=row.eta_delay_date or row.estimated_arrival_date,
+                    arrival_date=(
+                        row.eta_delay_date
+                        or row.estimated_arrival_date
+                        or row.expected_date
+                    ),
                     qty=balance,
-                    supplier_name=row.supplier_name,
+                    supplier_name=row.shipment_supplier_name or row.spo_supplier_name,
                 )
             )
         return out

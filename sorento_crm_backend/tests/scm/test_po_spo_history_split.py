@@ -32,7 +32,12 @@ from sqlalchemy import text
 
 from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import OrderLinkClaim
 from app.services import import_outcome_codes as oc
@@ -170,6 +175,10 @@ def blank_book(db):
     )
     db.execute(text("DELETE FROM purchase_orders WHERE po_number = ANY(:nums)"),
                {"nums": numbers})
+    # The SPO half lives in `spo_allocations` since migration 420, and its documents are
+    # just as fixed as the purchase orders' are.
+    db.execute(text("DELETE FROM spo_allocations WHERE spo_number = ANY(:nums)"),
+               {"nums": numbers})
     db.execute(text("DELETE FROM scm.order_link_claim WHERE po_number = ANY(:nums)"),
                {"nums": numbers})
     db.flush()
@@ -183,6 +192,16 @@ def imported(db, catalogue, blank_book):
 
 def _order(db, number: str) -> PurchaseOrder:
     return db.query(PurchaseOrder).filter(PurchaseOrder.po_number == number).one()
+
+
+def _allocations(db, number: str) -> list[SPOAllocation]:
+    """The SPO half, in the table it lives in since migration 420 (section K)."""
+    return (
+        db.query(SPOAllocation)
+        .filter(SPOAllocation.spo_number == number)
+        .order_by(SPOAllocation.spo_line_number)
+        .all()
+    )
 
 
 class _Recorder(ImportOutcome):
@@ -314,7 +333,13 @@ def _on_order(db, product_ids: list[str]) -> float:
 def test_neither_family_ever_counts_as_incoming_supply(db, catalogue, blank_book):
     """THE test, asserted through the view the planner reads rather than by inspecting the
     write. Measured as a delta: these are real product codes and a real product may
-    legitimately have live purchase orders against it."""
+    legitimately have live purchase orders against it.
+
+    It matters MORE since migration 420, not less: the SPO half now lands in
+    `spo_allocations`, which is the only table this view reads. What keeps 2023 out of the
+    plan is that history is written closed and fully received, and this is where that is
+    proved rather than asserted about the write.
+    """
     product_ids = [str(p.id) for p in catalogue["products"].values()]
     before = _on_order(db, product_ids)
 
@@ -324,29 +349,40 @@ def test_neither_family_ever_counts_as_incoming_supply(db, catalogue, blank_book
     assert _on_order(db, product_ids) == before
 
 
-def test_spo_lines_land_closed_and_fully_received(db, imported):
-    """Both halves. Either one alone would let a later status edit re-open the supply."""
+def test_no_shipping_order_is_written_as_a_purchase_order(db, imported):
+    """Section K, AC-K1: `purchase_orders` stops receiving the SPO family altogether."""
     for number in SPO_DOCS:
-        order = _order(db, number)
-        assert order.status == "closed"
-        assert order.lines
-        for line in order.lines:
-            assert line.line_status == "closed"
-            assert float(line.qty_received) == float(line.qty_ordered)
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.po_number == number).count() == 0
+        assert _allocations(db, number)
+
+
+def test_spo_lines_land_closed_and_fully_received(db, imported):
+    """Both halves, now asserted on the allocation. Either one alone would let a later
+    status edit re-open supply that was delivered years ago - and the SPO family sits in
+    the very table `scm.on_order_v` reads, so there is no second line of defence."""
+    for number in SPO_DOCS:
+        rows = _allocations(db, number)
+        assert rows
+        for row in rows:
+            assert row.line_status == "closed"
+            assert row.receipt_status == "fully_received"
+            assert row.quantity_received == row.allocated_quantity
 
 
 def test_each_family_carries_its_own_source_stamp(db, imported):
     """Same tables, discriminated by the source system, so a later reader can tell a
     shipping order from a purchase order without re-parsing the number."""
     assert _order(db, "202301-S0001").source_system == svc.SOURCE_SYSTEM
-    assert _order(db, "SPO-2023/01-0001").source_system == svc.SPO_SOURCE_SYSTEM
-    for number in PO_DOCS | SPO_DOCS:
+    assert all(row.source_system == svc.SPO_SOURCE_SYSTEM
+               for row in _allocations(db, "SPO-2023/01-0001"))
+    for number in PO_DOCS:
         assert _order(db, number).source_ref == svc.STRUCTURED_SOURCE_REF
 
 
 def test_the_document_date_survives(db, imported):
     assert _order(db, "202301-S0001").issue_date == date(2023, 1, 3)
-    assert _order(db, "SPO-2023/01-0001").issue_date == date(2023, 1, 4)
+    assert all(row.issue_date == date(2023, 1, 4)
+               for row in _allocations(db, "SPO-2023/01-0001"))
 
 
 def test_both_families_are_counted_separately_on_the_result(db, imported):
@@ -454,7 +490,11 @@ def test_each_order_is_linked_to_exactly_what_the_matcher_resolved(db, catalogue
     db.flush()
 
     for order in parsed.orders:
-        written = _order(db, order.po_number).supplier_id
+        written = (
+            _allocations(db, order.po_number)[0].supplier_id
+            if order.doc_family == "spo"
+            else _order(db, order.po_number).supplier_id
+        )
         match = expected.get(order.supplier_name)
         if match is None:
             assert written is None, "an unmatched creditor was linked to something"

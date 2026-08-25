@@ -1840,27 +1840,40 @@ class SPOAllocationService:
         so that caller suppresses it here and fires it once, per SPO number, when
         the whole file has landed.
         """
-        # Check unique constraint: (spo_number, product_id, warehouse_id)
-        if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
-            existing = self.db.query(SPOAllocation).filter(
-                SPOAllocation.spo_number == allocation_data.spo_number,
-                SPOAllocation.product_id == allocation_data.product_id,
-                SPOAllocation.warehouse_id == allocation_data.warehouse_id,
-            ).first()
-            if existing:
-                raise handle_conflict("SPO number, product and warehouse combination already exists.")
-        
         allocation_dict = allocation_data.model_dump()
         allocation_dict["receipt_status"] = _normalize_spo_receipt_status(
             allocation_dict.get("receipt_status")
         )
         allocation_dict["created_by"] = created_by
+        # The LINE is the identity of a row in this table since migration 420
+        # (`uk_spo_allocations_company_spo_line`), so a caller that does not state a line
+        # number gets the next one on that document. The old guard checked
+        # (spo_number, product, warehouse), which is not unique and never was: the captain's
+        # book states the same product on one SPO 13,305 times over, two containers at a
+        # time, and refusing the second one refuses ordinary data.
+        if allocation_dict.get("spo_number") and allocation_dict.get("spo_line_number") is None:
+            allocation_dict["spo_line_number"] = self._next_spo_line_number(
+                allocation_dict["spo_number"]
+            )
+        if allocation_dict.get("spo_number") and allocation_dict.get("spo_line_number") is not None:
+            existing = self.db.query(SPOAllocation.id).filter(
+                SPOAllocation.spo_number == allocation_dict["spo_number"],
+                SPOAllocation.spo_line_number == allocation_dict["spo_line_number"],
+            ).first()
+            if existing:
+                raise handle_conflict("This SPO already carries that line number.")
+
         allocation = SPOAllocation(**allocation_dict)
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
         self._capture_incoming_cost(allocation)
-        InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
+        if allocation.inbound_shipment_id:
+            # An SPO document has no shipment until somebody books a container for it, and
+            # there is nothing to refresh until then.
+            InboundShipmentService(self.db).refresh_shipment_line_statuses(
+                allocation.inbound_shipment_id
+            )
         # The other half of the journey: any GRN line that stated this SPO and
         # could not be placed when it was imported is now placeable. This is the
         # hook for the paths that write ONE allocation - the UI / API create, and
@@ -1869,6 +1882,15 @@ class SPOAllocationService:
         if forward_match:
             _forward_match_for_spo(self.db, allocation.spo_number, allocation.company_id)
         return allocation
+
+    def _next_spo_line_number(self, spo_number: str) -> int:
+        """The next line number on a shipping order, 1 where it has none yet."""
+        highest = (
+            self.db.query(func.max(SPOAllocation.spo_line_number))
+            .filter(SPOAllocation.spo_number == spo_number)
+            .scalar()
+        )
+        return int(highest or 0) + 1
 
     def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
         """Stamp the packing-list cost, in its currency, on the inbound shipment line.
@@ -1992,7 +2014,13 @@ class SPOAllocationService:
                 SPOAllocation.spo_number == allocation_data.spo_number,
                 SPOAllocation.product_id == allocation_data.product_id,
                 SPOAllocation.warehouse_id == allocation_data.warehouse_id,
-            ).first()
+                # Rows this writer could own, which is the ones nobody stamped. Since
+                # migration 420 the same table holds the IMPORTED documents too, and the
+                # triple is not unique across them - two containers of one product on one
+                # SPO is ordinary data - so without this the allocation sheet would rewrite
+                # a 2023 history quantity, and `.first()` would pick which one at random.
+                SPOAllocation.source_system.is_(None),
+            ).order_by(SPOAllocation.spo_line_number).first()
 
         if existing is None:
             allocation = self.create_allocation(
@@ -2020,7 +2048,10 @@ class SPOAllocationService:
         # (AC-C3.2). The "unchanged" path above returns before any write and stamps
         # nothing, because there was no moment of allocation to capture at.
         self._capture_incoming_cost(existing)
-        InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
+        if existing.inbound_shipment_id:
+            InboundShipmentService(self.db).refresh_shipment_line_statuses(
+                existing.inbound_shipment_id
+            )
         # A corrected SPO file raising `allocated_quantity` FREES capacity, and the
         # lines waiting on it should get it. The "unchanged" branch returns above
         # without writing, so there is no moment of allocation to react to there.
