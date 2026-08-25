@@ -5158,3 +5158,111 @@ def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_b
         assert refused.value.status_code == 409
         [failing] = refused.value.detail["failing_lines"]
         assert "free for this line" in failing["reason"], failing["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# what a donor line lost (AC-L6)
+#
+# The captain, 25 August 2026: the donor's board cell reads "71 lent to SO415472". A borrow
+# is visible on the borrowing side and was invisible on the giving side, so the agent whose
+# stock moved found out when the delivery did not.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTL{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=100)
+
+        donor = _order(db, so_number="ZZT-SO-DONOR", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="71", required_date=date(2026, 9, 4), warehouse=own
+        )
+        borrower = _order(db, so_number="ZZT-SO-TAKER", order_date=date(2026, 1, 1))
+        borrow_line = _line(
+            db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
+        )
+        pso_id = _adopt(db, str(borrower.id))
+        db.flush()
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == borrow_line.id,
+            )
+            .first()
+        )
+        _confirm(
+            db,
+            pso_id,
+            actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [
+                        {
+                            "source": "other_location",
+                            "warehouse_id": str(own.id),
+                            "qty": "71",
+                            "reason": "Authorised by agent CYNDI: the site is waiting.",
+                            "donor_core_line_id": str(donor_line.id),
+                            "donor_so_number": "ZZT-SO-DONOR",
+                            "donor_line_no": 1,
+                        }
+                    ],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-DONOR", "ZZT-SO-TAKER"], granularity="week", as_of=TODAY
+        )
+
+        contributions = [
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+        ]
+        given = next(c for c in contributions if c["so_number"] == "ZZT-SO-DONOR")
+        assert given["lent_to"] == [
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+        ]
+        # The borrowing line lent nothing; the field is an empty list, never absent, so the
+        # cell has one shape to read.
+        taken = next(c for c in contributions if c["so_number"] == "ZZT-SO-TAKER")
+        assert taken["lent_to"] == []
+
+        # And it reaches the wire: a field the service returns and the response model does
+        # not declare is dropped silently.
+        from app.models.base import company_scope
+
+        company_id = _sorento(db)
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": "ZZT-SO-DONOR,ZZT-SO-TAKER", "granularity": "week"},
+                )
+        finally:
+            _restore(originals)
+        assert response.status_code == 200, response.text
+        on_the_wire = [
+            contribution
+            for cell in response.json()["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-DONOR"
+        ]
+        assert on_the_wire and on_the_wire[0]["lent_to"] == [
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+        ]

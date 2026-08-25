@@ -346,6 +346,17 @@ class BoardLineOrderInquiry(BaseModel):
     state: str
 
 
+class BoardLineLending(BaseModel):
+    """One borrow taken OFF this line by another sales order (AC-L6)."""
+
+    #: How much was taken.
+    qty: str
+    #: The order that took it, by its document number - never a UUID.
+    so_number: Optional[str] = None
+    #: Its line on that order, so two lines of one order are told apart.
+    line_no: Optional[int] = None
+
+
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
@@ -468,6 +479,11 @@ class BoardContribution(BaseModel):
     #: an inquiry exists only once somebody has confirmed supply - and never an empty
     #: object, by the same rule `decision` follows.
     order_inquiry: Optional[BoardLineOrderInquiry] = None
+    #: What ANOTHER sales order borrowed off THIS line (AC-L6, the captain 25 August 2026:
+    #: the donor's cell reads "71 lent to SO415472"). A borrow used to be visible only on the
+    #: taking side, so the agent whose stock moved found out when the delivery did not.
+    #: An empty list when nothing was lent, never absent: the cell has one shape to read.
+    lent_to: List[BoardLineLending] = Field(default_factory=list)
 
 
 class BorrowDonorImpact(BaseModel):

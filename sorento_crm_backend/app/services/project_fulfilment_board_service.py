@@ -303,7 +303,7 @@ class _Row:
         "outside_reserve_window",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "item_flags", "order_inquiry",
+        "decision", "item_flags", "order_inquiry", "lent_to",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -347,6 +347,9 @@ class _Row:
         # walked - unplannable or covered - because `false` there would claim a judgement that
         # was never made.
         self.item_flags: Optional[Dict[str, Any]] = None
+        # What ANOTHER sales order borrowed off this line, and which order took it (AC-L6).
+        # A list, and an empty one when nothing was lent: the cell has one shape to read.
+        self.lent_to: List[Dict[str, Any]] = []
         # What purchasing has already been TOLD about this line, and how far they got:
         # `{inquiry_no, state}` off the inquiry row covering it, None when there is none.
         self.order_inquiry: Optional[Dict[str, Any]] = None
@@ -986,6 +989,8 @@ class FulfilmentBoardService:
         frozen = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
         inquiries = self._order_inquiries([str(line.id) for line, *_r in records])
+        # What another order borrowed OFF each of these lines. One read for the whole board.
+        lent = self._lent_from([str(line.id) for line, *_r in records])
 
         rows: List[_Row] = []
         for line, order, product, warehouse, agent in records:
@@ -1034,8 +1039,61 @@ class FulfilmentBoardService:
             # board that carried only the first sent the planner to another screen for the
             # second.
             row.order_inquiry = inquiries.get(str(line.id))
+            row.lent_to = lent.get(str(line.id), [])
             rows.append(row)
         return rows
+
+    def _lent_from(self, core_line_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """What another sales order borrowed OFF each of these lines (AC-L6).
+
+        The captain, 25 August 2026: the donor's cell reads "71 lent to SO415472". A borrow
+        was visible only on the taking side, so the agent whose stock moved found out when
+        the delivery did not.
+
+        Read off the ACTIVE decisions' frozen compositions, because that is where a group
+        borrow names its donor line (`donor_core_line_id`); `so_line_allocations` records
+        the warehouse the stock came from but not the line it was promised to. This is the
+        REVERSE direction of `_frozen_decisions` - the borrowing order is usually not in
+        this board's own selection - so it reads every active revision rather than the
+        selection's own, in one query, and filters in Python.
+
+        One row per project sales order, and a group borrow is rare, so the scan is small.
+        The trigger for a JSONB index on `donor_core_line_id`: the day this read shows up in
+        a board's own timings.
+        """
+        wanted = {str(line_id) for line_id in core_line_ids}
+        if not wanted:
+            return {}
+        decisions = (
+            self.db.query(SOSupplyDecision, ProjectSalesOrder)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .filter(SOSupplyDecision.state == DECISION_ACTIVE)
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for decision, order in decisions:
+            so_number = order.autocount_doc_no or order.provisional_ref
+            for snapshot in decision.line_snapshots or []:
+                for component in (snapshot or {}).get("components") or []:
+                    donor = component.get("donor_core_line_id")
+                    if not donor or str(donor) not in wanted:
+                        continue
+                    qty = _dec(component.get("qty"))
+                    if qty <= _ZERO:
+                        continue
+                    out.setdefault(str(donor), []).append(
+                        {
+                            "qty": qty_text(qty),
+                            "so_number": so_number,
+                            "line_no": (snapshot or {}).get("line_no"),
+                        }
+                    )
+        for rows in out.values():
+            rows.sort(key=lambda r: (str(r["so_number"] or ""), r["line_no"] or 0))
+        return out
 
     def _order_inquiries(self, core_line_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """The instruction covering each core line, keyed by that line.
@@ -2992,6 +3050,9 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: What ANOTHER sales order borrowed off this line (AC-L6): "71 lent to
+            #: SO415472". Empty when nothing was lent, never absent.
+            "lent_to": row.lent_to or [],
             #: What purchasing was already TOLD about this line, and how far they got with
             #: it. The other half of the decision beside it: the decision is the promise,
             #: this is the instruction it produced. Null when nobody has raised one - never
