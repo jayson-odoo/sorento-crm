@@ -50,6 +50,14 @@ vi.mock('next/navigation', async (importOriginal) => ({
 
 
 
+// The Plan action asks whether this user may open the fulfilment board. `useHasPermission`
+// reaches for the NextAuth session, which is not mounted under jsdom, so it is stubbed the
+// same way the proforma-invoice view's own suite stubs it.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 // The grid asks for the user's saved column order via this hook, which reads the route to
 // build its listing key. With `next/navigation` mocked the hook goes down its fetching path
 // and the grid sits on its loading skeleton, so it is stubbed the same way the detail suite
@@ -236,10 +244,11 @@ describe('SalesOrdersList - a long wait list stays readable', () => {
 
 describe('SalesOrdersList - the pills follow the sales-agents master', () => {
   /**
-   * The captain's reference for a pill is the sales-agents page: an ENUM (a class, a source,
-   * a priority) is a light filled chip, and a STATE (active/inactive, open/closed) is a ghost
-   * chip with a dot. This list had solid chips for both, so a status and a type read as the
-   * same kind of thing.
+   * The captain's reference for a pill is the sales-agents page: a light filled chip. The
+   * status used to be the exception - a ghost chip with a dot, on the theory that a STATE is
+   * a different kind of thing from an ENUM - and that exception is gone: "pure green
+   * bulleted point word is a no-no". One pill family on the screen, colour carried by the
+   * chip.
    *
    * The WORDS follow AutoCount, the system this book is exported from and the one the client
    * reads all day: `open` is Outstanding, `closed` is Completed. The stored values are
@@ -258,15 +267,20 @@ describe('SalesOrdersList - the pills follow the sales-agents master', () => {
     expect(screen.queryByText('Closed')).not.toBeInTheDocument();
   });
 
-  it('paints a status as a ghost pill with a dot - a state, not an enum', async () => {
+  it('paints a status as a light chip - no dot, and no ghost', async () => {
+    // It WAS a ghost chip with a dot. The captain's verdict on a bare green dot beside a
+    // word ("pure green bulleted point word is a no-no") is what retired it: the status now
+    // wears the same light family as every other pill in the table, and the colour is
+    // carried by the chip rather than by a dot floating in a transparent box.
     stub([order({ status: 'open' })]);
     renderList();
 
     await screen.findByText('Outstanding');
     const badge = badgeFor('Outstanding');
     expect(badge).not.toBeNull();
-    expect(badge?.className).toContain('bg-transparent');
-    expect(badge?.querySelector('[data-slot="badge-dot"]')).not.toBeNull();
+    expect(badge?.className).not.toContain('bg-transparent');
+    expect(badge?.className).toContain('--color-success-soft');
+    expect(badge?.querySelector('[data-slot="badge-dot"]')).toBeNull();
   });
 
   it('paints the priority from the priority table: normal is neutral, urgent shouts', async () => {

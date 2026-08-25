@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -198,16 +198,18 @@ export default function PurchaseOrdersList() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        // A STATE, so it wears the dot rather than a filled chip, and it is worded the way
+        // The same light chip every other enum column on this screen wears, worded the way
         // AutoCount words it: still expecting goods reads Outstanding, an order that
-        // finished reads Completed. The separate "On order" column that used to sit beside
-        // it is gone - it said the same thing twice, in different words, in a column whose
-        // only two values were the two this pill now carries.
+        // finished reads Completed. It used to be a ghost chip with a dot, on the theory
+        // that a STATE is a different kind of thing from an enum; the captain's verdict on
+        // a bare green dot beside a word was that it reads as an unfinished control, so the
+        // colour is carried by the chip itself. The separate "On order" column that used to
+        // sit beside it is gone - it said the same thing twice, in different words, in a
+        // column whose only two values were the two this pill now carries.
         cell: ({ row }) => {
           const pill = purchaseOrderStatusPill(row.original);
           return (
-            <Badge variant={pill.variant} appearance="ghost">
-              <BadgeDot />
+            <Badge variant={pill.variant} appearance="light" size="md">
               {pill.label}
             </Badge>
           );
@@ -217,12 +219,16 @@ export default function PurchaseOrdersList() {
       },
       {
         accessorKey: 'expected_date',
-        header: ({ column }) => <DataGridColumnHeader title="Expected date" column={column} />,
+        // "Delivery date" is what the buyer calls it and what AutoCount prints; "Expected
+        // date" was our word for the same column. The stored field is untouched - only the
+        // heading is - so the sort key, the listing preference and the API all still say
+        // `expected_date`.
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => (
           <span className="text-muted-foreground">{fmtDate(row.original.expected_date)}</span>
         ),
         size: 140,
-        meta: { headerTitle: 'Expected date' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         accessorKey: 'total_qty',

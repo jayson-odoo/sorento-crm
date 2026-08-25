@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
+import { toMinor } from '../../_shared/lib/supplyComposition';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -226,7 +227,12 @@ function BoardCellButton({
   onOpen: () => void;
 }) {
   const decided = cell.contributions.filter((entry) => decidedKeys.has(entry.key)).length;
+  // Only the locations this cell's own lines name. `cell.locations` also carries the rest of
+  // the sales agent's ownership group, which holds none of this cell's demand - listing those
+  // here would read "BRW-BB 42 · MWH-BB 0 · DC1-BB 0" on a grid whose whole job is to be
+  // scanned. Their stock position is the drill-down's answer, not this strip's.
   const strip = cell.locations
+    .filter((entry) => toMinor(entry.qty) > 0)
     .map((entry) => `${entry.location ?? 'No location'} ${entry.qty}`)
     .join(' · ');
   const orders = new Set(cell.contributions.map((entry) => entry.so_number)).size;

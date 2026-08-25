@@ -558,7 +558,7 @@ function trailFor(input: {
     outcome: 'not_eligible',
     why:
       input.ahead.lines > 0
-        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} owed to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
+        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} outstanding to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
         : `${fromMinor(input.offered)} at ${input.location}, nothing ranked ahead of this line there. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`,
   });
   add('incoming', {

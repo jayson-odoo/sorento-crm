@@ -920,7 +920,7 @@ export function FulfilmentBoardPanel({
                 selection-scoped total is the only thing that can tell the two apart. */}
             {(board.data?.line_count ?? 0) > 0 ? (
               <>
-                <h3 className="mt-2 text-sm font-semibold">Nothing is owed in these dates</h3>
+                <h3 className="mt-2 text-sm font-semibold">Nothing is outstanding in these dates</h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {`The selection holds ${board.data?.line_count} lines on other dates.`}
                 </p>
@@ -928,7 +928,7 @@ export function FulfilmentBoardPanel({
             ) : (
               <>
                 <h3 className="mt-2 text-sm font-semibold">
-                  These sales orders owe nothing that can be planned
+                  Nothing is outstanding on these sales orders that can be planned
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   Every line of the selection is already delivered, closed or covered.

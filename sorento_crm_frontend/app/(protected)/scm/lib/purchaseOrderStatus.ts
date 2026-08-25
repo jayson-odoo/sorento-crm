@@ -30,8 +30,10 @@ const OUTSTANDING: PurchaseOrderStatusPill = { label: 'Outstanding', variant: 's
 /** Not a failure - an order that finished - so it reads muted rather than the destructive
  *  the generic table gives a "closed" anything. Same choice the sales book made. */
 const COMPLETED: PurchaseOrderStatusPill = { label: 'Completed', variant: 'secondary' };
-const DRAFT: PurchaseOrderStatusPill = { label: 'Draft', variant: 'secondary' };
-const CANCELLED: PurchaseOrderStatusPill = { label: 'Cancelled', variant: 'secondary' };
+/** The two the system status table already words this way, so the pill agrees with every
+ *  other screen rather than painting a draft and a cancellation the same neutral grey. */
+const DRAFT: PurchaseOrderStatusPill = { label: 'Draft', variant: 'warning' };
+const CANCELLED: PurchaseOrderStatusPill = { label: 'Cancelled', variant: 'destructive' };
 
 export function isDraftPurchaseOrder(status: string | null | undefined): boolean {
   const key = (status ?? '').trim().toLowerCase();

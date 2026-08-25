@@ -23,7 +23,7 @@ import {
   Truck,
   X,
 } from 'lucide-react';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -399,6 +399,16 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // the stored row, which is the same value.
   const outstandingOf = useCallback(
     (row: SalesOrderLine) => {
+      // A CLOSED line is outstanding NOTHING, whatever its two quantities say. A book
+      // re-upload closes a line by absence without knowing what shipped, so `qty_delivered`
+      // stays 0 and `ordered - delivered` read the whole quantity as still owed: SO397450
+      // showed 306 Completed lines and a footer summing 39,008 outstanding.
+      if ((row.line_status ?? 'open') !== 'open') return 0;
+      // Off the SERVER outside an edit session, so this grid, its footer and the Totals
+      // card above all print the one figure the backend computed.
+      if (!isEditing && row.outstanding_qty !== undefined && row.outstanding_qty !== null) {
+        return row.outstanding_qty;
+      }
       const ordered = isEditing
         ? Number(draftOrRow(lineDrafts, row).qty_ordered)
         : Number(row.qty_ordered);
@@ -781,14 +791,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
       {
         accessorKey: 'line_status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        // A STATE, so it wears the dot rather than a filled chip, and it is worded the way
-        // AutoCount words it - the same helper the header pill and the list column use.
+        // The same light chip as every other pill on this page, worded the way AutoCount
+        // words it - the same helper the header pill and the list column use.
         cell: ({ row }) => (
           <Badge
             variant={salesOrderStatusVariant(row.original.line_status ?? 'open')}
-            appearance="ghost"
+            appearance="light"
+            size="md"
           >
-            <BadgeDot />
             {salesOrderStatusLabel(row.original.line_status ?? 'open')}
           </Badge>
         ),
@@ -940,8 +950,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <CardTitle className="text-lg">{so.so_number}</CardTitle>
-              <Badge variant={salesOrderStatusVariant(so.status)} appearance="ghost">
-                <BadgeDot />
+              <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
                 {salesOrderStatusLabel(so.status)}
               </Badge>
             </div>
@@ -1160,6 +1169,33 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 )}
               </Field>
               <Field label="Source">{SOURCE_LABELS[so.source ?? 'manual'] ?? 'Manual'}</Field>
+              {/* What purchasing has been told to do about this order. Read-only in both
+                  views, so nothing moves between them: it is a record of what happened,
+                  not a field anybody sets here. Empty states as "-", never hidden. */}
+              <Field label="Order inquiries">
+                {(so.order_inquiries ?? []).length ? (
+                  <span className="flex flex-wrap gap-x-2 gap-y-1">
+                    {(so.order_inquiries ?? []).map((inquiry, index) => (
+                      <Link
+                        key={inquiry.inquiry_no ?? index}
+                        href={`/project-sales/order-inquiries?query=${encodeURIComponent(
+                          so.so_number,
+                        )}`}
+                        className="text-primary hover:underline"
+                        title={
+                          `raised ${fmtDate(inquiry.raised_at)}` +
+                          `${inquiry.raised_by_name ? ` by ${inquiry.raised_by_name}` : ''}` +
+                          `, ${inquiry.rows_placed}/${inquiry.rows_total} placed`
+                        }
+                      >
+                        {inquiry.inquiry_no ?? 'Unnumbered'}
+                      </Link>
+                    ))}
+                  </span>
+                ) : (
+                  '-'
+                )}
+              </Field>
             </section>
           </Card>
 

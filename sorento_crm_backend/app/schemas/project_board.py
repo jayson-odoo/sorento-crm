@@ -703,6 +703,15 @@ class BoardCell(BaseModel):
     bucket_key: str
     #: Summed across every contributing line, including the unplannable ones.
     total_qty: str
+    #: The sales agents' warehouse-suffix ownership group whose locations are listed below
+    #: alongside the ones this cell's own lines name (`BB` for BRW-BB / MWH-BB / DC1-BB).
+    #: Several, joined by " / ", when the cell holds orders of agents in different groups.
+    #: None when none could be resolved, and then `location_group_note` says why - silence
+    #: would read as "this product lives in exactly one place".
+    location_group: Optional[str] = None
+    #: Why only the line's own location is listed, when that is all there is. Set ONLY when
+    #: `location_group` is None.
+    location_group_note: Optional[str] = None
     locations: List[BoardCellLocation] = []
     contributions: List[BoardContribution] = []
     unplannable_count: int = 0

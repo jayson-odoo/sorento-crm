@@ -859,7 +859,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
         dayWindow: '2026-11-03',
       }),
     );
-    await screen.findByText('Nothing is owed in these dates');
+    await screen.findByText('Nothing is outstanding in these dates');
 
     fireEvent.click(screen.getByRole('button', { name: 'Earlier days' }));
     await waitFor(() =>
@@ -901,7 +901,7 @@ describe('FulfilmentBoardPanel: states', () => {
     renderPanel();
 
     expect(
-      await screen.findByText('These sales orders owe nothing that can be planned'),
+      await screen.findByText('Nothing is outstanding on these sales orders that can be planned'),
     ).toBeInTheDocument();
   });
 
@@ -922,7 +922,7 @@ describe('FulfilmentBoardPanel: states', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('Nothing is owed in these dates')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is outstanding in these dates')).toBeInTheDocument();
     expect(
       screen.queryByText('These sales orders owe nothing that can be planned'),
     ).not.toBeInTheDocument();

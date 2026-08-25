@@ -88,9 +88,15 @@ DOCUMENT_OWNED_ELSEWHERE = "document_owned_elsewhere"
 #: than dropped silently, and its own code rather than a failure, because 9,144 of them in
 #: one export would otherwise bury the handful of rows that really did fail.
 NOT_A_LINE = "not_a_line"
-#: The row states nothing still outstanding (quantity nets to zero or less). Not an error:
-#: on an outstanding book that line is reached by its ABSENCE, in the closed half of the diff.
+#: The row states a netted quantity of zero and nothing else - no ordered figure behind it,
+#: so there is no line to write. Not an error: on a file that states the open half of the
+#: book, that line is reached by its ABSENCE, in the closed half of the diff. A row that DOES
+#: state what was ordered against what went out is a completed line and is written, closed.
 NOTHING_OUTSTANDING = "nothing_outstanding"
+#: The row belongs to a shipping order (`SPO-...`), which the purchase-order book does not
+#: carry: AutoCount exports both families in one file and this channel writes
+#: `purchase_orders`, so importing one invents a purchase order nobody raised.
+SHIPPING_ORDER = "shipping_order"
 #: The row was counted into a delivery this same file already states on another tab. Nothing
 #: is skipped - its quantity is in the instalment - so it rides on OUTCOME_UNCHANGED. Its own
 #: code because a book of 15,797 rows describing 8,272 deliveries reads as loss otherwise.
@@ -152,6 +158,7 @@ LABELS: dict[str, str] = {
     DOCUMENT_OWNED_ELSEWHERE: "Left alone: another upload owns this document",
     NOT_A_LINE: "Caption or spacer, not a line",
     NOTHING_OUTSTANDING: "Nothing outstanding on this row",
+    SHIPPING_ORDER: "Shipping order: not part of the purchase-order book",
     RESTATES_AN_INSTALMENT: "Counted into a delivery this file already states",
     CODE_EXISTS_UNDER_OTHER_NAME: "Inserted; similar name already on this code",
     MARKET_SEGMENT_NOT_RECOGNISED: "Imported; market segment not recognised, left unset",

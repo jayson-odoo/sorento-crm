@@ -357,12 +357,13 @@ describe('SalesOrderDetail - the header says what the order IS, once', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
 
-    // Worded the way AutoCount words it - `open` is Outstanding - and shaped as a STATE:
-    // a ghost pill with a dot, the same as the sales-agents master's Active column.
+    // Worded the way AutoCount words it - `open` is Outstanding - and shaped like every
+    // other pill on the page: a light chip, no dot and no ghost.
     const badge = screen.getByText('Outstanding').closest('[data-slot="badge"]');
     expect(badge).not.toBeNull();
-    expect(badge?.className).toContain('bg-transparent');
-    expect(badge?.querySelector('[data-slot="badge-dot"]')).not.toBeNull();
+    expect(badge?.className).not.toContain('bg-transparent');
+    expect(badge?.className).toContain('--color-success-soft');
+    expect(badge?.querySelector('[data-slot="badge-dot"]')).toBeNull();
     expect(screen.queryByText('Open')).not.toBeInTheDocument();
     expect(screen.queryByText('Committed demand')).not.toBeInTheDocument();
     expect(screen.queryByText(/Not committed/)).not.toBeInTheDocument();
@@ -433,7 +434,8 @@ describe('SalesOrderDetail - the header says what the order IS, once', () => {
 
     const badge = screen.getByText('Cancelled').closest('[data-slot="badge"]');
     expect(badge).not.toBeNull();
-    expect(badge?.className).toContain('text-destructive');
+    // The light family's destructive, since every pill on this page is now a light chip.
+    expect(badge?.className).toContain('--color-destructive-soft');
   });
 
   it('shows "Outstanding qty" ALWAYS, even when it repeats the total', () => {
@@ -718,6 +720,39 @@ describe('SalesOrderDetail - the lines say what the customer was charged', () =>
     expect(screen.getByText('1 - 2 of 2')).toBeInTheDocument();
   });
 
+  /**
+   * SO397450: a book re-upload closed 306 lines by absence ("no longer on the uploaded
+   * book"). Each read `1,500 ordered / 0 delivered / 1,500 outstanding / Completed`, and the
+   * footer summed 39,008 outstanding on an order that is done. A closed line has nothing
+   * outstanding by definition, and `qty_delivered` is NOT back-filled to make the
+   * subtraction come out - what shipped before the book dropped the line is unknown.
+   */
+  it('reads 0 outstanding on a CLOSED line, however little was delivered', () => {
+    renderLines({
+      lines: [
+        {
+          id: 'l-closed', sku: 'CB6633', product_name: 'Closed board', qty_ordered: 1500,
+          qty_delivered: 0, outstanding_qty: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+          line_status: 'closed', required_date: '2026-08-15',
+        },
+        ...TWO_LINES,
+      ],
+      line_count: 3,
+      open_line_count: 2,
+    });
+
+    const closed = screen.getByText('CB6633').closest('tr') as HTMLElement;
+    expect(within(closed).getByText('1,500')).toBeInTheDocument();
+    // Delivered stays 0: inventing a delivery to balance the row would be worse than the
+    // figure being unknown.
+    expect(within(closed).getAllByText('0').length).toBeGreaterThan(0);
+
+    // ... and the footer sums the two OPEN lines only, not 1,508.
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(within(foot).getByText('8')).toBeInTheDocument();
+    expect(within(foot).queryByText('1,508')).not.toBeInTheDocument();
+  });
+
   it('recomputes Outstanding qty live while a quantity is being typed', () => {
     // A row that states 10 ordered, 4 delivered and 6 outstanding must not keep saying 6
     // while the quantity box reads 20. Two figures contradicting each other on one row is
@@ -868,6 +903,48 @@ describe('SalesOrderDetail - the agent', () => {
     const agentValue = screen.getByText('Agent').closest('div');
     expect(within(agentValue as HTMLElement).getByText('-')).toBeInTheDocument();
     expect(orderCard).toContainElement(agentValue);
+  });
+
+  it('names the order inquiries raised against it, and links to them', () => {
+    // The business sees sales orders and order inquiries and nothing between them, so this
+    // is where the order says what purchasing has been told to do about it.
+    useSalesOrder.mockReturnValue({
+      data: so({
+        order_inquiries: [
+          {
+            inquiry_no: 'OI-000007',
+            state: 'raised',
+            raised_at: '2026-07-18T09:00:00',
+            raised_by_name: 'Yana',
+            rows_total: 3,
+            rows_placed: 2,
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const orderCard = screen.getByRole('region', { name: 'Order' });
+    const link = within(orderCard).getByRole('link', { name: 'OI-000007' });
+    expect(link).toHaveAttribute(
+      'href',
+      '/project-sales/order-inquiries?query=SO-2026%2F07-0042',
+    );
+    expect(link.getAttribute('title')).toContain('2/3 placed');
+  });
+
+  it('shows the Order inquiries field even when there are none - never hidden', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ order_inquiries: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const value = screen.getByText('Order inquiries').closest('div');
+    expect(within(value as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });
 

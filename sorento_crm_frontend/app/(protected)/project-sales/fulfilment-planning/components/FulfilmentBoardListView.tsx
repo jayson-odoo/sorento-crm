@@ -140,7 +140,7 @@ export function FulfilmentBoardListView({
       {
         id: 'owed_qty',
         accessorFn: (row) => row.qty_outstanding ?? row.qty,
-        header: 'Owed qty',
+        header: 'Outstanding qty',
         cell: ({ row }) => (
           <span className="block truncate tabular-nums">
             {row.original.qty_outstanding ?? row.original.qty}
@@ -299,7 +299,7 @@ export function FulfilmentBoardListView({
         getRowId={(row) => row.key}
         listingKey="projects.projects.view::project-fulfilment-board-list-v1"
         isLoading={isLoading}
-        emptyTitle="Nothing is owed on this board"
+        emptyTitle="Nothing is outstanding on this board"
         searchPlaceholder="Search sales order, customer, agent or product"
         searchOf={(row) =>
           [row.so_number, row.customer_name, row.agent_code, row.item_code]

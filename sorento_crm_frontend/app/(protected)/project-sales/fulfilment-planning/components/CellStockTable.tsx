@@ -45,10 +45,18 @@ const NUMBER_COL = 'w-[100px] min-w-[100px] max-w-[100px]';
 export function CellStockTable({
   locations,
   itemCode,
+  groupNote,
 }: {
   locations: BoardCellLocation[];
   /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
   itemCode: string;
+  /**
+   * Why this table is showing the line's own location and nothing else, when that is all there
+   * is (`BoardCell.location_group_note`). The rows are normally the sales agent's whole
+   * ownership group, so a single row with no explanation reads as "this product lives in
+   * exactly one place" - which is the belief the group listing exists to correct.
+   */
+  groupNote?: string | null;
 }) {
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
@@ -62,11 +70,18 @@ export function CellStockTable({
     // so no single stock position is true of it - and saying nothing at all would read as a
     // position of zero.
     return (
-      <div
-        data-testid="cell-stock-table-empty"
-        className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground"
-      >
-        No stock position for this cell
+      <div className="space-y-1">
+        <div
+          data-testid="cell-stock-table-empty"
+          className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground"
+        >
+          No stock position for this cell
+        </div>
+        {groupNote ? (
+          <p data-testid="cell-stock-group-note" className="text-xs text-muted-foreground">
+            {groupNote}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -74,6 +89,7 @@ export function CellStockTable({
   const showTotals = locations.length > 1;
 
   return (
+    <div className="space-y-1">
     <div
       data-testid="cell-stock-table"
       className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
@@ -217,6 +233,14 @@ export function CellStockTable({
         )}
       </table>
     </div>
+      {groupNote ? (
+        // Muted and one line, under the table it explains. Stated rather than left silent: a
+        // single row with nothing said about it reads as the whole answer.
+        <p data-testid="cell-stock-group-note" className="text-xs text-muted-foreground">
+          {groupNote}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -227,23 +251,30 @@ const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-
 
 /**
  * The columns, in AutoCount's order, because this is the order the planner reads over there and
- * then comes here to reconcile. `Owed here` is this cell's own demand at the location and comes
- * first, since it is the question the dialog was opened to ask; the AutoCount triple closes the
- * row.
+ * then comes here to reconcile.
+ *
+ * There is no demand column. It used to lead the row as "Owed here", and it said what the
+ * Contributing lines table below already says line by line under Outstanding - the same figure
+ * twice, in a word this screen no longer uses. What this table is for is what is AT each
+ * location, which is the one thing that table cannot say.
+ *
+ * EVERY column totals. The rows are now a whole ownership group rather than the one warehouse
+ * a line named, and "what does the group hold" is the question the group was listed to answer -
+ * so Reserved and Free are summed too. They were left out when a "total" could only ever add a
+ * location to itself.
  */
 const NUMERIC_COLUMNS: {
   key: string;
   label: string;
   of: (entry: BoardCellLocation) => string | null;
-  /** Summed in the totals row. Reserved and Free are per-location facts, so they are not. */
+  /** Summed in the totals row. */
   total?: boolean;
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
 }[] = [
-  { key: 'owed', label: 'Owed here', of: (entry) => entry.qty ?? null, total: true },
   { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
-  { key: 'reserved', label: 'Reserved', of: (entry) => entry.qty_reserved ?? null },
-  { key: 'free', label: 'Free', of: (entry) => entry.qty_free ?? null },
+  { key: 'reserved', label: 'Reserved', of: (entry) => entry.qty_reserved ?? null, total: true },
+  { key: 'free', label: 'Free', of: (entry) => entry.qty_free ?? null, total: true },
   { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
   { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
   {

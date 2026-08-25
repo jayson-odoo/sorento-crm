@@ -3,12 +3,13 @@
  *
  * A TABLE, on the shared DataGrid, not a stack of cards. The captain: "this needs to be more
  * table based instead of card based, so it is easier to see, and you need to show me the SO
- * order quantity, owed / outstanding quantity also in the table ... then need to show summary
+ * order quantity, outstanding quantity also in the table ... then need to show summary
  * row whenever relevant". So the columns are asserted by name, the quantity columns are
  * asserted to total in the table's own footer row, and the verbs are a row action.
  *
- * The balance for the whole cell is stated ONCE, at the TOP ("7 owed = 7 reserve + 0 incoming
- * + 0 buy" - the captain: "you should show at the top"), rather than repeated under every row.
+ * ONE VOCABULARY: what is still to go out is **outstanding**, and the summary of it is the
+ * table's own footer. The balance equation that used to sit at the top said the same figures
+ * again, in the word this screen no longer uses.
  *
  * The verbs write into the DRAFT and nothing else. Nothing in this dialog claims a cell
  * committed anything: the commit is the per-order confirmation on the rail behind it (13.4).
@@ -141,18 +142,19 @@ beforeEach(() => {
 });
 
 describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
-  it('states the whole cell balance once, above the table', () => {
+  /**
+   * The balance equation is GONE. It restated the heading's own figure and then split it into
+   * four terms the table below already carries under Outstanding and Sourced from - a second
+   * arithmetic of the same facts, in a vocabulary ("owed") this screen no longer uses.
+   */
+  it('states no balance equation above the table', () => {
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
 
-    const summary = screen.getByTestId('cell-balance');
-    expect(summary.textContent).toBe('100 owed = 40 reserve + 0 incoming + 60 buy');
-    // Above the table, which is what the captain asked for: the summary before the detail.
-    expect(summary.compareDocumentPosition(contributionTable())).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(screen.queryByTestId('cell-balance')).not.toBeInTheDocument();
+    expect(screen.queryByText(/owed =/)).not.toBeInTheDocument();
   });
 
-  it('sums the balance across every contributing line, not just the first', () => {
+  it('sums the outstanding quantity in the table footer instead', () => {
     renderDialog(
       [
         demand({ line_no: 1, qty: '60' }),
@@ -161,9 +163,7 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
       { 'WESERP10B|BRW-BB': '70' },
     );
 
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '100 owed = 70 reserve + 0 incoming + 30 buy',
-    );
+    expect(footerCells()).toContain('100');
   });
 
   it('names the cell and how much of it is decided', () => {
@@ -186,7 +186,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
       'Customer',
       'Project',
       'Ordered',
-      'Owed',
+      'Outstanding',
       'Delivery date',
       'Location',
       'Sourced from',
@@ -336,11 +336,10 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, Owed here, On hand, Reserved, Free, SO qty, SPO qty, Available - after the
-    // chevron cell, which carries no text.
+    // Location, On hand, Reserved, Free, SO qty, SPO qty, Available - after the chevron
+    // cell, which carries no text. No demand column: the table below says that per line.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
-      '100',
       '478',
       'Not stated',
       'Not stated',
@@ -367,9 +366,9 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-BB');
-    expect(row[3]).toBe('500');
-    expect(row[4]).toBe('380');
-    expect(row[5]).toBe('120');
+    expect(row[2]).toBe('500');
+    expect(row[3]).toBe('380');
+    expect(row[4]).toBe('120');
   });
 
   /**
@@ -388,11 +387,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[6]).toBe('10805');
-    expect(row[7]).toBe('0');
+    expect(row[5]).toBe('10805');
+    expect(row[6]).toBe('0');
     // Absent is absent: neither invented as 0 nor allowed to hide the ones that are stated.
-    expect(row[3]).toBe('Not stated');
-    expect(row[8]).toBe('Not stated');
+    expect(row[2]).toBe('Not stated');
+    expect(row[7]).toBe('Not stated');
   });
 
   it('says NOT STATED, never 0, when the sales order named no location', () => {
@@ -412,7 +411,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual([
+    expect(row.slice(2)).toEqual([
       'Not stated',
       'Not stated',
       'Not stated',
@@ -423,7 +422,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     expect(row).not.toContain('0');
   });
 
-  it('carries delivered beside ordered and owed', () => {
+  it('carries delivered beside ordered and outstanding', () => {
     renderDialog([demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' })]);
 
     const table = contributionTable();
@@ -913,15 +912,14 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   });
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
-  it('counts a timely SPO into the cell balance as incoming, not as reserve', () => {
+  it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
     renderServerCell([
       { kind: 'timely_spo', qty: '10', location: 'BRW-BB', reason: 'Incoming covers 10.' },
       { kind: 'buy', qty: '5', location: null, reason: 'The residual is bought.' },
     ]);
 
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '15 owed = 0 reserve + 10 incoming + 5 buy',
-    );
+    expect(screen.getByText('Incoming 10 at BRW-BB · Buy 5')).toBeInTheDocument();
+    expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
   });
 });
 
@@ -1549,7 +1547,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).toContain(
       'stock at BRW-BB is committed to whichever sales order is queued for it',
@@ -1569,7 +1567,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
@@ -1990,15 +1988,13 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByText('64 across 2 lines, 1 decided')).toBeInTheDocument();
   });
 
-  it('counts the frozen numbers into the cell balance', () => {
+  it('counts the frozen line into the outstanding total, decided or not', () => {
     renderDialog([covered(), demand({ line_no: 2, qty: '21', sales_order_id: 'so-a' })], {
       'WESERP10B|BRW-BB': '5',
     });
 
-    // 43 owed on the covered line (borrow 10 + buy 33) and 21 on the undecided one (reserve 5
-    // + buy 16), so the whole cell reads 64 owed against 5 + 10 + 49.
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '64 owed = 5 reserve + 0 incoming + 10 borrow + 49 buy',
-    );
+    // 43 outstanding on the covered line and 21 on the undecided one. A decision is a claim on
+    // stock, not a delivery, so it does not take the line out of what is still outstanding.
+    expect(footerCells()).toContain('64');
   });
 });

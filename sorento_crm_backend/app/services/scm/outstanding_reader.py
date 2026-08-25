@@ -1,4 +1,13 @@
-"""Read an outstanding SO / PO extract into `outstanding_diff.Line` objects.
+"""Read an SO / PO order-book extract into `outstanding_diff.Line` objects.
+
+The file is the ORDER BOOK, outstanding or completed - not an outstanding list. A row that
+nets to nothing left is a real line with its ordered and delivered figures intact, and the
+`Line` it produces simply carries `qty = 0`; the write path files it closed. This reader used
+to drop such a row as "nothing outstanding", which cost the captain's whole-year book (21,445
+rows, every `Remaining Qty` 0) every single one of its documents. The one row it still skips
+is one that states a NETTED quantity of zero and nothing else: there is no ordered figure
+anywhere in it, so the only line it could produce would be a zero claiming an order for
+nothing.
 
 Column headers are resolved through `import_field_alias` rather than a hardcoded candidate
 tuple, so onboarding a client whose export says `S/O NO` instead of `SO NO`, or `型号`
@@ -61,12 +70,18 @@ class ReadResult:
     #: Rows carrying neither an item code nor a quantity. Captions and spacers rather than
     #: failed lines, counted so a big number is visible instead of being silently dropped.
     layout_rows: int = 0
-    #: Which rows those were, and which rows stated nothing still outstanding. Row NUMBERS,
-    #: not just counts, because a queued import records an outcome per source row: without
-    #: them the job would report 4,290 rows processed out of 4,349 and leave the operator to
-    #: guess what happened to the other 59.
+    #: Which rows those were, and which rows stated a netted quantity of zero with no
+    #: ordered figure behind it. Row NUMBERS, not just counts, because a queued import
+    #: records an outcome per source row: without them the job would report 4,290 rows
+    #: processed out of 4,349 and leave the operator to guess what happened to the other 59.
     layout_row_numbers: list[int] = field(default_factory=list)
     settled_row_numbers: list[int] = field(default_factory=list)
+    #: Rows on the PURCHASE book whose document is a shipping order (`SPO-...`). AutoCount
+    #: exports both families in one file and this channel writes `purchase_orders`, so an
+    #: SPO row imported here becomes a purchase order nobody raised, counted as on-order
+    #: supply and indistinguishable from a real one. Counted, so the file is not quietly
+    #: half-used.
+    shipping_order_row_numbers: list[int] = field(default_factory=list)
     # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
     # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
     # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
@@ -238,6 +253,11 @@ def all_sheet_rows(file_data: bytes) -> list[tuple]:
 
 def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> ReadResult:
     """Parse the first sheet of an uploaded workbook into lines plus complaints."""
+    # Imported here rather than at module scope: `po_listing_reader` reads `sheet_rows` out
+    # of THIS module, so a top-level import in this direction closes the cycle. One
+    # authority for the family either way - the same function the history channel splits on.
+    from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
+
     result = ReadResult(doc_type=doc_type)
     try:
         rows = sheet_rows(file_data)
@@ -317,6 +337,16 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
                 row_number, f"missing {', '.join(missing)}", value=doc or item))
             continue
 
+        # A shipping order is not a purchase order. Told apart by the document number's
+        # PREFIX and by nothing else - AutoCount's own `Shipping Order` checkbox disagrees
+        # with the number on nine rows of the captain's 2023 book - so this is the same
+        # authority the history channel splits its two families on. Purchase book only: the
+        # sales book has no families, and an SO numbered like a shipping order is still a
+        # sales order.
+        if doc_type == PO and doc_family(doc) == FAMILY_SPO:
+            result.shipping_order_row_numbers.append(row_number)
+            continue
+
         # Three real file shapes, resolved in a fixed order of preference rather than by
         # column position. Getting this wrong is not cosmetic: reading ORDERED as
         # OUTSTANDING inflates committed demand on every partly-delivered line, and inflates
@@ -329,19 +359,40 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # The purchase-order path has always done (2) with `qty_received`; this is the same
         # rule, named, and extended to the sales-order side which needed it for the
         # AutoCount detail listing (Qty + Transfered Qty + Remaining Qty).
+        ordered = qty
         remaining = _to_float(rec.get("qty_remaining"))
         fulfilled_field = "qty_received" if doc_type == PO else "qty_delivered"
         fulfilled = _to_float(rec.get(fulfilled_field))
+        # Whether the row states the two figures SEPARATELY - an order and its progress -
+        # rather than one netted number. It is what makes a zero readable: with it, a
+        # settled row still says how much was ordered and how much went out; without it,
+        # zero is the whole statement.
+        netted = remaining is not None or fulfilled is not None
         if remaining is not None:
             qty = remaining
+            # `Qty` and `Remaining Qty` with nothing between them: the difference IS what
+            # has gone out, so a `Remaining` of 0 means the whole quantity was delivered.
+            # Reading it as 0 delivered would close a line claiming it shipped nothing.
+            if fulfilled is None:
+                fulfilled = ordered - remaining
         elif fulfilled is not None:
-            qty = qty - fulfilled
+            qty = ordered - fulfilled
 
         if qty <= 0:
-            # Nothing outstanding is not an error - it is a line that belongs in the
-            # "closed" side of the diff, reached by its absence rather than by a zero.
-            result.settled_row_numbers.append(row_number)
-            continue
+            if not netted:
+                # A single netted column stating zero, and nothing else in the row: there is
+                # no ordered figure to write, so the only line it could produce is a zero
+                # claiming an order for nothing. Still not an error - on a file that states
+                # the open half of the book, that line is reached by its ABSENCE.
+                result.settled_row_numbers.append(row_number)
+                continue
+            # The book states this line SETTLED, which is a fact worth keeping: the
+            # document, the quantity ordered, what went out, the money and the date are all
+            # in the row. It is carried as a line with nothing outstanding, and the write
+            # path files it closed. Negative (over-delivered) reads as zero: the line is
+            # settled either way, and a negative outstanding would be a quantity nobody can
+            # act on.
+            qty = 0.0
 
         raw_date = rec.get(date_field)
         when = _to_date(raw_date)
@@ -409,6 +460,14 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
             "order_date": _to_date(rec.get(order_date_field)),
             "order_type": _clean(rec.get("order_type")) or None,
             "agent": _clean(rec.get("agent")) or None,
+            # The two figures BEHIND the outstanding quantity, as the file states them. The
+            # diff compares what is still owed and has no place for either, but a settled
+            # line has nothing left to compare and everything to record: the write path
+            # takes the order and its delivered half from here. `qty_fulfilled` is None when
+            # the file states no progress column at all, which is a different fact from a
+            # stated zero.
+            "qty_ordered": ordered,
+            "qty_fulfilled": fulfilled,
         }
 
     return result

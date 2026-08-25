@@ -23,7 +23,7 @@ import {
   SquarePen,
   X,
 } from 'lucide-react';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -86,8 +86,8 @@ import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types'
  *
  * VIEW AND EDIT ARE THE SAME SCREEN. Editing swaps a read-only value for an input IN PLACE -
  * the same fields, in the same order, in the same card, in the same tab. Editable: Order
- * date, Expected date, Supplier. Lines: Product, Qty ordered, Unit price, Discount, UoM,
- * Location and Expected date. Everything else (Source, Currency, Supplier code, Qty
+ * date, Delivery date, Supplier. Lines: Product, Qty ordered, Unit price, Discount, UoM,
+ * Location and Delivery date. Everything else (Source, Currency, Supplier code, Qty
  * received, the totals) has no edit counterpart and stays exactly where it was.
  *
  * One Save writes the whole header, plus the lines ONLY when they actually moved - see
@@ -321,6 +321,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   // the stored row, which is the same value.
   const outstandingOf = useCallback(
     (row: PurchaseOrderLine) => {
+      // A CLOSED line has nothing still to arrive, whatever its two quantities say. Same
+      // rule and the same reason as the sales book's own: a book re-upload closes a line by
+      // absence without knowing what arrived, so `qty_received` stays 0 and
+      // `ordered - received` would report the whole quantity as still coming.
+      if ((row.line_status ?? 'open') !== 'open') return 0;
+      // Off the SERVER outside an edit session, so this grid, its footer and the Totals
+      // card above all print the one figure the backend computed.
+      if (!isEditing && row.outstanding_qty !== undefined && row.outstanding_qty !== null) {
+        return row.outstanding_qty;
+      }
       const ordered = isEditing
         ? Number(draftOrRow(lineDrafts, row).qty_ordered)
         : Number(row.qty_ordered);
@@ -675,14 +685,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         // day-of-month and would put September before July. A line with no date sorts last
         // either way.
         accessorFn: (line) => line.expected_date ?? undefined,
-        header: ({ column }) => <DataGridColumnHeader title="Expected date" column={column} />,
+        // Worded "Delivery date", the buyer's own word for it. The column, the accessor and
+        // the API field stay `expected_date`: this is a label change, not a data one.
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => {
           if (isEditing) {
             const draft = draftOrRow(lineDrafts, row.original);
             return (
               <Input
                 type="date"
-                aria-label={`Expected date on ${row.original.sku}`}
+                aria-label={`Delivery date on ${row.original.sku}`}
                 value={draft.expected_date}
                 onChange={(e) =>
                   setLineDrafts((prev) => ({
@@ -700,18 +712,17 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           return row.original.expected_date ? fmtDate(row.original.expected_date) : '-';
         },
         size: 150,
-        meta: { headerTitle: 'Expected date' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         accessorKey: 'line_status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        // A STATE, so it wears the dot rather than a filled chip, and it is worded the same
-        // two ways the header pill is - the same helper both read.
+        // The same light chip as every other pill on this page, worded the same two ways the
+        // header pill is - the same helper both read.
         cell: ({ row }) => {
           const pill = purchaseOrderLineStatusPill(row.original.line_status);
           return (
-            <Badge variant={pill.variant} appearance="ghost">
-              <BadgeDot />
+            <Badge variant={pill.variant} appearance="light" size="md">
               {pill.label}
             </Badge>
           );
@@ -860,8 +871,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <CardTitle className="text-lg">{po.po_number}</CardTitle>
-              <Badge variant={statusPill.variant} appearance="ghost">
-                <BadgeDot />
+              <Badge variant={statusPill.variant} appearance="light" size="md">
                 {statusPill.label}
               </Badge>
             </div>
@@ -960,7 +970,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 )}
               </Field>
               <Field
-                label="Expected date"
+                label="Delivery date"
                 htmlFor={isEditing ? 'po-edit-expected-date' : undefined}
               >
                 {isEditing ? (

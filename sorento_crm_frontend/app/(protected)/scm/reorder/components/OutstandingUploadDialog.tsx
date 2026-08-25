@@ -88,7 +88,8 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
  * ERRORS are what makes the FILE unusable: a header missing a required column, so nothing in
  * it can import at all. Nothing else qualifies.
  *
- * WARNINGS are the rows the import merely SKIPS, plus the things that cost the file nothing.
+ * WARNINGS are the rows the import merely SKIPS, the file-level notices the backend states
+ * outright (`warnings`), plus the things that cost the file nothing.
  * A row with no item code, or one naming a warehouse we do not hold, does not stop the other
  * 4,346 rows landing - reporting it in red said "this upload failed" about a file that
  * imports perfectly, and the operator's only honest reaction was to stop reading the panel.
@@ -110,15 +111,25 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
     ...skipped,
     ...(preview.unmapped_agents ?? []).map((agent) => `Agent ${agent.code}: ${agent.reason}`),
     ...preview.unmapped_headers.map((header) => `Column not recognised: ${header}`),
+    // The file-level notices the backend already words as sentences: dates it could not
+    // read, rows belonging to the other document family. They were computed and never
+    // printed, so the operator learnt about them only from the job afterwards.
+    ...(preview.warnings ?? []),
   ];
   const failedRows = preview.row_problems.length + preview.resolution_issues.length;
+  // Rows this channel leaves out WHOLESALE - today only the shipping orders in a purchase
+  // book. Not a row problem (nothing is wrong with them) and not a warning count, but they
+  // do not import, so "would import" has to know about them.
+  const otherFamilyRows = preview.shipping_order_rows ?? 0;
   return {
     valid: preview.ok && errors.length === 0,
     errors,
     warnings,
     summary: {
       total_rows: preview.total_rows,
-      would_apply: preview.ok ? Math.max(preview.total_rows - failedRows, 0) : 0,
+      would_apply: preview.ok
+        ? Math.max(preview.total_rows - failedRows - otherFamilyRows, 0)
+        : 0,
       // What the import would LEAVE OUT, named as its own figure. Read off the rows
       // themselves rather than off `warnings.length`, which also counts the file-level
       // notes (an unrecognised column skips no row at all).
@@ -170,12 +181,17 @@ export function OutstandingUploadDialog({
 
   const hasChanges = !!preview && ACTIONABLE_KINDS.some((k) => countOf(preview.counts, k) > 0);
   /**
-   * Confirmable once a file is picked. Deliberately NOT "once it has been tested and shows
-   * changes": Test is a tool, not a gate, and the same rule holds in every other import
-   * dialog. A file already tested and known to change nothing is the one case worth
-   * blocking, because there is nothing for the job to do.
+   * Confirmable once a file is picked, and that is the whole rule. Test is a tool, not a
+   * gate, exactly as in every other import dialog.
+   *
+   * A tested file that changes nothing used to disable Confirm as well, and it was wrong on
+   * its own terms: the diff answers for the QUANTITIES and DATES this channel writes, so a
+   * book that restates them and nothing else still carries money, units and closures the
+   * write path acts on - and a greyed button over a file the operator can see is readable
+   * reads as a defect in the upload, not as a statement about the file. The note below still
+   * says what the diff found; it just no longer decides for them.
    */
-  const canConfirm = upload.canConfirm && (!preview || hasChanges);
+  const canConfirm = upload.canConfirm;
 
   // One press, one answer: the preview IS the test read, so the verdict is derived from it
   // rather than costing the operator a second one.
@@ -213,8 +229,8 @@ export function OutstandingUploadDialog({
 
           {verdict ? <UploadTestVerdict result={verdict} /> : null}
 
-          {/* The one thing the verdict cannot say, and the reason Confirm is disabled: the
-              file reads perfectly and asks for nothing. */}
+          {/* The one thing the verdict cannot say: the file reads perfectly and the diff
+              found nothing to move. Information, not a refusal - Confirm stays live. */}
           {preview && preview.ok && !hasChanges ? (
             <p className="text-sm font-medium">
               Nothing would change - every line already matches what we hold.

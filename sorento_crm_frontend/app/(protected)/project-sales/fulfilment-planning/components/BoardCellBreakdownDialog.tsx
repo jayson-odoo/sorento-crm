@@ -38,16 +38,19 @@ import type {
  *
  * A TABLE on the shared DataGrid, and the captain's reason for it is the whole design: "this
  * needs to be more table based instead of card based, so it is easier to see, and you need to
- * show me the SO order quantity, owed / outstanding quantity also in the table ... then need to
+ * show me the SO order quantity, outstanding quantity also in the table ... then need to
  * show summary row whenever relevant". Ten lines as ten cards is a scroll; ten lines as ten rows
  * is a comparison, which is what a planner is actually doing here.
  *
  * The earlier version of this file argued for cards on the grounds that a row carries a
- * two-line explanation and a balance line. That argument does not survive the ask: the balance
- * is now stated ONCE for the whole cell at the TOP (the captain: "7 owed = 7 reserve + 0
- * incoming + 0 buy, you should show at the top"), and the per-row reasoning lives in the
- * `title` of the cell that shows the composition, which is the same `truncate` + `title`
- * contract every other grid in this repo uses for long text.
+ * two-line explanation and a balance line. That argument does not survive the ask: the
+ * per-row reasoning lives in the `title` of the cell that shows the composition, which is the
+ * same `truncate` + `title` contract every other grid in this repo uses for long text.
+ *
+ * ONE VOCABULARY: what is still to go out is **outstanding**, everywhere on this screen. It
+ * used to be "owed" in a column header, in a balance equation at the top and in a column of
+ * the stock table, while the sales-order screens next door said "outstanding" for the same
+ * figure - and a reader cannot tell a deliberate distinction from an accidental one.
  *
  * Approve / amend / reject are a ROW ACTION, and they write into the board's DRAFT, not into
  * the database (13.4): the decision that is persisted is still the whole sales order's, and the
@@ -101,7 +104,7 @@ export function BoardCellBreakdownDialog({
    * nothing posts here and Confirm remains the only write.
    *
    * AMEND is deliberately not offered in bulk: an amendment is a quantity and a reason for ONE
-   * line, and a single quantity applied to eleven different owed quantities is not a decision
+   * line, and a single quantity applied to eleven different outstanding quantities is not a decision
    * anybody meant to make.
    */
   const decideSelected = React.useCallback(
@@ -139,7 +142,7 @@ export function BoardCellBreakdownDialog({
           </div>
         ),
         // Labels the totals row under the first column, the way a spreadsheet labels its sum,
-        // so the numbers below Ordered and Owed need no caption of their own.
+        // so the numbers below Ordered and Outstanding need no caption of their own.
         footer: () => <span className="text-muted-foreground">Total</span>,
         size: 150,
         minSize: 120,
@@ -219,7 +222,7 @@ export function BoardCellBreakdownDialog({
               {row.original.qty_ordered}
             </span>
           ) : (
-            // Never derived from owed plus delivered on this side. A number the client
+            // Never derived from outstanding plus delivered on this side. A number the client
             // invented is a number nobody can be held to.
             <span className="text-sm text-muted-foreground">Not stated</span>
           ),
@@ -251,17 +254,19 @@ export function BoardCellBreakdownDialog({
       },
       {
         id: 'qty',
-        accessorFn: (row) => owedOf(row),
-        header: ({ column }) => <DataGridColumnHeader title="Owed" column={column} />,
+        accessorFn: (row) => outstandingOf(row),
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-sm font-medium tabular-nums">
-            {owedOf(row.original)}
+            {outstandingOf(row.original)}
           </span>
         ),
-        footer: () => <span className="tabular-nums">{sumOf(cell.contributions, owedOf)}</span>,
-        size: 110,
-        minSize: 90,
-        meta: { headerTitle: 'Owed' },
+        footer: () => (
+          <span className="tabular-nums">{sumOf(cell.contributions, outstandingOf)}</span>
+        ),
+        size: 120,
+        minSize: 100,
+        meta: { headerTitle: 'Outstanding' },
       },
       {
         id: 'required_date',
@@ -435,14 +440,11 @@ export function BoardCellBreakdownDialog({
             }, ${decided} decided`}
           </DialogDescription>
 
-          {/* THE SUMMARY, AT THE TOP (the captain). One balance for the whole cell, stated
-              before the detail rather than repeated under every row. */}
-          <div
-            data-testid="cell-balance"
-            className="text-sm font-medium tabular-nums break-words"
-          >
-            {cellBalanceLine(cell)}
-          </div>
+          {/* No balance equation here. It restated the heading's own figure and then split it
+              across four terms the Contributing lines table already carries under Outstanding
+              and Sourced from - a second arithmetic of the same facts, in a vocabulary the
+              screen no longer uses. The heading says what the cell is; the table says how it
+              is met. */}
 
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
               repeated under every rank, eleven identical grey sentences saying nothing
@@ -451,7 +453,7 @@ export function BoardCellBreakdownDialog({
             <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
           )}
 
-          {/* What is actually AT each location, not only what is owed from it - the captain's
+          {/* What is actually AT each location, not only what is outstanding from it - the captain's
               "where will I need to source to fulfil", answered with facts, and the dialog has to
               carry it because a reader who opened it from a cell they can no longer see still
               needs to know one cell can draw on several locations.
@@ -463,6 +465,7 @@ export function BoardCellBreakdownDialog({
             key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
             locations={cell.locations}
             itemCode={cell.item_code}
+            groupNote={cell.location_group_note}
           />
         </DialogHeader>
 
@@ -528,7 +531,7 @@ export function BoardCellBreakdownDialog({
               ) : undefined
             }
             emptyTitle="No line contributes to this cell"
-            emptyBody="Nothing in the selection owes this product by this date."
+            emptyBody="Nothing in the selection is outstanding for this product by this date."
             pageSize={25}
           />
 
@@ -785,8 +788,8 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
   return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }
 
-/** The owed quantity: the server's own name for it when it sends one. */
-function owedOf(contribution: BoardContribution): string {
+/** The outstanding quantity: the server's own name for it when it sends one. */
+function outstandingOf(contribution: BoardContribution): string {
   return contribution.qty_outstanding ?? contribution.qty;
 }
 
@@ -801,45 +804,6 @@ function sumOf(
   return fromMinor(
     contributions.reduce((total, contribution) => total + toMinor(pick(contribution)), 0),
   );
-}
-
-/**
- * "100 owed = 40 reserve + 0 incoming + 60 buy", for the WHOLE cell, at the top.
- *
- * The captain asked for it there because it is the answer to the question the cell was opened
- * to ask. Under each row it was the same arithmetic said N times and summed by nobody.
- *
- * A BORROW term appears only when there is one, and there only ever is on a covered row: the
- * engine proposes no Borrow, but a confirmed line states the composition a person made, and a
- * balance that dropped it would not add up to what is owed.
- *
- * When the terms do NOT sum to what is owed, the gap is stated as "uncovered" rather than
- * printing an equation that fails its own arithmetic (captain, 20 Aug: an SO line edited
- * 12 -> 14 against a frozen revision-2 decision read "14 owed = 0 reserve + 0 incoming +
- * 12 buy", which is "sus" - the decision's coverage is a snapshot, the owed is live, and
- * the 2 the decision does not cover is the fact the reader needs; confirming a new
- * revision trues it up).
- */
-function cellBalanceLine(cell: BoardCell): string {
-  const of = (kind: string) =>
-    cell.contributions
-      .flatMap((contribution) => contribution.sources)
-      .filter((source) => source.kind === kind)
-      .reduce((total, source) => total + toMinor(source.qty), 0);
-  const owed = cell.contributions.reduce(
-    (total, contribution) => total + toMinor(owedOf(contribution)),
-    0,
-  );
-  const borrowed = of('borrow');
-  const covered = of('reserve') + of('timely_spo') + borrowed + of('buy');
-  const uncovered = owed - covered;
-  return [
-    `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve`,
-    `${fromMinor(of('timely_spo'))} incoming`,
-    ...(borrowed > 0 ? [`${fromMinor(borrowed)} borrow`] : []),
-    `${fromMinor(of('buy'))} buy`,
-    ...(uncovered > 0 ? [`${fromMinor(uncovered)} uncovered - confirm a new revision`] : []),
-  ].join(' + ');
 }
 
 // The evidence behind the score used to be a `title` sentence built here. It is a table now

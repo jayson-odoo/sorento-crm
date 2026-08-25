@@ -267,6 +267,11 @@ export interface SalesOrderLine {
   qty_ordered: number;
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
+  /** What is still to go out on this line, off the SERVER: `ordered - delivered` floored at
+   *  0, and **0 on a closed line** whatever those two say. A book re-upload closes a line by
+   *  absence without knowing what shipped, so the subtraction alone reads as the whole
+   *  quantity still being owed on an order that is done. */
+  outstanding_qty?: number;
   uom: string;
   /** The line's money, as decimal STRINGS - the backend sends `Decimal` and Pydantic
    *  serialises it as a string, which is what keeps RM 985.00 from arriving as
@@ -297,6 +302,13 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
+  /** The span of the LINE delivery dates (`sales_order_lines.required_date`): the earliest
+   *  and the latest date any of its lines names. Both `null` when no line names one - an
+   *  order is not due "today" because nobody dated it. This is what the list's "Delivery
+   *  date" column shows; the header's own `requested_delivery_date` is a different figure
+   *  and stays on the detail page. */
+  delivery_date_from?: string | null;
+  delivery_date_to?: string | null;
   /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
    *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
    *  never the id. Absent (all three null) when the order names no agent. */
@@ -327,7 +339,24 @@ export interface SalesOrder {
   /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
   linked_purchase_orders?: LinkedPurchaseOrder[];
   awaiting_purchase_orders?: number;
+  /** The order inquiries raised against this order - on the list AND the single read.
+   *  Empty for an order nobody has planned: the business sees sales orders and order
+   *  inquiries and nothing between them, so this is where an order says what has been
+   *  done about it. */
+  order_inquiries?: SalesOrderInquiry[];
   created_at: string;
+}
+
+/** One order inquiry raised against a sales order, by NUMBER - never by id. */
+export interface SalesOrderInquiry {
+  inquiry_no: string | null;
+  state: string;
+  /** ISO datetime, or null on a record that predates the column. */
+  raised_at: string | null;
+  raised_by_name: string | null;
+  /** How far purchasing has got: `rows_placed` of `rows_total` instructions placed. */
+  rows_total: number;
+  rows_placed: number;
 }
 
 export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
@@ -423,6 +452,10 @@ export interface PurchaseOrderLine {
   product_name: string;
   qty_ordered: number;
   qty_received: number;
+  /** What is still to ARRIVE on this line, off the SERVER: `ordered - received` floored at
+   *  0, and **0 on a closed line** whatever those two say. Same rule and same reason as the
+   *  sales book's own `outstanding_qty`. */
+  outstanding_qty?: number;
   uom: string;
   /** The line's own destination - location is a line fact, never a header one. */
   warehouse_code?: string | null;

@@ -137,6 +137,7 @@ class PurchaseOrderService:
         total_qty = 0.0
         open_qty = 0.0
         open_lines = 0
+        outstanding_qty = 0.0
         lines = []
         for ln in po.lines:
             # TWO figures, because there are two questions and one number cannot answer both.
@@ -155,6 +156,18 @@ class PurchaseOrderService:
             if _is_open_line(ln):
                 open_qty += float(ln.qty_ordered or 0)
                 open_lines += 1
+            # STILL TO ARRIVE on this line, which is a third figure again: `open_qty` above is
+            # what the PO contributes as SUPPLY (the whole open line, as `scm.on_order_v`
+            # counts it), while this is net of what has been received. 0 on a CLOSED line
+            # whatever the two quantities say - a book re-upload closes a line by absence
+            # without knowing what arrived, so `qty_received` stays 0 and `ordered - received`
+            # alone would report the whole quantity as still coming. `qty_received` is
+            # deliberately NOT back-filled: that would be inventing a receipt.
+            line_outstanding = (
+                0.0 if not _is_open_line(ln)
+                else max(float(ln.qty_ordered or 0) - float(ln.qty_received or 0), 0.0)
+            )
+            outstanding_qty += line_outstanding
             if wh_code is None and ln.warehouse is not None:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
@@ -164,6 +177,7 @@ class PurchaseOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
+                "outstanding_qty": line_outstanding,
                 "line_status": ln.line_status,
                 # The line's own override when the book stated one; otherwise the product's
                 # base unit, exactly as the sales book does it. A purchase order written in
@@ -203,6 +217,10 @@ class PurchaseOrderService:
             "line_count": len(po.lines),
             "open_qty": open_qty,
             "open_line_count": open_lines,
+            # What is still to ARRIVE across the order, summed off the same per-line rule the
+            # grid prints, so the Totals card and the footer of the table under it cannot
+            # disagree. Distinct from `open_qty`, which is supply and ignores receipts.
+            "outstanding_qty": outstanding_qty,
             # What the order is worth, summed from the SAME line figures the Lines tab
             # prints, so the header total and the column under it cannot disagree.
             "total_amount": _order_amount(list(po.lines)),

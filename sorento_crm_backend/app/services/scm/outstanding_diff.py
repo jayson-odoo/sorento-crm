@@ -33,6 +33,12 @@ the recommendation.
 scope. A line missing from the file for a document that IS in the file has been delivered or
 cancelled, so it closes. A document not in the file at all is untouched, because a
 single-project export must not read as every other project having been delivered.
+
+**A line can also close by being STATED settled.** The upload is the whole order book, so a
+row may arrive with nothing left on it (`qty = 0`, see `states_settled`). Against an existing
+line that reads `closed` - the same word absence earns, because it is the same event - and
+against nothing at all it reads `added`, which is a completed document this database has
+never seen. Both are what the file says; neither is a quantity that fell to zero.
 """
 from __future__ import annotations
 
@@ -136,7 +142,27 @@ def _sort_key(line: Line) -> tuple:
             line.row_ref or "")
 
 
+def states_settled(line: Line) -> bool:
+    """Whether this INCOMING line says there is nothing left on it.
+
+    The upload is the whole order book, so a line can arrive already finished: the reader
+    carries such a row with `qty = 0` and its ordered / delivered figures in `extras`. A
+    settled line is not a quantity that fell to nothing - it is the line leaving the book -
+    so it classifies as `closed`, the same word the far commoner case (a line simply absent
+    from the next upload) already earns. One vocabulary for one event.
+
+    Public because the write path asks the same question, and two answers that merely agree
+    today would eventually disagree about which lines to close.
+    """
+    return line.qty <= _QTY_EPSILON
+
+
 def _classify(before: Line, after: Line) -> str:
+    # The file states this line settled, so it closes. Ahead of the date and quantity
+    # comparison because it outranks both: a line that has left the book has not "changed
+    # quantity to zero", and calling it `qty_changed` would leave it open on a plan.
+    if states_settled(after):
+        return CLOSED
     # An unreadable incoming date states nothing usable about the date, so it is never a
     # move - the line's date is read as whatever it already was (`_write_date` writes it
     # that way too). Only the quantity can still change on such a row.

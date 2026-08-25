@@ -467,7 +467,7 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
     expect(screen.queryByText('SRTWC8613-RL')).toBeNull();
   });
 
-  it('says nothing would change, and blocks Confirm, when only unchanged rows are found', async () => {
+  it('says nothing would change, and STILL allows Confirm, when only unchanged rows are found', async () => {
     previewOutstandingImport.mockResolvedValue(
       preview({
         counts: {
@@ -484,8 +484,12 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
     renderDialog();
     await chooseFile();
 
+    // The note stays: it is the one thing the standard verdict cannot say. What it no
+    // longer does is decide - the diff answers for quantities and dates only, so a book
+    // that moves neither still carries money, units and closures worth writing, and a
+    // greyed Confirm over a readable file reads as a broken dialog.
     expect(await screen.findByText(/Nothing would change/i)).toBeInTheDocument();
-    expect(confirmButton()).toBeDisabled();
+    expect(confirmButton()).toBeEnabled();
   });
 });
 
@@ -537,6 +541,32 @@ describe('verdictFromPreview', () => {
       skipped_rows: 2,
       warning_count: 3,
       error_count: 0,
+    });
+  });
+
+  it('prints the file-level notices the backend states, and keeps them out of "would import"', () => {
+    // A purchase book carries shipping orders too, and this channel does not write them.
+    // The count is its own field because "would import" is a count: a book that is half SPO
+    // would otherwise promise to import twice what it will. The sentence itself is the
+    // backend's, printed as it was written rather than re-worded here.
+    const result = verdictFromPreview(
+      preview({
+        total_rows: 500,
+        shipping_order_rows: 120,
+        warnings: ['120 rows are shipping orders (SPO), which this book does not carry; ' +
+          'they are left out'],
+      }),
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContain(
+      '120 rows are shipping orders (SPO), which this book does not carry; they are left out',
+    );
+    expect(result.summary).toMatchObject({
+      total_rows: 500,
+      would_apply: 380,
+      skipped_rows: 0,
+      warning_count: 1,
     });
   });
 

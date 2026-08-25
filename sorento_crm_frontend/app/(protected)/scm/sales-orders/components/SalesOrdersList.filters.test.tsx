@@ -91,6 +91,14 @@ vi.mock('../../hooks/useScmOptions', () => ({
 // build its listing key. With `next/navigation` mocked the hook goes down its fetching path
 // and the grid sits on its loading skeleton, so it is stubbed the same way the detail suite
 // stubs it.
+// The Plan action asks whether this user may open the fulfilment board. `useHasPermission`
+// reaches for the NextAuth session, which is not mounted under jsdom, so it is stubbed the
+// same way the proforma-invoice view's own suite stubs it.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));

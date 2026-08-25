@@ -218,7 +218,7 @@ describe('PurchaseOrderDetail - states', () => {
     expect(screen.getByText('PO-2026/07-0009')).toBeInTheDocument();
     // Per card, because "Supplier" is now both a card TITLE and a field label inside it.
     const fields: Record<string, string[]> = {
-      Order: ['Order date', 'Expected date', 'Source', 'Currency'],
+      Order: ['Order date', 'Delivery date', 'Source', 'Currency'],
       Supplier: ['Supplier', 'Supplier code'],
       Totals: ['Total amount', 'Total qty', 'Outstanding qty', 'Lines'],
     };
@@ -474,10 +474,34 @@ describe('PurchaseOrderDetail - the lines grid', () => {
 
     const footer = document.querySelector('tfoot') as HTMLElement;
     expect(footer).toBeTruthy();
-    // 320 + 45 + 1200 ordered, 300 + 0 + 1100 received, and the difference outstanding.
+    // 320 + 45 + 1200 ordered, 300 + 0 + 1100 received. Outstanding is 20 + 45 + 0 = 65,
+    // NOT 165: the 1200/1100 line is CLOSED, and a closed line has nothing still to arrive
+    // however the two quantities read. `qty_received` is left at 1100 rather than being
+    // back-filled to 1200 - what actually arrived is what it is.
     expect(within(footer).getByText('1,565')).toBeInTheDocument();
     expect(within(footer).getByText('1,400')).toBeInTheDocument();
-    expect(within(footer).getByText('165')).toBeInTheDocument();
+    expect(within(footer).getByText('65')).toBeInTheDocument();
+  });
+
+  /**
+   * The sales book's own defect, on this side of the same rule (SO397450): a book re-upload
+   * closes a line by absence without knowing what arrived, so `qty_received` stays where it
+   * is and `ordered - received` would report the whole quantity as still coming.
+   */
+  it('reads 0 outstanding on a CLOSED line, however little was received', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ lines: SORT_LINES, line_count: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const closed = screen.getByText('SKU-A').closest('tr') as HTMLElement;
+    expect(within(closed).getByText('1,200')).toBeInTheDocument();
+    expect(within(closed).getByText('1,100')).toBeInTheDocument();
+    // Not 100: the line is closed, so nothing on it is still to arrive.
+    expect(within(closed).queryByText('100')).not.toBeInTheDocument();
   });
 });
 
@@ -495,7 +519,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
       expect(screen.getByRole('region', { name })).toBeInTheDocument();
     }
     expect(screen.getByLabelText('Order date')).toBeInTheDocument();
-    expect(screen.getByLabelText('Expected date')).toBeInTheDocument();
+    expect(screen.getByLabelText('Delivery date')).toBeInTheDocument();
     expect(screen.getByText('Nothing is written until you press Save.')).toBeInTheDocument();
   });
 

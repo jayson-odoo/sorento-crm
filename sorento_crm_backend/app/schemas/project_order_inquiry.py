@@ -59,6 +59,9 @@ class OrderInquiryRowOut(BaseModel):
 
 class OrderInquiryDetail(BaseModel):
     id: str
+    #: `OI-000001` - what a person calls this inquiry. Optional only so a record written
+    #: before the column existed still reads; everything created since carries one.
+    inquiry_no: Optional[str] = None
     project_sales_order_id: str
     amendment_id: Optional[str] = None
     state: str

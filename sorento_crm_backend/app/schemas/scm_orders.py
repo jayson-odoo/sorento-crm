@@ -21,6 +21,12 @@ class SalesOrderLine(BaseModel):
     product_name: str
     qty_ordered: float
     qty_delivered: float
+    #: What is still to go out on this line: `ordered - delivered`, floored at 0, and **0 on a
+    #: CLOSED line whatever those two say**. A book re-upload closes a line by absence without
+    #: knowing what shipped, so `qty_delivered` stays 0 and the subtraction alone would report
+    #: the whole quantity as still owed on an order that is done. Stated here rather than
+    #: recomputed on the client so the grid, its footer and the header cannot disagree.
+    outstanding_qty: float = 0
     uom: str
     #: What the customer pays for this line, and what the sales book states about it.
     #: `Decimal`, never `float`: money read back through a float is how RM 985.00 becomes
@@ -49,6 +55,14 @@ class SalesOrder(BaseModel):
     status: str
     order_date: str
     requested_delivery_date: Optional[str] = None
+    #: The SPAN of this order's LINE delivery dates (`sales_order_lines.required_date`):
+    #: the earliest and the latest date any line names. Both `None` when no line names one,
+    #: because an order nobody dated is not due today. This is what the list's "Delivery
+    #: date" column shows - one order routinely ships across two dates, so the header's own
+    #: `requested_delivery_date` (a different figure, and blank on most of this book) could
+    #: never answer "when is this due". That field is unchanged and still on the detail page.
+    delivery_date_from: Optional[str] = None
+    delivery_date_to: Optional[str] = None
     #: Who sold it, resolved from `sales_orders.sales_agent_id` (`sales_agents` master).
     #: The id is carried only so the detail page's edit select can pre-select the current
     #: agent - the code + label are what a person reads; never a bare UUID in the UI.
@@ -85,6 +99,11 @@ class SalesOrder(BaseModel):
     #: Present on the LIST (attached in one query per page); absent on a single read.
     linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
     awaiting_purchase_orders: int = 0
+    #: The order inquiries raised against this order, on BOTH the list and the single read.
+    #: Empty for an order nobody has planned - the business sees sales orders and order
+    #: inquiries and nothing between them, so this is where an order says what has been
+    #: done about it.
+    order_inquiries: List[SalesOrderInquiry] = Field(default_factory=list)
     created_at: str
 
 
@@ -94,6 +113,24 @@ class LinkedPurchaseOrder(BaseModel):
     po_number: str
     item_code: Optional[str] = None
     resolved: bool = False
+
+
+class SalesOrderInquiry(BaseModel):
+    """One order inquiry raised against this sales order.
+
+    By NUMBER (`OI-000001`), never by id: this is what the screen prints and links from.
+    `rows_placed` against `rows_total` is how far purchasing has got with it - the one fact
+    a buyer looking at the sales order actually wants, and the reason the column is not
+    just a list of numbers.
+    """
+
+    inquiry_no: Optional[str] = None
+    state: str
+    raised_at: Optional[str] = None
+    #: Who raised it, resolved to a person's name. Null when nobody was recorded.
+    raised_by_name: Optional[str] = None
+    rows_total: int = 0
+    rows_placed: int = 0
 
 
 class SalesOrderLineInput(BaseModel):
@@ -204,6 +241,12 @@ class PurchaseOrderLine(BaseModel):
     product_name: str
     qty_ordered: float
     qty_received: float
+    #: What is still to ARRIVE on this line: `ordered - received`, floored at 0, and **0 on a
+    #: CLOSED line whatever those two say**. A book re-upload closes a line by absence without
+    #: knowing what arrived, so `qty_received` stays 0 and the subtraction alone would report
+    #: the whole quantity as still coming on an order that is done. Distinct from the header's
+    #: `open_qty`, which is SUPPLY and ignores receipts.
+    outstanding_qty: float = 0
     #: The line's own override when the book stated one, otherwise the product's base unit.
     uom: str
     #: What we pay for this line, and what the supplier's document states about it.
@@ -246,6 +289,10 @@ class PurchaseOrder(BaseModel):
     #: says. Zero on a fully-received or historical order, which is the point.
     open_qty: float = 0.0
     open_line_count: int = 0
+    #: What is still to ARRIVE across the order, summed off the per-line rule above. Not the
+    #: same figure as `open_qty`: that one is supply and counts a whole open line however much
+    #: of it has already been received.
+    outstanding_qty: float = 0.0
     #: What the order is WORTH, summed from its own lines: each line's stated `line_total`
     #: where it has one, otherwise `unit_cost * qty_ordered - discount`. `None` when not one
     #: line carries money, which is not the same as 0 - an order nobody priced is not an

@@ -1174,8 +1174,22 @@ export interface BoardCell {
   bucket_key: string;
   /** Summed across every contributing line, including the unplannable ones (13.7). */
   total_qty: string;
-  /** One entry per distinct source location; more than one is normal, not exotic. */
+  /**
+   * One entry per location. More than one is normal, not exotic, and now for two reasons: the
+   * cell's own lines can name several, AND the whole of the sales agent's ownership group is
+   * listed beside them (see `location_group`). A group entry carries a demand of `0` - no line
+   * of this cell sits there - and the stock facts that are the reason it is listed.
+   */
   locations: BoardCellLocation[];
+  /**
+   * The agents' warehouse-suffix ownership group whose locations are listed above alongside
+   * the ones this cell's lines name (`BB` for BRW-BB / MWH-BB / DC1-BB). Several, joined by
+   * " / ", when the cell holds orders of agents in different groups. Null when none could be
+   * resolved, and `location_group_note` then says why.
+   */
+  location_group?: string | null;
+  /** Why only the line's own location is listed. Set ONLY when `location_group` is null. */
+  location_group_note?: string | null;
   contributions: BoardContribution[];
   /** Contributions whose sales order states no location for them. */
   unplannable_count: number;

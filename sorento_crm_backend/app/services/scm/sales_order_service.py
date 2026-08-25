@@ -13,7 +13,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -346,20 +346,43 @@ class SalesOrderService:
         committed = 0.0
         lines = []
         open_lines = 0
+        # Every date its lines name, so the header can report the span they cover. Read off
+        # the lines already loaded here rather than aggregated in a second query: both the
+        # list and the single read join the lines in (they have to - the quantities and the
+        # money are summed from them), so a `min`/`max` over them costs nothing and cannot
+        # disagree with the figures beside it.
+        required_dates = []
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
-            outstanding = max(qo - qd, 0.0)
+            # A CLOSED line is outstanding NOTHING, whatever its two quantities say. When a
+            # re-uploaded book closes a line by absence, what actually shipped is unknown, so
+            # `qty_delivered` stays 0 and `ordered - delivered` reads as the whole order still
+            # being owed - SO397450 showed 306 Completed lines summing 39,008 outstanding.
+            # `qty_delivered` is deliberately NOT back-filled to make the subtraction come
+            # out: that would be inventing a delivery. The figure is stated in its own right.
+            #
+            # It is the same rule `is_open_demand()` has always applied, so this is the detail
+            # page catching up with `scm.committed_v`, the netting engine and the planning
+            # board rather than a new one.
+            outstanding = 0.0 if (ln.line_status or "open") != "open" else max(qo - qd, 0.0)
             total_qty += qo
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
+            if ln.required_date:
+                required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
                 "sku": ln.product.product_code if ln.product else "",
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": qo,
                 "qty_delivered": qd,
+                # What is still to go out on THIS line, stated rather than left to be
+                # recomputed. The grid, its footer and the header total all read this one
+                # figure, so a closed line cannot read Completed beside a full outstanding
+                # quantity on one screen and 0 on another.
+                "outstanding_qty": outstanding,
                 # The line's own override when one was set; otherwise the product's base
                 # UOM, same as before this column was mapped.
                 "uom": ln.uom or (self._uom_for(ln.product) if ln.product else ""),
@@ -396,6 +419,16 @@ class SalesOrderService:
             "order_date": order_dt.isoformat(),
             "requested_delivery_date": (
                 so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
+            ),
+            # When its lines are due, from the earliest to the latest. Both None when no
+            # line names a date - an order nobody dated is not due today, and the header's
+            # own `requested_delivery_date` above is a DIFFERENT figure that must not be
+            # substituted for it.
+            "delivery_date_from": (
+                min(required_dates).isoformat() if required_dates else None
+            ),
+            "delivery_date_to": (
+                max(required_dates).isoformat() if required_dates else None
             ),
             # Who sold it. `sales_agent_id` rides along only so the edit screen's select can
             # pre-select the current agent; a person reads the code + label, never the id.
@@ -466,6 +499,84 @@ class SalesOrderService:
             row["awaiting_purchase_orders"] = sum(1 for l in linked if not l["resolved"])
         return rows
 
+    def with_order_inquiries(self, rows: list[dict]) -> list[dict]:
+        """Attach the order inquiries raised against each order, in ONE query for the page.
+
+        The business sees sales orders and order inquiries, and nothing between them: there
+        is no plan entity to show and no "Planning" column. So an order has to say for
+        itself which inquiries it has produced and how far purchasing has got with them,
+        or the answer lives only on a screen the buyer has to go and find.
+
+        The chain is `sales_orders.id` -> `projects.sales_orders.so_id` ->
+        `projects.order_inquiries`. An order nobody has planned reaches no planning record
+        and gets an empty list - never null and never absent, so the column renders its own
+        empty state rather than the screen having to tell an unplanned order from a broken
+        payload.
+
+        The order's OWN inquiry first, then the ones its amendments raised, oldest first:
+        that is the sequence purchasing was told things in, and any other order reads as
+        arbitrary. One query for the headers and one for the row counts, per PAGE - the
+        same rule `with_links` follows, because per-row would be an N+1 across a
+        15,000-order list.
+        """
+        by_id = {r["id"]: r for r in rows}
+        for row in rows:
+            row["order_inquiries"] = []
+        if not by_id:
+            return rows
+
+        from app.models.project_so import INQUIRY_PLACED, OrderInquiry, OrderInquiryRow
+        from app.models.user import User
+
+        headers = (
+            self.db.query(OrderInquiry, ProjectSalesOrder.so_id, User.name)
+            .join(ProjectSalesOrder,
+                  ProjectSalesOrder.id == OrderInquiry.project_sales_order_id)
+            .outerjoin(User, User.id == OrderInquiry.raised_by)
+            .filter(ProjectSalesOrder.so_id.in_(list(by_id)))
+            .all()
+        )
+        if not headers:
+            return rows
+
+        counts: dict[str, tuple[int, int]] = {}
+        for inquiry_id, total, placed in (
+            self.db.query(
+                OrderInquiryRow.order_inquiry_id,
+                func.count(OrderInquiryRow.id),
+                func.count(OrderInquiryRow.id).filter(
+                    OrderInquiryRow.state == INQUIRY_PLACED),
+            )
+            .filter(OrderInquiryRow.order_inquiry_id.in_(
+                [str(h[0].id) for h in headers]))
+            .group_by(OrderInquiryRow.order_inquiry_id)
+            .all()
+        ):
+            counts[str(inquiry_id)] = (int(total or 0), int(placed or 0))
+
+        for inquiry, so_id, raised_by_name in headers:
+            row = by_id.get(str(so_id))
+            if row is None:
+                continue
+            total, placed = counts.get(str(inquiry.id), (0, 0))
+            row["order_inquiries"].append({
+                "inquiry_no": inquiry.inquiry_no,
+                "state": inquiry.state,
+                "raised_at": inquiry.raised_at.isoformat() if inquiry.raised_at else None,
+                "raised_by_name": raised_by_name,
+                "rows_total": total,
+                "rows_placed": placed,
+                # Ordering only: an amendment's inquiry follows the order's own one.
+                "_is_amendment": inquiry.amendment_id is not None,
+            })
+        for row in rows:
+            row["order_inquiries"].sort(
+                key=lambda i: (i["_is_amendment"], i["raised_at"] or "", i["inquiry_no"] or "")
+            )
+            for inquiry in row["order_inquiries"]:
+                inquiry.pop("_is_amendment", None)
+        return rows
+
     def _get_or_404(self, so_id: str) -> SalesOrder:
         so = (
             self.db.query(SalesOrder)
@@ -481,7 +592,9 @@ class SalesOrderService:
     # -- reads ---------------------------------------------------------------
 
     def get(self, so_id: str) -> dict:
-        return self.serialize(self._get_or_404(so_id))
+        # The detail page shows the same inquiries the list column does, off the same
+        # helper: a second query for the same fact is how two screens start disagreeing.
+        return self.with_order_inquiries([self.serialize(self._get_or_404(so_id))])[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], priority: Optional[str],
@@ -571,6 +684,17 @@ class SalesOrderService:
             "status": SalesOrder.status,
             "priority": SalesOrder.priority,
             "created_at": SalesOrder.created_at,
+            # The START of the delivery span the list prints - "what is due first", which is
+            # the question that column is scanned with. In SQL over the SAME
+            # `min(required_date)` the serializer prints, so the header's order and the cell
+            # cannot come apart. Null placement is Postgres's default, the same as the
+            # `order_date` sort beside it: an order no line has dated sorts last ascending.
+            "delivery_date_from": (
+                select(func.min(SalesOrderLine.required_date))
+                .where(SalesOrderLine.sales_order_id == SalesOrder.id)
+                .correlate(SalesOrder)
+                .scalar_subquery()
+            ),
         }
         q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()

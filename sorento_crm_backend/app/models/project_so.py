@@ -40,7 +40,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -772,6 +774,13 @@ class OrderInquiry(Base, CompanyScopedMixin):
     __audit_entity_type__ = "project_order_inquiries"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # What a person calls this inquiry: `OI-000001`, the same shape and the same series
+    # discipline as `ProjectSalesOrder.provisional_ref`. Nothing in this product may show a
+    # UUID, and "the inquiry on SO414033" stops being an answer the moment an amendment
+    # raises the second one on that order. Unique per COMPANY, like `provisional_ref` and
+    # for the same reason: the read that mints it is company-scoped, so each company has
+    # its own series.
+    inquiry_no = Column(String(20), nullable=False)
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
     )
@@ -783,6 +792,7 @@ class OrderInquiry(Base, CompanyScopedMixin):
     raised_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("company_id", "inquiry_no", name="uq_project_order_inquiry_no"),
         Index("ix_project_order_inquiries_order", "project_sales_order_id"),
         # One inquiry per publish, enforced by the database rather than by remembering
         # to check: republishing must not double what purchasing is told to buy.
@@ -802,6 +812,54 @@ class OrderInquiry(Base, CompanyScopedMixin):
         ),
         {"schema": "projects"},
     )
+
+
+#: `OI-000001`. Six digits, the same width `PSO-000001` uses, so the two documents a
+#: project screen shows side by side are read the same way.
+INQUIRY_NO_PREFIX = "OI-"
+INQUIRY_NO_DIGITS = 6
+
+
+def next_inquiry_no(bind, company_id) -> str:
+    """The next inquiry number for one company: the highest already issued, plus one.
+
+    HIGHEST plus one, never the count: a number that has been issued is in somebody's
+    email, so a departed inquiry must not hand it to a different one.
+
+    Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
+    over. `bind` is whatever can execute a statement - the flush's own Connection when this
+    runs from the stamp below, a Session when a caller asks directly - so the number is
+    minted by ONE piece of code however it is reached.
+    """
+    table = OrderInquiry.__table__
+    latest = bind.execute(
+        select(table.c.inquiry_no)
+        .where(table.c.company_id == company_id,
+               table.c.inquiry_no.like(f"{INQUIRY_NO_PREFIX}%"))
+        .order_by(func.length(table.c.inquiry_no).desc(), table.c.inquiry_no.desc())
+        .limit(1)
+    ).scalar()
+    tail = (latest or "")[len(INQUIRY_NO_PREFIX):]
+    highest = int(tail) if tail.isdigit() else 0
+    return f"{INQUIRY_NO_PREFIX}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
+
+
+@event.listens_for(OrderInquiry, "before_insert")
+def _stamp_inquiry_no(_mapper, connection, target) -> None:
+    """Every inquiry gets its number, whoever created it.
+
+    A listener rather than a line in each writer, for the same reason the company stamp is
+    one (`app.models.base`): there are two creation sites today and the invariant is "no
+    inquiry exists without a number", which a rule each new writer has to remember is not.
+
+    Minted off the flush's own connection, so it sees the rows this same flush has already
+    inserted - two inquiries raised in one confirmation take consecutive numbers - and
+    cannot re-enter the flush the way a session query would. A number already set (a
+    migration backfill, a test pinning one) is left exactly as it is.
+    """
+    if getattr(target, "inquiry_no", None):
+        return
+    target.inquiry_no = next_inquiry_no(connection, target.company_id)
 
 
 class OrderInquiryRow(Base, CompanyScopedMixin):

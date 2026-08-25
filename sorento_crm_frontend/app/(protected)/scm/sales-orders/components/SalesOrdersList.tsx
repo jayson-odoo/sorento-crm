@@ -6,19 +6,21 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,6 +30,9 @@ import { Switch } from '@/components/ui/switch';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
+import { buildPlanActions } from '../lib/planActions';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
 import {
@@ -40,7 +45,7 @@ import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
 import { useCreateSalesOrder, useDeleteSalesOrder, useSalesOrders } from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
-import { fmtDate, fmtInt } from '../../lib/format';
+import { fmtDate, fmtDateRange, fmtInt } from '../../lib/format';
 import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
 // The order book upload lives on Reorder planning - the whole plan is computed from it, so
@@ -61,6 +66,20 @@ const SOURCE_FILTER_OPTIONS = [
 
 /** How many purchase orders to name in the cell before collapsing the rest into a count. */
 const WAITING_ON_LIMIT = 2;
+
+/** Same cap for the inquiry numbers, for the same reason. */
+const ORDER_INQUIRY_LIMIT = 2;
+
+/**
+ * How many orders may be planned together, matching the board's own bound
+ * (`FulfilmentPlanningClient.MAX_BOARD_SELECTION`). The whole book is 862 products across
+ * 349 dates, so a board of everything is roughly 300,000 cells and is not a screen. Stated
+ * here so the action can say why it is refusing BEFORE the board is opened.
+ */
+const MAX_PLAN_SELECTION = 50;
+
+/** Who may open the fulfilment planning board. Same gate the board's own page carries. */
+const PLAN_PERMISSION = 'projects.projects.view';
 
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
@@ -119,6 +138,10 @@ export default function SalesOrdersList() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  // Which orders to plan together. The board is a URL, not a stored plan, so the selection
+  // is the whole state there is: nothing is saved by picking rows here.
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const canPlan = useHasPermission(PLAN_PERMISSION);
 
   const queryClient = useQueryClient();
 
@@ -217,6 +240,12 @@ export default function SalesOrdersList() {
 
   const columns = useMemo<ColumnDef<SalesOrder>[]>(
     () => [
+      // Picking orders to plan together is what this list is for, beside reading it: the
+      // fulfilment board takes a set of sales orders and nothing else. Each box says WHICH
+      // order it ticks - a grid of "Select row" tells a screen reader nothing.
+      buildSelectColumn<SalesOrder>({
+        rowLabel: (row) => `Select ${row.original.so_number}`,
+      }),
       {
         accessorKey: 'so_number',
         header: ({ column }) => <DataGridColumnHeader title="SO number" column={column} />,
@@ -318,17 +347,67 @@ export default function SalesOrdersList() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        // A STATE, not an enum, so it wears the dot rather than a filled chip - the same
-        // shape the sales-agents master's Active/Inactive column uses. Worded the way
+        // The same light chip as every other pill in this table. It was a ghost chip with a
+        // dot, on the theory that a STATE is a different kind of thing from an enum; the
+        // captain's verdict on a bare green dot beside a word was that it reads as an
+        // unfinished control, so the colour is carried by the chip itself. Worded the way
         // AutoCount words it: `open` is Outstanding, `closed` is Completed.
         cell: ({ row }) => (
-          <Badge variant={salesOrderStatusVariant(row.original.status)} appearance="ghost">
-            <BadgeDot />
+          <Badge
+            variant={salesOrderStatusVariant(row.original.status)}
+            appearance="light"
+            size="md"
+          >
             {salesOrderStatusLabel(row.original.status)}
           </Badge>
         ),
         size: 160,
         meta: { headerTitle: 'Status' },
+      },
+      {
+        accessorKey: 'order_inquiries',
+        header: ({ column }) => <DataGridColumnHeader title="Order inquiries" column={column} />,
+        // What purchasing has been told to do about this order, by NUMBER. There is no
+        // planning record to show and no "Planning" column: the business sees sales orders
+        // and order inquiries, so the order names its inquiries and links to them.
+        cell: ({ row }) => {
+          const inquiries = row.original.order_inquiries ?? [];
+          if (!inquiries.length) return <span className="text-muted-foreground">-</span>;
+          const shown = inquiries.slice(0, ORDER_INQUIRY_LIMIT);
+          const hidden = inquiries.length - shown.length;
+          // One line per inquiry on the tooltip: who raised it, when, and how far
+          // purchasing has got with it. The cell itself stays a row of numbers.
+          const title = inquiries
+            .map(
+              (i) =>
+                `${i.inquiry_no ?? 'Unnumbered'}: raised ${fmtDate(i.raised_at)}` +
+                `${i.raised_by_name ? ` by ${i.raised_by_name}` : ''}` +
+                `, ${i.rows_placed}/${i.rows_total} placed`,
+            )
+            .join('\n');
+          return (
+            <span className="truncate" title={title}>
+              {shown.map((inquiry, index) => (
+                <span key={inquiry.inquiry_no ?? index}>
+                  {index > 0 ? ', ' : null}
+                  <Link
+                    href={`/project-sales/order-inquiries?query=${encodeURIComponent(
+                      row.original.so_number,
+                    )}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-primary hover:underline"
+                  >
+                    {inquiry.inquiry_no ?? 'Unnumbered'}
+                  </Link>
+                </span>
+              ))}
+              {hidden > 0 ? <span className="text-muted-foreground"> +{hidden} more</span> : null}
+            </span>
+          );
+        },
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Order inquiries' },
       },
       {
         accessorKey: 'total_qty',
@@ -349,13 +428,47 @@ export default function SalesOrdersList() {
         meta: { headerTitle: 'Committed', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
       },
       {
-        accessorKey: 'requested_delivery_date',
-        header: ({ column }) => <DataGridColumnHeader title="Requested delivery" column={column} />,
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">{fmtDate(row.original.requested_delivery_date)}</span>
-        ),
-        size: 150,
-        meta: { headerTitle: 'Requested delivery' },
+        accessorKey: 'total_amount',
+        header: ({ column }) => <DataGridColumnHeader title="Total amount" column={column} />,
+        // The same figure the detail page's Totals card prints, through the same formatter,
+        // so the list and the order cannot disagree about what it is worth. `-` and not
+        // `RM 0` when nobody priced it: 15,000 of the absorbed rows carry no money at all,
+        // and an order nobody priced is not an order worth nothing.
+        cell: ({ row }) =>
+          row.original.total_amount ? formatMyrExact(row.original.total_amount) : '-',
+        size: 140,
+        // Not sortable: the total is summed from the LINES (each line's stated total, or
+        // the arithmetic its parts support), so there is no column for Postgres to order
+        // by and a SQL rewrite of that rule could disagree with the figure on screen.
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Total amount',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
+      {
+        accessorKey: 'delivery_date_from',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
+        // The span of the LINE dates, not the header's `requested_delivery_date`: one order
+        // routinely ships across two dates, and the header figure is blank on most of this
+        // book. Printed as one date when the lines agree and as a range when they do not,
+        // so a reader can tell "due on the 12th" from "due across two months" at a glance.
+        // Sorted by the FROM end, which is the question the column is scanned with: what is
+        // due first. The header's own figure stays on the detail page.
+        cell: ({ row }) => {
+          const text = fmtDateRange(
+            row.original.delivery_date_from,
+            row.original.delivery_date_to,
+          );
+          return (
+            <span className="truncate text-muted-foreground" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 190,
+        meta: { headerTitle: 'Delivery date' },
       },
       // No Location column here. A location is a property of a LINE - one order routinely
       // lands in two - so it lives on the detail page's lines grid, where it belongs to the
@@ -445,15 +558,36 @@ export default function SalesOrdersList() {
     data: rows,
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onRowSelectionChange: setRowSelection,
+    enableRowSelection: true,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // The orders the board would be opened on, in the order the list shows them. Document
+  // NUMBERS, not ids: the board's URL is the plan (`?orders=SO1,SO2`), and it is a link a
+  // person can read, keep and send.
+  const selectedSoNumbers = table
+    .getSelectedRowModel()
+    .rows.map((r) => r.original.so_number);
+
+  const planActions = buildPlanActions(
+    { selectedCount: selectedSoNumbers.length, canPlan, max: MAX_PLAN_SELECTION },
+    {
+      onPlan: () =>
+        router.push(
+          `/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+            selectedSoNumbers.join(','),
+          )}`,
+        ),
+    },
+  );
 
   const filtersActive =
     (statusFilter ? 1 : 0) +
@@ -650,11 +784,20 @@ export default function SalesOrdersList() {
                   </div>
                 ),
               }}
+              // No `bulkActions`: the strip keeps its count, its Export and Clear, and
+              // nothing else. Plan lives in the "Actions" dropdown below instead - the
+              // strip only exists once rows are ticked, so an action that lived there
+              // could not be found by anyone who had not already guessed it was there,
+              // and its refusal over the board's bound read as a dead click.
               exportConfig={{ filename: 'sales_orders_export.xlsx' }}
               // Two secondary actions is what makes the shared toolbar collapse them into
               // an "Actions" dropdown (data-grid-list-toolbar.tsx) instead of a single loose
               // button, matching Delivery Orders (OrdersList.tsx).
               secondaryActions={[
+                // First, because it is the action this list's row selection exists for.
+                // Present (and disabled, with its reason) even with nothing ticked, so the
+                // menu teaches that the orders are picked here.
+                ...planActions,
                 {
                   key: 'refresh',
                   label: 'Refresh',

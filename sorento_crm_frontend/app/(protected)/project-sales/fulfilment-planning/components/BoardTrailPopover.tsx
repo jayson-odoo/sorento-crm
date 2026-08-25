@@ -26,7 +26,7 @@ import { PileQueueDialog } from './PileQueueDialog';
  * including the ones that gave nothing: "the pool was checked and had none" is the answer to
  * that question, and a rung left out reads as a rung nobody walked. What each source HELD, who
  * was ahead of this line at it, what it could offer, what the line took, and what was still
- * owed after it - the same numbers the source strip beside it is the summary of.
+ * outstanding after it - the same numbers the source strip beside it is the summary of.
  *
  * A real `<table>` and not the shared DataGrid on purpose: five fixed rows of arithmetic inside
  * a popover, with no sorting, paging or column preferences to speak of.
@@ -67,7 +67,7 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
             onOpenAutoFocus={(event) => event.preventDefault()}
           >
             {/* Scrolls in BOTH directions: at 375px the eight columns are wider than the phone,
-                and clipping them silently drops Still owed and Outcome - the two that say how the
+                and clipping them silently drops Still outstanding and Outcome - the two that say how the
                 rung ended. */}
             <div data-testid={`trail-${contribution.key}`} className="max-h-[60vh] overflow-auto">
               <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2 text-xs font-semibold">
@@ -88,7 +88,7 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                       <th className="px-2 py-1.5 text-start font-medium">Ahead</th>
                       <th className="px-2 py-1.5 text-end font-medium">For this line</th>
                       <th className="px-2 py-1.5 text-end font-medium">Took</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Still owed</th>
+                      <th className="px-2 py-1.5 text-end font-medium">Still outstanding</th>
                       <th className="px-3 py-1.5 text-start font-medium">Outcome</th>
                     </tr>
                   </thead>
@@ -295,7 +295,7 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
 function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributionKey: string }) {
   const cells: Array<{ label: string; value: string; title?: string }> = [
     { label: 'On hand', value: pool.on_hand },
-    { label: 'SO qty', value: pool.so_qty, title: 'Owed by every open sales order at this location' },
+    { label: 'SO qty', value: pool.so_qty, title: 'Outstanding on every open sales order at this location' },
     { label: 'SPO qty', value: pool.spo_qty, title: 'On the water to this location' },
     { label: 'Available', value: pool.available, title: 'On hand - SO qty + SPO qty' },
     { label: 'Free', value: pool.free, title: 'On hand less reserved less confirmed holds' },

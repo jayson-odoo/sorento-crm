@@ -66,6 +66,7 @@ from app.services.project_supply_service import (
     _open_of,
 )
 from app.services.scm import priority
+from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -265,7 +266,7 @@ class _Row:
 
     __slots__ = (
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
-        "agent_code", "agent_label",
+        "agent_code", "agent_label", "agent_location_group",
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
@@ -363,6 +364,10 @@ class FulfilmentBoardService:
         # (product, POOL warehouse) -> AutoCount's `on hand / so_qty / spo_qty`, for the pool
         # rung of the trail. One batched read over every pool a served line may draw on.
         self._pool_piles: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
+        # Ownership group -> the warehouses that carry its suffix, e.g. `BB` -> BRW-BB /
+        # MWH-BB / DC1-BB. One read for the whole board; empty when no order's agent holds a
+        # group, which is what makes the cell say so rather than silently show one location.
+        self._group_warehouses: Dict[str, List[Tuple[str, str]]] = {}
         # PROJECT line ids `build()` was asked to preview as uncovered (`exclude_covered_line_ids`).
         self._exclude_covered_line_ids: set = set()
 
@@ -952,6 +957,10 @@ class FulfilmentBoardService:
                 customer_name=customers.get(customer_id or ""),
                 agent_code=agent.sales_agent if agent else None,
                 agent_label=agent.person_label if agent else None,
+                # Which warehouse-suffix ownership group this agent's stock lives in. The
+                # cell's stock table lists the WHOLE group, because "can I fulfil this" is a
+                # question about the three BB warehouses, not about the one the line names.
+                agent_location_group=agent.location_group if agent else None,
                 project_label=_project_label(order),
                 order_date=order.order_date,
                 line_no=line_numbers[str(line.id)],
@@ -1297,6 +1306,18 @@ class FulfilmentBoardService:
 
         product_ids = {row.product_id for row in plannable if row.product_id}
         warehouse_ids = {row.warehouse_id for row in plannable if row.warehouse_id}
+        # The agents' ownership groups, resolved to warehouses ONCE for the whole board. Their
+        # ids join the read set below so the group's rows carry the same demand pressure and
+        # incoming figures the line's own location does - a group warehouse listed with two of
+        # its seven numbers blank would be worse than not listing it.
+        self._group_warehouses = self._warehouses_for_groups(
+            {row.agent_location_group for row in served}
+        )
+        warehouse_ids |= {
+            warehouse_id
+            for pairs in self._group_warehouses.values()
+            for warehouse_id, _code in pairs
+        }
         # Every stock fact the board states comes from these reads and no other, so the
         # availability printed beside a proposal is the availability the proposal was computed
         # from.
@@ -2020,8 +2041,8 @@ class FulfilmentBoardService:
         where = location or "this location"
         if ahead_lines > 0:
             base = (
-                f"{qty_text(left)} left at {where} after {qty_text(ahead_qty)} owed to "
-                f"{ahead_lines} line{'s' if ahead_lines != 1 else ''} ranked ahead of "
+                f"{qty_text(left)} left at {where} after {qty_text(ahead_qty)} outstanding "
+                f"to {ahead_lines} line{'s' if ahead_lines != 1 else ''} ranked ahead of "
                 "this line."
             )
         else:
@@ -2374,6 +2395,52 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the answer
 
+    def _warehouses_for_groups(
+        self, groups: Sequence[Optional[str]]
+    ) -> Dict[str, List[Tuple[str, str]]]:
+        """`{group: [(warehouse_id, warehouse_code), ...]}` for the groups asked about.
+
+        ONE query for every active warehouse, then the ladder's OWN suffix rule
+        (`sales_agent_service.group_of_warehouse_code`) decides which group each code belongs
+        to. Filtering in SQL with a `LIKE '%-BB'` would be a second definition of "the BB
+        group", and the two would drift the first time a code grew a second hyphen.
+        """
+        keys = {
+            key
+            for key in (sales_agent_service.normalize_location_group(g) for g in groups)
+            if key
+        }
+        if not keys:
+            return {}
+        out: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+        rows = (
+            self.db.query(Warehouse.id, Warehouse.warehouse_code)
+            .filter(Warehouse.is_active.is_(True))
+            .all()
+        )
+        for warehouse_id, code in rows:
+            group = sales_agent_service.group_of_warehouse_code(code)
+            if group in keys:
+                out[group].append((str(warehouse_id), code))
+        for pairs in out.values():
+            pairs.sort(key=lambda pair: pair[1])
+        return dict(out)
+
+    def _group_note(self, members: Sequence[_Row], group_codes: Sequence[str]) -> Optional[str]:
+        """Why this cell is showing one location instead of a group, when it is.
+
+        Only ever set when NO group was resolved. Silence would read as "this product lives in
+        exactly one place", which is the belief the group listing exists to correct.
+        """
+        if group_codes:
+            return None
+        agents = sorted({row.agent_code for row in members if row.agent_code})
+        if not agents:
+            return "No sales agent on the order, so no location group."
+        if len(agents) == 1:
+            return f"Agent {agents[0]} has no location group."
+        return f"Agents {', '.join(agents)} have no location group."
+
     def _cell(self, item_code: str, bucket_key: str, members: Sequence[_Row]) -> Dict[str, Any]:
         by_location: Dict[Optional[str], List[_Row]] = defaultdict(list)
         for row in members:
@@ -2382,9 +2449,26 @@ class FulfilmentBoardService:
             (self._location(location, rows) for location, rows in by_location.items()),
             key=lambda entry: (-Decimal(entry["qty_demand"]), entry["location"] or ""),
         )
+        # The rest of the agents' ownership group, appended after the locations this cell's own
+        # lines named. "Can I fulfil this" is a question about the whole group - BRW-BB alone
+        # answers a narrower one - and the line's own location leads because it is the one the
+        # order actually states, group or no group.
+        group_codes = sorted({
+            group
+            for group in (
+                sales_agent_service.normalize_location_group(row.agent_location_group)
+                for row in members
+            )
+            if group and group in self._group_warehouses
+        })
+        locations.extend(self._group_locations(members, locations, group_codes))
         return {
             "item_code": item_code,
             "bucket_key": bucket_key,
+            #: The ownership group whose warehouses are listed beside the line's own, or None
+            #: when none could be resolved - in which case `location_group_note` says why.
+            "location_group": " / ".join(group_codes) or None,
+            "location_group_note": self._group_note(members, group_codes),
             # Summed across every contributing line INCLUDING the unplannable ones: the demand
             # is not hidden because the source record is incomplete (13.7).
             "total_qty": qty_text(sum((row.qty for row in members), _ZERO)),
@@ -2406,8 +2490,56 @@ class FulfilmentBoardService:
             "past_count": sum(1 for row in members if row.is_past),
         }
 
-    def _location(self, location: Optional[str], rows: Sequence[_Row]) -> Dict[str, Any]:
-        """One (product, location) line of the cell: what is owed there, and what is there.
+    def _group_locations(
+        self,
+        members: Sequence[_Row],
+        already: Sequence[Dict[str, Any]],
+        group_codes: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        """The group's OTHER warehouses: no demand of this cell sits there, stock does.
+
+        Emitted only for a cell that holds ONE product. Two products behind one item code is a
+        real case on this book (`B2155-NL-BLUE`), and a pivoted cell can hold several products
+        outright - so a group row would have to say which product it counts, and this table has
+        no column for that. A cell that cannot answer honestly says nothing extra.
+
+        Ordered by code, after the locations the lines themselves named.
+        """
+        if not group_codes:
+            return []
+        product_ids = {row.product_id for row in members if row.product_id}
+        if len(product_ids) != 1:
+            return []
+        product_id = next(iter(product_ids))
+        seen = {entry["location"] for entry in already}
+        out: List[Dict[str, Any]] = []
+        for group in group_codes:
+            for warehouse_id, code in self._group_warehouses.get(group, []):
+                if code in seen:
+                    continue
+                seen.add(code)
+                out.append(
+                    self._location(
+                        code, (), product_id=product_id, warehouse_id=warehouse_id
+                    )
+                )
+        return out
+
+    def _location(
+        self,
+        location: Optional[str],
+        rows: Sequence[_Row],
+        *,
+        product_id: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """One (product, location) line of the cell: its demand here, and what is there.
+
+        `rows` is empty for a warehouse of the agent's ownership group that this cell's lines
+        do not name: it holds no demand of this cell (so every proposed and demand figure is a
+        plain 0, which is TRUE rather than absent) and its stock facts are read exactly as any
+        other row's, off the same maps. `product_id` / `warehouse_id` address it, since there
+        is no row to read them from.
 
         The strip used to read "BRW-BB 22" and the 22 was the DEMAND, which is the one reading
         nobody guessed - the captain asked "how do i see the available quantity for each stock,
@@ -2418,8 +2550,11 @@ class FulfilmentBoardService:
         zero: there is no location whose stock could be counted, and a zero would read as
         "that location is empty".
         """
-        first = rows[0]
-        key = (first.product_id, first.warehouse_id)
+        first = rows[0] if rows else None
+        if first is not None:
+            product_id = first.product_id
+            warehouse_id = first.warehouse_id
+        key = (product_id, warehouse_id)
         # What was still unclaimed when this cell was reached, off the first row that was
         # actually served: a covered row never draws the pile down, so reading it off the first
         # row full stop would answer "not stated" for a cell whose first line is decided.
@@ -2428,7 +2563,7 @@ class FulfilmentBoardService:
         )
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
-        stated = location is not None and first.warehouse_id is not None
+        stated = location is not None and warehouse_id is not None
         owed, _covered = self._pressure.get(key, (None, None))
         incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if stated else None
         # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
@@ -2444,8 +2579,8 @@ class FulfilmentBoardService:
             "location": location,
             #: Addressing only: the stock drill-down is opened by id, never by resolving a
             #: warehouse code or an item code back into one.
-            "product_id": first.product_id if stated else None,
-            "warehouse_id": first.warehouse_id if stated else None,
+            "product_id": product_id if stated else None,
+            "warehouse_id": warehouse_id if stated else None,
             #: The demand, kept under its old name because the frontend's source strip reads
             #: it. `qty_demand` is the same number said unambiguously.
             "qty": qty_text(sum((row.qty for row in rows), _ZERO)),
