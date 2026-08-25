@@ -425,11 +425,7 @@ export default function ContactAccessTypesAdmin() {
           {policyType ? (
             <StockVisibilitySection
               heading={null}
-              scope={{
-                kind: 'access_type',
-                accessTypeCode: policyType.code,
-                accessTypeName: policyType.name,
-              }}
+              scope={{ kind: 'access_type', accessTypeCode: policyType.code }}
             />
           ) : null}
         </DialogContent>

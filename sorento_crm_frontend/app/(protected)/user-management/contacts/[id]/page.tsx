@@ -177,13 +177,7 @@ export default function ContactProfilePage() {
                 answer shape. Full width: the two pickers do not fit a grid cell at
                 375px without clipping their chips. */}
             <div className="md:col-span-2">
-              <StockVisibilitySection
-                scope={{
-                  kind: 'contact',
-                  contactId,
-                  accessTypeCodes: (contact.access_types ?? []).map((t) => t.code),
-                }}
-              />
+              <StockVisibilitySection scope={{ kind: 'contact', contactId }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Respond.io Workspace</p>

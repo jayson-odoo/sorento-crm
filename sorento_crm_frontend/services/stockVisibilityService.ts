@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------------------------------
- * Stock visibility policy - PLAN-stock-visibility-policy, slice S1 (Phase 1).
+ * Stock visibility policy - PLAN-stock-visibility-policy, slice S4 (Phase 2).
  *
  * Which warehouses a chatbot contact may be told about, and in which of the three
  * answer shapes. One row per tier: contact override > contact access type > global
@@ -8,15 +8,7 @@
  * `agent_field_access`).
  *
  * ===================================================================================
- * PHASE 1 NOTICE
- * ===================================================================================
- * Nothing here talks to the API yet. S2 builds the routes, S4 swaps the bodies of the
- * exported functions for `apiFetch` + `extractApiError` calls against the contract
- * below and deletes the `MOCK BACKEND` block at the bottom. The exported signatures,
- * types and error shape are what S4 must keep - the UI is written against them.
- *
- * ===================================================================================
- * API CONTRACT (built in S2, wired in S4)
+ * API CONTRACT (built in S2, wired here in S4)
  * ===================================================================================
  *
  * Permission: reads `inventory.stock.view`, writes `inventory.stock.edit`.
@@ -70,18 +62,21 @@
  *
  * --- Warehouse pickers (existing route, one new filter) ------------------------------
  *
- *   GET /api/v1/inventory/warehouses?query=&is_active=true&page=1&limit=50
+ *   GET /api/v1/inventory/warehouses?page=1&limit=50&query=&is_active=true
  *            Already exists. Server search, which is what the Locations picker uses -
  *            a client-side capped list is not allowed for a master this size.
  *
- *   GET /api/v1/inventory/warehouses?segment=dealer&is_active=true&limit=200
- *            The "Dealer pool" preset. `segment` is a NEW query filter on the existing
- *            route (the column `warehouses.segment` is already there and already on
- *            `WarehouseResponse`); S2 adds the filter. Documented here because the
- *            preset is the only caller and the PLAN's API section did not list it.
+ *   GET /api/v1/inventory/warehouses?page=1&limit=200&segment=dealer&is_active=true
+ *            The "Dealer pool" preset. `segment` is a query filter S2 added to the
+ *            existing route (the column `warehouses.segment` and `WarehouseResponse.segment`
+ *            were already there). Documented here because the preset is the only caller
+ *            and the PLAN's API section did not list it.
  * ----------------------------------------------------------------------------------- */
 
-/** The three answer shapes. Ordered loosest -> most restrictive; the merge below relies on it. */
+import { apiFetch } from '@/lib/api';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+
+/** The three answer shapes. Ordered loosest -> most restrictive; the backend merge relies on it. */
 export type StockVisibilityMode = 'detailed' | 'compact' | 'availability';
 
 export const STOCK_VISIBILITY_MODE_ORDER: StockVisibilityMode[] = [
@@ -130,17 +125,16 @@ export interface StockVisibilityInput {
  * Which tier a surface edits. One component serves the contact page, the access type
  * admin and the settings default, so the tier is a prop rather than three copies.
  *
- * `accessTypeCodes` / `accessTypeName` are PHASE 1 MOCK INPUT ONLY: the backend resolves
- * the access-type tier itself from `contact_id`, and S4 drops both fields when it swaps
- * the mock for `apiFetch`. They are here so a real contact on a real page reaches the
- * inherited-from-access-type state during the S1 browser run.
+ * The scope carries only what the ROUTE needs. The access-type tier a contact inherits
+ * is resolved by the backend from `contact_id`, so the card never has to be told which
+ * access types the contact holds.
  */
 export type StockVisibilityScope =
-  | { kind: 'contact'; contactId: string; accessTypeCodes?: string[] }
-  | { kind: 'access_type'; accessTypeCode: string; accessTypeName?: string }
+  | { kind: 'contact'; contactId: string }
+  | { kind: 'access_type'; accessTypeCode: string }
   | { kind: 'default' };
 
-/** react-query key, and (in S4) the route segment each scope maps to. */
+/** react-query key, and the route segment each scope maps to. */
 export function stockVisibilityScopeKey(scope: StockVisibilityScope): string[] {
   switch (scope.kind) {
     case 'contact':
@@ -152,13 +146,15 @@ export function stockVisibilityScopeKey(scope: StockVisibilityScope): string[] {
   }
 }
 
-/** The path S4 calls. Kept next to the key so the two cannot drift. */
+/** The path the three verbs call. Kept next to the key so the two cannot drift. */
 export function stockVisibilityScopePath(scope: StockVisibilityScope): string {
   switch (scope.kind) {
     case 'contact':
-      return `/api/v1/inventory/stock-visibility/contacts/${scope.contactId}`;
+      return `/api/v1/inventory/stock-visibility/contacts/${encodeURIComponent(scope.contactId)}`;
     case 'access_type':
-      return `/api/v1/inventory/stock-visibility/access-types/${scope.accessTypeCode}`;
+      return `/api/v1/inventory/stock-visibility/access-types/${encodeURIComponent(
+        scope.accessTypeCode,
+      )}`;
     default:
       return '/api/v1/inventory/stock-visibility/default';
   }
@@ -167,231 +163,84 @@ export function stockVisibilityScopePath(scope: StockVisibilityScope): string {
 export async function getStockVisibility(
   scope: StockVisibilityScope,
 ): Promise<StockVisibilityPolicyResponse> {
-  await mockLatency();
-  return mockRead(scope);
+  const response = await apiFetch(stockVisibilityScopePath(scope));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load stock visibility'));
+  }
+  return response.json();
 }
 
 export async function saveStockVisibility(
   scope: StockVisibilityScope,
   input: StockVisibilityInput,
 ): Promise<StockVisibilityPolicyResponse> {
-  await mockLatency();
-  return mockWrite(scope, input);
+  const response = await apiFetch(stockVisibilityScopePath(scope), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save stock visibility'));
+  }
+  return response.json();
 }
 
 export async function deleteStockVisibility(
   scope: StockVisibilityScope,
 ): Promise<StockVisibilityPolicyResponse> {
-  await mockLatency();
-  return mockDelete(scope);
+  // The default row is the floor of the resolution chain and has no DELETE route; the
+  // card offers no Remove there, and this guard keeps a stray caller off a 405.
+  if (scope.kind === 'default') {
+    throw new Error('The default stock visibility policy cannot be removed');
+  }
+  const response = await apiFetch(stockVisibilityScopePath(scope), { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to remove stock visibility'));
+  }
+  return response.json();
 }
 
-/** Locations picker: server search, one page at a time. */
+/** One page of `WarehouseResponse` rows, narrowed to what the pickers render. */
+interface WarehouseListRow {
+  id: string;
+  warehouse_code: string;
+  warehouse_name?: string | null;
+}
+
+function toWarehouseRef(row: WarehouseListRow): StockVisibilityWarehouse {
+  return { id: row.id, code: row.warehouse_code, name: row.warehouse_name ?? null };
+}
+
+async function fetchWarehouses(
+  params: URLSearchParams,
+  fallback: string,
+): Promise<StockVisibilityWarehouse[]> {
+  const response = await apiFetch(`/api/v1/inventory/warehouses?${params.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, fallback));
+  const body = (await response.json()) as { data?: WarehouseListRow[] };
+  return (body.data ?? []).map(toWarehouseRef);
+}
+
+/** Locations picker: server search, one page at a time - never a capped client-side list. */
 export async function searchStockVisibilityWarehouses(
   query: string,
 ): Promise<StockVisibilityWarehouse[]> {
-  await mockLatency();
-  return mockSearchWarehouses(query);
+  return fetchWarehouses(
+    buildDataGridParams(
+      { pageIndex: 0, pageSize: 50, searchQuery: query, sorting: [{ id: 'warehouse_code', desc: false }] },
+      { is_active: true },
+    ),
+    'Failed to load locations',
+  );
 }
 
 /** "Dealer pool" preset: every active warehouse whose `segment` is `dealer`. */
 export async function getDealerPoolWarehouses(): Promise<StockVisibilityWarehouse[]> {
-  await mockLatency();
-  return MOCK_WAREHOUSES.filter((w) => w.segment === 'dealer').map(toWarehouseRef);
-}
-
-/* =====================================================================================
- * MOCK BACKEND - Phase 1 only. S4 deletes everything below this line.
- * =====================================================================================
- *
- * In-memory and module-scoped, so a save on one surface is visible on the next read
- * from any surface within the same page session. It mirrors the resolution the backend
- * will do (S2): contact override, else the most restrictive matching access-type row,
- * else the default row.
- *
- * Seeded so all three badge states are reachable without writing anything:
- *   - MOCK_CONTACT_WITH_OVERRIDE     -> "Contact override"  (compact, two locations)
- *   - MOCK_CONTACT_WITH_ACCESS_TYPE  -> "Access type: Dealer" (availability, dealer pool)
- *   - MOCK_CONTACT_INHERITING_DEFAULT -> "Default"          (detailed, all locations)
- * Any other contact id resolves through its `accessTypeCodes` hint, then the default -
- * which is what a real contact on the real page hits.
- */
-
-export const MOCK_CONTACT_WITH_OVERRIDE = 'mock-contact-override';
-export const MOCK_CONTACT_WITH_ACCESS_TYPE = 'mock-contact-access-type';
-export const MOCK_CONTACT_INHERITING_DEFAULT = 'mock-contact-default';
-
-interface MockWarehouse extends StockVisibilityWarehouse {
-  segment: 'dealer' | 'project';
-}
-
-/** `pool_warehouse_id` / `segment` already exist on `warehouses`; codes are the real ones. */
-const MOCK_WAREHOUSES: MockWarehouse[] = [
-  { id: 'wh-brw', code: 'BRW', name: 'Rawang Main Warehouse', segment: 'dealer' },
-  { id: 'wh-mwh', code: 'MWH', name: 'Meru Warehouse', segment: 'dealer' },
-  { id: 'wh-dc1', code: 'DC1', name: 'Distribution Centre 1', segment: 'dealer' },
-  { id: 'wh-brw-bb', code: 'BRW-BB', name: 'Rawang Bulk Bay', segment: 'project' },
-  { id: 'wh-brw-ib', code: 'BRW-IB', name: 'Rawang Inbound Bay', segment: 'project' },
-  { id: 'wh-jhb1', code: 'JHB1', name: 'Johor Bahru Hub', segment: 'project' },
-  { id: 'wh-png1', code: 'PNG1', name: 'Penang Hub', segment: 'project' },
-  { id: 'wh-kch1', code: 'KCH1', name: 'Kuching Depot', segment: 'project' },
-];
-
-function toWarehouseRef(w: MockWarehouse): StockVisibilityWarehouse {
-  return { id: w.id, code: w.code, name: w.name };
-}
-
-function warehouseRefs(ids: string[] | null): StockVisibilityWarehouse[] | null {
-  if (ids === null) return null;
-  return MOCK_WAREHOUSES.filter((w) => ids.includes(w.id)).map(toWarehouseRef);
-}
-
-interface MockRow {
-  mode: StockVisibilityMode;
-  warehouse_ids: string[] | null;
-}
-
-const mockContactRows = new Map<string, MockRow>([
-  [MOCK_CONTACT_WITH_OVERRIDE, { mode: 'compact', warehouse_ids: ['wh-brw', 'wh-brw-bb'] }],
-]);
-
-const mockAccessTypeRows = new Map<string, MockRow & { name: string }>([
-  [
-    'dealer',
-    {
-      name: 'Dealer',
-      mode: 'availability',
-      warehouse_ids: ['wh-brw', 'wh-mwh', 'wh-dc1'],
-    },
-  ],
-]);
-
-let mockDefaultRow: MockRow = { mode: 'detailed', warehouse_ids: null };
-
-/** Access types held by the seeded contacts; real contacts pass their own via the scope. */
-const mockContactAccessTypes = new Map<string, string[]>([
-  [MOCK_CONTACT_WITH_ACCESS_TYPE, ['dealer']],
-  [MOCK_CONTACT_WITH_OVERRIDE, ['dealer']],
-  [MOCK_CONTACT_INHERITING_DEFAULT, []],
-]);
-
-function mockLatency(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 200));
-}
-
-function policyFrom(
-  row: MockRow,
-  source: StockVisibilitySource,
-  sourceLabel: string | null = null,
-): StockVisibilityPolicy {
-  return {
-    mode: row.mode,
-    warehouses: warehouseRefs(row.warehouse_ids),
-    source,
-    source_label: sourceLabel,
-  };
-}
-
-/**
- * Most restrictive wins, exactly as the S2 resolver must: highest mode in
- * STOCK_VISIBILITY_MODE_ORDER, warehouses intersected with NULL read as "all".
- */
-function mergeAccessTypeRows(codes: string[]): { row: MockRow; label: string } | null {
-  const matched = codes
-    .map((code) => mockAccessTypeRows.get(code))
-    .filter((r): r is MockRow & { name: string } => !!r);
-  if (matched.length === 0) return null;
-
-  let mode: StockVisibilityMode = 'detailed';
-  let ids: string[] | null = null;
-  for (const row of matched) {
-    if (
-      STOCK_VISIBILITY_MODE_ORDER.indexOf(row.mode) > STOCK_VISIBILITY_MODE_ORDER.indexOf(mode)
-    ) {
-      mode = row.mode;
-    }
-    if (row.warehouse_ids === null) continue;
-    ids = ids === null ? [...row.warehouse_ids] : ids.filter((id) => row.warehouse_ids!.includes(id));
-  }
-  return { row: { mode, warehouse_ids: ids }, label: matched.map((r) => r.name).join(', ') };
-}
-
-function mockContactAccessTypeCodes(scope: {
-  contactId: string;
-  accessTypeCodes?: string[];
-}): string[] {
-  return scope.accessTypeCodes ?? mockContactAccessTypes.get(scope.contactId) ?? [];
-}
-
-function mockRead(scope: StockVisibilityScope): StockVisibilityPolicyResponse {
-  if (scope.kind === 'default') {
-    return {
-      effective: policyFrom(mockDefaultRow, 'default'),
-      override: policyFrom(mockDefaultRow, 'default'),
-    };
-  }
-
-  if (scope.kind === 'access_type') {
-    const row = mockAccessTypeRows.get(scope.accessTypeCode);
-    if (!row) {
-      return { effective: policyFrom(mockDefaultRow, 'default'), override: null };
-    }
-    const policy = policyFrom(row, 'access_type', row.name);
-    return { effective: policy, override: policy };
-  }
-
-  const own = mockContactRows.get(scope.contactId);
-  if (own) {
-    const policy = policyFrom(own, 'contact');
-    return { effective: policy, override: policy };
-  }
-  const inherited = mergeAccessTypeRows(mockContactAccessTypeCodes(scope));
-  if (inherited) {
-    return {
-      effective: policyFrom(inherited.row, 'access_type', inherited.label),
-      override: null,
-    };
-  }
-  return { effective: policyFrom(mockDefaultRow, 'default'), override: null };
-}
-
-function mockWrite(
-  scope: StockVisibilityScope,
-  input: StockVisibilityInput,
-): StockVisibilityPolicyResponse {
-  const row: MockRow = { mode: input.mode, warehouse_ids: input.warehouse_ids };
-  if (scope.kind === 'default') {
-    mockDefaultRow = row;
-  } else if (scope.kind === 'access_type') {
-    mockAccessTypeRows.set(scope.accessTypeCode, {
-      ...row,
-      name: scope.accessTypeName ?? scope.accessTypeCode,
-    });
-  } else {
-    mockContactRows.set(scope.contactId, row);
-  }
-  return mockRead(scope);
-}
-
-function mockDelete(scope: StockVisibilityScope): StockVisibilityPolicyResponse {
-  if (scope.kind === 'default') {
-    throw new Error('The default stock visibility policy cannot be removed');
-  }
-  if (scope.kind === 'access_type') {
-    mockAccessTypeRows.delete(scope.accessTypeCode);
-  } else {
-    mockContactRows.delete(scope.contactId);
-  }
-  return mockRead(scope);
-}
-
-function mockSearchWarehouses(query: string): StockVisibilityWarehouse[] {
-  const q = query.trim().toLowerCase();
-  const matched = q
-    ? MOCK_WAREHOUSES.filter(
-        (w) =>
-          w.code.toLowerCase().includes(q) || (w.name ?? '').toLowerCase().includes(q),
-      )
-    : MOCK_WAREHOUSES;
-  return matched.slice(0, 50).map(toWarehouseRef);
+  return fetchWarehouses(
+    buildDataGridParams(
+      { pageIndex: 0, pageSize: 200, sorting: [{ id: 'warehouse_code', desc: false }] },
+      { segment: 'dealer', is_active: true },
+    ),
+    'Failed to load the dealer pool',
+  );
 }

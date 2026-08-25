@@ -1,6 +1,6 @@
 # PLAN: Stock visibility policy (per contact, per access type)
 
-**Status:** Approved 2026-08-25. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 next.
+**Status:** S4 done, browser verification + S5 n8n + S6 review pending. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 done (mock swapped for the real API, vitest 25 passed).
 **UAC:** `stock-visibility-policy-acceptance-criteria.md` (alongside)
 **Domain:** inventory / chatbot (n8n `sub-get-results` `Fss5aAaXthJSWpZCgKiKR`, MCP `crm_inventory_stock_balance_list`)
 
@@ -249,7 +249,7 @@ block (`stock_visibility`, `stock_summary`, `stock_availability`) or they are si
 | S1 | FE mock: `StockVisibilitySection` against a mocked service, three states, 375 / 1280 | Phase 1 | done (browser run deferred to S6) |
 | S2 | Backend: migration + model + `stock_visibility.py` resolver + enforcement in `list_stock` + CRUD routes; pytest first (resolution tiers, most-restrictive merge, fail-closed, empty `data` in compact/availability, staff path untouched, `response_model` fields present) | Phase 2 | done - `tests/test_stock_visibility_policy.py`, 34 passed |
 | S3 | MCP: catalog param + presenter branches; pytest on envelope shapes | Phase 2 | done - `sorento_crm_mcp/tests/test_presenters_stock.py` (25) + backend B13 (zero-stock products still answered). Restart the MCP session to pick it up |
-| S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | |
+| S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | done - mock deleted, `apiFetch` + `extractApiError` + `buildDataGridParams`; `StockVisibilitySection.test.tsx` (15) + `stockVisibilityService.test.ts` (10) |
 | S5 | n8n: transformer + structurer + pending-quantity turn; live-envelope harness capture | separate n8n plan-build-test-promote; promote = user's call | |
 | S6 | Browser verification via agent-browser from `/` by sidebar; `/code-review`; DoD gate; PR | Phase 3 | |
 
