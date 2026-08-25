@@ -17,6 +17,7 @@ export type TagLayerType =
   | 'shape'
   | 'product_slot'
   | 'price_field'
+  | 'price_badge'
   | 'badge'
   | 'group';
 
@@ -42,15 +43,60 @@ export type PriceDisplayType = 'list' | 'sell' | 'both';
 
 export type ImageFit = 'cover' | 'contain';
 
+/** How an image layer is masked. `circle` is the round product cut-out on the flyer. */
+export type ImageMaskShape = 'none' | 'circle';
+
+/**
+ * Where an image layer's picture comes from.
+ *
+ * Two sources, kept apart on purpose: a library asset is artwork somebody
+ * uploaded to the Kit, a product attachment is one of the product's own photos
+ * and carries the access gate that decides who may see it. Collapsing them into
+ * one id column would lose that distinction the first time a tag was printed
+ * for a consumer.
+ */
+export type ImageSource =
+  | { type: 'asset'; assetId: string }
+  | { type: 'product_attachment'; attachmentId: string };
+
+/** How a product block binds to the data behind it. */
+export interface GroupBinding {
+  product_id?: string;
+  product_set_id?: string;
+}
+
+/** The two shapes a price badge takes. See `lib/dealer-kit/price-badge.ts`. */
+export type PriceBadgeVariant = 'list_only' | 'promo';
+
 // ---------------------------------------------------------------------------
 // Layer props (discriminated union on `kind`)
 // ---------------------------------------------------------------------------
 
 export interface ImageLayerProps {
   kind: 'image';
-  assetId: string | null;
+  source: ImageSource | null;
   fit: ImageFit;
   cropRect?: { x: number; y: number; width: number; height: number };
+  maskShape?: ImageMaskShape;
+  /**
+   * Where the picture came from before S3b gave image layers a source
+   * discriminator. Read by `imageSourceOf`, never written: a template saved by
+   * the first version of the editor still opens.
+   */
+  assetId?: string | null;
+}
+
+/**
+ * The source of an image layer, tolerating a document saved before S3b.
+ *
+ * A missing `source` is null rather than an error - `assetId` was the whole
+ * story until price badges arrived, and a template nobody has reopened since
+ * must not throw when they do.
+ */
+export function imageSourceOf(props: ImageLayerProps): ImageSource | null {
+  if (props.source) return props.source;
+  if (props.assetId) return { type: 'asset', assetId: props.assetId };
+  return null;
 }
 
 export interface TextLayerProps {
@@ -90,9 +136,34 @@ export interface BadgeLayerProps {
   assetId: string;
 }
 
+/**
+ * A price, drawn the way a price tag draws one.
+ *
+ * A dedicated layer type rather than free text (D26), because the composition -
+ * struck list price above a filled box holding `SP`, the figure and `NETT` - is
+ * the same on every tag and a designer retyping it per tag would eventually
+ * type it differently. Colours, radius and size stay editable; what the badge
+ * is MADE of does not.
+ */
+export interface PriceBadgeLayerProps {
+  kind: 'price_badge';
+  variant: PriceBadgeVariant;
+  fill: string;
+  textColor: string;
+  cornerRadius: number;
+  showNett: boolean;
+}
+
 export interface GroupLayerProps {
   kind: 'group';
   children: string[];
+  /**
+   * Which product or set the whole block is about. Carried on the GROUP so a
+   * block can be re-bound or relinked in one action instead of layer by layer.
+   * Optional: a group made by selecting two shapes and pressing Ctrl+G binds to
+   * nothing, and a document saved before S3b has no bindings at all.
+   */
+  binding?: GroupBinding;
 }
 
 export type TagLayerProps =
@@ -101,6 +172,7 @@ export type TagLayerProps =
   | ShapeLayerProps
   | ProductSlotLayerProps
   | PriceFieldLayerProps
+  | PriceBadgeLayerProps
   | BadgeLayerProps
   | GroupLayerProps;
 
@@ -222,6 +294,100 @@ export interface PlacedTag {
 }
 
 // ---------------------------------------------------------------------------
+// Live product data behind a binding (never stored in doc - ADR 0008)
+// ---------------------------------------------------------------------------
+
+/** One photo a bound product may show, already signed for this viewer. */
+export interface TagImage {
+  attachment_id: string;
+  url: string;
+  is_primary: boolean;
+}
+
+/**
+ * Everything a product block draws, resolved by the backend at the moment the
+ * block is dropped or re-bound.
+ *
+ * Held in editor state only. A saved document carries the binding and any text
+ * overrides, never these values: prices resolve at render time (ADR 0008), and
+ * a name or a photo that was baked into the doc would go stale the first time
+ * somebody fixed the product master.
+ */
+export interface ProductTagData {
+  id: string;
+  code: string;
+  name: string;
+  dimensions: string;
+  spec_lines: string[];
+  images: TagImage[];
+  list_price: number | null;
+  offer_price: number | null;
+  promotion_id: string | null;
+}
+
+export interface ProductSetMemberTagData {
+  product_id: string;
+  code: string;
+  name: string;
+  dimensions: string;
+  quantity: number;
+}
+
+export interface ProductSetTagData {
+  id: string;
+  set_code: string;
+  name: string;
+  members: ProductSetMemberTagData[];
+  list_price: number | null;
+  offer_price: number | null;
+  promotion_id: string | null;
+}
+
+/**
+ * Display data for one price tag request LINE.
+ *
+ * The tag sheet designer resolves per line rather than per product, because a
+ * line can carry a marketing price override with a logged reason (D9) and that
+ * override has to win on the tag the designer is looking at. Same shape the
+ * print payload sends, so the proof and the PDF agree.
+ */
+export interface LineTagData {
+  line_id: string;
+  code: string;
+  name: string;
+  dimensions: string;
+  /** Already joined with newlines, as the backend resolved it. */
+  spec_lines: string;
+  /** One line per set member, already formatted. Empty for a product line. */
+  set_members: string;
+  images: TagImage[];
+  list_price: number | null;
+  sell_price: number | null;
+  show_promo_price: boolean;
+  included_accessories: string;
+  quantity: number;
+}
+
+/** A binding's resolved data, whichever kind of thing it points at. */
+export type TagBindingData =
+  | { kind: 'product'; product: ProductTagData }
+  | { kind: 'set'; set: ProductSetTagData }
+  | { kind: 'line'; line: LineTagData };
+
+/**
+ * The key a resolved-data map is held under.
+ *
+ * A string rather than the binding object, because a Map keyed on an object
+ * compares by identity and every re-render would miss.
+ */
+export function bindingKey(binding: GroupBinding | undefined): string | null {
+  if (!binding) return null;
+  if (binding.product_id) return `product:${binding.product_id}`;
+  if (binding.product_set_id) return `set:${binding.product_set_id}`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Resolved product data for rendering (never stored in doc - ADR 0008)
 // ---------------------------------------------------------------------------
 
@@ -273,8 +439,9 @@ export function defaultShapeProps(): ShapeLayerProps {
 export function defaultImageProps(): ImageLayerProps {
   return {
     kind: 'image',
-    assetId: null,
+    source: null,
     fit: 'contain',
+    maskShape: 'none',
   };
 }
 
@@ -290,6 +457,21 @@ export function defaultPriceFieldProps(): PriceFieldLayerProps {
     kind: 'price_field',
     priceType: 'both',
     format: 'RM #,##0',
+  };
+}
+
+export function defaultPriceBadgeProps(
+  variant: PriceBadgeVariant = 'list_only',
+): PriceBadgeLayerProps {
+  return {
+    kind: 'price_badge',
+    variant,
+    // The flyer's promotional block is white on red. A list-only badge paints
+    // no box, so the fill only shows once somebody switches it to promo.
+    fill: '#d32f2f',
+    textColor: '#ffffff',
+    cornerRadius: 2,
+    showNett: true,
   };
 }
 

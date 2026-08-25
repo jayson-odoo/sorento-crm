@@ -207,3 +207,130 @@ class TagSheetExportOut(BaseModel):
     download_id: str = Field(serialization_alias="downloadId")
     status: str
     filename: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Tag data for the canvas editor (S3b)
+#
+# Money crosses this boundary as `float`, not `Decimal`. The arithmetic is done
+# in Decimal inside the pricing engine and never here; what a browser needs is a
+# number it can format, and Pydantic serialises a Decimal as a JSON string,
+# which the canvas would then have to parse back. Formatting happens at the
+# edge, once - see the note at the top of `services/dealer_kit/pricing.py`.
+# ---------------------------------------------------------------------------
+
+
+class ProductSearchItem(BaseModel):
+    """One row of the editor's product picker. Deliberately three fields."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    product_code: str
+    product_name: str
+
+
+class ProductSetSearchItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    set_code: str
+    name: str
+
+
+class TagImage(BaseModel):
+    """One photo of a bound product, signed for the viewer that asked."""
+
+    attachment_id: str
+    url: str
+    is_primary: bool
+
+
+class ProductTagData(BaseModel):
+    """Everything a product block draws. Resolved per request, never stored."""
+
+    id: str
+    code: str
+    name: str
+    dimensions: str
+    spec_lines: list[str] = []
+    images: list[TagImage] = []
+    list_price: Optional[float] = None
+    offer_price: Optional[float] = None
+    promotion_id: Optional[str] = None
+
+
+class ProductSetMemberTagData(BaseModel):
+    product_id: str
+    code: str
+    name: str
+    dimensions: str
+    quantity: float
+
+
+class ProductSetTagData(BaseModel):
+    id: str
+    set_code: str
+    name: str
+    members: list[ProductSetMemberTagData] = []
+    list_price: Optional[float] = None
+    offer_price: Optional[float] = None
+    promotion_id: Optional[str] = None
+
+
+class ResolvePreviewIn(BaseModel):
+    """What the template editor wants priced.
+
+    One of ``product_id`` / ``product_set_id`` is required; the route answers
+    422 when neither is named, because a preview of nothing is a mistake rather
+    than an empty result.
+    """
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    promotion_id: Optional[str] = None
+
+
+class ResolvePreviewOut(BaseModel):
+    product: Optional[ProductTagData] = None
+    product_set: Optional[ProductSetTagData] = None
+
+
+class ResolvedLineData(BaseModel):
+    """Display data for one request line, for the designer and the print page."""
+
+    line_id: str
+    code: str
+    name: str
+    dimensions: str
+    spec_lines: str
+    set_members: str = ""
+    images: list[TagImage] = []
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+    show_promo_price: bool
+    included_accessories: str = ""
+    quantity: int
+
+
+class TagFont(BaseModel):
+    """A brand font the editor and the print page load through ``@font-face``."""
+
+    name: str
+    family: str
+    url: str
+
+
+class AssetResponse(BaseModel):
+    """One row of the Dealer Kit artwork library.
+
+    ``url`` is null when the file cannot be signed - absent rather than broken,
+    the same rule the catalogue uses for a background it cannot serve.
+    """
+
+    id: str
+    name: str
+    kind: str
+    tags: list[str] = []
+    url: Optional[str] = None
+    mime_type: Optional[str] = None

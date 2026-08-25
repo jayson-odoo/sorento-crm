@@ -8,14 +8,67 @@
  * draggable/selectable.
  */
 
-import { useEffect, useRef } from 'react';
-import { Ellipse, Group, Line, Rect, Text, Transformer } from 'react-konva';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Ellipse,
+  Group,
+  Image as KonvaImage,
+  Line,
+  Rect,
+  Text,
+  Transformer,
+} from 'react-konva';
 import type Konva from 'konva';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
+import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
+
+// `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
+// designer) and handed DOWN: the canvas draws layers and knows nothing about
+// products, which is what lets one component render a template, a placed tag
+// and a preview.
+export type { TagLayerDisplay };
+
+/**
+ * Load an image for Konva.
+ *
+ * Konva needs a real HTMLImageElement rather than a URL, and re-rendering with
+ * a half-loaded one paints nothing, so the element only reaches the stage once
+ * it has decoded. `crossOrigin` is anonymous because the bytes come from the
+ * CDN through a signed URL.
+ */
+function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (!url) {
+      setImage(null);
+      return;
+    }
+    let live = true;
+    const element = new window.Image();
+    element.crossOrigin = 'anonymous';
+    element.src = url;
+    element.onload = () => {
+      if (live) setImage(element);
+    };
+    element.onerror = () => {
+      if (live) setImage(null);
+    };
+    return () => {
+      live = false;
+    };
+  }, [url]);
+
+  return image;
+}
 
 interface KonvaTagLayerProps {
   layer: TagLayer;
   scale: number;
+  /** Live values for a bound layer. Absent = draw the layer's own content. */
+  display?: TagLayerDisplay;
   isSelected: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onDragStart: (id: string) => void;
@@ -37,6 +90,7 @@ function px2mm(px: number, scale: number) {
 export function KonvaTagLayer({
   layer,
   scale,
+  display,
   isSelected,
   onSelect,
   onDragStart,
@@ -118,7 +172,13 @@ export function KonvaTagLayer({
         onDragEnd={handleDragEnd}
         onTransformEnd={handleTransformEnd}
       >
-        <LayerContent props={layer.props} w={w} h={h} scale={scale} />
+        <LayerContent
+          props={layer.props}
+          w={w}
+          h={h}
+          scale={scale}
+          display={display}
+        />
       </Group>
 
       {isSelected && !layer.locked && (
@@ -163,11 +223,13 @@ function LayerContent({
   w,
   h,
   scale,
+  display,
 }: {
   props: TagLayerProps;
   w: number;
   h: number;
   scale: number;
+  display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
     case 'text':
@@ -175,7 +237,7 @@ function LayerContent({
         <Text
           width={w}
           height={h}
-          text={props.text}
+          text={display?.text ?? props.text}
           fontFamily={props.fontFamily}
           fontSize={props.fontSize * scale * 0.35}
           fontStyle={props.fontWeight >= 700 ? 'bold' : 'normal'}
@@ -191,20 +253,14 @@ function LayerContent({
       return <ShapeContent shape={props.shape} w={w} h={h} props={props} />;
 
     case 'image':
-      // Image placeholder (asset loading is out of scope for Phase 1 mock).
       return (
-        <>
-          <Rect width={w} height={h} fill="#f0f0f0" stroke="#ccc" strokeWidth={1} />
-          <Text
-            width={w}
-            height={h}
-            text={props.assetId ? 'Image' : 'No image'}
-            align="center"
-            verticalAlign="middle"
-            fontSize={10}
-            fill="#999"
-          />
-        </>
+        <ImageContent
+          w={w}
+          h={h}
+          url={display?.imageUrl ?? null}
+          fit={props.fit}
+          maskShape={props.maskShape ?? 'none'}
+        />
       );
 
     case 'product_slot':
@@ -233,7 +289,29 @@ function LayerContent({
     case 'price_field':
       return <PriceFieldContent w={w} h={h} priceType={props.priceType} scale={scale} />;
 
+    case 'price_badge':
+      return (
+        <PriceBadgeContent
+          w={w}
+          h={h}
+          scale={scale}
+          props={props}
+          input={display?.price ?? { listPrice: null, offerPrice: null }}
+        />
+      );
+
     case 'badge':
+      if (display?.imageUrl) {
+        return (
+          <ImageContent
+            w={w}
+            h={h}
+            url={display.imageUrl}
+            fit="contain"
+            maskShape="none"
+          />
+        );
+      }
       return (
         <>
           <Rect width={w} height={h} fill="#2e7d32" cornerRadius={mm2px(1, scale)} />
@@ -400,6 +478,200 @@ function PriceFieldContent({
         fill="#b44d2e"
         fontStyle="bold"
       />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Image
+// ---------------------------------------------------------------------------
+
+function ImageContent({
+  w,
+  h,
+  url,
+  fit,
+  maskShape,
+}: {
+  w: number;
+  h: number;
+  url: string | null;
+  fit: 'cover' | 'contain';
+  maskShape: 'none' | 'circle';
+}) {
+  const image = useHtmlImage(url);
+
+  if (!image) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="#f0f0f0" stroke="#ccc" strokeWidth={1} />
+        <Text
+          width={w}
+          height={h}
+          text={url ? 'Loading' : 'No image'}
+          align="center"
+          verticalAlign="middle"
+          fontSize={10}
+          fill="#999"
+        />
+      </>
+    );
+  }
+
+  // `contain` letterboxes inside the box, `cover` fills it and overflows; the
+  // clip below is what turns overflow into a crop rather than a picture spilling
+  // over the layer next to it.
+  const ratio = image.width / image.height;
+  const boxRatio = w / h;
+  const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
+  const drawW = wide ? w : h * ratio;
+  const drawH = wide ? w / ratio : h;
+
+  const body = (
+    <KonvaImage
+      image={image}
+      x={(w - drawW) / 2}
+      y={(h - drawH) / 2}
+      width={drawW}
+      height={drawH}
+    />
+  );
+
+  if (maskShape === 'circle') {
+    return (
+      <Group
+        clipFunc={(ctx) => {
+          ctx.beginPath();
+          ctx.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2, false);
+          ctx.closePath();
+        }}
+      >
+        {body}
+      </Group>
+    );
+  }
+
+  if (fit === 'cover') {
+    return (
+      <Group
+        clipFunc={(ctx) => {
+          ctx.beginPath();
+          ctx.rect(0, 0, w, h);
+          ctx.closePath();
+        }}
+      >
+        {body}
+      </Group>
+    );
+  }
+
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// Price badge (D26)
+// ---------------------------------------------------------------------------
+
+/**
+ * The badge, composed by `priceBadgeParts` so this and the DOM print renderer
+ * cannot disagree about what a promotional price looks like.
+ */
+function PriceBadgeContent({
+  w,
+  h,
+  scale,
+  props,
+  input,
+}: {
+  w: number;
+  h: number;
+  scale: number;
+  props: Extract<TagLayerProps, { kind: 'price_badge' }>;
+  input: PriceBadgeInput;
+}) {
+  const parts = priceBadgeParts(props, input);
+
+  if (!parts.boxed) {
+    return (
+      <Text
+        width={w}
+        height={h}
+        text={parts.plainText}
+        align="center"
+        verticalAlign="middle"
+        fontSize={Math.min(h * 0.6, w / 6)}
+        fontStyle="bold"
+        fill={parts.amountText ? '#000000' : '#999999'}
+      />
+    );
+  }
+
+  // Struck list price on top, filled box under it. A third of the height for
+  // the strike keeps the figure dominant at every layer size.
+  const strikeH = parts.struckText ? h * 0.3 : 0;
+  const boxY = strikeH;
+  const boxH = h - strikeH;
+  const smallFont = Math.max(4, boxH * 0.28);
+  const bigFont = Math.max(6, boxH * 0.5);
+
+  return (
+    <>
+      {parts.struckText && (
+        <Text
+          width={w}
+          height={strikeH}
+          text={parts.struckText}
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.max(4, strikeH * 0.7)}
+          fill="#666666"
+          textDecoration="line-through"
+        />
+      )}
+      <Rect
+        y={boxY}
+        width={w}
+        height={boxH}
+        fill={props.fill}
+        cornerRadius={mm2px(props.cornerRadius, scale)}
+      />
+      {parts.spLabel && (
+        <Text
+          x={w * 0.04}
+          y={boxY + boxH * 0.1}
+          width={w * 0.2}
+          height={boxH * 0.4}
+          text={parts.spLabel}
+          fontSize={smallFont}
+          fontStyle="bold"
+          fill={props.textColor}
+          verticalAlign="middle"
+        />
+      )}
+      <Text
+        y={boxY + boxH * 0.15}
+        width={w}
+        height={boxH * 0.55}
+        text={parts.amountText}
+        align="center"
+        verticalAlign="middle"
+        fontSize={bigFont}
+        fontStyle="bold"
+        fill={props.textColor}
+      />
+      {parts.nettLabel && (
+        <Text
+          y={boxY + boxH * 0.7}
+          width={w}
+          height={boxH * 0.28}
+          text={parts.nettLabel}
+          align="center"
+          verticalAlign="middle"
+          fontSize={smallFont}
+          fontStyle="bold"
+          fill={props.textColor}
+        />
+      )}
     </>
   );
 }

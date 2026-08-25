@@ -6,10 +6,7 @@
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import type {
-  TagSheetDoc,
-  ResolvedTagData,
-} from '@/lib/dealer-kit/tag-template-types';
+import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -229,39 +226,37 @@ export async function saveTagSheetDoc(
 }
 
 /**
- * Resolve display data for a request line.
+ * Display data for this request's lines, resolved by the backend.
  *
- * Prices resolve at render time (ADR 0008) - never stored in the tag sheet
- * doc. Marketing price override on the line wins over resolved price when set.
+ * ```
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/resolve-prices
+ *   body: string[] | null   line ids, or null for every line
+ *   200 [{ line_id, code, name, dimensions, spec_lines, set_members, images[],
+ *          list_price, sell_price, show_promo_price, included_accessories,
+ *          quantity }]
+ * ```
+ *
+ * Prices resolve at render time through the pricing engine and are never stored
+ * in the tag sheet document (ADR 0008). A marketing override on the line wins
+ * over the resolved offer, which is why this is resolved per LINE rather than
+ * per product.
  */
-export function resolveTagData(line: PriceTagRequestLine): ResolvedTagData {
-  const listPrice = line.list_price;
-  const sellPrice =
-    line.marketing_price_override != null
-      ? line.marketing_price_override
-      : line.sell_price;
-
-  return {
-    product_image_url: null,
-    code: line.code,
-    name: line.name,
-    dimensions: '',
-    spec_lines: '',
-    list_price: listPrice != null ? formatPrice(listPrice) : null,
-    sell_price: sellPrice != null ? formatPrice(sellPrice) : null,
-    show_promo_price: line.show_promo_price,
-    included_accessories: line.included_accessories ?? '',
-    alternatives: line.alternatives.map((a) => ({
-      code: a.code,
-      name: a.name,
-      list_price: null,
-    })),
-    set_members: [],
-  };
-}
-
-function formatPrice(amount: number): string {
-  return `RM ${amount.toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+export async function resolveRequestLines(
+  requestId: string,
+  lineIds?: string[],
+): Promise<LineTagData[]> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/resolve-prices`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lineIds ?? null),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to resolve line prices'));
+  }
+  return response.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -290,52 +285,4 @@ export async function exportTagSheet(
     throw new Error(await extractApiError(response, 'Failed to export tag sheet'));
   }
   return response.json();
-}
-
-/**
- * Resolve print payload for a request (all lines with prices).
- */
-export function resolveAllLineData(
-  request: PriceTagRequestDetail,
-): Record<string, {
-  line_id: string;
-  code: string;
-  name: string;
-  dimensions: string;
-  spec_lines: string;
-  list_price: number | null;
-  sell_price: number | null;
-  show_promo_price: boolean;
-  included_accessories: string;
-  quantity: number;
-}> {
-  const result: Record<string, {
-    line_id: string;
-    code: string;
-    name: string;
-    dimensions: string;
-    spec_lines: string;
-    list_price: number | null;
-    sell_price: number | null;
-    show_promo_price: boolean;
-    included_accessories: string;
-    quantity: number;
-  }> = {};
-
-  for (const line of request.lines) {
-    result[line.id] = {
-      line_id: line.id,
-      code: line.code,
-      name: line.name,
-      dimensions: '',
-      spec_lines: '',
-      list_price: line.list_price,
-      sell_price: line.marketing_price_override ?? line.sell_price,
-      show_promo_price: line.show_promo_price,
-      included_accessories: line.included_accessories ?? '',
-      quantity: line.quantity,
-    };
-  }
-
-  return result;
 }

@@ -35,16 +35,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type {
+  GroupBinding,
   ImpositionConfig,
   ImpositionPreset,
+  LineTagData,
   PlacedTag,
-  ResolvedTagData,
+  TagBindingData,
+  TagLayer,
   TagSheet,
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import { IMPOSITION_PRESETS } from '@/lib/dealer-kit/tag-template-types';
+import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
+import { bindTemplateLayers, layerDisplay } from '@/lib/dealer-kit/product-block';
+import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import {
-  resolveTagData,
+  resolveRequestLines,
   transitionPriceTagRequest,
   exportTagSheet,
   type PriceTagRequestDetail,
@@ -54,7 +60,7 @@ import { listTemplates } from '../../../../services/tagTemplateService';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
 // This component is loaded with ssr:false by TagSheetDesignerShell, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Rect } from 'react-konva';
+import { Stage, Layer as KonvaLayer, Group, Rect, Text } from 'react-konva';
 import { KonvaTagLayer } from '@/app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer';
 
 // ---------------------------------------------------------------------------
@@ -126,9 +132,12 @@ function computeImpositionSlots(
 // Determine product family from line (mock heuristic)
 // ---------------------------------------------------------------------------
 
-function lineFamily(line: PriceTagRequestLine): string {
+function lineFamily(line: PriceTagRequestLine, code?: string): string {
   if (line.line_type === 'product_set') return 'furniture_set';
-  const codeLower = (line.code ?? '').toLowerCase();
+  // The code comes from the resolver: a request line stores product ids, not
+  // product codes, so reading it off the line answered '' for every line and
+  // every tag fell back to the ala carte template.
+  const codeLower = (code ?? '').toLowerCase();
   if (codeLower.includes('wc')) return 'wc';
   if (codeLower.includes('sh')) return 'shower';
   if (codeLower.includes('mr') || codeLower.includes('mirror')) return 'mirror';
@@ -182,6 +191,9 @@ export function TagSheetDesigner({
   const [exportingSheet, setExportingSheet] = useState(false);
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
 
+  // Signed URLs for library artwork placed on a template (badges, icons).
+  const library = useKitLibrary();
+
   const stageRef = useRef<Konva.Stage | null>(null);
 
   // Load templates on mount.
@@ -209,14 +221,34 @@ export function TagSheetDesigner({
     return ids;
   }, [doc.sheets]);
 
-  // Resolved data cache keyed by line id.
+  // Resolved data, keyed by line id, from the pricing engine.
+  //
+  // Fetched rather than derived: prices live nowhere in the document (ADR
+  // 0008), and the promotion window, the audience gate and the marketing
+  // override are all decisions the backend owns.
+  const [resolvedRows, setResolvedRows] = useState<LineTagData[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    resolveRequestLines(request.id)
+      .then((rows) => {
+        if (live) setResolvedRows(rows);
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error ? error.message : 'Failed to resolve prices',
+        );
+      });
+    return () => {
+      live = false;
+    };
+  }, [request.id]);
+
   const resolvedDataMap = useMemo(() => {
-    const map = new Map<string, ResolvedTagData>();
-    for (const line of request.lines) {
-      map.set(line.id, resolveTagData(line));
-    }
+    const map = new Map<string, LineTagData>();
+    for (const row of resolvedRows) map.set(row.line_id, row);
     return map;
-  }, [request.lines]);
+  }, [resolvedRows]);
 
   const selectedTag = useMemo(() => {
     if (!selectedTagId || !activeSheet) return null;
@@ -286,7 +318,7 @@ export function TagSheetDesigner({
       }
 
       // Find a matching template by family.
-      const family = lineFamily(line);
+      const family = lineFamily(line, resolvedDataMap.get(line.id)?.code);
       let template = templates.find((t) => t.family === family);
       if (!template) {
         // Fall back to ala_carte or first available.
@@ -317,7 +349,14 @@ export function TagSheetDesigner({
         y_mm: slot.y_mm,
         width_mm: tagW,
         height_mm: tagH,
-        layers: structuredClone(template.doc.layers),
+        // The template's groups learn which product this tag is about, so the
+        // tag carries its binding exactly as one built in the editor does.
+        layers: bindTemplateLayers(
+          structuredClone(template.doc.layers) as TagLayer[],
+          line.line_type === 'product_set'
+            ? ({ product_set_id: line.product_set_id ?? undefined } as GroupBinding)
+            : ({ product_id: line.product_id ?? undefined } as GroupBinding),
+        ),
       };
 
       updateActiveSheet((sheet) => ({
@@ -326,7 +365,14 @@ export function TagSheetDesigner({
       }));
       setSelectedTagId(newTag.id);
     },
-    [placedLineIds, templates, doc.imposition, activeSheet, updateActiveSheet],
+    [
+      placedLineIds,
+      templates,
+      doc.imposition,
+      activeSheet,
+      updateActiveSheet,
+      resolvedDataMap,
+    ],
   );
 
   // -- Tag selection and removal -----------------------------------------------
@@ -541,6 +587,12 @@ export function TagSheetDesigner({
               <div className="divide-y">
                 {request.lines.map((line) => {
                   const isPlaced = placedLineIds.has(line.id);
+                  // The line row carries ids; the code, the name and the price
+                  // come from the resolver, which is the only thing that knows
+                  // them (a request line stores no figures - ADR 0008).
+                  const row = resolvedDataMap.get(line.id);
+                  const code = row?.code ?? '';
+                  const name = row?.name ?? '';
                   return (
                     <button
                       key={line.id}
@@ -560,26 +612,23 @@ export function TagSheetDesigner({
                             </Badge>
                             <span
                               className="text-xs font-mono text-muted-foreground truncate"
-                              title={line.code}
+                              title={code}
                             >
-                              {line.code}
+                              {code || 'Resolving...'}
                             </span>
                             {isPlaced && (
                               <Check className="size-3 text-emerald-600 shrink-0" />
                             )}
                           </div>
-                          <p
-                            className="text-xs mt-0.5 truncate"
-                            title={line.name}
-                          >
-                            {line.name}
+                          <p className="text-xs mt-0.5 truncate" title={name}>
+                            {name}
                           </p>
                           <p className="text-[10px] text-muted-foreground mt-0.5">
                             Qty: {line.quantity}
-                            {line.show_promo_price && line.sell_price != null
-                              ? ` / SP RM ${line.sell_price}`
-                              : line.list_price != null
-                                ? ` / LP RM ${line.list_price}`
+                            {row && row.show_promo_price && row.sell_price != null
+                              ? ` / SP ${formatTagPrice(row.sell_price)}`
+                              : row && row.list_price != null
+                                ? ` / LP ${formatTagPrice(row.list_price)}`
                                 : ''}
                           </p>
                         </div>
@@ -649,6 +698,7 @@ export function TagSheetDesigner({
                         resolvedData={
                           resolvedDataMap.get(tag.request_line_id) ?? null
                         }
+                        assetUrls={library.assetUrls}
                         onSelect={handleSelectTag}
                         onDragEnd={handleTagDragEnd}
                       />
@@ -758,21 +808,20 @@ export function TagSheetDesigner({
 // TagOnCanvas: renders a placed tag as a Konva group with its layers
 // ---------------------------------------------------------------------------
 
-const Group = dynamic(() => import('react-konva').then((m) => m.Group), { ssr: false });
-const Text = dynamic(() => import('react-konva').then((m) => m.Text), { ssr: false });
-
 function TagOnCanvas({
   tag,
   scale,
   isSelected,
   resolvedData,
+  assetUrls,
   onSelect,
   onDragEnd,
 }: {
   tag: PlacedTag;
   scale: number;
   isSelected: boolean;
-  resolvedData: ResolvedTagData | null;
+  resolvedData: LineTagData | null;
+  assetUrls: Record<string, string>;
   onSelect: (tagId: string) => void;
   onDragEnd: (tagId: string, xPx: number, yPx: number) => void;
 }) {
@@ -803,6 +852,12 @@ function TagOnCanvas({
     [tag.layers],
   );
 
+  // The tag's layers resolve against the LINE, so a marketing override on it
+  // shows here exactly as it will print.
+  const bindingData: TagBindingData | null = resolvedData
+    ? { kind: 'line', line: resolvedData }
+    : null;
+
   // Noop handlers for KonvaTagLayer (layers are read-only inside placed tags).
   const noop = useCallback(() => {}, []);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -825,7 +880,7 @@ function TagOnCanvas({
       onClick={handleClick}
       onTap={handleClick}
       onDragEnd={handleDragEnd}
-      clipFunc={(ctx) => {
+      clipFunc={(ctx: Konva.Context) => {
         ctx.rect(0, 0, w, h);
       }}
     >
@@ -848,6 +903,7 @@ function TagOnCanvas({
             key={layer.id}
             layer={layer}
             scale={scale}
+            display={layerDisplay(layer, bindingData, assetUrls)}
             isSelected={false}
             onSelect={noopSelect}
             onDragStart={noop}
@@ -888,7 +944,7 @@ function SelectedTagInspector({
 }: {
   tag: PlacedTag;
   line: PriceTagRequestLine;
-  resolved: ResolvedTagData;
+  resolved: LineTagData;
   templateName: string;
   onRemove: () => void;
 }) {
@@ -911,9 +967,9 @@ function SelectedTagInspector({
           <Label className="text-[10px] text-muted-foreground">
             Request Line
           </Label>
-          <p className="font-mono">{line.code}</p>
-          <p className="text-muted-foreground mt-0.5 truncate" title={line.name}>
-            {line.name}
+          <p className="font-mono">{resolved.code}</p>
+          <p className="text-muted-foreground mt-0.5 truncate" title={resolved.name}>
+            {resolved.name}
           </p>
         </div>
 
@@ -933,18 +989,24 @@ function SelectedTagInspector({
                 {resolved.name}
               </dd>
             </div>
-            {resolved.list_price && (
+            {resolved.list_price != null && (
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">List Price</dt>
-                <dd>{resolved.list_price}</dd>
+                <dd>{formatTagPrice(resolved.list_price)}</dd>
               </div>
             )}
-            {resolved.show_promo_price && resolved.sell_price && (
+            {resolved.show_promo_price && resolved.sell_price != null && (
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Sell Price</dt>
                 <dd className="text-green-700 font-medium">
-                  {resolved.sell_price}
+                  {formatTagPrice(resolved.sell_price)}
                 </dd>
+              </div>
+            )}
+            {resolved.dimensions && (
+              <div className="flex justify-between">
+                <dt className="text-muted-foreground">Dimensions</dt>
+                <dd className="text-right">{resolved.dimensions}</dd>
               </div>
             )}
             {resolved.included_accessories && (
@@ -953,14 +1015,12 @@ function SelectedTagInspector({
                 <dd className="mt-0.5">{resolved.included_accessories}</dd>
               </div>
             )}
-            {resolved.alternatives.length > 0 && (
+            {resolved.set_members && (
               <div>
-                <dt className="text-muted-foreground">Alternatives</dt>
-                {resolved.alternatives.map((a) => (
-                  <dd key={a.code} className="mt-0.5 font-mono text-[10px]">
-                    {a.code} - {a.name}
-                  </dd>
-                ))}
+                <dt className="text-muted-foreground">Set members</dt>
+                <dd className="mt-0.5 whitespace-pre-wrap text-[10px]">
+                  {resolved.set_members}
+                </dd>
               </div>
             )}
           </dl>

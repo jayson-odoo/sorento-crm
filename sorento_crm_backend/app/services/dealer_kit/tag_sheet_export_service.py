@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import ExportRequest, Page, PageVersion
 from app.models.download import DownloadStatus, UserDownload
-from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+from app.models.price_tag import PriceTagRequest
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import STATUS_APPROVED, STATUS_READY
 
@@ -250,139 +250,60 @@ def render_inputs(db: Session, download_id: str) -> dict:
 
 
 def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
-    """Build the full print payload for a tag sheet.
+    """Everything the print page renders, resolved at render time (ADR 0008).
 
-    Resolves product data and prices at render time (ADR 0008).
+    Prices and product data come from ``tag_data_service`` - the SAME call the
+    designer's left panel makes - so the proof marketing approved on screen and
+    the PDF that reaches the printer carry the same figures. Artwork is signed
+    HERE and sent with the payload rather than fetched by the page: the worker
+    waits on one ready flag, and a picture that starts loading after it prints
+    as a blank box.
     """
+    from app.services.dealer_kit import asset_service, tag_data_service
+
     inputs = render_inputs(db, download_id)
     request = inputs["request"]
     doc = inputs["doc"] or {}
 
-    if not request:
-        return {
-            "doc": doc,
-            "resolvedData": {},
-            "requestDocNumber": "",
-            "version": inputs["version"],
-        }
-
-    # Build a map of line_id -> resolved data.
     resolved_data: dict[str, dict] = {}
-    lines = (
-        db.query(PriceTagRequestLine)
-        .filter(PriceTagRequestLine.request_id == request.id)
-        .all()
-    )
+    images: dict[str, str] = {}
 
-    # Resolve prices via the pricing engine.
-    product_ids = [
-        str(line.product_id) for line in lines
-        if line.product_id is not None
-    ]
-
-    price_map: dict = {}
-    if product_ids and request.promotion_id:
-        try:
-            from app.models.product import Product
-            from app.services.dealer_kit.pricing import resolve_prices
-            from app.services.dealer_kit.viewer import ViewerContext
-
-            products = (
-                db.query(Product)
-                .filter(Product.id.in_(product_ids))
-                .all()
-            )
-            viewer = ViewerContext(
-                is_staff=True,
-                access_codes=frozenset(),
-                show_invoice_price=False,
-                is_internal_copy=True,
-            )
-            price_map = resolve_prices(db, products, viewer, request.promotion_id)
-        except Exception:
-            logger.warning(
-                "Price resolution failed for request %s", request.id,
-                exc_info=True,
-            )
-    elif product_ids:
-        try:
-            from app.models.product import Product
-            from app.services.dealer_kit.pricing import resolve_prices
-            from app.services.dealer_kit.viewer import ViewerContext
-
-            products = (
-                db.query(Product)
-                .filter(Product.id.in_(product_ids))
-                .all()
-            )
-            viewer = ViewerContext(
-                is_staff=True,
-                access_codes=frozenset(),
-                show_invoice_price=False,
-                is_internal_copy=True,
-            )
-            price_map = resolve_prices(db, products, viewer, None)
-        except Exception:
-            logger.warning(
-                "Price resolution failed for request %s", request.id,
-                exc_info=True,
-            )
-
-    # Build product info map.
-    product_info: dict[str, dict] = {}
-    if product_ids:
-        try:
-            from app.models.product import Product
-
-            products = (
-                db.query(Product)
-                .filter(Product.id.in_(product_ids))
-                .all()
-            )
-            for p in products:
-                product_info[str(p.id)] = {
-                    "code": p.product_code or "",
-                    "name": p.product_name or "",
-                    "dimensions": getattr(p, "dimensions", "") or "",
-                }
-        except Exception:
-            logger.warning(
-                "Product info resolution failed for request %s", request.id,
-                exc_info=True,
-            )
-
-    for line in lines:
-        line_id = str(line.id)
-        pid = str(line.product_id) if line.product_id else None
-        info = product_info.get(pid, {}) if pid else {}
-        pv = price_map.get(pid) if pid else None
-
-        list_price = None
-        sell_price = None
-        if pv:
-            list_price = float(pv.list_price) if pv.list_price is not None else None
-            sell_price = float(pv.offer_price) if pv.offer_price is not None else None
-
-        # Marketing override wins (AC D9).
-        if line.marketing_price_override is not None:
-            sell_price = float(line.marketing_price_override)
-
-        resolved_data[line_id] = {
-            "line_id": line_id,
-            "code": info.get("code", ""),
-            "name": info.get("name", ""),
-            "dimensions": info.get("dimensions", ""),
-            "spec_lines": "",
-            "list_price": list_price,
-            "sell_price": sell_price,
-            "show_promo_price": line.show_promo_price,
-            "included_accessories": line.included_accessories or "",
-            "quantity": line.quantity,
-        }
+    if request is not None:
+        for row in tag_data_service.resolve_request_line_data(db, request):
+            for image in row["images"]:
+                images[image["attachment_id"]] = image["url"]
+            resolved_data[row["line_id"]] = {
+                "line_id": row["line_id"],
+                "code": row["code"],
+                "name": row["name"],
+                "dimensions": row["dimensions"],
+                "spec_lines": row["spec_lines"],
+                "set_members": row["set_members"],
+                # Money leaves as a number the browser can format. The Decimal
+                # arithmetic already happened, in the pricing engine.
+                "list_price": _as_float(row["list_price"]),
+                "sell_price": _as_float(row["sell_price"]),
+                "show_promo_price": row["show_promo_price"],
+                "included_accessories": row["included_accessories"],
+                "quantity": row["quantity"],
+            }
 
     return {
         "doc": doc,
         "resolvedData": resolved_data,
-        "requestDocNumber": request.doc_number,
+        # assetId -> signed URL, for every library asset the document names.
+        "assets": asset_service.urls_for(
+            db, asset_service.tag_sheet_asset_ids(doc)
+        ),
+        # attachmentId -> signed URL, for every product photo a bound layer may
+        # be showing. Gated by `product_images` before it ever gets here.
+        "images": images,
+        # Brand fonts, loaded through @font-face before the page reports ready.
+        "fonts": asset_service.font_assets(db),
+        "requestDocNumber": request.doc_number if request is not None else "",
         "version": inputs["version"],
     }
+
+
+def _as_float(value) -> Optional[float]:
+    return None if value is None else float(value)

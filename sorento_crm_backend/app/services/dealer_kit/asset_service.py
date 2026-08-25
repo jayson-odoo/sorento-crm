@@ -53,8 +53,39 @@ logger = logging.getLogger(__name__)
 STORAGE_ENTITY_TYPE = "dealer_kit_asset"
 
 DECORATIVE = "decorative"
+FONT = "font"
 
-_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+#: What a library asset can BE. `font` (S3b, D29) is a file the editor and the
+#: print page load through `@font-face`; everything else is artwork. Kept as a
+#: plain set rather than a lookup table because it is a vocabulary, not data
+#: somebody administers.
+KINDS = frozenset({DECORATIVE, "badge", "icon", "diagram", "logo", FONT})
+
+_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+    "font/woff2": "woff2",
+    "font/ttf": "ttf",
+    "font/otf": "otf",
+}
+
+#: Which file extensions each kind accepts, and the mime each implies.
+#:
+#: Validated on the EXTENSION rather than the browser's content type, because a
+#: browser sends `application/octet-stream` for a woff2 as often as not - and
+#: because the failure this guards is silent: a JPEG accepted as a font reaches
+#: the print page as a broken `@font-face`, Chromium falls back to a system font
+#: without complaining, and the tag prints in the wrong typeface.
+FONT_EXTENSIONS = {"woff2": "font/woff2", "ttf": "font/ttf", "otf": "font/otf"}
+IMAGE_EXTENSIONS = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "svg": "image/svg+xml",
+}
 
 
 def create_from_bytes(
@@ -224,6 +255,134 @@ def urls_for(
         if signed:
             urls[asset.id] = signed
     return urls
+
+
+def mime_for_upload(filename: str, kind: str) -> str:
+    """The mime a library upload is stored under, or a refusal.
+
+    Raises ``ValueError`` naming what WOULD have been accepted: an upload
+    rejected with "invalid file" sends the person back to the file picker with
+    nothing to change.
+    """
+    if kind not in KINDS:
+        raise ValueError(
+            f"Unknown asset kind '{kind}'. Choose one of: "
+            + ", ".join(sorted(KINDS))
+            + "."
+        )
+
+    extension = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+
+    if kind == FONT:
+        mime = FONT_EXTENSIONS.get(extension)
+        if not mime:
+            raise ValueError(
+                "A font must be a .woff2, .ttf or .otf file."
+            )
+        return mime
+
+    mime = IMAGE_EXTENSIONS.get(extension)
+    if not mime:
+        raise ValueError(
+            "Artwork must be a .png, .jpg, .webp or .svg file."
+        )
+    return mime
+
+
+def list_assets(
+    db: Session,
+    *,
+    kind: Optional[str] = None,
+    tag: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: int = 100,
+) -> list[tuple[Asset, Attachment]]:
+    """The library, narrowed the three ways a picker narrows it.
+
+    Company-scoped by the ordinary ORM filter (``Asset`` is owned), and joined to
+    the attachment so a caller can sign every row without a second query per
+    thumbnail.
+    """
+    statement = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Attachment.is_deleted.is_(False))
+    )
+
+    if kind:
+        statement = statement.filter(Asset.kind == kind)
+    if tag:
+        statement = statement.filter(Asset.tags.any(tag))
+    if query and query.strip():
+        statement = statement.filter(Asset.name.ilike(f"%{query.strip()}%"))
+
+    return statement.order_by(Asset.name).limit(limit).all()
+
+
+def font_assets(db: Session, *, expires_in: int = 3600) -> list[dict]:
+    """Every brand font this company can print with, signed.
+
+    ALL of them, not just the ones a document names: a text layer carries a font
+    FAMILY, never an asset id, so nothing can tell which fonts a page needs until
+    the browser lays the text out. The list is small (a brand has a handful of
+    faces), and a missing one is a tag printed in the wrong typeface.
+    """
+    rows = list_assets(db, kind=FONT, limit=100)
+
+    fonts: list[dict] = []
+    for asset, attachment in rows:
+        signed = resolve_signed_url(
+            attachment.file_path,
+            provider=attachment.storage_provider,
+            expires_in=expires_in,
+            strict=True,
+        )
+        if not signed:
+            continue
+        # The family IS the asset name. The inspector lists names, a text layer
+        # stores the one that was picked, and `@font-face` declares the same
+        # string - so the three cannot disagree about what "ZZT Brand" means.
+        fonts.append({"name": asset.name, "family": asset.name, "url": signed})
+    return fonts
+
+
+def tag_sheet_asset_ids(doc: Optional[dict]) -> set[str]:
+    """Every library asset a tag sheet or tag template document names.
+
+    The tag-shaped counterpart of ``background_asset_ids``: layers rather than
+    section styles. Both an ``image`` layer whose source is an asset and a
+    ``badge`` layer count, and an ``image`` layer saved before S3b - which
+    carried a bare ``assetId`` - counts too, so a template nobody has reopened
+    still prints its artwork.
+
+    A product photo is deliberately NOT here: it is a ``product_attachments``
+    row behind the access gate, signed by ``product_images``, not a library
+    asset.
+    """
+    ids: set[str] = set()
+    if not doc:
+        return ids
+
+    for sheet in doc.get("sheets", []) or []:
+        for tag in (sheet or {}).get("tags", []) or []:
+            ids |= _layer_asset_ids((tag or {}).get("layers", []) or [])
+
+    # A tag TEMPLATE document is layers all the way down, with no sheets.
+    ids |= _layer_asset_ids(doc.get("layers", []) or [])
+    return ids
+
+
+def _layer_asset_ids(layers) -> set[str]:
+    ids: set[str] = set()
+    for layer in layers or []:
+        props = (layer or {}).get("props") or {}
+        source = props.get("source")
+        if isinstance(source, dict) and source.get("type") == "asset":
+            if source.get("assetId"):
+                ids.add(source["assetId"])
+        elif props.get("assetId"):
+            ids.add(props["assetId"])
+    return ids
 
 
 def background_asset_ids(doc: Optional[dict]) -> set[str]:
@@ -451,12 +610,20 @@ def purge_objects(objects: Iterable[StoredObject]) -> None:
 
 __all__ = [
     "DECORATIVE",
+    "FONT",
+    "IMAGE_EXTENSIONS",
+    "FONT_EXTENSIONS",
+    "KINDS",
     "STORAGE_ENTITY_TYPE",
     "StoredObject",
     "background_asset_ids",
     "background_urls",
     "create_from_bytes",
     "delete_unreferenced",
+    "font_assets",
+    "list_assets",
+    "mime_for_upload",
+    "tag_sheet_asset_ids",
     "purge_objects",
     "referenced_asset_ids",
     "urls_for",

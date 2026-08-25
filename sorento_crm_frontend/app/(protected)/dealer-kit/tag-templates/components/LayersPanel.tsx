@@ -9,6 +9,7 @@
  */
 
 import {
+  Banknote,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -21,11 +22,13 @@ import {
   Type,
   Unlock,
   Layers,
+  Link2Off,
   DollarSign,
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { TagLayer, TagLayerType } from '@/lib/dealer-kit/tag-template-types';
+import { isUnlinked } from '@/lib/dealer-kit/product-block';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 function layerIcon(type: TagLayerType) {
@@ -40,6 +43,8 @@ function layerIcon(type: TagLayerType) {
       return <RectangleHorizontal className="size-3.5" />;
     case 'price_field':
       return <DollarSign className="size-3.5" />;
+    case 'price_badge':
+      return <Banknote className="size-3.5" />;
     case 'badge':
       return <Tag className="size-3.5" />;
     case 'group':
@@ -62,10 +67,19 @@ function layerDisplayName(layer: TagLayer): string {
       return `Slot: ${layer.props.fieldKey}`;
     case 'price_field':
       return `Price (${layer.props.priceType})`;
+    case 'price_badge':
+      return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
     case 'badge':
       return 'Badge';
-    case 'group':
-      return `Group (${layer.props.children.length})`;
+    case 'group': {
+      const binding = layer.props.binding;
+      const what = binding?.product_set_id
+        ? 'Set'
+        : binding?.product_id
+          ? 'Product'
+          : 'Group';
+      return `${what} (${layer.props.children.length})`;
+    }
   }
 }
 
@@ -151,6 +165,19 @@ export function LayersPanel({
           <span className="min-w-0 flex-1 truncate" title={layerDisplayName(layer)}>
             {layerDisplayName(layer)}
           </span>
+
+          {/* Unlinked marker: bound to a slot but showing typed text instead.
+              Without it a designer cannot tell which layers stopped following
+              the product, which is exactly what they need to know before
+              re-binding the block. */}
+          {isUnlinked(layer) && (
+            <span
+              className="shrink-0 text-amber-600"
+              title="Unlinked from product data - showing typed text"
+            >
+              <Link2Off className="size-3" />
+            </span>
+          )}
 
           {/* Visibility */}
           <button

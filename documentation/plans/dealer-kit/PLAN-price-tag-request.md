@@ -391,7 +391,9 @@ S1 and S3 can run in parallel after S0. S4 needs both S2 (request lines to bind)
 
 ## 8. S3b - Enrich the tag canvas with the catalogue builder's data layer
 
-**Status:** APPROVED 2026-08-25 (5 decisions, one round). Builds on S3/S4/S5 as merged in PR #289.
+**Status:** Slices 1-4 BUILT 2026-08-25 (types + `price_badge`, tag-data endpoints and bound
+blocks, assets/product images/fonts, presets). Slice 5 (seed the eight templates) and AC-L.9/L.10
+are outstanding. Builds on S3/S4/S5 as merged in PR #289.
 
 ### Why
 
@@ -432,12 +434,28 @@ type TagLayerType = ... | 'price_badge';
   editor select. Reuse the master-data product query; do not build a new index.
 - `GET /api/v1/dealer-kit/products/{id}/tag-data` - code, name, dimensions, spec lines, image
   attachments (gated), list price, offer price via `resolve_prices()` for the staff viewer.
-- `GET /api/v1/dealer-kit/product-sets/{id}/tag-data` - members with code, name, dimensions.
-- Assets: reuse the existing asset list/upload; add `kind='font'` to the allowed kinds and serve
-  font files through the same signed-URL path. Print page and editor load `@font-face` from the
-  page payload's `fonts[]`.
+- `GET /api/v1/dealer-kit/product-sets/{id}/tag-data` - members with code, name, dimensions,
+  quantity, PLUS `list_price` / `offer_price` / `promotion_id`. **Amended during build:** a set
+  block drops a price badge like a product block does, and with no figures on the set payload that
+  badge could only ever print "Price TBC". The list price is the set's own rule
+  (`resolve_set_price`, so a tag and the set's detail page agree); the offer is the same sum with
+  each ticked member at its promotional price, and absent entirely when no member is on offer.
+- `GET /api/v1/dealer-kit/product-sets/search?q=` - sets for the editor's picker (the master-data
+  set list is a DataGrid listing, not a select).
+- Assets: **there was no HTTP surface at all** - `dealer_kit.asset` rows were only ever written by
+  the flyer reader - so `GET|POST /api/v1/dealer-kit/assets` was added over the existing
+  `asset_service` (same file store, same storage router, same strict signing), with `kind='font'`
+  added to the allowed kinds and extension validation per kind. Gated on the existing
+  `dealer_kit.library.manage`, so no new permission and no grant sweep.
+- **Amended during build:** the editor gets `fonts[]` and asset URLs from `GET /dealer-kit/assets`
+  (which it already calls for the badge picker) rather than from the tag-template GET - one
+  delivery path instead of two, and the template GET is untouched. The PRINT payload carries
+  `fonts[]`, `assets{assetId: url}` and `images{attachmentId: url}` as planned.
 - `POST /tag-templates/resolve-preview` - resolve a template's bindings for preview.
-- Remove the Phase 1 mock in `resolve_prices_for_lines`; wire `resolve_prices()`.
+- Remove the Phase 1 mock in `resolve_prices_for_lines`; wire `resolve_prices()`. The body is now
+  nullable (`null` = every line) and the response is the full display row - code, name,
+  dimensions, spec lines, set members, gated images, both prices - which is also what the print
+  payload's `resolvedData` is built from, so the designer and the PDF cannot drift.
 - Seed script `scripts/seed_tag_templates.py`: uploads badge assets from
   `documentation/plans/dealer-kit/seed-assets/` and inserts the eight templates (idempotent by name).
 

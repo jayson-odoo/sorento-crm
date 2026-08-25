@@ -10,7 +10,7 @@ Permission gates:
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy import func
@@ -22,6 +22,7 @@ from app.models.dealer_kit import Page, PageVersion
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
+    ResolvedLineData,
     PriceTagRequestLineUpdate,
     PriceTagRequestListItem,
     PriceTagRequestResponse,
@@ -31,6 +32,7 @@ from app.schemas.price_tag import (
     TagSheetExportOut,
     TransitionPayload,
 )
+from app.services.dealer_kit import tag_data_service
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -283,17 +285,22 @@ def save_tag_sheet_design(
     )
 
 
-@router.post("/{request_id}/resolve-prices")
+@router.post("/{request_id}/resolve-prices", response_model=list[ResolvedLineData])
 def resolve_prices_for_lines(
     request_id: str,
-    line_ids: list[str] = Body(...),
+    line_ids: Optional[list[str]] = Body(default=None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
-) -> list[dict[str, Any]]:
-    """Return resolved price data for the given line IDs.
+):
+    """Resolved display data - including prices - for this request's lines.
 
-    Phase 1: returns mock-resolved data from the line's own fields. Phase 2
-    will wire through ``resolve_prices`` from ``pricing.py``.
+    Through ``resolve_prices`` and the product master, never off the line row:
+    the document stores no figures (ADR 0008), so this is the only place the
+    designer's left panel can learn what a line costs. A marketing override on
+    the line wins over the resolved offer (D9).
+
+    ``line_ids`` narrows the answer; omitting it resolves every line, which is
+    what the designer asks for when it opens.
     """
     req = PriceTagRequestService.get_request(db, request_id)
     if not req:
@@ -301,27 +308,12 @@ def resolve_prices_for_lines(
             status_code=404, message="Price tag request not found.", code="NOT_FOUND",
         )
 
-    lines_by_id = {str(line.id): line for line in req.lines}
-    results: list[dict[str, Any]] = []
+    rows = tag_data_service.resolve_request_line_data(db, req)
+    if line_ids:
+        wanted = set(line_ids)
+        rows = [row for row in rows if row["line_id"] in wanted]
 
-    for lid in line_ids:
-        line = lines_by_id.get(lid)
-        if not line:
-            continue
-        # Mock resolution: in Phase 2, this calls resolve_prices + product master.
-        results.append({
-            "line_id": str(line.id),
-            "code": line.product_code if hasattr(line, "product_code") else "",
-            "name": "",
-            "list_price": None,
-            "sell_price": None,
-            "show_promo_price": line.show_promo_price,
-            "dimensions": "",
-            "spec_lines": "",
-            "included_accessories": line.included_accessories or "",
-        })
-
-    return results
+    return [ResolvedLineData.model_validate(row) for row in rows]
 
 
 # ---------------------------------------------------------------------------

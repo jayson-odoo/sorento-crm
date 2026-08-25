@@ -14,15 +14,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type Konva from 'konva';
-import type { TagLayer, TagLayerProps, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  GroupBinding,
+  ImageSource,
+  TagLayer,
+  TagLayerProps,
+  TagTemplateDoc,
+} from '@/lib/dealer-kit/tag-template-types';
 import {
   defaultTextProps,
   defaultShapeProps,
   defaultImageProps,
   defaultProductSlotProps,
   defaultPriceFieldProps,
+  defaultPriceBadgeProps,
   defaultBadgeProps,
 } from '@/lib/dealer-kit/tag-template-types';
+import {
+  buildAccessoriesStrip,
+  buildAlternativesRow,
+  buildProductBlock,
+  buildSetBlock,
+  layerDisplay,
+  rebindImageLayers,
+  resolveSlotText,
+  PRODUCT_BLOCK_SIZE,
+  SET_BLOCK_SIZE,
+} from '@/lib/dealer-kit/product-block';
+import { AssetPickerDialog } from './AssetPickerDialog';
+import { FontUploadDialog } from './FontUploadDialog';
+import { ProductPickDialog, type PickMode } from './ProductPickDialog';
+import { useKitLibrary, useTagBindings } from './useTagBindings';
+import { getProductTagData } from '../../services/tagDataService';
 import { CanvasToolbar } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
@@ -56,13 +79,36 @@ const DEFAULT_SCALE = 3; // 3 px per mm at 100% zoom
 interface TagCanvasEditorProps {
   doc: TagTemplateDoc;
   onChange: (doc: TagTemplateDoc) => void;
+  /**
+   * Which promotion the preview prices resolve against. A template is not tied
+   * to one, so this is normally absent and the badge previews list prices.
+   */
+  promotionId?: string | null;
 }
 
-export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
+/** What the canvas is currently asking the user to pick. */
+type PickerState =
+  | { kind: 'none' }
+  | { kind: 'add-product' }
+  | { kind: 'add-set' }
+  | { kind: 'rebind'; groupId: string; mode: PickMode }
+  | { kind: 'alternatives' }
+  | { kind: 'accessories' };
+
+export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [zoom, setZoom] = useState(1);
   const [clipboard, setClipboard] = useState<TagLayer[] | null>(null);
+  const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [imagePicker, setImagePicker] = useState<
+    { layerId: string; badge: boolean } | null
+  >(null);
+  const [fontUploadOpen, setFontUploadOpen] = useState(false);
+
+  const bindings = useTagBindings(promotionId);
+  const library = useKitLibrary();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -108,6 +154,23 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
         return next;
       });
       setSelectedIds(new Set([layer.id]));
+    },
+    [history],
+  );
+
+  const addLayers = useCallback(
+    (incoming: TagLayer[]) => {
+      if (incoming.length === 0) return;
+      setLayers((prev) => {
+        const next = [...prev, ...incoming];
+        history.pushState(next);
+        return next;
+      });
+      // The GROUP is what gets selected when a block is dropped, so the
+      // inspector opens on the binding rather than on whichever child happened
+      // to be last.
+      const group = incoming.find((layer) => layer.props.kind === 'group');
+      setSelectedIds(new Set([group ? group.id : incoming[incoming.length - 1].id]));
     },
     [history],
   );
@@ -214,6 +277,45 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
     [layers],
   );
 
+  // -- Bound data ------------------------------------------------------------
+
+  /** childId -> the group that owns it, so a layer can find its binding. */
+  const groupOfChild = useMemo(() => {
+    const map = new Map<string, TagLayer>();
+    for (const layer of layers) {
+      if (layer.props.kind !== 'group') continue;
+      for (const childId of layer.props.children) map.set(childId, layer);
+    }
+    return map;
+  }, [layers]);
+
+  const bindingOf = useCallback(
+    (layer: TagLayer): GroupBinding | undefined => {
+      if (layer.props.kind === 'group') return layer.props.binding;
+      const group = groupOfChild.get(layer.id);
+      return group && group.props.kind === 'group' ? group.props.binding : undefined;
+    },
+    [groupOfChild],
+  );
+
+  const dataOf = useCallback(
+    (layer: TagLayer) => bindings.get(bindingOf(layer)),
+    [bindings, bindingOf],
+  );
+
+  // Resolve whatever the document already carries, once, on open. A template
+  // stores bindings and no values (ADR 0008), so without this every bound layer
+  // would open showing the text it was created with.
+  useEffect(() => {
+    const carried = doc.layers
+      .map((layer) => (layer.props.kind === 'group' ? layer.props.binding : undefined))
+      .filter((binding): binding is GroupBinding => Boolean(binding));
+    if (carried.length > 0) void bindings.loadAll(carried);
+    // Deliberately once per document: re-running on every layer change would
+    // re-fetch the whole catalogue on each drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc]);
+
   const makeBaseLayer = useCallback(
     (type: TagLayer['type'], width: number, height: number): Omit<TagLayer, 'props'> => ({
       id: newLayerId(),
@@ -258,9 +360,211 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
     });
   }, [addLayer, makeBaseLayer]);
 
-  const handleAddBadge = useCallback(() => {
-    addLayer({ ...makeBaseLayer('badge', 15, 15), props: defaultBadgeProps() });
+  const handleAddPriceBadge = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('price_badge', 45, 17),
+      props: defaultPriceBadgeProps(),
+    });
   }, [addLayer, makeBaseLayer]);
+
+  const handleAddBadge = useCallback(() => {
+    const layer = { ...makeBaseLayer('badge', 15, 15), props: defaultBadgeProps() };
+    addLayer(layer);
+    // Straight into the picker: a badge with no artwork is an empty square, and
+    // the reason somebody pressed the button was to place a specific badge.
+    setImagePicker({ layerId: layer.id, badge: true });
+  }, [addLayer, makeBaseLayer]);
+
+  // -- Bound blocks (D27) ----------------------------------------------------
+
+  const closePicker = useCallback(() => {
+    setPicker({ kind: 'none' });
+    setPickerBusy(false);
+  }, []);
+
+  const handlePick = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      setPickerBusy(true);
+      try {
+        if (picker.kind === 'add-product') {
+          const product = await bindings.loadProduct(ids[0]);
+          if (!product) return;
+          addLayers(
+            buildProductBlock(product, {
+              newId: newLayerId,
+              x_mm: Math.max(0, centerX - PRODUCT_BLOCK_SIZE.width_mm / 2),
+              y_mm: Math.max(0, centerY - PRODUCT_BLOCK_SIZE.height_mm / 2),
+              z_index: maxZ,
+            }),
+          );
+        } else if (picker.kind === 'add-set') {
+          const set = await bindings.loadSet(ids[0]);
+          if (!set) return;
+          addLayers(
+            buildSetBlock(set, {
+              newId: newLayerId,
+              x_mm: Math.max(0, centerX - SET_BLOCK_SIZE.width_mm / 2),
+              y_mm: Math.max(0, centerY - SET_BLOCK_SIZE.height_mm / 2),
+              z_index: maxZ,
+            }),
+          );
+        } else if (picker.kind === 'alternatives') {
+          const products = [];
+          for (const id of ids) {
+            const product = await getProductTagData(id, promotionId ?? null);
+            products.push(product);
+          }
+          addLayers(
+            buildAlternativesRow(products, {
+              newId: newLayerId,
+              x_mm: 5,
+              y_mm: Math.max(0, centerY),
+              z_index: maxZ,
+            }),
+          );
+        } else if (picker.kind === 'accessories') {
+          const items = [];
+          for (const id of ids) {
+            const product = await getProductTagData(id, promotionId ?? null);
+            const primary =
+              product.images.find((image) => image.is_primary) ?? product.images[0];
+            items.push({
+              caption: product.code,
+              source: primary
+                ? ({
+                    type: 'product_attachment' as const,
+                    attachmentId: primary.attachment_id,
+                  })
+                : null,
+            });
+          }
+          addLayers(
+            buildAccessoriesStrip(items, {
+              newId: newLayerId,
+              x_mm: 5,
+              y_mm: Math.max(0, centerY),
+              z_index: maxZ,
+            }),
+          );
+        } else if (picker.kind === 'rebind') {
+          const groupId = picker.groupId;
+          const isSet = picker.mode === 'set';
+
+          // The block's binding moves; its layout and any typed-over text stay.
+          const product = isSet ? null : await bindings.loadProduct(ids[0]);
+          const set = isSet ? await bindings.loadSet(ids[0]) : null;
+          if (!product && !set) return;
+
+          const group = layers.find((layer) => layer.id === groupId);
+          const childIds = new Set(
+            group && group.props.kind === 'group' ? group.props.children : [],
+          );
+          const binding: GroupBinding = isSet
+            ? { product_set_id: ids[0] }
+            : { product_id: ids[0] };
+
+          setLayers((prev) => {
+            const rebound = prev.map((layer) =>
+              layer.id === groupId && layer.props.kind === 'group'
+                ? { ...layer, props: { ...layer.props, binding } }
+                : layer,
+            );
+            // An image layer still holding the old product's attachment id
+            // would print the wrong photo under the right name.
+            const next = product
+              ? rebindImageLayers(rebound, childIds, { kind: 'product', product })
+              : rebound;
+            history.pushState(next);
+            return next;
+          });
+        }
+        closePicker();
+      } finally {
+        setPickerBusy(false);
+      }
+    },
+    [
+      picker,
+      bindings,
+      addLayers,
+      centerX,
+      centerY,
+      maxZ,
+      layers,
+      history,
+      promotionId,
+      closePicker,
+    ],
+  );
+
+  const handleRebind = useCallback(
+    (groupId: string) => {
+      const group = layers.find((layer) => layer.id === groupId);
+      const binding =
+        group && group.props.kind === 'group' ? group.props.binding : undefined;
+      setPicker({
+        kind: 'rebind',
+        groupId,
+        mode: binding?.product_set_id ? 'set' : 'product',
+      });
+    },
+    [layers],
+  );
+
+  /** Put every typed-over layer in this block back on the product's own words. */
+  const handleRelinkGroup = useCallback(
+    (groupId: string) => {
+      const group = layers.find((layer) => layer.id === groupId);
+      if (!group || group.props.kind !== 'group') return;
+      const childIds = new Set(group.props.children);
+      setLayers((prev) => {
+        const next = prev.map((layer) =>
+          childIds.has(layer.id) && layer.slot_binding
+            ? { ...layer, text_override: null }
+            : layer,
+        );
+        history.pushState(next);
+        return next;
+      });
+    },
+    [layers, history],
+  );
+
+  const handleChooseImage = useCallback((layerId: string) => {
+    setImagePicker({ layerId, badge: false });
+  }, []);
+
+  const handleChooseBadge = useCallback((layerId: string) => {
+    setImagePicker({ layerId, badge: true });
+  }, []);
+
+  const handleImagePicked = useCallback(
+    (source: ImageSource) => {
+      const target = imagePicker;
+      if (!target) return;
+      setLayers((prev) => {
+        const next = prev.map((layer) => {
+          if (layer.id !== target.layerId) return layer;
+          if (layer.props.kind === 'badge') {
+            if (source.type !== 'asset') return layer;
+            return { ...layer, props: { ...layer.props, assetId: source.assetId } };
+          }
+          if (layer.props.kind === 'image') {
+            return { ...layer, props: { ...layer.props, source } };
+          }
+          return layer;
+        });
+        history.pushState(next);
+        return next;
+      });
+      // A freshly uploaded asset is not in the library map yet, so refresh it or
+      // the layer draws its no-image state until the next open.
+      void library.reload();
+      setImagePicker(null);
+    },
+    [imagePicker, history, library],
+  );
 
   // -- Selection -------------------------------------------------------------
 
@@ -526,8 +830,31 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
     return null;
   }, [selectedIds, layers]);
 
-  const selectionIsGroup =
-    selectedLayer?.props.kind === 'group';
+  const selectionIsGroup = selectedLayer?.props.kind === 'group';
+
+  const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
+
+  /** What the inspector's Content box falls back to when nothing was typed. */
+  const selectedResolvedText = selectedLayer
+    ? resolveSlotText(selectedLayer, selectedData)
+    : null;
+
+  /** The bound thing, named the way a person recognises it. Never a UUID. */
+  const selectedBindingLabel = !selectedData
+    ? null
+    : selectedData.kind === 'product'
+      ? `${selectedData.product.code} - ${selectedData.product.name}`
+      : selectedData.kind === 'set'
+        ? `${selectedData.set.set_code} - ${selectedData.set.name}`
+        : `${selectedData.line.code} - ${selectedData.line.name}`;
+
+  /** The bound product's photos, for the image picker's first tab. */
+  const pickerProductImages = useMemo(() => {
+    if (!imagePicker) return [];
+    const layer = layers.find((l) => l.id === imagePicker.layerId);
+    const data = layer ? dataOf(layer) : null;
+    return data?.kind === 'product' ? data.product.images : [];
+  }, [imagePicker, layers, dataOf]);
 
   // -- Render ----------------------------------------------------------------
 
@@ -545,7 +872,12 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
         onAddImage={handleAddImage}
         onAddProductSlot={handleAddProductSlot}
         onAddPriceField={handleAddPriceField}
+        onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
+        onAddProduct={() => setPicker({ kind: 'add-product' })}
+        onAddSet={() => setPicker({ kind: 'add-set' })}
+        onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
+        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={history.canUndo}
@@ -621,6 +953,7 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
                     key={layer.id}
                     layer={layer}
                     scale={scale}
+                    display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
                     isSelected={selectedIds.has(layer.id)}
                     onSelect={handleSelect}
                     onDragStart={handleDragStart}
@@ -661,9 +994,67 @@ export function TagCanvasEditor({ doc, onChange }: TagCanvasEditorProps) {
             layer={selectedLayer}
             onUpdate={updateLayer}
             onUpdateProps={updateLayerProps}
+            resolvedText={selectedResolvedText}
+            bindingLabel={selectedBindingLabel}
+            fontOptions={library.fontOptions}
+            onUploadFont={() => setFontUploadOpen(true)}
+            onChooseImage={handleChooseImage}
+            onChooseBadge={handleChooseBadge}
+            onRebind={handleRebind}
+            onRelinkGroup={handleRelinkGroup}
           />
         </div>
       </div>
+
+      {/* Pickers. Rendered here rather than beside their buttons so the
+          canvas keeps its selection while a dialog is open. */}
+      <ProductPickDialog
+        open={picker.kind !== 'none'}
+        mode={
+          picker.kind === 'add-set'
+            ? 'set'
+            : picker.kind === 'rebind'
+              ? picker.mode
+              : 'product'
+        }
+        multiple={picker.kind === 'alternatives' || picker.kind === 'accessories'}
+        title={
+          picker.kind === 'add-set'
+            ? 'Add a product set'
+            : picker.kind === 'rebind'
+              ? 'Change what this block is about'
+              : picker.kind === 'alternatives'
+                ? 'Add an alternatives row'
+                : picker.kind === 'accessories'
+                  ? 'Add an accessories strip'
+                  : 'Add a product'
+        }
+        confirmLabel={picker.kind === 'rebind' ? 'Rebind' : 'Add'}
+        busy={pickerBusy}
+        onCancel={closePicker}
+        onConfirm={(ids) => {
+          void handlePick(ids);
+        }}
+      />
+
+      <AssetPickerDialog
+        open={imagePicker !== null}
+        productImages={pickerProductImages}
+        allowProductPhotos={!imagePicker?.badge}
+        uploadKind={imagePicker?.badge ? 'badge' : 'decorative'}
+        title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
+        onCancel={() => setImagePicker(null)}
+        onPick={handleImagePicked}
+      />
+
+      <FontUploadDialog
+        open={fontUploadOpen}
+        onCancel={() => setFontUploadOpen(false)}
+        onUploaded={(asset) => {
+          library.remember(asset);
+          setFontUploadOpen(false);
+        }}
+      />
 
       {/* Save bar (sticky bottom) */}
       <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-t bg-background px-4">

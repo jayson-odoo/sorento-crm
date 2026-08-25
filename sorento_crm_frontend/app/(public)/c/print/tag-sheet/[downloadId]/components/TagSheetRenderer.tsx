@@ -10,6 +10,8 @@
  * CSS variables.
  */
 
+import type { CSSProperties } from 'react';
+
 import type {
   ImpositionConfig,
   PlacedTag,
@@ -17,6 +19,8 @@ import type {
   TagSheetDoc,
   TagSheet,
 } from '@/lib/dealer-kit/tag-template-types';
+import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,9 +37,24 @@ export interface ResolvedLineData {
   show_promo_price: boolean;
   included_accessories: string;
   quantity: number;
+  /** One line per member, already formatted, for a set line. */
+  set_members?: string;
 }
 
-interface TagSheetRendererProps {
+/**
+ * Every picture the sheet may need, signed at payload time.
+ *
+ * `assets` is keyed by dealer-kit asset id, `images` by product attachment id.
+ * Sent WITH the payload rather than fetched here, for the same reason the
+ * catalogue print page takes its backgrounds that way: the worker waits on one
+ * ready flag, and an image that starts loading after it prints as a blank box.
+ */
+export interface TagSheetMedia {
+  assets?: Record<string, string>;
+  images?: Record<string, string>;
+}
+
+interface TagSheetRendererProps extends TagSheetMedia {
   doc: TagSheetDoc;
   resolvedData: Record<string, ResolvedLineData>;
   /** When true, render at a scaled-down size for preview (not print). */
@@ -78,6 +97,9 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         break;
       case 'included_accessories':
         text = resolved.included_accessories;
+        break;
+      case 'set_members':
+        text = resolved.set_members ?? '';
         break;
     }
   }
@@ -143,13 +165,23 @@ function renderShapeLayer(layer: TagLayer) {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function renderImageLayer(layer: TagLayer, _resolved: ResolvedLineData | null) {
+/** The URL an image layer prints, or null when nothing could be signed for it. */
+function imageUrlFor(layer: TagLayer, media: TagSheetMedia): string | null {
+  const props = layer.props;
+  if (props.kind !== 'image') return null;
+  const source = imageSourceOf(props);
+  if (!source) return null;
+  if (source.type === 'asset') return media.assets?.[source.assetId] ?? null;
+  return media.images?.[source.attachmentId] ?? null;
+}
+
+function renderImageLayer(layer: TagLayer, media: TagSheetMedia) {
   const props = layer.props;
   if (props.kind !== 'image') return null;
 
-  // For print, we would need the actual asset URL from the payload.
-  // For now, render a placeholder if no src is available.
+  const url = imageUrlFor(layer, media);
+  const circle = props.maskShape === 'circle';
+
   return (
     <div
       style={{
@@ -160,13 +192,111 @@ function renderImageLayer(layer: TagLayer, _resolved: ResolvedLineData | null) {
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
         overflow: 'hidden',
+        borderRadius: circle ? '50%' : undefined,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: url ? 'transparent' : '#f5f5f5',
       }}
     >
-      {/* Asset images will be resolved and injected by the print payload */}
+      {url && (
+        <img
+          src={url}
+          alt=""
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: props.fit === 'cover' ? 'cover' : 'contain',
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The price badge, composed by the SAME helper the Konva editor uses.
+ *
+ * That shared call is the whole point of the layer type: the proof a
+ * salesperson approves on screen and the PDF that reaches the printer state the
+ * same price in the same shape (AC-L.1).
+ */
+function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
+  const props = layer.props;
+  if (props.kind !== 'price_badge') return null;
+
+  const parts = priceBadgeParts(props, {
+    listPrice: resolved?.list_price ?? null,
+    offerPrice:
+      resolved && resolved.show_promo_price ? resolved.sell_price ?? null : null,
+  });
+
+  const frame: CSSProperties = {
+    position: 'absolute',
+    left: `${layer.x_mm}mm`,
+    top: `${layer.y_mm}mm`,
+    width: `${layer.width_mm}mm`,
+    height: `${layer.height_mm}mm`,
+    transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+    fontFamily: 'DM Sans, sans-serif',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  };
+
+  if (!parts.boxed) {
+    return (
+      <div style={frame}>
+        <span
+          style={{
+            fontSize: '13pt',
+            fontWeight: 700,
+            textAlign: 'center',
+            color: parts.amountText ? '#000000' : '#999999',
+          }}
+        >
+          {parts.plainText}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={frame}>
+      {parts.struckText && (
+        <span
+          style={{
+            fontSize: '9pt',
+            color: '#666666',
+            textAlign: 'center',
+            textDecoration: 'line-through',
+          }}
+        >
+          {parts.struckText}
+        </span>
+      )}
+      <div
+        style={{
+          flex: 1,
+          backgroundColor: props.fill,
+          color: props.textColor,
+          borderRadius: `${props.cornerRadius}mm`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '1mm',
+          padding: '0.5mm 1mm',
+        }}
+      >
+        {parts.spLabel && (
+          <span style={{ fontSize: '8pt', fontWeight: 700 }}>{parts.spLabel}</span>
+        )}
+        <span style={{ fontSize: '16pt', fontWeight: 800 }}>{parts.amountText}</span>
+        {parts.nettLabel && (
+          <span style={{ fontSize: '8pt', fontWeight: 700 }}>{parts.nettLabel}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -344,9 +474,11 @@ function renderPriceFieldLayer(
   );
 }
 
-function renderBadgeLayer(layer: TagLayer) {
+function renderBadgeLayer(layer: TagLayer, media: TagSheetMedia) {
   const props = layer.props;
   if (props.kind !== 'badge') return null;
+
+  const url = props.assetId ? media.assets?.[props.assetId] ?? null : null;
 
   return (
     <div
@@ -360,7 +492,13 @@ function renderBadgeLayer(layer: TagLayer) {
         overflow: 'hidden',
       }}
     >
-      {/* Badge asset would be resolved from the asset map */}
+      {url && (
+        <img
+          src={url}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        />
+      )}
     </div>
   );
 }
@@ -373,10 +511,12 @@ function TagRenderer({
   tag,
   resolved,
   bleed_mm,
+  media,
 }: {
   tag: PlacedTag;
   resolved: ResolvedLineData | null;
   bleed_mm: number;
+  media: TagSheetMedia;
 }) {
   const sortedLayers = [...tag.layers]
     .filter((l) => l.visible !== false)
@@ -398,12 +538,13 @@ function TagRenderer({
         <div key={layer.id}>
           {layer.type === 'text' && renderTextLayer(layer, resolved)}
           {layer.type === 'shape' && renderShapeLayer(layer)}
-          {layer.type === 'image' && renderImageLayer(layer, resolved)}
+          {layer.type === 'image' && renderImageLayer(layer, media)}
           {layer.type === 'product_slot' &&
             renderProductSlotLayer(layer, resolved)}
           {layer.type === 'price_field' &&
             renderPriceFieldLayer(layer, resolved)}
-          {layer.type === 'badge' && renderBadgeLayer(layer)}
+          {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}
+          {layer.type === 'badge' && renderBadgeLayer(layer, media)}
         </div>
       ))}
 
@@ -509,11 +650,13 @@ function SheetRenderer({
   imposition,
   resolvedData,
   isLast,
+  media,
 }: {
   sheet: TagSheet;
   imposition: ImpositionConfig;
   resolvedData: Record<string, ResolvedLineData>;
   isLast: boolean;
+  media: TagSheetMedia;
 }) {
   return (
     <div
@@ -536,6 +679,7 @@ function SheetRenderer({
             tag={tag}
             resolved={resolved}
             bleed_mm={imposition.bleed_mm}
+            media={media}
           />
         );
       })}
@@ -550,10 +694,13 @@ function SheetRenderer({
 export default function TagSheetRenderer({
   doc,
   resolvedData,
+  assets,
+  images,
   preview = false,
   previewScale = 0.3,
 }: TagSheetRendererProps) {
   const imposition = doc.imposition;
+  const media: TagSheetMedia = { assets, images };
 
   if (preview) {
     return (
@@ -580,6 +727,7 @@ export default function TagSheetRenderer({
               imposition={imposition}
               resolvedData={resolvedData}
               isLast={index === doc.sheets.length - 1}
+              media={media}
             />
           </div>
         ))}
@@ -596,6 +744,7 @@ export default function TagSheetRenderer({
           imposition={imposition}
           resolvedData={resolvedData}
           isLast={index === doc.sheets.length - 1}
+          media={media}
         />
       ))}
     </>

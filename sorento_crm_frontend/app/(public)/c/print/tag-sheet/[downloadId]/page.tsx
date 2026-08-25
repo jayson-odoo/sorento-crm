@@ -17,6 +17,7 @@
 import { use, useEffect, useState } from 'react';
 
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import { ensureFontsLoaded, type TagFont } from '@/lib/dealer-kit/fonts';
 import TagSheetRenderer, {
   type ResolvedLineData,
 } from './components/TagSheetRenderer';
@@ -24,6 +25,12 @@ import TagSheetRenderer, {
 interface TagSheetPrintPayload {
   doc: TagSheetDoc;
   resolvedData: Record<string, ResolvedLineData>;
+  /** assetId -> signed URL, for every library asset the document names. */
+  assets: Record<string, string>;
+  /** attachmentId -> signed URL, for the bound products' own photos. */
+  images: Record<string, string>;
+  /** Brand fonts, loaded before this page reports itself ready. */
+  fonts: TagFont[];
   requestDocNumber: string;
   version: number;
 }
@@ -82,7 +89,11 @@ export default function TagSheetPrintPage({
           throw new Error(`Render payload unavailable (${response.status})`);
         return (await response.json()) as TagSheetPrintPayload;
       })
-      .then((body) => {
+      .then(async (body) => {
+        // Fonts BEFORE the ready flag. Chromium prints whatever is loaded at
+        // that moment, and a brand face that arrives afterwards prints as the
+        // fallback typeface with nothing on screen to say so.
+        await ensureFontsLoaded(body.fonts ?? []);
         if (live) setPayload(body);
       })
       .catch((error: unknown) => {
@@ -115,6 +126,8 @@ export default function TagSheetPrintPage({
         <TagSheetRenderer
           doc={payload.doc}
           resolvedData={payload.resolvedData}
+          assets={payload.assets}
+          images={payload.images}
         />
       )}
     </main>

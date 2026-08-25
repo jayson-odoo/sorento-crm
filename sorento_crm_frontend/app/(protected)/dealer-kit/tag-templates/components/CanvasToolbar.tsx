@@ -7,8 +7,13 @@
  */
 
 import {
+  Banknote,
+  Boxes,
   Copy,
   Group,
+  Package,
+  Shuffle,
+  Sparkles,
   ImageIcon,
   Minus,
   Plus,
@@ -37,7 +42,12 @@ interface CanvasToolbarProps {
   onAddImage: () => void;
   onAddProductSlot: () => void;
   onAddPriceField: () => void;
+  onAddPriceBadge: () => void;
   onAddBadge: () => void;
+  onAddProduct: () => void;
+  onAddSet: () => void;
+  onAddAlternativesRow: () => void;
+  onAddAccessoriesStrip: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -99,7 +109,12 @@ export function CanvasToolbar({
   onAddImage,
   onAddProductSlot,
   onAddPriceField,
+  onAddPriceBadge,
   onAddBadge,
+  onAddProduct,
+  onAddSet,
+  onAddAlternativesRow,
+  onAddAccessoriesStrip,
   onUndo,
   onRedo,
   canUndo,
@@ -131,7 +146,28 @@ export function CanvasToolbar({
         label="Add Price Field"
         onClick={onAddPriceField}
       />
+      <ToolbarButton
+        icon={Banknote}
+        label="Add Price Badge"
+        onClick={onAddPriceBadge}
+      />
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      {/* Product-bound blocks and presets */}
+      <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />
+      <ToolbarButton icon={Boxes} label="Add Set" onClick={onAddSet} />
+      <ToolbarButton
+        icon={Shuffle}
+        label="Add Alternatives Row"
+        onClick={onAddAlternativesRow}
+      />
+      <ToolbarButton
+        icon={Sparkles}
+        label="Add Accessories Strip"
+        onClick={onAddAccessoriesStrip}
+      />
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 
