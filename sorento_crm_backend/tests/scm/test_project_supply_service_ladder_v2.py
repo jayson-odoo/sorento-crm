@@ -172,12 +172,15 @@ def test_a_line_on_or_before_the_coverage_date_runs_the_ladder_normally():
 # --------------------------------------------------------------------------- own location
 
 
-def test_the_own_location_is_never_a_source_only_the_pool_and_group_locations_are():
+def test_the_own_location_is_a_group_source_again_under_ladder_v3():
+    """Section 1b rung 2, the captain 25 August 2026: "consider the group location first
+    (only available quantity)". The line's own location is a location of its group, so a
+    line standing on free stock reserves it rather than buying it - which is what v2's rule
+    7 exclusion made impossible."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        # Free stock sits at the line's OWN location - the ladder must not touch it.
         _stock(db, product, own, on_hand=999)
         db.commit()
 
@@ -187,9 +190,10 @@ def test_the_own_location_is_never_a_source_only_the_pool_and_group_locations_ar
         proposal = ProjectSupplyService(db).proposal_for(order)
         components = _components(proposal)
 
-    assert not any(c.get("source_location") == own.warehouse_code for c in components)
     assert len(components) == 1
-    assert components[0]["kind"] == "buy"
+    assert components[0]["kind"] == "reserve"
+    assert components[0]["rung"] == "group_take"
+    assert components[0]["source_location"] == own.warehouse_code
     assert components[0]["qty"] == "40"
 
 
@@ -392,10 +396,11 @@ def test_a_line_beyond_the_reserve_window_is_offered_no_donor_to_borrow_from():
     assert line["borrow_candidates"] == []
 
 
-def test_a_line_beyond_the_window_still_reserves_stock_that_is_genuinely_surplus():
-    """The pool rung is capped at the location's SIGNED availability, so what it offers is
-    what nothing else there is owed. Refusing a far line that would buy stock the business
-    already holds and nobody needs."""
+def test_a_line_beyond_the_window_buys_the_whole_line_however_much_sits_beside_it():
+    """AC-L1: "if delivery date exceed lead time, directly buy". v2 still walked the two
+    surplus rungs for such a line; v3 walks nothing. A pool holding exactly what the line
+    owes is left alone, because a line 300 days out has months for a purchase order and the
+    stock is kept for the orders that do not."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -411,12 +416,15 @@ def test_a_line_beyond_the_window_still_reserves_stock_that_is_genuinely_surplus
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert len(components) == 1
-    assert components[0]["kind"] == "reserve"
+    assert components[0]["kind"] == "buy"
     assert components[0]["qty"] == "358"
+    assert "beyond the lead time window" in components[0]["reason"]
 
 
-def test_a_line_inside_the_window_is_untouched_by_the_rule():
-    """The near line keeps rung 4, exactly as it always had it."""
+def test_a_line_inside_the_window_is_offered_the_donor_the_far_line_is_not():
+    """The near line still SEES the donor; the far line does not. Neither has it proposed:
+    borrowing another sales order's committed quantity is a person's pick (AC-L3), so the
+    near line reads Buy with the donor beside it, waiting in Amend."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -434,10 +442,12 @@ def test_a_line_inside_the_window_is_untouched_by_the_rule():
             so_number="SO331506",
         )
 
-        components = _components(ProjectSupplyService(db).proposal_for(order))
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = _components(proposal)
+        candidates = proposal["lines"][0]["borrow_candidates"]
 
-    assert components[0]["kind"] == "borrow"
-    assert components[0]["rung"] == "group_borrow"
+    assert [c["kind"] for c in components] == ["buy"]
+    assert any(c.get("donor_so_number") == "SO371334" for c in candidates)
 
 
 def test_a_product_nobody_states_a_lead_time_for_uses_the_documented_default():
@@ -473,7 +483,11 @@ def test_a_product_nobody_states_a_lead_time_for_uses_the_documented_default():
 # --------------------------------------------------------------------------- rung 4: group borrow
 
 
-def test_group_borrow_from_a_lower_ranked_so_is_auto_proposed_with_an_order_back():
+def test_group_borrow_is_offered_not_proposed_and_a_manual_pick_raises_the_order_back():
+    """AC-L3 + AC-L6, ruled 25 August 2026: the engine never composes a group borrow, so a
+    line the group and the pool cannot cover reads Buy - with the donor offered beside it.
+    Picking that donor in Amend and confirming still raises the order-back on the donor's
+    own line, at the donor's own date, exactly as it always did."""
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
     from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 
@@ -498,21 +512,15 @@ def test_group_borrow_from_a_lower_ranked_so_is_auto_proposed_with_an_order_back
 
         proposal = ProjectSupplyService(db).proposal_for(order)
         components = proposal["lines"][0]["components"]
-        assert len(components) == 1
-        borrow = components[0]
-        assert borrow["kind"] == "borrow"
-        assert borrow["rung"] == "group_borrow"
-        assert borrow["qty"] == "145"
-        assert borrow["donor_so_number"] == "SO371334"
-        assert borrow["donor_line_no"] == 2
-        assert borrow["order_back_qty"] == "145"
-        # B4: urgency = the DONOR's own required date, carried by the engine itself -
-        # not this line's, and not left for the confirm payload alone to state.
-        assert borrow["donor_required_date"] == REQUIRED_DATE + timedelta(days=60)
+        assert [c["kind"] for c in components] == ["buy"]
         candidates = proposal["lines"][0]["borrow_candidates"]
         donor_candidate = next(
             c for c in candidates if c.get("donor_so_number") == "SO371334"
         )
+        assert donor_candidate["rung"] == "group_borrow"
+        assert donor_candidate["donor_line_no"] == 2
+        # B4: urgency = the DONOR's own required date, so the order-back the manual pick
+        # raises is dated by the order it is taken from, not by the one taking it.
         assert donor_candidate["donor_required_date"] == REQUIRED_DATE + timedelta(days=60)
 
         service = ProjectSupplyService(db)
@@ -527,7 +535,7 @@ def test_group_borrow_from_a_lower_ranked_so_is_auto_proposed_with_an_order_back
                                 "source": "other_location",
                                 "warehouse_id": str(own.id),
                                 "qty": "145",
-                                "reason": "Group borrow, auto-proposed.",
+                                "reason": "Authorised by agent CYNDI: urgent site delivery.",
                                 "donor_core_line_id": str(donor_cline.id),
                                 "donor_so_number": "SO371334",
                                 "donor_line_no": 2,
@@ -665,11 +673,12 @@ def test_group_borrow_from_a_sibling_location_raises_the_order_back_only_once():
         )
 
         proposal = ProjectSupplyService(db).proposal_for(order)
-        components = proposal["lines"][0]["components"]
-        assert len(components) == 1
-        assert components[0]["kind"] == "borrow"
-        assert components[0]["rung"] == "group_borrow"
-        assert components[0]["source_location"] == sibling.warehouse_code
+        # Offered, never proposed (AC-L3): the planner picks it in Amend.
+        assert any(
+            c.get("donor_so_number") == "SO500001"
+            and c["warehouse_code"] == sibling.warehouse_code
+            for c in proposal["lines"][0]["borrow_candidates"]
+        )
 
         ProjectSupplyService(db).confirm(
             order,
@@ -682,7 +691,7 @@ def test_group_borrow_from_a_sibling_location_raises_the_order_back_only_once():
                                 "source": "other_location",
                                 "warehouse_id": str(sibling.id),
                                 "qty": "90",
-                                "reason": "Group borrow, auto-proposed.",
+                                "reason": "Authorised by agent CYNDI: urgent site delivery.",
                                 "donor_core_line_id": str(donor_cline.id),
                                 "donor_so_number": "SO500001",
                                 "donor_line_no": 3,
@@ -944,7 +953,7 @@ def test_a_line_covered_by_another_active_decision_is_not_offered_as_a_donor():
 
 
 def test_group_borrow_donors_at_one_location_prefer_the_lowest_ranked_over_the_biggest():
-    """Nit: within one location, `_group_borrow_donors` must take the LOWEST-ranked
+    """Nit: within one location, `_group_borrow_donors` must OFFER the LOWEST-ranked
     donor first (the safest one to draw from), not the one holding the most."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -969,12 +978,16 @@ def test_group_borrow_donors_at_one_location_prefer_the_lowest_ranked_over_the_b
         )
 
         proposal = ProjectSupplyService(db).proposal_for(order)
-        components = proposal["lines"][0]["components"]
+        candidates = [
+            c
+            for c in proposal["lines"][0]["borrow_candidates"]
+            if c.get("rung") == "group_borrow"
+        ]
 
-    assert len(components) == 1
-    assert components[0]["kind"] == "borrow"
-    assert components[0]["rung"] == "group_borrow"
-    assert components[0]["donor_core_line_id"] == str(far_cline.id)
+    # The order is what matters, not a composition: nothing is auto-composed any more
+    # (AC-L3), so "safest first" is a statement about the list a person reads.
+    assert candidates
+    assert candidates[0]["donor_core_line_id"] == str(far_cline.id)
 
 
 def test_group_borrow_refuses_a_donor_line_of_a_different_product():

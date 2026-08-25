@@ -417,10 +417,14 @@ def test_a_later_confirmation_carries_the_covered_lines_forward(api):
     assert _snapshot_of(active, line_1.id) == frozen_1
 
 
-def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api):
-    """The carried snapshot is verbatim (the person's borrow reason and buy reason
-    included), and the stock it holds is held by revision 2 exactly as revision 1 held it:
-    same warehouses, same quantities, and the claim it made is not made a second time."""
+def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
+    """The carried snapshot is verbatim (the person's borrow reason included), and the stock
+    it holds is held by revision 2 exactly as revision 1 held it: same warehouses, same
+    quantities, and the claim it made is not made a second time.
+
+    The composition is wholly from stock (AC-L5: a line is met entirely from stock or
+    entirely bought), which is also the interesting carry - two different locations under one
+    line, one of them a borrow with a person's reason on it."""
     from app.models.project_so import AllocationClaim, SOLineAllocation
     from app.services.project_supply_service import ProjectSupplyService
 
@@ -429,8 +433,7 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
     donor_wh = _warehouse(db, f"ZZT-DONOR-{_uid()[:4]}")
     _stock(db, world.product, donor_wh, on_hand=100)
     order, line_1, line_2 = _two_line_order(world)
-    # Ladder v2 has no own-location Reserve any more; the pool is the only Reserve
-    # source, so it needs its own stock.
+    # The pool is a Reserve source and needs its own stock.
     _stock(db, world.product, world.pool_wh, on_hand=100)
     db.commit()
 
@@ -440,7 +443,7 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
             "lines": [
                 _line_payload(
                     line_1.id,
-                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "20"}],
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}],
                     borrow=[
                         {
                             "source": "other_location",
@@ -449,8 +452,6 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
                             "reason": "Their hand-over is in December.",
                         }
                     ],
-                    buy_qty="20",
-                    buy_reason="Nothing else is free before the date.",
                 )
             ]
         },
@@ -459,13 +460,12 @@ def test_a_carried_line_keeps_its_borrow_reason_its_buy_reason_and_its_hold(api)
     rev_1 = _decision(db, order)
     frozen_1 = _snapshot_of(rev_1, line_1.id)
     borrow = next(c for c in frozen_1["components"] if c["kind"] == "borrow")
-    buy = next(c for c in frozen_1["components"] if c["kind"] == "buy")
     assert borrow["cs_reason"] == "Their hand-over is in December."
-    assert buy["cs_reason"] == "Nothing else is free before the date."
+    assert not any(c["kind"] == "buy" for c in frozen_1["components"])
 
     supply = ProjectSupplyService(db)
     held_before = supply.held_stock_by_location([world.product.id])
-    assert held_before[(world.product.id, world.pool_wh.id)] == Decimal("20")
+    assert held_before[(world.product.id, world.pool_wh.id)] == Decimal("40")
     assert held_before[(world.product.id, donor_wh.id)] == Decimal("10")
 
     second = client.post(
