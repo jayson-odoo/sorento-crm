@@ -19,6 +19,7 @@ export const ProductSchema = z.object({
   brand_id: z.string().uuid().optional().nullable(),
   item_type: z.enum(['product', 'bundle', 'service', 'other']).optional().nullable(),
   is_active: z.boolean(),
+  is_searchable: z.boolean(),
 
   // Tab 2: Pricing (coerce strings from API/inputs to numbers)
   list_price: z.coerce.number()

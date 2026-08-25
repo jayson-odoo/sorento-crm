@@ -24,6 +24,7 @@ import {
   Upload,
   Download,
   SlidersHorizontal,
+  MessageSquare,
 } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -47,10 +48,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
-import type { ProductListItem } from '../types/product.types';
+import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { getProducts, bulkImportProducts, validateProductsImport, type GetProductsParams } from '../services/productService';
 import ProductDeleteDialog from './product-delete-dialog';
 import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
+import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
@@ -184,6 +186,7 @@ const ProductsList = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<ProductListItem | null>(null);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
@@ -647,6 +650,36 @@ const ProductsList = () => {
         enableHiding: true,
       },
       {
+        accessorKey: 'is_searchable',
+        id: 'is_searchable',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Chat Search"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => {
+          const state = chatSearchState(row.original);
+          return (
+            <Badge
+              variant={state === 'shown' ? 'success' : 'destructive'}
+              appearance="light"
+            >
+              <BadgeDot />
+              {CHAT_SEARCH_LABEL[state]}
+            </Badge>
+          );
+        },
+        size: 140,
+        meta: {
+          headerTitle: 'Chat Search',
+          skeleton: <Skeleton className="w-16 h-7" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
         accessorKey: 'created_at',
         id: 'created_at',
         header: ({ column }) => (
@@ -942,6 +975,12 @@ const ProductsList = () => {
             ]}
             bulkActions={[
               {
+                key: 'chat-search',
+                label: 'Chat search',
+                icon: MessageSquare,
+                onClick: () => setBulkChatSearchDialogOpen(true),
+              },
+              {
                 key: 'delete',
                 label: 'Delete',
                 icon: Trash2,
@@ -1013,6 +1052,12 @@ const ProductsList = () => {
           setRowSelection({});
           queryClient.invalidateQueries({ queryKey: ['products'] });
         }}
+      />
+      <ProductBulkChatSearchDialog
+        open={bulkChatSearchDialogOpen}
+        onOpenChange={setBulkChatSearchDialogOpen}
+        productIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

@@ -213,7 +213,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
     BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
-    ProductAttachmentCreate, ProductAttachmentUpdate
+    ProductAttachmentCreate, ProductAttachmentUpdate, ProductBulkUpdates
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.services.company_scope import stamp_lookup_companies
@@ -1202,6 +1202,25 @@ class ProductService:
             return child_ids_of(self.db, product_id)
         except Exception:
             return []
+
+    def bulk_update_products(
+        self, product_ids: List[str], updates: ProductBulkUpdates, updated_by: str
+    ) -> dict:
+        """Apply the same edit to every listed product.
+
+        Row-by-row `setattr` rather than `query.update()`, so the audit listener
+        sees each change like it does for a single edit. The read is an ORM
+        query and therefore company-scoped: an id from another company is simply
+        not found and not counted, never written.
+        """
+        rows = self.db.query(Product).filter(Product.id.in_(product_ids)).all()
+        now = datetime.utcnow()
+        for product in rows:
+            product.is_searchable = updates.is_searchable
+            product.updated_by = updated_by
+            product.updated_at = now
+        self.db.commit()
+        return {"message": f"Updated {len(rows)} product(s)", "updated_count": len(rows)}
 
     def bulk_delete_products(self, product_ids: List[str]):
         """Delete multiple products by ID."""

@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProduct, useProductPurchaseHistory } from '../../hooks/useProducts';
+import { CHAT_SEARCH_LABEL, chatSearchState } from '../../types/product.types';
 import { formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
@@ -495,6 +496,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         title="Auto-derived: True when description starts with ****"
                       >
                         Discontinued: {product.is_discontinued ? 'Yes' : 'No'}
+                      </Badge>
+                      <Badge
+                        variant={chatSearchState(product) === 'shown' ? 'success' : 'destructive'}
+                      >
+                        Chat Search: {CHAT_SEARCH_LABEL[chatSearchState(product)]}
                       </Badge>
                     </div>
                   </div>

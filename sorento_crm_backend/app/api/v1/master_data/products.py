@@ -12,7 +12,14 @@ from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
+from app.schemas.product import (
+    ProductCreate,
+    ProductUpdate,
+    ProductResponse,
+    BulkImportProductsRequest,
+    BulkDeleteProductsRequest,
+    BulkUpdateProductsRequest,
+)
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
@@ -322,6 +329,25 @@ async def create_product(
         service = ProductService(db)
         product = service.create_product(product_data, current_user["id"])
         return product
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+# Declared BEFORE `PUT /{product_id}`: FastAPI matches routes in order, and the
+# path parameter would otherwise swallow the literal "bulk" (the DELETE pair
+# below is ordered the same way for the same reason).
+@router.put("/bulk", status_code=status.HTTP_200_OK)
+def bulk_update_products(
+    body: BulkUpdateProductsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk update products by ID. Body: { ids: string[], updates: { is_searchable } }."""
+    try:
+        service = ProductService(db)
+        return service.bulk_update_products(body.ids, body.updates, current_user["id"])
     except HTTPException:
         raise
     except Exception as e:
