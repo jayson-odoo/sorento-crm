@@ -58,6 +58,7 @@ import {
 } from '../../../../services/priceTagRequestService';
 import { listTemplates } from '../../../../services/tagTemplateService';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
+import { lineFamily } from '@/lib/dealer-kit/line-family';
 
 // This component is loaded with ssr:false by TagSheetDesignerShell, so direct imports are safe.
 import { Stage, Layer as KonvaLayer, Group, Rect, Text } from 'react-konva';
@@ -132,20 +133,6 @@ function computeImpositionSlots(
 // Determine product family from line (mock heuristic)
 // ---------------------------------------------------------------------------
 
-function lineFamily(line: PriceTagRequestLine, code?: string): string {
-  if (line.line_type === 'product_set') return 'furniture_set';
-  // The code comes from the resolver: a request line stores product ids, not
-  // product codes, so reading it off the line answered '' for every line and
-  // every tag fell back to the ala carte template.
-  const codeLower = (code ?? '').toLowerCase();
-  if (codeLower.includes('wc')) return 'wc';
-  if (codeLower.includes('sh')) return 'shower';
-  if (codeLower.includes('mr') || codeLower.includes('mirror')) return 'mirror';
-  if (codeLower.includes('mc')) return 'mirror_cabinet';
-  if (codeLower.includes('sk') || codeLower.includes('sink') || codeLower.includes('sws'))
-    return 'sink_combo';
-  return 'ala_carte';
-}
 
 // ---------------------------------------------------------------------------
 // Component props
