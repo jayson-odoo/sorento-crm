@@ -224,6 +224,11 @@ def create_spo_allocations(
             SPOAllocation.spo_number == spo_number,
             SPOAllocation.product_id == product_id,
             SPOAllocation.warehouse_id == warehouse_id,
+            # Unstamped rows only. Since migration 420 this table also holds the IMPORTED
+            # SPO documents, and refusing an integration's allocation because a 2023
+            # history line names the same product at the same location would reject a
+            # perfectly good write for a document that closed years ago.
+            SPOAllocation.source_system.is_(None),
         ).first()
         if existing:
             first = items[0]
