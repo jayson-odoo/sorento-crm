@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { OrderInquiryRowActions } from '../../_shared/components/OrderInquiryRowActions';
 import {
   OrderInquiryStatePill,
@@ -338,14 +338,34 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
       },
       {
+        // WHO pushed this to purchasing. Sorted server-side on the person's name, which
+        // is why the column id is `raised_by_name` rather than `raised_by`: the id is
+        // what the filter sends, the name is what this column is about.
+        accessorKey: 'raised_by_name',
+        header: ({ column }) => <DataGridColumnHeader title="Raised by" column={column} />,
+        size: 150,
+        meta: { headerTitle: 'Raised by', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) =>
+          row.original.raised_by_name ? (
+            <span className="block truncate" title={row.original.raised_by_name}>
+              {row.original.raised_by_name}
+            </span>
+          ) : (
+            <Muted>Not recorded</Muted>
+          ),
+      },
+      {
+        // The TIME, not just the day: two revisions of the same order are raised hours
+        // apart, and a date alone cannot tell them apart. Malaysian wall clock, from a
+        // naive UTC stamp.
         accessorKey: 'raised_at',
-        header: ({ column }) => <DataGridColumnHeader title="Raised" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Raised', skeleton: <Skeleton className="h-4 w-20" /> },
+        header: ({ column }) => <DataGridColumnHeader title="Raised at" column={column} />,
+        size: 170,
+        meta: { headerTitle: 'Raised at', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
           row.original.raised_at ? (
             <span className="whitespace-nowrap">
-              {formatDateInMalaysia(row.original.raised_at)}
+              {formatDateTimeInMalaysia(row.original.raised_at)}
             </span>
           ) : (
             <Muted>Unknown</Muted>

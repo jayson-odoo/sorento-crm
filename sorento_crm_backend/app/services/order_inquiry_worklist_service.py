@@ -22,9 +22,10 @@ rather than the product's usual supplier, because purchasing reads that column a
 statement that an order exists.
 
 **Each of the screen's own controls is computed ignoring its own filter** (the month
-strip, the supplier list, the project list). A control that empties itself the moment it
-is used cannot be used a second time. The visible TOTALS honour every filter, month
-included, because that strip is a statement about what is on screen.
+strip, the supplier list, the project list, the people who raised them). A control that
+empties itself the moment it is used cannot be used a second time. The visible TOTALS
+honour every filter, month included, because that strip is a statement about what is on
+screen.
 """
 from __future__ import annotations
 
@@ -55,6 +56,7 @@ from app.models.project_so import (
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
+from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
@@ -92,6 +94,7 @@ SORTABLE_FIELDS = frozenset(
         "po_number",
         "state",
         "raised_at",
+        "raised_by_name",
         "location",
         "agent",
     }
@@ -196,6 +199,12 @@ _RAISED_AT = OrderInquiryRow.created_at
 _RAISED_DAY = cast(
     func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", _RAISED_AT)), Date
 )
+# WHO told purchasing to buy it: `order_inquiries.raised_by`, resolved to the person's
+# NAME. Off the HEADER rather than the row, because that is where the stamp is - a row
+# carries `actioned_by`, which is purchasing's answer, not CS's instruction. The id never
+# leaves the service: a screen printing a UUID at a buyer is a screen they cannot use, so
+# the filter takes an id and every read gives a name.
+_RAISED_BY_NAME = User.name
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
 # row, or the confirmed allocation's warehouse for a plan/confirmed row
@@ -218,6 +227,7 @@ _SORT_EXPRESSIONS = {
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
     "raised_at": _RAISED_AT,
+    "raised_by_name": _RAISED_BY_NAME,
     "location": _LOCATION,
     "agent": SalesAgent.sales_agent,
 }
@@ -236,6 +246,7 @@ _COLUMNS = (
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
     _RAISED_AT.label("raised_at"),
+    _RAISED_BY_NAME.label("raised_by_name"),
     _SO_DATE.label("so_date"),
     _SO_NUMBER.label("so_number"),
     Product.id.label("product_id"),
@@ -322,6 +333,7 @@ class OrderInquiryWorklistService:
         state: Optional[str] = None,
         project_id: Optional[str] = None,
         supplier_id: Optional[str] = None,
+        raised_by: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -338,6 +350,10 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
+            # Who raised the inquiry. Outer, on the primary key, so a header stamped
+            # before the column existed (or one whose user has since been removed)
+            # still brings its rows to the list.
+            .outerjoin(User, User.id == OrderInquiry.raised_by)
             .outerjoin(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
@@ -383,6 +399,10 @@ class OrderInquiryWorklistService:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
+        if raised_by:
+            # By id, off the header. The screen picks the person from the summary's own
+            # list, so this never has to guess which "Cindy" was meant.
+            base = base.filter(OrderInquiry.raised_by == raised_by)
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -398,6 +418,12 @@ class OrderInquiryWorklistService:
                     Customer.customer_name.ilike(like),
                     Project.title.ilike(like),
                     Project.project_code.ilike(like),
+                    # The CS who raised it. By name, and by the FRONT of the email
+                    # address rather than anywhere inside it: a buyer types "cindy",
+                    # and matching `%cindy%` across a whole address would also return
+                    # every row whose raiser happens to work at cindy.com.
+                    User.name.ilike(like),
+                    User.email.ilike(f"{query.strip()}%"),
                 )
             )
         return base
@@ -572,6 +598,7 @@ class OrderInquiryWorklistService:
             "agent_label": row.agent_label,
             "state": row.state,
             "raised_at": row.raised_at,
+            "raised_by_name": row.raised_by_name,
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -647,11 +674,11 @@ class OrderInquiryWorklistService:
     # ---------------------------------------------------------------- summary
 
     def summary(self, **filters) -> Dict[str, Any]:
-        """The strip above the list, and the three controls beside it.
+        """The strip above the list, and the controls beside it.
 
         Totals honour EVERY filter, month included, because they describe what is on
-        screen. The three axes each drop their own filter, because a control that empties
-        itself the moment you use it cannot be used a second time.
+        screen. Each axis drops its OWN filter, because a control that empties itself the
+        moment you use it cannot be used a second time.
         """
         visible = self._base(**filters)
         state_rows = (
@@ -679,6 +706,7 @@ class OrderInquiryWorklistService:
             "by_month": self._by_month({**filters, "delivery_month": None}),
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
             "projects": self._projects({**filters, "project_id": None}),
+            "raised_by": self._raised_by({**filters, "raised_by": None}),
         }
 
     def _by_month(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -733,6 +761,30 @@ class OrderInquiryWorklistService:
         return [
             {"id": project_id, "label": title, "rows": int(count)}
             for project_id, title, count in rows
+        ]
+
+    def _raised_by(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The people who have actually raised an inquiry, and how many rows each.
+
+        Scoped to the rows in view rather than to `users`, deliberately: a picker built
+        from the user table would list hundreds of names, almost all of which return
+        nothing, and the one question this filter answers is "show me what CS raised".
+        Bounded by the same fact - a company has a handful of people who confirm supply -
+        so it ships whole with the summary rather than as a searched endpoint.
+        """
+        rows = (
+            self._base(**filters)
+            .with_entities(
+                OrderInquiry.raised_by, User.name, func.count(OrderInquiryRow.id)
+            )
+            .filter(OrderInquiry.raised_by.isnot(None))
+            .group_by(OrderInquiry.raised_by, User.name)
+            .order_by(User.name.asc().nulls_last())
+            .all()
+        )
+        return [
+            {"id": user_id, "label": name or "Unnamed user", "rows": int(count)}
+            for user_id, name, count in rows
         ]
 
     # ------------------------------------------------------------- unplace all

@@ -311,6 +311,15 @@ class ProjectOrderInquiryService:
             )
             self.db.add(inquiry)
             self.db.flush()
+        elif actor_user_id:
+            # A reconfirm RE-STAMPS the header (PLAN section H, AC-H4). The inquiry is
+            # deliberately reused so purchasing keeps quoting one number, which means
+            # without this the screen would name whoever confirmed revision 1 forever,
+            # long after somebody else decided what purchasing is actually holding. The
+            # rows keep their own `actioned_by` - that is purchasing's answer, not CS's
+            # instruction.
+            inquiry.raised_by = actor_user_id
+            inquiry.raised_at = datetime.utcnow()
 
         created = 0
         raised = 0

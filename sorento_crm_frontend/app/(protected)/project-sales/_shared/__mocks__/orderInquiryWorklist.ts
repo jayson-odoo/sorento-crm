@@ -35,6 +35,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     agent_label: 'Sean',
     state: 'actioned',
     raised_at: '2026-01-02T09:15:00',
+    raised_by_name: 'Cindy Lee',
     verb: 'ORDER',
     note: null,
     taken_from_po: '35',
@@ -62,6 +63,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     agent_label: null,
     state: 'raised',
     raised_at: '2026-01-08T11:02:00',
+    raised_by_name: 'Johnson Tan',
     verb: 'ORDER',
     note: null,
     taken_from_po: '0',
@@ -88,6 +90,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     agent_label: 'Lee',
     state: 'raised',
     raised_at: '2026-01-02T09:15:00',
+    raised_by_name: 'Cindy Lee',
     verb: 'ORDER',
     note: null,
     project_id: 'proj-9',
@@ -110,6 +113,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     po_number: null,
     state: 'cancelled',
     raised_at: '2026-01-08T11:02:00',
+    raised_by_name: null,
     verb: 'CANCEL_BALANCE',
     note: 'Placed 12, new need 6',
     project_id: 'proj-4',
@@ -134,6 +138,12 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
   projects: [
     { id: 'proj-4', label: 'SDB @ Gombak', rows: 1 },
     { id: 'proj-9', label: 'Eko Titiwangsa', rows: 1 },
+  ],
+  // Only the people who actually raised one of these rows - the "Raised by" filter's
+  // whole list, and the reason it is not a picker over every user in the company.
+  raised_by: [
+    { id: 'user-cindy', label: 'Cindy Lee', rows: 2 },
+    { id: 'user-johnson', label: 'Johnson Tan', rows: 1 },
   ],
 };
 

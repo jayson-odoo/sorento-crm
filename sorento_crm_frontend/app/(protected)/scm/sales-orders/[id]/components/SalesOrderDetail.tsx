@@ -55,6 +55,7 @@ import {
   subtractMoney,
   sumMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useSearchParams } from 'next/navigation';
 import { useSalesOrder, useUpdateSalesOrder } from '../../../hooks/useSalesOrders';
 import { useWarehouseOptions } from '../../../hooks/useScmOptions';
@@ -1220,22 +1221,30 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   not a field anybody sets here. Empty states as "-", never hidden. */}
               <Field label="Order inquiries">
                 {(so.order_inquiries ?? []).length ? (
-                  <span className="flex flex-wrap gap-x-2 gap-y-1">
+                  <span className="flex flex-col gap-1">
                     {(so.order_inquiries ?? []).map((inquiry, index) => (
-                      <Link
-                        key={inquiry.inquiry_no ?? index}
-                        href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                          so.so_number,
-                        )}`}
-                        className="text-primary hover:underline"
-                        title={
-                          `raised ${fmtDate(inquiry.raised_at)}` +
-                          `${inquiry.raised_by_name ? ` by ${inquiry.raised_by_name}` : ''}` +
-                          `, ${inquiry.rows_placed}/${inquiry.rows_total} placed`
-                        }
-                      >
-                        {inquiry.inquiry_no ?? 'Unnumbered'}
-                      </Link>
+                      <span key={inquiry.inquiry_no ?? index} className="block">
+                        <Link
+                          href={`/project-sales/order-inquiries?query=${encodeURIComponent(
+                            so.so_number,
+                          )}`}
+                          className="text-primary hover:underline"
+                          title={`${inquiry.rows_placed}/${inquiry.rows_total} placed`}
+                        >
+                          {inquiry.inquiry_no ?? 'Unnumbered'}
+                        </Link>
+                        {/* Who raised it and when, ON the header rather than in a
+                            tooltip (AC-H2): "who pushed this to purchasing" is the
+                            first thing asked of this field, and a fact nobody hovers
+                            over is a fact nobody has. Malaysian wall clock, with the
+                            hour - two revisions of one order are raised hours apart. */}
+                        <span className="ms-1 font-normal text-muted-foreground">
+                          · {inquiry.raised_by_name ?? 'Not recorded'}
+                          {inquiry.raised_at
+                            ? ` · ${formatDateTimeInMalaysia(inquiry.raised_at)}`
+                            : ''}
+                        </span>
+                      </span>
                     ))}
                   </span>
                 ) : (

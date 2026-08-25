@@ -13,8 +13,7 @@ import { OrderInquiriesClient } from './components/OrderInquiriesClient';
 
 export const metadata: Metadata = {
   title: 'Order Inquiries',
-  description:
-    'Everything purchasing has been told to buy, across every project and every adopted sales order, by delivery month.',
+  description: 'Everything purchasing has been told to buy.',
 };
 
 export default function OrderInquiriesPage() {

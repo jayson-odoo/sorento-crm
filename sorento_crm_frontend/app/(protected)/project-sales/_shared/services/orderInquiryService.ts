@@ -234,7 +234,7 @@ export async function autoPlaceOrderInquiryRows(
   return response.json();
 }
 
-/** The same five fields, however they are used - a query string for the preview GET, a
+/** The same fields, however they are used - a query string for the preview GET, a
  * JSON body for the commit POST. No page/sort/limit: neither endpoint paginates. */
 function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   const params = new URLSearchParams();
@@ -243,6 +243,7 @@ function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   if (filters.raised_date) params.set('raised_date', filters.raised_date);
   if (filters.project_id) params.set('project_id', filters.project_id);
   if (filters.supplier_id) params.set('supplier_id', filters.supplier_id);
+  if (filters.raised_by) params.set('raised_by', filters.raised_by);
   return params;
 }
 
@@ -289,17 +290,22 @@ export async function unplaceAllOrderInquiryRows(
  *
  *   GET  {BASE}/order-inquiries
  *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
- *        supplier_id, page, limit, sort, dir
+ *        supplier_id, raised_by, page, limit, sort, dir
+ *        query also matches the name and the email prefix of the CS who raised it.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
- *        delivery_date, project_customer, supplier, po_number, state, raised_at - and an
- *        unknown value is a 422, never a silent fall back to the default.
+ *        delivery_date, project_customer, supplier, po_number, state, raised_at,
+ *        raised_by_name - and an unknown value is a 422, never a silent fall back to
+ *        the default.
  *
  *   GET  {BASE}/order-inquiries/summary
  *        the same filters, no paging
  *        -> { total_rows, total_qty, by_state,
- *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [] }
- *        The totals honour every filter. The three AXES each ignore their own filter on
+ *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
+ *             raised_by: [] }
+ *        `raised_by` lists only the people who have actually raised one of the rows in
+ *        view, id + name, which is what the "Raised by" filter offers.
+ *        The totals honour every filter. The AXES each ignore their own filter on
  *        purpose: they are the screen's controls, and a control that empties itself the
  *        moment it is used cannot be used a second time.
  *
@@ -330,6 +336,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       state: params.state,
       project_id: params.project_id,
       supplier_id: params.supplier_id,
+      raised_by: params.raised_by,
     },
   );
 }
