@@ -225,14 +225,14 @@ describe('OrderInquiriesClient', () => {
     renderClient();
 
     const shortfall = (await screen.findByText('SO390001')).closest('tr') as HTMLElement;
-    expect(within(shortfall).getByText('BORROW SHORTFALL')).toBeInTheDocument();
+    expect(within(shortfall).getByText('ORDER BACK')).toBeInTheDocument();
     // The server's note is behind the info icon now, not inline under the pill (A3).
     expect(within(shortfall).queryByText('BRW-BB is short by 12')).not.toBeInTheDocument();
     fireEvent.focus(within(shortfall).getByRole('button', { name: 'Why this instruction' }));
     expect(await screen.findByRole('tooltip')).toHaveTextContent('BRW-BB is short by 12');
     const order = screen.getByText('SO385126').closest('tr') as HTMLElement;
     expect(within(order).getByText('ORDER')).toBeInTheDocument();
-    expect(within(order).queryByText('BORROW SHORTFALL')).not.toBeInTheDocument();
+    expect(within(order).queryByText('ORDER BACK')).not.toBeInTheDocument();
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {

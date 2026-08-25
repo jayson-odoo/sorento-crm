@@ -751,47 +751,50 @@ describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
   });
 
   it('takes the proposal as it stands, and carries the whole composition into the draft', () => {
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    // Wholly from stock (AC-L5), which is what the engine can propose: a mix of stock and a
+    // Buy on one line is refused by `lineBlockers` and by the confirmation alike.
+    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'amended',
-      reserve_qty: '40',
+      reserve_qty: '100',
       timely_spo_qty: '0',
-      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' }],
+      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
       borrow: [],
-      buy_qty: '60',
+      buy_qty: '0',
       reason: undefined,
     });
   });
 
   it('demands a reason the moment the amendment displaces the rule, and blocks Save until it has one', () => {
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '10' } });
-    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '90' } });
+    // Buy is a whole-line switch (AC-L5): on, the stock rows clear and the whole 100 is
+    // bought, which is exactly the amendment that displaces the proposal.
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
 
     const save = screen.getByRole('button', { name: 'Save the amendment' });
     expect(save).toBeDisabled();
     expect(onDecide).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
-      target: { value: 'Keeping 30 for the site that is already late.' },
+      target: { value: 'The site wants new stock, not what is standing there.' },
     });
     expect(save).toBeEnabled();
     fireEvent.click(save);
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'amended',
-      reserve_qty: '10',
+      reserve_qty: '0',
       timely_spo_qty: '0',
-      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '10' }],
+      reserve: [],
       borrow: [],
-      buy_qty: '90',
-      reason: 'Keeping 30 for the site that is already late.',
+      buy_qty: '100',
+      reason: 'The site wants new stock, not what is standing there.',
     });
   });
 
@@ -2053,10 +2056,11 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
-    // The borrow the planner made is IN the editor, and the buy is the confirmed 33 rather
-    // than the 43 the engine would propose for an undecided line.
+    // The borrow the planner made is IN the editor, at the quantity they made it, rather
+    // than whatever the engine would propose for an undecided line.
     expect(screen.getByLabelText('Borrow from MWH-IB')).toHaveValue(10);
-    expect(screen.getByLabelText('Buy')).toHaveValue(33);
+    // Buy is a whole-line switch (AC-L5) and this composition carries stock, so it is off.
+    expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
   });
 
   it('behaves like any amended row once it has been amended', () => {

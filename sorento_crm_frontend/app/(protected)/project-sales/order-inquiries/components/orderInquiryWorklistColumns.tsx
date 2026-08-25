@@ -298,7 +298,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
         size: 210,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
-        // The verb is what purchasing DOES with the row: an ORDER and a BORROW SHORTFALL both
+        // The verb is what purchasing DOES with the row: an ORDER and an ORDER BACK both
         // cost money, a CANCEL BALANCE takes it back, and the state alone tells them apart
         // from nothing. The server's own sentence ("Borrowed N for SOxxx line n; CODE goes
         // short by q") is the reasoning behind the verb, not the instruction itself, so it

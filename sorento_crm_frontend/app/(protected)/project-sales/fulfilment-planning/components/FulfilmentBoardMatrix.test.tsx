@@ -320,3 +320,43 @@ describe('FulfilmentBoardMatrix tints the past on the column header only', () =>
     expect(body?.className).not.toContain('destructive');
   });
 });
+
+/**
+ * AC-L6, the captain 25 August 2026: the donor's cell reads "71 lent to SO415472". A borrow
+ * was visible on the taking side and invisible on the giving side, so the agent whose stock
+ * moved found out when the delivery did not.
+ */
+describe('FulfilmentBoardMatrix: what was lent off a line', () => {
+  it('says how much was lent, and to which order', () => {
+    renderMatrix([
+      cellWith([
+        contribution({ lent_to: [{ qty: '71', so_number: 'SO415472', line_no: 3 }] }),
+      ]),
+    ]);
+
+    expect(screen.getByTestId('cell-lent-out')).toHaveTextContent('71 lent to SO415472');
+  });
+
+  it('lists every borrow taken off the cell, one order per phrase', () => {
+    renderMatrix([
+      cellWith([
+        contribution({
+          lent_to: [
+            { qty: '71', so_number: 'SO415472', line_no: 3 },
+            { qty: '4', so_number: 'SO394803', line_no: 1 },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(screen.getByTestId('cell-lent-out')).toHaveTextContent(
+      '71 lent to SO415472 · 4 lent to SO394803',
+    );
+  });
+
+  it('says nothing at all when nothing was lent', () => {
+    renderMatrix([cellWith([contribution()])]);
+
+    expect(screen.queryByTestId('cell-lent-out')).not.toBeInTheDocument();
+  });
+});

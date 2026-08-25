@@ -192,7 +192,7 @@ describe('lineBlockers', () => {
         open_qty: '100',
         borrow: [
           borrow('40', '   '),
-          borrow('20', '', {
+          borrow('60', '', {
             key: 'b2',
             source: 'other_project',
             warehouse_code: 'JB',
@@ -200,7 +200,7 @@ describe('lineBlockers', () => {
             donor_project_id: DONOR_PROJECT,
           }),
         ],
-        buy_qty: '40',
+        buy_qty: '0',
       }),
     );
 
@@ -242,6 +242,44 @@ describe('lineBlockers', () => {
         }),
       ),
     ).toEqual([]);
+  });
+
+  it('refuses a line that mixes stock with a Buy, and says what to do instead', () => {
+    // AC-L5, the captain 25 August 2026: "a line is either wholly covered from stock (own
+    // group, pools, borrow, incoming in any mix) or wholly Buy". The server refuses the mix
+    // at confirm; this is the same rule said before the round trip.
+    expect(
+      lineBlockers(
+        draft({ open_qty: '100', reserve: [reserve('40')], buy_qty: '60' }),
+      ),
+    ).toEqual([
+      'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
+        'This one mixes 40 from stock with a Buy of 60.',
+    ]);
+  });
+
+  it('lets either pure composition through', () => {
+    expect(
+      lineBlockers(draft({ open_qty: '100', reserve: [reserve('100')], buy_qty: '0' })),
+    ).toEqual([]);
+    expect(lineBlockers(draft({ open_qty: '100', buy_qty: '100' }))).toEqual([]);
+  });
+
+  it('counts incoming supply as stock, so it cannot sit beside a Buy either', () => {
+    expect(
+      lineBlockers(draft({ open_qty: '100', timely_spo_qty: '10', buy_qty: '90' })),
+    ).toEqual([
+      'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
+        'This one mixes 10 from stock with a Buy of 90.',
+    ]);
+  });
+
+  it('says nothing about the mix on a line that does not add up: that comes first', () => {
+    // One refusal at a time. A line short of its open quantity is told THAT, not a second
+    // sentence about a composition it has not finished stating.
+    expect(lineBlockers(draft({ open_qty: '100', reserve: [reserve('40')], buy_qty: '50' }))).toEqual([
+      'Line 1, CB6633: the components are short of the open quantity by 10.',
+    ]);
   });
 
   it('orders the blockers: below zero, then the imbalance, then the missing reasons', () => {
@@ -379,7 +417,13 @@ describe('draftFromLine', () => {
             donor_project_id: DONOR_PROJECT,
             cs_reason: 'Their hand-over is in December.',
           },
-          { kind: 'buy', qty: '60', reason: 'Remaining uncovered need.' },
+          {
+            kind: 'reserve',
+            qty: '60',
+            reason: 'Free stock covers it.',
+            source_location: 'BRW-BB',
+            source_warehouse_id: WAREHOUSE_BRW,
+          },
         ],
       }),
     );
