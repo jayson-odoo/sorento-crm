@@ -65,6 +65,7 @@ WorklistSort = Literal[
     "po_number",
     "state",
     "raised_at",
+    "raised_by_name",
     "location",
     "agent",
 ]
@@ -79,6 +80,7 @@ def _worklist_filters(
     state: Optional[str],
     project_id: Optional[str],
     supplier_id: Optional[str],
+    raised_by: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
@@ -91,6 +93,8 @@ def _worklist_filters(
         "state": state,
         "project_id": project_id,
         "supplier_id": supplier_id,
+        # `users.id` is a plain string, not a UUID column - it is never validated as one.
+        "raised_by": raised_by,
     }
 
 
@@ -114,6 +118,9 @@ def list_order_inquiry_worklist(
     state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(
+        None, description="The user who raised the inquiry. Their id, off the summary."
+    ),
     sort: Optional[WorklistSort] = Query(
         None, description="Defaults to delivery_date. Nulls always last."
     ),
@@ -144,7 +151,13 @@ def list_order_inquiry_worklist(
             sort=sort,
             direction=direction,
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
             ),
         )
     except Exception as exc:
@@ -159,6 +172,7 @@ def order_inquiry_worklist_summary(
     state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -166,7 +180,13 @@ def order_inquiry_worklist_summary(
     try:
         return OrderInquiryWorklistService(db).summary(
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
             ),
         )
     except Exception as exc:
@@ -181,6 +201,7 @@ def export_order_inquiry_worklist(
     state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -193,7 +214,13 @@ def export_order_inquiry_worklist(
     try:
         filename, body = OrderInquiryWorklistService(db).export_xlsx(
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
             )
         )
         return Response(
@@ -474,6 +501,7 @@ def order_inquiry_unplace_all_preview(
     raised_date: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
 ):
@@ -485,7 +513,7 @@ def order_inquiry_unplace_all_preview(
     not a browse."""
     try:
         filters = _worklist_filters(
-            query, delivery_month, raised_date, None, project_id, supplier_id
+            query, delivery_month, raised_date, None, project_id, supplier_id, raised_by
         )
         filters.pop("state", None)
         return OrderInquiryWorklistService(db).unplace_all_preview(**filters)
@@ -516,6 +544,7 @@ async def unplace_order_inquiry_rows_in_scope(
             raised_date=payload.raised_date,
             project_id=payload.project_id,
             supplier_id=payload.supplier_id,
+            raised_by=payload.raised_by,
         )
         db.commit()
         return {"unplaced": unplaced}

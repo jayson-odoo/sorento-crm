@@ -195,6 +195,8 @@ describe('OrderInquiriesClient', () => {
       'PO no',
       'Instruction',
       'State',
+      'Raised by',
+      'Raised at',
     ];
     let cursor = -1;
     for (const title of order) {
@@ -572,6 +574,101 @@ describe('OrderInquiriesClient', () => {
         ),
       ).not.toBeInTheDocument();
       expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Who raised it, and when (PLAN section H)', () => {
+    it('has no subtitle explaining what the page covers (AC-H1)', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      expect(
+        screen.queryByText(/Every project and every adopted sales order/i),
+      ).not.toBeInTheDocument();
+    });
+
+    it('names the CS who raised each row, and when, in Malaysian time (AC-H2)', async () => {
+      renderClient();
+
+      const row = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+      expect(within(row).getByText('Cindy Lee')).toBeInTheDocument();
+      // 09:15 UTC is 17:15 in Malaysia, so the wall clock is the assertion: rendering the
+      // naive stamp as local time is the defect this catches.
+      expect(within(row).getByText('02/01/2026, 5:15 pm')).toBeInTheDocument();
+    });
+
+    it('says so plainly when the header named nobody, rather than printing an empty cell', async () => {
+      renderClient();
+
+      const row = (await screen.findByText('PSO-000412')).closest('tr') as HTMLElement;
+      expect(within(row).getByText('Not recorded')).toBeInTheDocument();
+    });
+
+    it('offers only the people who have raised something, and sends the pick to the service (AC-H3)', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      const select = (await screen.findByLabelText('Everyone')) as HTMLSelectElement;
+      expect([...select.options].map((option) => option.textContent)).toEqual([
+        // The clearable "no filter" entry, then the two people the summary named.
+        'Everyone',
+        'Cindy Lee',
+        'Johnson Tan',
+      ]);
+
+      fireEvent.change(select, { target: { value: 'user-cindy' } });
+
+      await waitFor(() =>
+        expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+          expect.objectContaining({ raised_by: 'user-cindy' }),
+        ),
+      );
+    });
+
+    it('clears the Raised by filter back to everyone', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      const select = await screen.findByLabelText('Everyone');
+      fireEvent.change(select, { target: { value: 'user-cindy' } });
+      await waitFor(() =>
+        expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+          expect.objectContaining({ raised_by: 'user-cindy' }),
+        ),
+      );
+
+      fireEvent.change(select, { target: { value: '' } });
+
+      await waitFor(() =>
+        expect(listOrderInquiryWorklist).toHaveBeenLastCalledWith(
+          expect.objectContaining({ raised_by: undefined }),
+        ),
+      );
+    });
+
+    it('names the person in the unplace-all scope rather than their id', async () => {
+      getUnplaceAllPreview.mockResolvedValue({
+        count: 2,
+        product_code: null,
+        product_name: null,
+      });
+      renderClient();
+      await screen.findByText('SO385126');
+
+      openFilters();
+      fireEvent.change(await screen.findByLabelText('Everyone'), {
+        target: { value: 'user-cindy' },
+      });
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      openActionsMenu();
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog.textContent).toContain('raised by Cindy Lee');
+      expect(dialog.textContent).not.toContain('user-cindy');
     });
   });
 

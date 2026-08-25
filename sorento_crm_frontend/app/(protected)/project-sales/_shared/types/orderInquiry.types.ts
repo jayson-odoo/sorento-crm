@@ -185,6 +185,11 @@ export interface OrderInquiryWorklistRow {
   state: OrderInquiryState | string;
   /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
   raised_at?: string | null;
+  /**
+   * WHO told them, by name (`order_inquiries.raised_by` -> `users.name`). Never an id:
+   * the cell prints this as it comes. Null when the header names nobody.
+   */
+  raised_by_name?: string | null;
   verb: OrderInquiryVerb | string;
   note?: string | null;
 
@@ -211,6 +216,8 @@ export interface OrderInquiryWorklistParams {
   state?: string;
   project_id?: string;
   supplier_id?: string;
+  /** The id of the user who raised the inquiry, picked off the summary's own list. */
+  raised_by?: string;
   page?: number;
   limit?: number;
   sort?: string;
@@ -250,13 +257,15 @@ export interface OrderInquiryWorklistSummary {
     total: number;
   };
   /**
-   * The three axes the screen's own controls are built from. Each is computed with every
+   * The axes the screen's own controls are built from. Each is computed with every
    * filter EXCEPT its own, because a control that empties itself the moment you use it
    * cannot be used a second time.
    */
   by_month: OrderInquiryMonthTotal[];
   suppliers: OrderInquiryFacet[];
   projects: OrderInquiryFacet[];
+  /** The people who raised the rows in view, id + name. The "Raised by" filter's list. */
+  raised_by: OrderInquiryFacet[];
 }
 
 /* --------------------------------------------------------- the schedule matrix
@@ -392,6 +401,7 @@ export interface UnplaceAllRequest {
   raised_date?: string;
   project_id?: string;
   supplier_id?: string;
+  raised_by?: string;
 }
 
 export interface UnplaceAllResult {

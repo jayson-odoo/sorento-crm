@@ -933,6 +933,33 @@ describe('SalesOrderDetail - the agent', () => {
       '/project-sales/order-inquiries?query=SO-2026%2F07-0042',
     );
     expect(link.getAttribute('title')).toContain('2/3 placed');
+    // WHO raised it and WHEN, ON the header rather than in a tooltip (AC-H2). 09:00 UTC
+    // is 5:00 pm in Malaysia: rendering the naive stamp as local time is the defect.
+    expect(within(orderCard).getByText(/Yana/)).toBeInTheDocument();
+    expect(within(orderCard).getByText(/18\/07\/2026, 5:00 pm/)).toBeInTheDocument();
+  });
+
+  it('says the inquiry names nobody rather than leaving the header half-written', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({
+        order_inquiries: [
+          {
+            inquiry_no: 'OI-000008',
+            state: 'raised',
+            raised_at: null,
+            raised_by_name: null,
+            rows_total: 1,
+            rows_placed: 0,
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const orderCard = screen.getByRole('region', { name: 'Order' });
+    expect(within(orderCard).getByText(/Not recorded/)).toBeInTheDocument();
   });
 
   it('shows the Order inquiries field even when there are none - never hidden', () => {

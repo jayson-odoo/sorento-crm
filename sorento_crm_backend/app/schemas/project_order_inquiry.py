@@ -140,6 +140,10 @@ class OrderInquiryWorklistRow(BaseModel):
     agent_label: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
+    # WHO told purchasing to buy it, by name (`order_inquiries.raised_by` -> `users`).
+    # Never the id: the column is printed as it comes. Null when the header names nobody
+    # (a record written before the stamp existed) or the user has since been removed.
+    raised_by_name: Optional[str] = None
     verb: str
     note: Optional[str] = None
 
@@ -176,11 +180,11 @@ class OrderInquiryStateCounts(BaseModel):
 
 
 class OrderInquiryWorklistSummary(BaseModel):
-    """The strip above the list, and the three controls beside it.
+    """The strip above the list, and the controls beside it.
 
     The totals honour every filter, the month included, because they describe what is on
-    screen. The three axes each drop their OWN filter, because a control that empties
-    itself the moment it is used cannot be used a second time.
+    screen. Each axis drops its OWN filter, because a control that empties itself the
+    moment it is used cannot be used a second time.
     """
 
     total_rows: int = 0
@@ -189,6 +193,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     by_month: List[OrderInquiryMonthTotal] = []
     suppliers: List[OrderInquiryFacet] = []
     projects: List[OrderInquiryFacet] = []
+    #: The people who have raised at least one of the rows in view - the "Raised by"
+    #: filter's own list. Never every user in the company: a picker whose entries mostly
+    #: return nothing is a picker nobody uses twice.
+    raised_by: List[OrderInquiryFacet] = []
 
 
 class MarkInquiryRowsRequest(BaseModel):
@@ -292,6 +300,9 @@ class UnplaceAllRequest(BaseModel):
     raised_date: Optional[str] = None
     project_id: Optional[str] = None
     supplier_id: Optional[str] = None
+    #: The user whose inquiries the list is narrowed to, so the action can never reach
+    #: further than what the person pressing it can see.
+    raised_by: Optional[str] = None
 
 
 class UnplaceAllResult(BaseModel):
