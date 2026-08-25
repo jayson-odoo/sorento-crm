@@ -111,6 +111,8 @@ def upgrade() -> None:
             sa.Column("approved_at", sa.DateTime(timezone=False), nullable=True),
             sa.Column("moved_by", sa.String(length=100), nullable=True),
             sa.Column("moved_at", sa.DateTime(timezone=False), nullable=True),
+            sa.Column("cancelled_by", sa.String(length=100), nullable=True),
+            sa.Column("cancelled_at", sa.DateTime(timezone=False), nullable=True),
             sa.Column("cancelled_reason", sa.Text(), nullable=True),
             sa.Column("autocount_ref", sa.String(length=80), nullable=True),
             sa.Column(
@@ -145,9 +147,40 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["to_warehouse_id"], ["warehouses.id"], ondelete="RESTRICT"),
             sa.ForeignKeyConstraint(["approved_by"], ["users.id"], ondelete="SET NULL"),
             sa.ForeignKeyConstraint(["moved_by"], ["users.id"], ondelete="SET NULL"),
+            sa.ForeignKeyConstraint(["cancelled_by"], ["users.id"], ondelete="SET NULL"),
             sa.UniqueConstraint(
                 "company_id", "transfer_no", name="uq_project_stock_transfer_no"
             ),
+            schema="projects",
+        )
+
+    # Added rather than created when the table is already there: this migration is applied
+    # by hand on the shared dev database (whose `alembic_version` points at another lane's
+    # head) and an earlier run of it predates these two columns. Guarded, so a third run is
+    # a no-op.
+    existing = {
+        column["name"]
+        for column in sa.inspect(bind).get_columns("stock_transfers", schema="projects")
+    }
+    if "cancelled_by" not in existing:
+        op.add_column(
+            "stock_transfers",
+            sa.Column("cancelled_by", sa.String(length=100), nullable=True),
+            schema="projects",
+        )
+        op.create_foreign_key(
+            "fk_project_stock_transfers_cancelled_by",
+            "stock_transfers",
+            "users",
+            ["cancelled_by"],
+            ["id"],
+            source_schema="projects",
+            ondelete="SET NULL",
+        )
+    if "cancelled_at" not in existing:
+        op.add_column(
+            "stock_transfers",
+            sa.Column("cancelled_at", sa.DateTime(timezone=False), nullable=True),
             schema="projects",
         )
 

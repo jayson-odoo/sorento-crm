@@ -424,7 +424,10 @@ export function movesOf(
     for (const part of contributionDecision(contribution, draft[contribution.key] ?? null) ??
       []) {
       if (part.kind !== 'reserve' && part.kind !== 'borrow') continue;
-      const from = part.location ?? part.source_location ?? null;
+      // `locationOf`, not a second hand-rolled `location ?? source_location`: the two wire
+      // shapes spell the warehouse differently and one reader for both is the whole reason
+      // that helper exists.
+      const from = locationOf(part);
       if (!from || from === own) continue;
       const key = `${from}\u0000${own}`;
       byPair.set(key, (byPair.get(key) ?? 0) + toMinor(part.qty));

@@ -56,13 +56,6 @@ TRANSFER_MOVED = "moved"
 #: Superseded by a later revision, or called off by a person with a reason. Terminal.
 TRANSFER_CANCELLED = "cancelled"
 
-TRANSFER_STATES = (
-    TRANSFER_PROPOSED,
-    TRANSFER_APPROVED,
-    TRANSFER_MOVED,
-    TRANSFER_CANCELLED,
-)
-
 #: The states a supersede or a person may still call off. A `moved` row is history: the
 #: stock is already somewhere else and cancelling the paperwork would not bring it back.
 TRANSFER_OPEN_STATES = (TRANSFER_PROPOSED, TRANSFER_APPROVED)
@@ -73,12 +66,6 @@ TRANSFER_OPEN_STATES = (TRANSFER_PROPOSED, TRANSFER_APPROVED)
 TRANSFER_KIND_OWN_GROUP = "own_group"
 TRANSFER_KIND_POOL = "pool"
 TRANSFER_KIND_BORROW = "borrow"
-
-TRANSFER_KINDS = (
-    TRANSFER_KIND_OWN_GROUP,
-    TRANSFER_KIND_POOL,
-    TRANSFER_KIND_BORROW,
-)
 
 
 class StockTransfer(Base, CompanyScopedMixin):
@@ -134,6 +121,8 @@ class StockTransfer(Base, CompanyScopedMixin):
     approved_at = Column(DateTime(timezone=False), nullable=True)
     moved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     moved_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
     cancelled_reason = Column(Text, nullable=True)
     #: The transfer document number a person keyed into AutoCount. Free text, because
     #: AutoCount is the ledger of record and is not integrated: this is the thread back to
@@ -170,6 +159,15 @@ def next_transfer_no(bind, company_id) -> str:
 
     `bind` is whatever can execute a statement - the flush's own Connection when this runs
     from the stamp below, a Session when a caller asks directly.
+
+    **This read takes no lock, so two confirmations running at the same instant can both
+    read the same highest number and the second one loses to
+    `uq_project_stock_transfer_no`.** The loser's transfers are then swallowed by the
+    best-effort savepoint in `project_supply_service._write_transfers`, which now reports
+    the failure on the confirm result (`transfers_failed`) instead of hiding it - but the
+    rows still have to be raised by a reconfirm. Two planners confirming two orders in the
+    same second is rare enough that a lock on every confirm is not worth it; if it starts
+    happening, `SELECT ... FOR UPDATE` on the company's highest row is the fix.
     """
     table = StockTransfer.__table__
     latest = bind.execute(

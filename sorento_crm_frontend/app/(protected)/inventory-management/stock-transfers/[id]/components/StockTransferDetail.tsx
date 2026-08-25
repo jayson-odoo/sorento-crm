@@ -3,6 +3,14 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ArrowLeft, FileText, History } from 'lucide-react';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -53,9 +61,31 @@ export function StockTransferDetail({ id }: { id: string }) {
     </Button>
   );
 
+  /** The leaf is the transfer NUMBER, never the id: no UUID reaches a screen. */
+  const crumbs = (leaf: string) => (
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/">Home</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/inventory-management/stock-transfers">
+            Stock Transfers
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage>{leaf}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4">
+        {crumbs('Loading')}
         <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
@@ -66,6 +96,7 @@ export function StockTransferDetail({ id }: { id: string }) {
   if (isError || !data) {
     return (
       <div className="space-y-4">
+        {crumbs('Not found')}
         <div className="flex justify-end">{backLink}</div>
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">Stock transfer not found</div>
@@ -83,6 +114,7 @@ export function StockTransferDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
+      {crumbs(transfer.transfer_no)}
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -244,8 +276,12 @@ export function StockTransferDetail({ id }: { id: string }) {
               />
               <HistoryRow
                 label="Cancelled"
-                when={transfer.state === 'cancelled' ? transfer.updated_at : null}
-                who={transfer.cancelled_reason}
+                when={transfer.cancelled_at}
+                who={
+                  [transfer.cancelled_by_name, transfer.cancelled_reason]
+                    .filter(Boolean)
+                    .join(': ') || null
+                }
                 empty="Not cancelled"
               />
             </section>

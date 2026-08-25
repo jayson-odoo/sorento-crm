@@ -90,6 +90,9 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
     moved_by: null,
     moved_by_name: null,
     moved_at: null,
+    cancelled_by: null,
+    cancelled_by_name: null,
+    cancelled_at: null,
     cancelled_reason: null,
     autocount_ref: null,
     created_at: '2026-08-25T08:42:00',
@@ -154,13 +157,17 @@ describe('StockTransfersPanel - rows', () => {
     expect(await screen.findByText('Moved, awaiting stock upload')).toBeInTheDocument();
   });
 
-  it('opens the transfer on row click', async () => {
-    renderPanel();
+  it('opens the transfer on row click, carrying the filtered list into the URL', async () => {
+    renderPanel({ salesOrderId: 'so-1' });
     const row = (await screen.findByText('TR-000001')).closest('tr');
 
     fireEvent.click(row as HTMLElement);
 
-    expect(push).toHaveBeenCalledWith(expect.stringContaining('/inventory-management/stock-transfers/tr-1'));
+    const href = push.mock.calls[0][0] as string;
+    expect(href).toContain('/inventory-management/stock-transfers/tr-1');
+    // The pager on the detail page walks the SAME set, so the filters ride along.
+    expect(href).toContain('sales_order_id=so-1');
+    expect(href).toContain('sort=proposed_at');
   });
 });
 
@@ -246,14 +253,41 @@ describe('StockTransfersPanel - row actions', () => {
 });
 
 describe('StockTransfersPanel - bulk approve', () => {
-  it('approves the selection', async () => {
+  it('confirms with the count before approving the selection', async () => {
     bulkApproveStockTransfers.mockResolvedValue({ approved: 1, skipped: [] });
     renderPanel();
 
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Select TR-000001' }));
     fireEvent.click(await screen.findByRole('button', { name: /Approve/ }));
 
+    // The bulk verb confirms first, exactly like the single one, and the copy says how many.
+    expect(await screen.findByText('Approve 1 transfer?')).toBeInTheDocument();
+    expect(bulkApproveStockTransfers).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(bulkApproveStockTransfers).toHaveBeenCalledWith(['tr-1']));
+  });
+
+  it('drops the selection when the set under it changes, and submits only this page', async () => {
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select TR-000001' }));
+    expect(screen.getByRole('checkbox', { name: 'Select TR-000001' })).toBeChecked();
+
+    // Re-sorting reorders the set under the tick (the search box is hidden while the bulk
+    // strip is up, so the sort is the reachable one of the five triggers). A tick made
+    // against the old order must not survive it, or Approve would act on rows nobody
+    // deliberately chose.
+    fireEvent.click(screen.getByRole('button', { name: 'Transfer' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Select TR-000001' })).not.toBeChecked(),
+    );
+    await waitFor(() =>
+      expect(listStockTransfers).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'transfer_no' }),
+      ),
+    );
   });
 });
 

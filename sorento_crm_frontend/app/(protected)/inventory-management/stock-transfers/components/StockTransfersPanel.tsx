@@ -12,6 +12,16 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Check, MoreHorizontal, Search, Truck, X } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -48,12 +58,11 @@ import {
   type TransferAction,
 } from './StockTransferActions';
 
-const STATE_OPTIONS: { value: StockTransferState; label: string }[] = [
-  { value: 'proposed', label: 'Proposed' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'moved', label: 'Moved' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
+// Both option lists are derived from the label maps rather than retyped, so a word can only
+// ever be changed in one place. The filter and the badge cannot say `moved` two ways.
+const STATE_OPTIONS: { value: StockTransferState; label: string }[] = (
+  ['proposed', 'approved', 'moved', 'cancelled'] as StockTransferState[]
+).map((state) => ({ value: state, label: TRANSFER_STATE_LABEL[state] }));
 
 const KIND_OPTIONS: { value: StockTransferKind; label: string }[] = (
   ['own_group', 'pool', 'borrow'] as StockTransferKind[]
@@ -103,9 +112,12 @@ export function TransferStatePill({ state }: { state: StockTransferState }) {
         : state === 'approved'
           ? 'primary'
           : 'warning';
+  const label = TRANSFER_STATE_LABEL[state];
   return (
-    <Badge variant={variant} appearance="light" size="sm">
-      {TRANSFER_STATE_LABEL[state]}
+    // `title` and `truncate`, because "Moved, awaiting stock upload" is longer than a
+    // 190px column and a badge cut mid-word reads as a different state.
+    <Badge variant={variant} appearance="light" size="sm" title={label}>
+      <span className="block truncate">{label}</span>
     </Badge>
   );
 }
@@ -154,6 +166,7 @@ export function StockTransfersPanel({
     transfer: StockTransfer;
     action: TransferAction;
   } | null>(null);
+  const [confirmingBulk, setConfirmingBulk] = React.useState(false);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
@@ -163,6 +176,29 @@ export function StockTransfersPanel({
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
   }, [debounced, state, kind, fromWarehouseId, toWarehouseId, productId]);
+
+  /**
+   * A selection belongs to the rows that were on screen when it was made.
+   *
+   * Cleared whenever the set under it moves - a filter, the search, a sort or a page -
+   * because `rowSelection` is keyed by id and survives a refetch: tick three rows, filter
+   * to something else, press Approve, and three rows nobody could see would have been
+   * approved. `bulkApprove` below also submits only the ids on the CURRENT page, so a
+   * stale key that outlived this effect still cannot be acted on.
+   */
+  React.useEffect(() => {
+    setRowSelection({});
+  }, [
+    debounced,
+    state,
+    kind,
+    fromWarehouseId,
+    toWarehouseId,
+    productId,
+    sorting,
+    pagination.pageIndex,
+    pagination.pageSize,
+  ]);
 
   const params = React.useMemo(
     () => ({
@@ -199,17 +235,47 @@ export function StockTransfersPanel({
   const filtered = Boolean(debounced || state || kind || fromWarehouseId || toWarehouseId || productId);
   const { bulkApprove } = useStockTransferMutations();
 
-  // Carried into the record URL so the detail page's prev/next pager walks the SAME
-  // searched, sorted page the reader was on (same param names as the list GET).
+  /**
+   * Carried into the record URL so the detail page's prev/next pager walks the SAME
+   * searched, sorted, FILTERED page the reader was on.
+   *
+   * The filters ride along as well as the sort and the search: a reader who narrowed to
+   * "proposed, from BRW" and opened the third row expects the chevrons to walk that set,
+   * and a pager rebuilt from page and sort alone would step through the unfiltered book
+   * instead. Same param names as the list GET, so the detail page forwards them verbatim.
+   */
   const detailSearch = React.useMemo(
     () =>
-      buildDetailSearch({
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery: debounced,
-      }),
-    [pagination.pageIndex, pagination.pageSize, sorting, debounced],
+      buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: debounced,
+        },
+        {
+          state,
+          kind,
+          from_warehouse_id: fromWarehouseId,
+          to_warehouse_id: toWarehouseId,
+          product_id: productId,
+          sales_order_id: salesOrderId,
+          sales_agent_id: salesAgentId,
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      debounced,
+      state,
+      kind,
+      fromWarehouseId,
+      toWarehouseId,
+      productId,
+      salesOrderId,
+      salesAgentId,
+    ],
   );
 
   const columns = React.useMemo<ColumnDef<StockTransfer>[]>(() => {
@@ -420,10 +486,11 @@ export function StockTransfersPanel({
     columnResizeMode: 'onChange',
   });
 
-  const selectedIds = React.useMemo(
-    () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
-    [rowSelection],
-  );
+  /** Ticked AND on the page in front of the reader. Never a key left over from another set. */
+  const selectedIds = React.useMemo(() => {
+    const onPage = new Set(rows.map((row) => row.id));
+    return Object.keys(rowSelection).filter((key) => rowSelection[key] && onPage.has(key));
+  }, [rowSelection, rows]);
 
   return (
     <>
@@ -554,10 +621,10 @@ export function StockTransfersPanel({
                           label: bulkApprove.isPending ? 'Approving…' : 'Approve',
                           icon: Check,
                           disabled: bulkApprove.isPending || selectedIds.length === 0,
-                          onClick: () =>
-                            bulkApprove.mutate(selectedIds, {
-                              onSuccess: () => setRowSelection({}),
-                            }),
+                          // Confirmed first, exactly like the single Approve: telling a
+                          // warehouse to carry eleven loads of stock across the country is
+                          // not a thing to do on one click.
+                          onClick: () => setConfirmingBulk(true),
                         },
                       ]
                     : []
@@ -603,6 +670,42 @@ export function StockTransfersPanel({
         action={acting?.action ?? null}
         onClose={() => setActing(null)}
       />
+
+      <AlertDialog
+        open={confirmingBulk && selectedIds.length > 0}
+        onOpenChange={(next) => !next && setConfirmingBulk(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Approve ${selectedIds.length} transfer${selectedIds.length === 1 ? '' : 's'}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {/* The count is in the copy, per the bulk-action standard. */}
+              {`${selectedIds.length} stock movement${
+                selectedIds.length === 1 ? '' : 's'
+              } will be approved for the warehouse to carry out.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkApprove.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkApprove.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                bulkApprove.mutate(selectedIds, {
+                  onSuccess: () => {
+                    setRowSelection({});
+                    setConfirmingBulk(false);
+                  },
+                });
+              }}
+            >
+              {bulkApprove.isPending ? 'Approving…' : 'Approve'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -63,6 +64,9 @@ class StockTransferOut(BaseModel):
     moved_by: Optional[str] = None
     moved_by_name: Optional[str] = None
     moved_at: Optional[datetime] = None
+    cancelled_by: Optional[str] = None
+    cancelled_by_name: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
     cancelled_reason: Optional[str] = None
     autocount_ref: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -99,8 +103,31 @@ class CancelTransferRequest(BaseModel):
         return cleaned
 
 
+#: One page of the grid at its largest offered size. A selection is what a person ticked on
+#: a page, so a body longer than a page is not a selection, and an unbounded list is one
+#: locked read of arbitrary size.
+BULK_APPROVE_MAX = 200
+
+
 class BulkApproveRequest(BaseModel):
-    ids: List[str] = Field(..., min_length=1)
+    ids: List[str] = Field(..., min_length=1, max_length=BULK_APPROVE_MAX)
+
+    @field_validator("ids")
+    @classmethod
+    def _uuids(cls, value: List[str]) -> List[str]:
+        """Every id is a UUID, refused here rather than reported as "does not exist".
+
+        A malformed id reaching the `IN` clause is a 500 from Postgres on a uuid column,
+        and a client that sent one has a bug worth naming.
+        """
+        cleaned: List[str] = []
+        for entry in value:
+            text = (entry or "").strip()
+            try:
+                cleaned.append(str(UUID(text)))
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError(f"{entry!r} is not a stock transfer id.") from None
+        return cleaned
 
 
 class BulkApproveSkipped(BaseModel):
@@ -116,6 +143,7 @@ class BulkApproveResult(BaseModel):
     cancelled a minute ago by somebody else is not a mistake worth refusing the other ten
     for, and the skipped list says exactly which and why.
     """
+
 
     approved: int
     skipped: List[BulkApproveSkipped] = []

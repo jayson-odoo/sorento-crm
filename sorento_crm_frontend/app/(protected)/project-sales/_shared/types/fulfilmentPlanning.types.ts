@@ -529,6 +529,17 @@ export interface ConfirmResult {
   review_state: string;
   inquiry_rows_created: number;
   exceptions: ConfirmException[];
+  /**
+   * The physical movements this confirmation raised, and how many it could NOT write
+   * (`PLAN-scm-cs-planning-uat.md` section E).
+   *
+   * The transfer write is best-effort on the server so a failure cannot fail a promise
+   * already made, but a movement nobody was told about is a movement nobody makes - so a
+   * non-zero `transfers_failed` is said out loud. Optional, because a revision confirmed
+   * against a server that predates the field carries neither.
+   */
+  transfers_written?: number | null;
+  transfers_failed?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
