@@ -186,8 +186,11 @@ export interface OrderInquiryWorklistRow {
   /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
   raised_at?: string | null;
   /**
-   * WHO told them, by name (`order_inquiries.raised_by` -> `users.name`). Never an id:
-   * the cell prints this as it comes. Null when the header names nobody.
+   * WHO told them, by name: the person who confirmed the supply revision that raised
+   * THIS row, falling back to the inquiry header for an amendment-born row that has no
+   * revision. Per row, never off the header alone - the header is re-stamped on every
+   * reconfirm, so it would name the latest reconfirmer beside an older row's own clock.
+   * Never an id: the cell prints this as it comes. Null when nobody was recorded.
    */
   raised_by_name?: string | null;
   verb: OrderInquiryVerb | string;
@@ -216,7 +219,7 @@ export interface OrderInquiryWorklistParams {
   state?: string;
   project_id?: string;
   supplier_id?: string;
-  /** The id of the user who raised the inquiry, picked off the summary's own list. */
+  /** The id of the person who raised the rows, picked off the summary's own list. */
   raised_by?: string;
   page?: number;
   limit?: number;

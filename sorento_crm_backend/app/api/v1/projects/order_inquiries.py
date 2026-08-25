@@ -104,7 +104,8 @@ def list_order_inquiry_worklist(
         None,
         description=(
             "One box. Matches the sales-order number, the item code, the product name or "
-            "code, the customer and the project."
+            "code, the customer, the project, and the name of the person who raised it "
+            "(or the front of their email address)."
         ),
     ),
     delivery_month: Optional[str] = Query(
@@ -119,7 +120,11 @@ def list_order_inquiry_worklist(
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(
-        None, description="The user who raised the inquiry. Their id, off the summary."
+        None,
+        description=(
+            "The person who raised the rows, by id, off the summary's own list. Matches a "
+            "row's supply revision confirmer, or its inquiry header when it has none."
+        ),
     ),
     sort: Optional[WorklistSort] = Query(
         None, description="Defaults to delivery_date. Nulls always last."
