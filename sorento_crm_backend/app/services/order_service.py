@@ -256,93 +256,92 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         # meaningful under any filter (it was the cross-product grand total that was
         # not). When the caller narrowed by product, the lines are restricted to it.
         _line_scope = OrderLine.product_id.in_(pids) if pids else None
-        if True:
-            prod_q = (
-                db.query(
-                    Product.product_code,
-                    func.count(func.distinct(Order.id)),
-                    func.sum(OrderLine.quantity).filter(delivered),
-                    func.sum(OrderLine.quantity).filter(pending),
-                    func.min(Order.actual_delivery_date).filter(delivered),
-                    func.max(Order.actual_delivery_date).filter(delivered),
-                    # exact per-product customer count - the presenter must not derive
-                    # it from a groups[] slice that the ceiling may have cut
-                    func.count(func.distinct(name_col)),
-                )
-                .select_from(OrderLine)
-                .join(Order, Order.id == OrderLine.order_id)
-                .join(Product, Product.id == OrderLine.product_id)
-                .outerjoin(Customer, _cust_on)
-                .filter(in_ids)
+        prod_q = (
+            db.query(
+                Product.product_code,
+                func.count(func.distinct(Order.id)),
+                func.sum(OrderLine.quantity).filter(delivered),
+                func.sum(OrderLine.quantity).filter(pending),
+                func.min(Order.actual_delivery_date).filter(delivered),
+                func.max(Order.actual_delivery_date).filter(delivered),
+                # exact per-product customer count - the presenter must not derive
+                # it from a groups[] slice that the ceiling may have cut
+                func.count(func.distinct(name_col)),
             )
-            if _line_scope is not None:
-                prod_q = prod_q.filter(_line_scope)
-            prod_q = _scoped(_scoped(prod_q, _p_order), _p_line)
-            prod_rows = (
-                prod_q.group_by(Product.product_code)
-                .order_by(Product.product_code.asc())
-                .limit(GROUPS_CEILING + 1)
-                .all()
-            )
-            summary["products"] = [
-                {
-                    "product_code": code,
-                    "order_count": int(oc or 0),
-                    "customer_count": int(cc or 0),
-                    "delivered_quantity": _plain_number(dq) or 0,
-                    "pending_quantity": _plain_number(pq) or 0,
-                    **({"delivered_from": pf.isoformat(), "delivered_to": pt.isoformat()}
-                       if (pf is not None and pt is not None) else {}),
-                }
-                for code, oc, dq, pq, pf, pt, cc in prod_rows[:GROUPS_CEILING]
-            ]
-            if len(prod_rows) > GROUPS_CEILING:
-                summary["products_truncated"] = True
+            .select_from(OrderLine)
+            .join(Order, Order.id == OrderLine.order_id)
+            .join(Product, Product.id == OrderLine.product_id)
+            .outerjoin(Customer, _cust_on)
+            .filter(in_ids)
+        )
+        if _line_scope is not None:
+            prod_q = prod_q.filter(_line_scope)
+        prod_q = _scoped(_scoped(prod_q, _p_order), _p_line)
+        prod_rows = (
+            prod_q.group_by(Product.product_code)
+            .order_by(Product.product_code.asc())
+            .limit(GROUPS_CEILING + 1)
+            .all()
+        )
+        summary["products"] = [
+            {
+                "product_code": code,
+                "order_count": int(oc or 0),
+                "customer_count": int(cc or 0),
+                "delivered_quantity": _plain_number(dq) or 0,
+                "pending_quantity": _plain_number(pq) or 0,
+                **({"delivered_from": pf.isoformat(), "delivered_to": pt.isoformat()}
+                   if (pf is not None and pt is not None) else {}),
+            }
+            for code, oc, dq, pq, pf, pt, cc in prod_rows[:GROUPS_CEILING]
+        ]
+        if len(prod_rows) > GROUPS_CEILING:
+            summary["products_truncated"] = True
 
-            # customer x product: the row the question is about. Same joins, same
-            # scope predicates, same delivered/pending clauses; grouped one level
-            # finer. Customer name resolved the same way as `customers` above.
-            grp_q = (
-                db.query(
-                    name_col,
-                    Product.product_code,
-                    func.count(func.distinct(Order.id)),
-                    func.sum(OrderLine.quantity).filter(delivered),
-                    func.sum(OrderLine.quantity).filter(pending),
-                    func.min(Order.actual_delivery_date).filter(delivered),
-                    func.max(Order.actual_delivery_date).filter(delivered),
-                )
-                .select_from(OrderLine)
-                .join(Order, Order.id == OrderLine.order_id)
-                .join(Product, Product.id == OrderLine.product_id)
-                .outerjoin(Customer, _cust_on)
-                .filter(in_ids)
+        # customer x product: the row the question is about. Same joins, same
+        # scope predicates, same delivered/pending clauses; grouped one level
+        # finer. Customer name resolved the same way as `customers` above.
+        grp_q = (
+            db.query(
+                name_col,
+                Product.product_code,
+                func.count(func.distinct(Order.id)),
+                func.sum(OrderLine.quantity).filter(delivered),
+                func.sum(OrderLine.quantity).filter(pending),
+                func.min(Order.actual_delivery_date).filter(delivered),
+                func.max(Order.actual_delivery_date).filter(delivered),
             )
-            if _line_scope is not None:
-                grp_q = grp_q.filter(_line_scope)
-            grp_q = _scoped(_scoped(grp_q, _p_order), _p_line)
-            grp_rows = (
-                grp_q.group_by(name_col, Product.product_code)
-                .order_by(name_col.asc().nulls_last(), Product.product_code.asc())
-                .limit(GROUPS_CEILING + 1)
-                .all()
-            )
-            summary["groups"] = [
-                {
-                    "customer": (cname or "").strip() or None,
-                    "product_code": code,
-                    "order_count": int(oc or 0),
-                    "delivered_quantity": _plain_number(dq) or 0,
-                    "pending_quantity": _plain_number(pq) or 0,
-                    **({"delivered_from": gf.isoformat(), "delivered_to": gt.isoformat()}
-                       if (gf is not None and gt is not None) else {}),
-                }
-                for cname, code, oc, dq, pq, gf, gt in grp_rows[:GROUPS_CEILING]
-            ]
-            if len(grp_rows) > GROUPS_CEILING:
-                # Only the ceiling tells us "more" - the exact remainder would be
-                # another COUNT over the groups; say that some were cut, honestly.
-                summary["groups_truncated"] = True
+            .select_from(OrderLine)
+            .join(Order, Order.id == OrderLine.order_id)
+            .join(Product, Product.id == OrderLine.product_id)
+            .outerjoin(Customer, _cust_on)
+            .filter(in_ids)
+        )
+        if _line_scope is not None:
+            grp_q = grp_q.filter(_line_scope)
+        grp_q = _scoped(_scoped(grp_q, _p_order), _p_line)
+        grp_rows = (
+            grp_q.group_by(name_col, Product.product_code)
+            .order_by(name_col.asc().nulls_last(), Product.product_code.asc())
+            .limit(GROUPS_CEILING + 1)
+            .all()
+        )
+        summary["groups"] = [
+            {
+                "customer": (cname or "").strip() or None,
+                "product_code": code,
+                "order_count": int(oc or 0),
+                "delivered_quantity": _plain_number(dq) or 0,
+                "pending_quantity": _plain_number(pq) or 0,
+                **({"delivered_from": gf.isoformat(), "delivered_to": gt.isoformat()}
+                   if (gf is not None and gt is not None) else {}),
+            }
+            for cname, code, oc, dq, pq, gf, gt in grp_rows[:GROUPS_CEILING]
+        ]
+        if len(grp_rows) > GROUPS_CEILING:
+            # Only the ceiling tells us "more" - the exact remainder would be
+            # another COUNT over the groups; say that some were cut, honestly.
+            summary["groups_truncated"] = True
         payload["summary"] = summary
     except Exception as exc:  # pragma: no cover - best-effort by contract
         logger.warning("stamp_order_summary skipped: %s", exc)
