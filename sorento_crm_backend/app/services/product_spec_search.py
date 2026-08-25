@@ -29,7 +29,7 @@ from sqlalchemy import cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from app.models.product import Brand, Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory, chat_searchable_products
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import resolve_classes_for_term, stored_class_labels
 from app.services.product_spec_registry import (
@@ -871,7 +871,7 @@ def search_specs(
         db.query(ProductSpecifications, Product, ProductCategory)
         .join(Product, Product.id == ProductSpecifications.product_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
-        .filter(Product.is_active.is_(True))
+        .filter(Product.is_active.is_(True), chat_searchable_products())
     )
     if product_ids is not None:
         candidate_query = candidate_query.filter(

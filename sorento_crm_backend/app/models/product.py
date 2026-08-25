@@ -173,6 +173,11 @@ class Product(Base, CompanyScopedMixin):
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
+    # Whether the chatbot may answer with this product. Placeholder rows that exist
+    # only for order / sample bookkeeping ("SORENTO", "SORENTOBAG") must stay
+    # is_active because orders reference them, so is_active is not the lever.
+    # Read through `chat_searchable_products()` below, never inline.
+    is_searchable = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     is_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
     # Discontinued-notification watermark. NULL = not yet reported by the batch cron
     # (cron-eligible while is_discontinued is True). Stamped with the run time when a
@@ -232,6 +237,35 @@ class Product(Base, CompanyScopedMixin):
         ),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
+    )
+
+
+def chat_searchable_products():
+    """The one predicate every chat-facing product read applies.
+
+    A product is a chat answer unless it says otherwise: its own `is_searchable`
+    is False, or it sits in a category with no class meaning
+    (`ProductCategory.is_searchable` False - MISC, PROJECT, SRTPART, VD ...).
+    Both halves fail closed only on an explicit False; anything else is today's
+    behaviour, so the response stays byte-identical for every searchable row.
+
+    The category half is a Core subquery on the table, not the ORM entity, on
+    purpose. Categories are per company and 498 products point at a category
+    row owned by the OTHER company; an ORM read of `ProductCategory` would be
+    company-scoped by the `do_orm_execute` listener, that row would vanish from
+    the subquery, and the product would slip back in. The rule follows the FK.
+    The product side stays an ordinary ORM column so the listener still scopes
+    every probe that uses this.
+    """
+    from sqlalchemy import and_, select
+
+    categories = ProductCategory.__table__
+    non_searchable_categories = select(categories.c.id).where(
+        categories.c.is_searchable.is_(False)
+    )
+    return and_(
+        Product.is_searchable.isnot(False),
+        Product.category_id.notin_(non_searchable_categories),
     )
 
 

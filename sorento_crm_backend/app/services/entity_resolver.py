@@ -44,7 +44,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.certificate import Certificate, CertificateRevision
-from app.models.product import Product
+from app.models.product import Product, chat_searchable_products
 from app.models.resources import Attachment, AttachmentType
 # Imported rather than redefined, so the value cannot drift between the two modules. A
 # draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
@@ -794,9 +794,12 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     # back to the caller's token after the SQL comparison.
     normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
     norm_to_token = dict(zip(normalized_tokens, tokens))
+    # A placeholder's exact code is still not an answer: that is the whole point
+    # of the flag (issue #300), so the filter sits on the exact tier too.
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
         .filter(_ws_insensitive_lower(Product.product_code).in_(list(norm_to_token.keys())))
+        .filter(chat_searchable_products())
         .all()
     )
     for pid, code, name, is_active in rows:
@@ -1756,7 +1759,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     code_norm = _ws_insensitive_lower(Product.product_code)
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(code_norm.ilike(prefix))
+        .filter(code_norm.ilike(prefix), chat_searchable_products())
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1764,7 +1767,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     if not rows:
         rows = (
             db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-            .filter(code_norm.ilike(substr))
+            .filter(code_norm.ilike(substr), chat_searchable_products())
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -2581,6 +2584,26 @@ EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
 
 
+def _chat_visible_product_ids(db: Session, product_ids: Iterable[str]) -> set[str]:
+    """The subset of `product_ids` the chatbot may answer with.
+
+    The exact / prefix / AND probes apply `chat_searchable_products()` inline.
+    The trigram and embedding tiers read raw SQL over tables the predicate does
+    not join, so they re-check their product hits here through the ORM - one
+    bounded IN query, company-scoped like every other product read - instead of
+    each carrying a hand-written copy of the rule.
+    """
+    ids = [str(p) for p in product_ids if p]
+    if not ids:
+        return set()
+    return {
+        str(pid)
+        for (pid,) in db.query(Product.id)
+        .filter(Product.id.in_(ids), chat_searchable_products())
+        .all()
+    }
+
+
 def _tier3_embedding_lookup(
     db: Session,
     token: str,
@@ -2645,6 +2668,9 @@ def _tier3_embedding_lookup(
 
     entity_type = _EMBEDDING_SOURCE_TYPES.get(str(top.source_type))
     if not entity_type:
+        return []
+    if entity_type == "product" and not _chat_visible_product_ids(db, [top.source_id]):
+        # A hidden placeholder is not an answer on the semantic tier either.
         return []
     canonical_code = top.source_key or str(top.source_id)
     return [
@@ -2750,7 +2776,12 @@ def _trgm_lookup(
                     ),
                     {"pn": norm, "n": TRGM_LIMIT, **scope_params},
                 ).all()
+            # A did-you-mean must not offer a placeholder the exact tier just
+            # refused to answer with.
+            visible = _chat_visible_product_ids(db, [r.id for r in rows])
             for r in rows:
+                if str(r.id) not in visible:
+                    continue
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
                     continue
@@ -3102,8 +3133,11 @@ def _find_entity_neighbours_with_data(
                 ),
                 {"pn": norm, "pid": input_id, "parent_id": parent_id, **scope_params},
             ).all()
+            visible = _chat_visible_product_ids(db, [r.id for r in graph_rows])
             for r in graph_rows:
                 cid = str(r.id)
+                if cid not in visible:
+                    continue
                 candidates[cid] = {
                     "value": r.product_code,
                     "display": r.product_name or r.product_code,
@@ -3275,7 +3309,11 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # like "USED FOR SRTWC6015-RL-UF" must NOT resolve that row for token SRTWC6015.
     blob = Product.product_code
     counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+    # Filtered BEFORE the per-token max is taken, so a hidden row can neither be
+    # returned nor set the bar the visible rows have to reach.
+    base = db.query(
+        Product.id, Product.product_code, Product.product_name, Product.is_active
+    ).filter(chat_searchable_products())
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []

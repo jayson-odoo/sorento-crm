@@ -62,6 +62,9 @@ export interface Product {
   reorder_quantity: number;
   item_type?: ProductItemType | null;
   is_active: boolean;
+  // Whether the chatbot may answer with this product. Independent of is_active:
+  // an order placeholder stays active and is still not a chat answer.
+  is_searchable: boolean;
   is_discontinued: boolean;
   created_at: Date;
   updated_at: Date;
@@ -115,6 +118,9 @@ export interface ProductCategory {
   description?: string | null;
   parent_category_id?: string | null;
   is_active: boolean;
+  // False for categories with no class meaning (MISC, PROJECT ...): every
+  // product in them is hidden from the chatbot whatever its own flag says.
+  is_searchable?: boolean;
   display_order: number;
   created_at: Date;
   updated_at: Date;
@@ -196,7 +202,27 @@ export interface ProductFormData {
   reorder_quantity: number;
   item_type?: ProductItemType | null;
   is_active: boolean;
+  is_searchable: boolean;
 }
+
+/**
+ * What the chatbot actually does with a product: hidden by its own flag, hidden
+ * because its whole category is, or shown. One place, so the list badge, the
+ * detail badge and the bulk dialog cannot disagree about it.
+ */
+export function chatSearchState(
+  product: Pick<ProductListItem, 'is_searchable' | 'category'>,
+): 'shown' | 'hidden' | 'hidden-by-category' {
+  if (product.is_searchable === false) return 'hidden';
+  if (product.category?.is_searchable === false) return 'hidden-by-category';
+  return 'shown';
+}
+
+export const CHAT_SEARCH_LABEL: Record<ReturnType<typeof chatSearchState>, string> = {
+  shown: 'Shown',
+  hidden: 'Hidden',
+  'hidden-by-category': 'Hidden (category)',
+};
 
 // Product Filters (for filtering state)
 export interface ProductFilters {
@@ -349,6 +375,8 @@ export interface ProductListItem {
   is_active: boolean;
   // Discontinued flag (independent of is_active). Surfaced by ProductResponse.
   is_discontinued?: boolean;
+  // Chat-search flag (independent of is_active). Surfaced by ProductResponse.
+  is_searchable?: boolean;
   // True when the product is a variant of another (variant_of_id IS NOT NULL).
   is_variant?: boolean;
   // Human-readable parent reference (null for base products).

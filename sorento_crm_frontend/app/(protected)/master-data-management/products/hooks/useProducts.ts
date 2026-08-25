@@ -29,6 +29,7 @@ import {
   resetVariantAuto,
   PRODUCT_NEIGHBOURS_PATH,
   type GetProductsParams,
+  type ProductBulkUpdates,
 } from '../services/productService';
 import type {
   Product,
@@ -326,11 +327,12 @@ export function useBulkUpdateProducts() {
       updates,
     }: {
       ids: string[];
-      updates: Partial<ProductFormData>;
+      updates: ProductBulkUpdates;
     }) => bulkUpdateProducts(ids, updates),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Products updated successfully', {
+      queryClient.invalidateQueries({ queryKey: ['product'] });
+      toast.success(`${result.updated_count} product${result.updated_count === 1 ? '' : 's'} updated`, {
         position: 'top-center',
       });
     },

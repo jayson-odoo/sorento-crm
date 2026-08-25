@@ -152,6 +152,9 @@ class ProductBase(BaseModel):
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     is_active: bool = True
+    # Whether the chatbot may answer with this product. Independent of is_active:
+    # an order placeholder stays active and is still not a chat answer (#300).
+    is_searchable: bool = True
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -188,6 +191,7 @@ class ProductUpdate(BaseModel):
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     is_active: Optional[bool] = None
+    is_searchable: Optional[bool] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -219,7 +223,11 @@ class ProductCategorySimple(BaseModel):
     id: str
     category_code: str
     category_name: str
-    
+    # A category with no class meaning hides every product in it from the chatbot
+    # (#300). Carried on the product so the UI can show the EFFECTIVE visibility,
+    # not just the product's own flag.
+    is_searchable: bool = True
+
     class Config:
         from_attributes = True
 
@@ -498,6 +506,18 @@ BULK_IMPORT_MAX_ROWS_PER_REQUEST = 50_000
 class BulkDeleteProductsRequest(BaseModel):
     """Request schema for bulk delete. Body: { ids: string[] }."""
     ids: List[str]
+
+
+class ProductBulkUpdates(BaseModel):
+    """What a bulk edit may change. One field today (#300); the shape leaves room
+    for the next one without a second endpoint."""
+    is_searchable: bool
+
+
+class BulkUpdateProductsRequest(BaseModel):
+    """Request schema for bulk update. Body: { ids: string[], updates: {...} }."""
+    ids: List[str] = Field(min_length=1)
+    updates: ProductBulkUpdates
 
 
 class BulkImportProductsRequest(BaseModel):

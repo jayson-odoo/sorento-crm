@@ -449,13 +449,16 @@ export async function getProductPurchaseHistory(
   return response.json();
 }
 
+/** What `PUT /products/bulk` accepts: one field today, the chat-search flag. */
+export type ProductBulkUpdates = Pick<ProductFormData, 'is_searchable'>;
+
 /**
- * Bulk update products (e.g., status change)
+ * Bulk update products: the same edit applied to every selected row.
  */
 export async function bulkUpdateProducts(
   ids: string[],
-  updates: Partial<ProductFormData>,
-): Promise<void> {
+  updates: ProductBulkUpdates,
+): Promise<{ updated_count: number }> {
   const response = await apiFetch('/api/v1/master-data/products/bulk', {
     method: 'PUT',
     headers: {
@@ -465,11 +468,9 @@ export async function bulkUpdateProducts(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      message: 'Failed to update products',
-    }));
-    throw new Error(error.message || 'Failed to update products');
+    throw new Error(await extractApiError(response, 'Failed to update products'));
   }
+  return response.json();
 }
 
 /**
