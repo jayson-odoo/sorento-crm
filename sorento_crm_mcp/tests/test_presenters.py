@@ -1241,3 +1241,35 @@ def test_qs_m8c_date_forms_match_the_js_fmtts():
     assert _sl_date("2026-03-02T09:05:07") == "02/03/2026 09:05:07"  # non-midnight keeps the time
     assert _sl_date("garbage") is None and _sl_date("") is None and _sl_date(None) is None
     assert _sl_date("0999-01-01") == "01/01/0999"
+
+
+# --- Review 3 (F-A, F-B): the two gates that survived a mutant --------------------------------
+
+def test_qs_m12b_one_customer_two_products_prints_no_detail_lines():
+    """Plan §3b taken literally (`len(groups) > 1`) would print each header followed by a verbatim
+    duplicate of itself: one customer buying two products carries two groups. The shipped gate is
+    `groups > 1 AND customer_count > 1` - this is the shape that proves the second half."""
+    s = {**_SUM_M1, "products": [
+        {"product_code": "SRTWC287-ARL", "delivered_quantity": 6, "pending_quantity": 0},
+        {"product_code": "SRTWC8605", "delivered_quantity": 48, "pending_quantity": 12},
+    ], "groups": [
+        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC287-ARL", "order_count": 1, "delivered_quantity": 6, "pending_quantity": 0},
+        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605", "order_count": 3, "delivered_quantity": 48, "pending_quantity": 12},
+    ]}
+    lines = summary_lines(s, 3)
+    assert lines == [
+        "*ECO WORLD SDN BHD · SRTWC287-ARL:* *6 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)",
+        "*ECO WORLD SDN BHD · SRTWC8605:* *48 pcs delivered* · 12 pcs pending",
+    ]
+    assert not any(l.startswith("ECO WORLD SDN BHD:") for l in lines)
+
+
+def test_qs_m15b_a_dropped_first_product_does_not_take_the_span_with_it():
+    """§QS-O8f: the span is keyed on the first RENDERED line, not on index 0."""
+    s = {**_SUM_M1, "products": [
+        {"product_code": {}, "delivered_quantity": 5},                       # unnameable -> dropped
+        {"product_code": "OK", "delivered_quantity": 1, "pending_quantity": 0},
+    ]}
+    lines = summary_lines(s, 3)
+    assert lines == ["*ECO WORLD SDN BHD · OK:* *1 pcs delivered* (3 DOs, 02/03/2026 – 15/07/2026)"]
+    assert "(3 DOs, " in lines[0]
