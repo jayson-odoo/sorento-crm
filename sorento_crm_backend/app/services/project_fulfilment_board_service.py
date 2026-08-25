@@ -433,6 +433,9 @@ class FulfilmentBoardService:
         # makes "this line's OWN site pool" a fact off `warehouses.pool_warehouse_id` rather
         # than a comparison of code prefixes - the naming coincidence is not the rule.
         self._pool_of: Dict[str, str] = {}
+        # The warehouses `_pressure` / `_incoming` / `_po_open` were actually asked about. What
+        # tells "counted, and the answer is zero" from "never looked" for a cited location.
+        self._counted_warehouses: set = set()
         # (product, warehouse) -> open PURCHASE-order balance there, netted for the
         # order-inquiry rows already placed on those lines. Information beside the decision:
         # `available_qty` stays on hand - SO + SPO, because a PO reaches a project line only
@@ -1552,6 +1555,13 @@ class FulfilmentBoardService:
         }
         warehouse_ids |= set(self._pool_warehouses)
         self._pool_of = self._pool_by_warehouse()
+        # WHICH warehouses the three batched reads below were actually asked about. A location
+        # OUTSIDE this set has no fact and no absence of one: nothing looked. `_cited_locations`
+        # emits exactly such a row - a cross-group donor a Borrow names is discovered from the
+        # engine's components, AFTER the read set was fixed - and defaulting it to zero would
+        # print "SO qty 0, PO qty 0, Available = on hand" for a warehouse the whole book owes
+        # against. It keeps its nulls instead, and the table prints a dash.
+        self._counted_warehouses = set(warehouse_ids)
         # Every stock fact the board states comes from these reads and no other, so the
         # availability printed beside a proposal is the availability the proposal was computed
         # from.
@@ -2805,60 +2815,76 @@ class FulfilmentBoardService:
         DC1. It is INFORMATION ONLY - `available_qty` stays `on hand - SO + SPO` - because a
         purchase order reaches a project line only through a link (PLAN section I).
 
-        Three rules, each with its own reason:
+        A line counts as ON ORDER on the same four tests every other on-order reader in this
+        codebase applies (`allocation_suggestion_service`, `loading_plan_service`,
+        `scm.on_order_v`, and `project_order_inquiry_service._open_po_lines_for_product`, which
+        is the reader that decides what may be LINKED):
 
+          * `line_status = 'open'` and a balance still to come. A line fully received has
+            nothing left to report;
+          * `purchase_orders.status IN ('active', 'partial')`. `decision_service` writes a
+            `draft_recommendation` PO per supplier per run, and a recommendation nobody has
+            confirmed is not on order - `on_order_v` leaves it out for exactly that reason
+            (M4-D5), so counting it here would put a proposal on screen as a purchase;
           * an SPO document is not a PO ("those are SPO, not PO" - the captain, live-testing).
             It is already counted as `spo_qty`, so counting it here would state one arrival
             twice. Excluded by both the source stamp and the number, because the two feeds
-            that write the table stamp it differently;
-          * a line whose ordered quantity is fully received has no balance to report;
-          * what an order-inquiry row already claims is netted OFF, per line and floored at
-            zero - the same arithmetic `project_order_inquiry_service._open_po_lines_for_product`
-            does, so the figure here and the quantity that dialog offers cannot disagree.
+            that write the table stamp it differently.
+
+        What an order-inquiry row already claims is then netted OFF, per line and floored at
+        zero, which is `_open_po_lines_for_product`'s own arithmetic - so the figure here and
+        the quantity that dialog offers cannot disagree.
+
+        The placements are materialised by a TOP-LEVEL query first and netted in Python. As a
+        correlated subquery they would join in un-scoped: `CompanyScopedMixin` filters the
+        entity a query is rooted at, and a subquery rooted at `OrderInquiryRow` inside a query
+        rooted at `PurchaseOrderLine` is not the root. Another company's placement would then
+        net down this company's balance.
 
         Placements are read off `order_inquiry_rows.po_line_id`, which is where a placement
         lives today; PLAN section I's `projects.order_inquiry_links` is its successor.
 
-        ONE query for the whole board, not one per location.
+        Two queries for the whole board, never one per location.
         """
         products = list(product_ids)
         warehouses = list(warehouse_ids)
         if not products or not warehouses:
             return {}
-        placed = (
-            self.db.query(
-                OrderInquiryRow.po_line_id.label("po_line_id"),
-                func.sum(OrderInquiryRow.qty).label("qty"),
+        placed: Dict[str, Decimal] = {
+            str(po_line_id): _dec(qty)
+            for po_line_id, qty in (
+                self.db.query(OrderInquiryRow.po_line_id, func.sum(OrderInquiryRow.qty))
+                .filter(
+                    OrderInquiryRow.state == INQUIRY_PLACED,
+                    OrderInquiryRow.po_line_id.isnot(None),
+                )
+                .group_by(OrderInquiryRow.po_line_id)
+                .all()
             )
-            .filter(
-                OrderInquiryRow.state == INQUIRY_PLACED,
-                OrderInquiryRow.po_line_id.isnot(None),
-            )
-            .group_by(OrderInquiryRow.po_line_id)
-            .subquery()
-        )
+        }
         rows = (
             self.db.query(
+                PurchaseOrderLine.id,
                 PurchaseOrderLine.product_id,
                 PurchaseOrderLine.warehouse_id,
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
-                placed.c.qty,
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .outerjoin(placed, placed.c.po_line_id == PurchaseOrderLine.id)
             .filter(
                 PurchaseOrderLine.product_id.in_(products),
                 PurchaseOrderLine.warehouse_id.in_(warehouses),
+                PurchaseOrderLine.line_status == "open",
                 PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                PurchaseOrder.status.in_(("active", "partial")),
                 func.coalesce(PurchaseOrder.source_system, "") != SPO_HISTORY_SOURCE,
                 PurchaseOrder.po_number.notlike("SPO-%"),
             )
             .all()
         )
         out: Dict[Tuple[str, str], Decimal] = defaultdict(lambda: _ZERO)
-        for product_id, warehouse_id, ordered, received, taken in rows:
-            left = _dec(ordered) - _dec(received) - _dec(taken)
+        for line_id, product_id, warehouse_id, ordered, received in rows:
+            left = _dec(ordered) - _dec(received) - placed.get(str(line_id), _ZERO)
             if left > _ZERO:
                 out[(str(product_id), str(warehouse_id))] += left
         return dict(out)
@@ -3106,23 +3132,29 @@ class FulfilmentBoardService:
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
         stated = location is not None and warehouse_id is not None
-        # A STATED location with no `stock` row at all holds ZERO, and says so (AC-B2). The
-        # last upload counted none there, which is a fact; "not stated" is the answer to a
-        # different question and it is reserved for the row below, whose sales order names no
-        # warehouse for anybody to count.
+        # COUNTED: this warehouse was in the set the batched reads were asked about, so an
+        # absent row is an answer of zero rather than the absence of a question (AC-B2) - the
+        # last upload counted none there, which is a fact. A location that was NOT asked about
+        # keeps its nulls: `_cited_locations` discovers a cross-group Borrow donor off the
+        # engine's own components, after the read set was fixed, and zeroing it would print
+        # "SO qty 0, Available = on hand" for a warehouse the whole book owes against.
+        counted = stated and warehouse_id in self._counted_warehouses
+        # `_levels` / `_free` / `_held` are read by PRODUCT across every warehouse, so an absent
+        # key there is a real zero for any stated location, cited ones included. The three reads
+        # below are warehouse-filtered, and that is the whole distinction `counted` draws.
         if stated and on_hand is None:
             on_hand, reserved = _ZERO, _ZERO
         # Same rule, and the same default `qty_owed_all_orders` below has always used: a
         # location nothing is owed at owes 0. The two said different things about one number.
-        owed, _covered = self._pressure.get(key, (_ZERO, _ZERO) if stated else (None, None))
-        incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if stated else None
+        owed, _covered = self._pressure.get(key, (_ZERO, _ZERO) if counted else (None, None))
+        incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if counted else None
         # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
         # water. It may be NEGATIVE and is never clamped - "oversold here by 632" is the signal
         # a planner needs, and a floor of zero would report it as "nothing left", which is a
         # different and less useful fact.
         available = (
             (on_hand or _ZERO) - (owed or _ZERO) + (incoming_qty or _ZERO)
-            if stated and on_hand is not None
+            if counted and on_hand is not None
             else None
         )
         return {
@@ -3164,21 +3196,21 @@ class FulfilmentBoardService:
             #: sales order, not merely the ones on this board. The number that stops "478 free"
             #: being read as "478 available to me" when 47,009 is owed.
             "qty_owed_all_orders": (
-                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[0]) if stated else None
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[0]) if counted else None
             ),
             #: Of that, the part already covered by a confirmed decision, so committed pressure
             #: can be told from uncommitted pressure.
             "qty_owed_confirmed": (
-                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if stated else None
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if counted else None
             ),
             #: Still to arrive at this location: allocated on a supply PO, not yet received.
-            "qty_incoming": qty_text(incoming_qty) if stated else None,
+            "qty_incoming": qty_text(incoming_qty) if counted else None,
             # ---- AutoCount's Stock Status vocabulary, which is what the planner reads ----
             #: "SO Qty": everything the book still owes here. The same number as
             #: `qty_owed_all_orders`, under the word the captain uses.
             "so_qty": qty_text(owed) if stated and owed is not None else None,
             #: "PO Qty" in AutoCount is the supplier order; in Sorento that is the SPO.
-            "spo_qty": qty_text(incoming_qty) if stated else None,
+            "spo_qty": qty_text(incoming_qty) if counted else None,
             #: "Available Qty": on hand - SO + SPO. Signed.
             "available_qty": qty_text(available) if available is not None else None,
             #: Open PURCHASE-order balance here, less what an order-inquiry row already
@@ -3186,7 +3218,7 @@ class FulfilmentBoardService:
             #: order reaches a project line through a link, never by sitting at the location
             #: (PLAN section I).
             "po_open_qty": (
-                qty_text(self._po_open.get(key, _ZERO)) if stated else None
+                qty_text(self._po_open.get(key, _ZERO)) if counted else None
             ),
             "incoming": [
                 {
@@ -3197,7 +3229,7 @@ class FulfilmentBoardService:
                 for ref in sorted(
                     incoming, key=lambda ref: (ref.arrival_date is None, ref.arrival_date)
                 )
-            ] if stated else [],
+            ] if counted else [],
             "qty_proposed_reserve": self._proposed_text(rows, RESERVE),
             "qty_proposed_incoming": self._proposed_text(rows, TIMELY_SPO),
             "qty_proposed_buy": self._proposed_text(rows, BUY),

@@ -9,7 +9,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-A4 The stock documents popover has no "On hand - SO + SPO = Available" header line.
 
 ## B. Location table
-- AC-B1 For a BRW-BB line the table lists BRW-BB, then MWH-BB / DC1-BB / WH3-BB / RSW-BB, then BRW / MWH / DC1 / WH3 / RSW, each with a Where tag and a subtotal per tag.
+- AC-B1 For a BRW-BB line the table lists BRW-BB, then MWH-BB / DC1-BB / WH3-BB / RSW-BB, then BRW / MWH / DC1 / WH3 / RSW, each with a Where tag and a subtotal per tag with more than one row (a one-row section IS its own subtotal, and printing it twice under two words says nothing).
 - AC-B2 A row with no stock upload shows 0, not "Not stated".
 - AC-B3 The Taken column sums exactly to the quantity needed when the line is fully covered; pools not drawn on show 0.
 

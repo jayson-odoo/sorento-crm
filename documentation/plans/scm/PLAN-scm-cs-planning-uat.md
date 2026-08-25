@@ -54,10 +54,14 @@ drops Reserved (nothing else on the screen read it). AC-B1/B2/B3 pass. Measured 
 SRT382-6-DIY on SO415472 lists BRW-BB, the four -BB siblings and the five pools with BRW
 leading (pool BRW: on hand 1728, available 1716, PO qty 0); CWCY605 on SO324132 reads Taken
 454 / 267 / 211 at DC1-BB / MWH-BB / WH3-BB, 0 everywhere else, summing to the 932 needed.
-**A section of ONE row still prints no subtotal** (a single-row Own section is its own
-subtotal, which is the rule already shipped), and `po_open_qty` counts every non-SPO PO line
-with an open balance, `draft_recommendation` documents included - the plan's wording is "open
-PO balance", and the placement reader's stricter status gate is about what may be LINKED.
+**A section of ONE row still prints no subtotal** (a single-row section IS its own subtotal,
+which is the rule already shipped; AC-B1 now says so). `po_open_qty` counts a line on the same
+four tests every other on-order reader applies - `line_status = 'open'`, a balance still to
+come, and `purchase_orders.status IN ('active', 'partial')`, SPO documents excluded - so a
+`draft_recommendation` PO, which `decision_service` writes one of per supplier per run and
+`on_order_v` leaves out, never reads as a purchase. A location OUTSIDE the board's fetched
+warehouse set (only a cited cross-group Borrow donor can be one) keeps NULLs rather than
+zeroes, because nothing looked there and a zero would claim it did.
 
 **AC-A1 does NOT hold and the cause is not the ladder**:
 SRT382-6-DIY is classified DEALER HOT-SELLING at BRW, so PLAN 3.3a keeps the pool for retail
