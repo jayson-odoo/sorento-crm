@@ -32,6 +32,44 @@ class TicketCommentCreate(BaseModel):
         return seen
 
 
+class TicketCommentExternalCreate(BaseModel):
+    """A comment written by an integration (n8n `sub-add-comment-respond`) on a
+    CONTACT. Saved in the CRM first, then mirrored to the Respond inbox.
+
+    Mentions arrive as Respond user ids because that is what the flow holds;
+    the route maps them onto CRM users where a mapping exists and still tags
+    the raw id in the mirror either way.
+    """
+
+    body: str = Field(..., min_length=1, max_length=5000)
+    mentioned_respond_user_ids: list[str] = Field(default_factory=list)
+    # Shown as the comment's author in the CRM thread (e.g. "Sorento Bot").
+    # Falls back to the act-as user's name when absent.
+    author_name: Optional[str] = Field(None, max_length=120)
+
+    @field_validator("body")
+    @classmethod
+    def _body_is_not_blank(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("A comment cannot be empty.")
+        return cleaned
+
+    @field_validator("mentioned_respond_user_ids", mode="before")
+    @classmethod
+    def _dedupe_respond_mentions(cls, value) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)):
+            value = [value]
+        seen: list[str] = []
+        for raw in value:
+            rid = str(raw).strip() if raw is not None else ""
+            if rid and rid.lower() not in ("null", "none", "undefined") and rid not in seen:
+                seen.append(rid)
+        return seen
+
+
 class TicketCommentResponse(BaseModel):
     """One rendered comment. No CRM user ids beyond the row's own id: the UI
     renders names, never uuids (cursor rule)."""
@@ -46,6 +84,13 @@ class TicketCommentResponse(BaseModel):
     mentioned_names: list[str] = Field(default_factory=list)
     source: Literal["crm", "respond"] = "crm"
     created_at: datetime
+
+
+class TicketCommentExternalResponse(TicketCommentResponse):
+    """The stored comment plus the Respond ids that matched no CRM user, so
+    the flow can see when a mention reached Respond but nobody in the CRM."""
+
+    unmapped_respond_user_ids: list[str] = Field(default_factory=list)
 
 
 class TicketCommentIngestRequest(BaseModel):
