@@ -295,6 +295,17 @@ above:
   column and the engine's decision cannot differ. Why it had to ship: all 715 open SPO lines
   (39,110 units) carry a past `expected_date`, the oldest 2024-06-28, and nothing refreshes
   them, so counted as supply they suppress real purchases for ever on two-year-old promises.
+- **What the stale rule costs on the dev copy, measured before re-applying: `scm.on_order_v`
+  goes from 292 rows / 39,110 units to ZERO.** Every one of those units is an unshipped SPO
+  line whose promised date has passed, and there is no shipment-backed allocation with a
+  balance on that database at all. That is the honest number and it is why the rule is worth
+  shipping, but it is also a visible change to every net position, so the captain confirms
+  the ruling before the re-apply. **AC-K3 is affected**: SPO-2026/08-0061's lines are dated
+  2026-08-01, which is in the past, so its quantity does NOT appear in `on_order_v` under
+  this rule. Either the UAT fixture (section J) restates that document with a live date, or
+  AC-K3 is re-worded to say "an SPO whose promised date has not passed". If the ruling is
+  rejected, the change to undo is one `AND` clause in the view and
+  `spo_supply.not_stale_clause`; nothing else moves.
 - **The claim gained an SPO side, `scm.order_link_claim.spo_allocation_id`.** Clearing
   `po_line_id` was not enough: 12,393 claims naming 2,989 sales orders would have been
   permanently unresolvable, `sales_order_service.with_links` would have shown every one of
