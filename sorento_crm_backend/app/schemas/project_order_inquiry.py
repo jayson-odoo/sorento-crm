@@ -140,9 +140,13 @@ class OrderInquiryWorklistRow(BaseModel):
     agent_label: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
-    # WHO told purchasing to buy it, by name (`order_inquiries.raised_by` -> `users`).
-    # Never the id: the column is printed as it comes. Null when the header names nobody
-    # (a record written before the stamp existed) or the user has since been removed.
+    # WHO told purchasing to buy THIS ROW, by name: the confirmer of the supply revision
+    # that raised it (`supply_decision_id` -> `so_supply_decisions.confirmed_by`), falling
+    # back to the inquiry header's `raised_by` for an amendment-born row that has no
+    # revision. Never the header for a row that HAS one: the header is re-stamped on every
+    # reconfirm, so it would print the latest reconfirmer beside an older row's own clock.
+    # Never the id either - the column is printed as it comes. Null when nobody was
+    # recorded, or the user has since been removed.
     raised_by_name: Optional[str] = None
     verb: str
     note: Optional[str] = None
@@ -193,9 +197,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     by_month: List[OrderInquiryMonthTotal] = []
     suppliers: List[OrderInquiryFacet] = []
     projects: List[OrderInquiryFacet] = []
-    #: The people who have raised at least one of the rows in view - the "Raised by"
-    #: filter's own list. Never every user in the company: a picker whose entries mostly
-    #: return nothing is a picker nobody uses twice.
+    #: The people who raised at least one of the rows in view, by the same rule the rows
+    #: themselves use (their revision's confirmer, the header only when there is no
+    #: revision) - the "Raised by" filter's own list. Never every user in the company: a
+    #: picker whose entries mostly return nothing is a picker nobody uses twice.
     raised_by: List[OrderInquiryFacet] = []
 
 

@@ -53,6 +53,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
@@ -199,11 +200,22 @@ _RAISED_AT = OrderInquiryRow.created_at
 _RAISED_DAY = cast(
     func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", _RAISED_AT)), Date
 )
-# WHO told purchasing to buy it: `order_inquiries.raised_by`, resolved to the person's
-# NAME. Off the HEADER rather than the row, because that is where the stamp is - a row
-# carries `actioned_by`, which is purchasing's answer, not CS's instruction. The id never
-# leaves the service: a screen printing a UUID at a buyer is a screen they cannot use, so
-# the filter takes an id and every read gives a name.
+# WHO told purchasing to buy THIS ROW. Per ROW, not per header, and the difference is the
+# whole point: the header's `raised_by` is RE-STAMPED on every reconfirm (AC-H4), so
+# reading it here would print the latest reconfirmer's name beside an older row's own
+# clock - a row A raised on 12 Aug would read "B, 12/08 10:25" the moment B reconfirmed
+# one other line. The row's own answer is the revision that raised it:
+# `supply_decision_id` -> `so_supply_decisions.confirmed_by`, the same person the header
+# stamps at that moment (PLAN section 3.H).
+#
+# An amendment-born row (`ProjectOrderInquiryService._write`) carries NO decision at all -
+# it is raised off the amendment, not off a supply revision - so it falls back to its
+# header's `raised_by`, which for that inquiry is the person who published the amendment
+# and is never re-stamped (an amendment raises its OWN inquiry).
+#
+# The id never leaves the service: a screen printing a UUID at a buyer is a screen they
+# cannot use, so the filter takes an id and every read gives a name.
+_RAISED_BY_ID = func.coalesce(SOSupplyDecision.confirmed_by, OrderInquiry.raised_by)
 _RAISED_BY_NAME = User.name
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
@@ -350,10 +362,15 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
-            # Who raised the inquiry. Outer, on the primary key, so a header stamped
-            # before the column existed (or one whose user has since been removed)
-            # still brings its rows to the list.
-            .outerjoin(User, User.id == OrderInquiry.raised_by)
+            # The revision that raised this row, and the person who confirmed it. Both
+            # OUTER and both on a primary key, so a row with no decision (the amendment
+            # path) or a decision whose user has since been removed still reaches the
+            # list rather than dropping out of it.
+            .outerjoin(
+                SOSupplyDecision,
+                SOSupplyDecision.id == OrderInquiryRow.supply_decision_id,
+            )
+            .outerjoin(User, User.id == _RAISED_BY_ID)
             .outerjoin(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
@@ -400,9 +417,10 @@ class OrderInquiryWorklistService:
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
-            # By id, off the header. The screen picks the person from the summary's own
-            # list, so this never has to guess which "Cindy" was meant.
-            base = base.filter(OrderInquiry.raised_by == raised_by)
+            # By id, off the ROW's own raiser (its revision's confirmer, the header only
+            # when there is no revision). The screen picks the person from the summary's
+            # own list, so this never has to guess which "Cindy" was meant.
+            base = base.filter(_RAISED_BY_ID == raised_by)
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -775,10 +793,10 @@ class OrderInquiryWorklistService:
         rows = (
             self._base(**filters)
             .with_entities(
-                OrderInquiry.raised_by, User.name, func.count(OrderInquiryRow.id)
+                _RAISED_BY_ID, User.name, func.count(OrderInquiryRow.id)
             )
-            .filter(OrderInquiry.raised_by.isnot(None))
-            .group_by(OrderInquiry.raised_by, User.name)
+            .filter(_RAISED_BY_ID.isnot(None))
+            .group_by(_RAISED_BY_ID, User.name)
             .order_by(User.name.asc().nulls_last())
             .all()
         )

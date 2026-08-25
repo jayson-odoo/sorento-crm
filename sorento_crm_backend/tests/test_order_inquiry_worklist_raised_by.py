@@ -14,15 +14,16 @@ Four things are pinned here, and each one is a way it would silently stop workin
 * the `raised_by` filter narrows the list, and the summary offers ONLY users who have
   actually raised something (a picker listing every user in the company is a picker whose
   entries mostly return nothing);
-* a RECONFIRM re-stamps the header, so the name on the screen is the person who last said
-  so rather than whoever happened to confirm the first revision.
+* a RECONFIRM re-stamps the HEADER (AC-H4), while each ROW keeps naming the revision that
+  actually raised it. Those are two different facts and the screen shows both: reading the
+  re-stamped header per row would print the latest reconfirmer beside an older row's own
+  clock ("B, 12/08 10:25" for a row A raised on 12 Aug).
 """
 from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -30,12 +31,15 @@ from sqlalchemy import text
 from app.models.order import Customer, SalesOrder
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    DECISION_ACTIVE,
+    DECISION_SUPERSEDED,
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.user import User
 
@@ -153,7 +157,48 @@ def _inquiry(
     return inquiry
 
 
-def _row(db, company_id: str, inquiry: OrderInquiry, line: ProjectSalesOrderLine, item_code: str):
+def _decision(
+    db,
+    company_id: str,
+    order: ProjectSalesOrder,
+    *,
+    revision_no: int,
+    confirmed_by: str,
+    confirmed_at: datetime,
+    supersedes: SOSupplyDecision | None = None,
+) -> SOSupplyDecision:
+    """One confirmed supply revision. The person on it is the person the rows it raised
+    were raised BY - the header stamps the same person at the same moment."""
+    if supersedes is not None:
+        # One ACTIVE revision per order, enforced by a partial unique index - the same
+        # rule the confirm path obeys, so the fixture has to obey it too.
+        supersedes.state = DECISION_SUPERSEDED
+        supersedes.superseded_at = confirmed_at
+        db.flush()
+    decision = SOSupplyDecision(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=order.id,
+        revision_no=revision_no,
+        state=DECISION_ACTIVE,
+        line_snapshots=[],
+        confirmed_by=confirmed_by,
+        confirmed_at=confirmed_at,
+    )
+    db.add(decision)
+    db.flush()
+    return decision
+
+
+def _row(
+    db,
+    company_id: str,
+    inquiry: OrderInquiry,
+    line: ProjectSalesOrderLine,
+    item_code: str,
+    *,
+    decision: SOSupplyDecision | None = None,
+):
     row = OrderInquiryRow(
         id=_uid(),
         company_id=company_id,
@@ -164,6 +209,7 @@ def _row(db, company_id: str, inquiry: OrderInquiry, line: ProjectSalesOrderLine
         delivery_date=date(2026, 3, 2),
         verb=IV_ORDER,
         state=INQUIRY_RAISED,
+        supply_decision_id=decision.id if decision else None,
     )
     db.add(row)
     db.flush()
@@ -224,7 +270,22 @@ def _seed(db, company_id: str) -> dict:
         raised_by=cindy.id,
         raised_at=datetime(2026, 8, 25, 0, 42),
     )
-    cindy_row = _row(db, company_id, cindy_inquiry, cindy_line, cindy_product.product_code)
+    cindy_decision = _decision(
+        db,
+        company_id,
+        cindy_order,
+        revision_no=1,
+        confirmed_by=cindy.id,
+        confirmed_at=datetime(2026, 8, 25, 0, 42),
+    )
+    cindy_row = _row(
+        db,
+        company_id,
+        cindy_inquiry,
+        cindy_line,
+        cindy_product.product_code,
+        decision=cindy_decision,
+    )
 
     johnson_order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
     johnson_product = _product(db, f"ZZT-M310CRPJ-{_uid()[:6]}")
@@ -236,8 +297,21 @@ def _seed(db, company_id: str) -> dict:
         raised_by=johnson.id,
         raised_at=datetime(2026, 8, 22, 6, 10),
     )
+    johnson_decision = _decision(
+        db,
+        company_id,
+        johnson_order,
+        revision_no=1,
+        confirmed_by=johnson.id,
+        confirmed_at=datetime(2026, 8, 22, 6, 10),
+    )
     johnson_row = _row(
-        db, company_id, johnson_inquiry, johnson_line, johnson_product.product_code
+        db,
+        company_id,
+        johnson_inquiry,
+        johnson_line,
+        johnson_product.product_code,
+        decision=johnson_decision,
     )
 
     db.commit()
@@ -250,6 +324,7 @@ def _seed(db, company_id: str) -> dict:
         "cindy_order": cindy_order,
         "cindy_line": cindy_line,
         "cindy_inquiry": cindy_inquiry,
+        "cindy_decision": cindy_decision,
         "cindy_product": cindy_product,
     }
 
@@ -390,52 +465,150 @@ def test_the_raised_by_list_keeps_every_person_while_one_of_them_is_selected(api
 # ------------------------------------------------------------------ AC-H4
 
 
-def test_reconfirming_restamps_who_raised_the_inquiry(api):
-    """A second person confirms a new revision: the header says THEM, and says when.
+def test_a_reconfirm_by_somebody_else_leaves_the_earlier_rows_attributed_to_who_raised_them(api):
+    """A confirms revision 1, B reconfirms as revision 2 covering another line.
 
-    The inquiry itself is reused (purchasing keeps quoting one number through every
-    revision), so without an explicit re-stamp the screen would keep naming whoever
-    happened to confirm revision 1 forever.
+    Three facts, and the defect is any two of them being conflated: the row A raised
+    still reads A, the row B's revision raised reads B, and the HEADER reads B (AC-H4).
+    Reading the header per row would repaint A's row as B's the moment B pressed confirm,
+    while leaving A's clock on it.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     client, db, company_id, seeded = api
     order = seeded["cindy_order"]
-    line = seeded["cindy_line"]
     inquiry = seeded["cindy_inquiry"]
-    service = ProjectOrderInquiryService(db)
-    buy_lines = [
-        {
-            "line": line,
-            "buy_qty": Decimal("932"),
-            "item_code": seeded["cindy_product"].product_code,
-            "required_date": date(2026, 3, 2),
-            "line_no": 1,
-        }
-    ]
-
-    service.refresh_for_decision(
-        order,
-        SimpleNamespace(id=None, revision_no=1),
-        buy_lines,
-        actor_user_id=seeded["cindy"].id,
+    first_line = seeded["cindy_line"]
+    # A second line on the same order, so revision 2 has something of its own to raise.
+    second_product = _product(db, f"ZZT-CWCSC605-{_uid()[:6]}")
+    second_line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=order.id,
+        line_no=2,
+        product_id=second_product.id,
+        description=f"{MARKER} line 2",
+        qty=Decimal("400"),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("4000.00"),
+        delivery_date=date(2026, 3, 2),
     )
+    db.add(second_line)
     db.flush()
-    first_raised_at = inquiry.raised_at
 
+    service = ProjectOrderInquiryService(db)
+    # Revision 1 is the seeded one: A confirmed it, and it raised the row on line 1.
+    first_raised_at = inquiry.raised_at
+    assert seeded["cindy_row"].supply_decision_id == seeded["cindy_decision"].id
+    assert first_line.id == seeded["cindy_line"].id
+
+    revision_two = _decision(
+        db,
+        company_id,
+        order,
+        revision_no=2,
+        confirmed_by=seeded["johnson"].id,
+        confirmed_at=datetime(2026, 8, 25, 2, 25),
+        supersedes=seeded["cindy_decision"],
+    )
     service.refresh_for_decision(
         order,
-        SimpleNamespace(id=None, revision_no=2),
-        buy_lines,
+        revision_two,
+        [
+            {
+                "line": second_line,
+                "buy_qty": Decimal("400"),
+                "item_code": second_product.product_code,
+                "required_date": date(2026, 3, 2),
+                "line_no": 2,
+            }
+        ],
         actor_user_id=seeded["johnson"].id,
     )
     db.commit()
 
+    # The header is re-stamped (AC-H4) - it is the SO detail's own answer.
     db.refresh(inquiry)
     assert inquiry.raised_by == seeded["johnson"].id
     assert inquiry.raised_at >= first_raised_at
-    # And the worklist agrees, which is the only place a person reads it.
-    response = client.get(LIST, params={"raised_by": seeded["johnson"].id})
+
+    response = client.get(LIST, params={"query": inquiry.inquiry_no})
     assert response.status_code == 200, response.text
-    names = {row["raised_by_name"] for row in response.json()["data"]}
-    assert names == {seeded["johnson"].name}
+    by_item = {row["item_code"]: row for row in response.json()["data"]}
+    # A's row still says A, however many times somebody else has confirmed since.
+    assert by_item[seeded["cindy_product"].product_code]["raised_by_name"] == (
+        seeded["cindy"].name
+    )
+    # B's revision raised B's row.
+    assert by_item[second_product.product_code]["raised_by_name"] == seeded["johnson"].name
+
+
+def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
+    """The same split, through the filter: asking for A's rows returns the row A raised,
+    not everything on an inquiry whose header B has since re-stamped."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    client, db, company_id, seeded = api
+    order = seeded["cindy_order"]
+    service = ProjectOrderInquiryService(db)
+    revision_two = _decision(
+        db,
+        company_id,
+        order,
+        revision_no=2,
+        confirmed_by=seeded["johnson"].id,
+        confirmed_at=datetime(2026, 8, 25, 2, 25),
+        supersedes=seeded["cindy_decision"],
+    )
+    service.refresh_for_decision(
+        order,
+        revision_two,
+        [
+            {
+                "line": seeded["cindy_line"],
+                "buy_qty": Decimal("932"),
+                "item_code": seeded["cindy_product"].product_code,
+                "required_date": date(2026, 3, 2),
+                "line_no": 1,
+            }
+        ],
+        actor_user_id=seeded["johnson"].id,
+    )
+    db.commit()
+
+    response = client.get(LIST, params={"raised_by": seeded["cindy"].id})
+
+    assert response.status_code == 200, response.text
+    ids = {row["id"] for row in response.json()["data"]}
+    assert seeded["cindy_row"].id in ids
+
+
+# ------------------------------------------- rows raised off an amendment, not a revision
+
+
+def test_a_row_with_no_supply_revision_falls_back_to_its_own_headers_raiser(api):
+    """An amendment raises its OWN inquiry and its rows carry no `supply_decision_id`
+    (`ProjectOrderInquiryService._write`). That header's `raised_by` is never re-stamped -
+    a reconfirm only touches the sales order's own inquiry - so it is the honest answer
+    for those rows and the only one there is."""
+    client, db, company_id, seeded = api
+
+    order = _adopted_order(db, company_id, f"ZZTSO{_uid()[:8]}")
+    product = _product(db, f"ZZT-AMEND-{_uid()[:6]}")
+    line = _line(db, company_id, order, product)
+    inquiry = _inquiry(
+        db,
+        company_id,
+        order,
+        raised_by=seeded["johnson"].id,
+        raised_at=datetime(2026, 8, 19, 9, 23),
+    )
+    row = _row(db, company_id, inquiry, line, product.product_code)  # no decision at all
+    db.commit()
+
+    response = client.get(LIST, params={"query": product.product_code})
+
+    assert response.status_code == 200, response.text
+    rows = {entry["id"]: entry for entry in response.json()["data"]}
+    assert rows[row.id]["raised_by_name"] == seeded["johnson"].name
