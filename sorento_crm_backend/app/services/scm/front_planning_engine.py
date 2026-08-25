@@ -17,7 +17,8 @@ DC1, WH3); if pool also don't have then consider borrowing from other location's
 quantity".
 
 0. beyond the reserve window (``as_of + lead time + RESERVE_BUFFER_DAYS``) or beyond
-   purchasing's reorder-coverage date -> ``Buy`` the whole line, nothing else tried;
+   purchasing's reorder-coverage date -> rung 1 runs and NOTHING ELSE: incoming supply
+   covering the whole line is proposed, and anything short of that is a whole-line ``Buy``;
 1. timely incoming (an SPO arriving by the required date) counts toward cover;
 2. the OWNERSHIP GROUP, this line's own location included, each location capped at
    ``max(min(free, available), 0)`` - the caller hands them over in draw order;
@@ -88,11 +89,16 @@ BUY_REASON = "remaining uncovered need"
 #
 #     as_of + (the product's lead time) + RESERVE_BUFFER_DAYS
 #
-# and a line due beyond it is BOUGHT WHOLE (ladder v3, section 1b rung 0: "if delivery date
+# and a line due beyond it takes NO STOCK (ladder v3, section 1b rung 0: "if delivery date
 # exceed lead time, directly buy"). v2 still walked the two surplus rungs for such a line
-# and refused it only the borrow rungs; v3 does not walk anything, because "surplus" is a
-# reading of one moment and the purchase order has months to be raised in. The reason names
-# the window rather than the arithmetic.
+# and refused it only the borrow rungs; v3 walks no stock rung at all, because "surplus" is
+# a reading of one moment and the purchase order has months to be raised in.
+#
+# INCOMING IS THE EXCEPTION, and it is not really one: rung 1 is unchanged (section 1b), so
+# supply already on its way still counts toward cover. It is already bought. Buying it a
+# second time is a double purchase, not a conservative choice - and it is what a blanket
+# "beyond the window means Buy" did. What incoming cannot cover in FULL still falls to the
+# whole-line rule, with the window named as the reason rather than the arithmetic.
 #
 # BOTH CONSTANTS ARE FUTURE POLICY FIELDS. They belong beside `reorder_coverage_until` on
 # `PriorityPolicy` (the same admin screen, the same revisioned row) the day somebody needs
@@ -264,19 +270,6 @@ def _group_take_reason(location: str, qty: Decimal, group_code: Optional[str]) -
     return f"{location} has {qty_text(qty)} available{where}"
 
 
-def _group_borrow_reason(candidate: Mapping[str, Any], qty: Decimal) -> str:
-    location = candidate.get("location") or ""
-    so_number = candidate.get("donor_so_number") or "an unnamed sales order"
-    line_no = candidate.get("donor_line_no")
-    line_text = f" line {line_no}" if line_no is not None else ""
-    agent = candidate.get("donor_agent_code")
-    agent_text = f" (agent {agent})" if agent else ""
-    return (
-        f"{so_number}{line_text}{agent_text} holds {qty_text(qty)} at {location}; it is "
-        "ranked below this line; order-back raised"
-    )
-
-
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
     return (
         f"{location} has {qty_text(qty)} free outside this group, within the cross-group "
@@ -316,10 +309,12 @@ def propose_line(
 ) -> Tuple[Component, ...]:
     """The proposed composition for one line, ladder v3's own order (section 1b).
 
-    0. beyond the reserve window, or beyond `reorder_coverage_until` -> the WHOLE line is a
-       Buy, nothing else is tried and the rest of this function never runs. An UNDATED line
-       (`required_date=None`) is never beyond either bound - both comparisons need two
-       dates - so it falls straight through to rung 1;
+    0. beyond the reserve window, or beyond `reorder_coverage_until` -> rung 1 runs and
+       nothing else does. Incoming supply covering the WHOLE of `open_qty` is proposed as
+       it stands; anything short of that is a single whole-line Buy naming the bound that
+       fired, never "incoming 40, buy 31" (that mix is what AC-L5 refuses at confirm). An
+       UNDATED line (`required_date=None`) is never beyond either bound - both comparisons
+       need two dates - so it falls straight through to the full walk;
     1. timely incoming, for supply arriving on or before the required date;
     2. the ownership group: `group_take_candidates`, already capped by the caller
        (`max(min(free, available), 0)`) and already in draw order - this line's own
@@ -341,59 +336,50 @@ def propose_line(
 
     `outside_reserve_window` is the ATP rule (see the constants at the top of this module):
     the line is due beyond `as_of + lead time + RESERVE_BUFFER_DAYS`, so purchasing can still
-    buy for it in time and it must not take stock a nearer-dated order needs. Under v3 that
-    is the whole answer for such a line - it is bought entire and no rung below runs at all.
-    The CALLER decides which side of the window a line falls on, because only it knows the
-    product's lead time.
+    buy for it in time and it must not take stock a nearer-dated order needs. Under v3 no
+    STOCK rung runs for such a line; rung 1 still does, because incoming supply is already
+    bought. The CALLER decides which side of the window a line falls on, because only it
+    knows the product's lead time.
     """
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
         return ()
 
-    # 0. Beyond either bound the whole line is a Buy and nothing below runs. Two bounds,
-    #    one rule: whichever of them the line is beyond decides it, and the reason names
-    #    the one that fired. Purchasing's stated coverage date is checked first because it
-    #    is a date a person set and can point at; the window is the derived one.
+    timely = max(_dec(timely_spo_qty), ZERO)
+
+    # 0. Beyond either bound, rung 1 runs and NOTHING ELSE does. Two bounds, one rule:
+    #    whichever of them the line is beyond decides it, and the reason names the one that
+    #    fired. Purchasing's stated coverage date is checked first because it is a date a
+    #    person set and can point at; the window is the derived one.
+    #
+    #    Incoming still counts, because it is already bought (see the constants block).
+    #    Incoming that does not reach the WHOLE line is dropped rather than mixed with a
+    #    Buy - the whole-line rule holds on both sides of the window.
+    beyond: Optional[str] = None
     if (
         reorder_coverage_until is not None
         and required_date is not None
         and required_date > reorder_coverage_until
     ):
+        beyond = _coverage_date_reason(reorder_coverage_until)
+    elif outside_reserve_window:
+        beyond = _reserve_window_buy_reason()
+    if beyond is not None:
+        if timely >= open_amount:
+            return tuple(
+                _incoming_rung(open_amount, timely_spo_refs, fulfilment_location)
+            )
         return (
-            Component(
-                kind=BUY,
-                qty=open_amount,
-                reason=_coverage_date_reason(reorder_coverage_until),
-                rung=RUNG_BUY,
-            ),
-        )
-    if outside_reserve_window:
-        return (
-            Component(
-                kind=BUY,
-                qty=open_amount,
-                reason=_reserve_window_buy_reason(),
-                rung=RUNG_BUY,
-            ),
+            Component(kind=BUY, qty=open_amount, reason=beyond, rung=RUNG_BUY),
         )
 
     remaining = open_amount
     components: List[Component] = []
 
     # 1. timely incoming.
-    timely = max(_dec(timely_spo_qty), ZERO)
     if remaining > ZERO and timely > ZERO:
         take = min(remaining, timely)
-        for component in _timely_components(take, timely_spo_refs, fulfilment_location):
-            components.append(
-                Component(
-                    kind=component.kind,
-                    qty=component.qty,
-                    reason=component.reason,
-                    source_location=component.source_location,
-                    rung=RUNG_INCOMING,
-                )
-            )
+        components.extend(_incoming_rung(take, timely_spo_refs, fulfilment_location))
         remaining -= take
 
     # 2. the ownership group: positive Available at the line's own location and at its
@@ -472,6 +458,29 @@ def propose_line(
         )
 
     return tuple(components)
+
+
+def _incoming_rung(
+    qty: Decimal,
+    refs: Optional[Sequence[Mapping[str, Any]]],
+    location: Optional[str],
+) -> List[Component]:
+    """Rung 1's components, stamped with the rung.
+
+    ONE builder, because rung 1 now has two callers - the full walk and rung 0's
+    short-circuit for a line beyond its window - and two copies would be two chances for a
+    far line's incoming to read differently from a near line's.
+    """
+    return [
+        Component(
+            kind=component.kind,
+            qty=component.qty,
+            reason=component.reason,
+            source_location=component.source_location,
+            rung=RUNG_INCOMING,
+        )
+        for component in _timely_components(qty, refs, location)
+    ]
 
 
 def _timely_components(

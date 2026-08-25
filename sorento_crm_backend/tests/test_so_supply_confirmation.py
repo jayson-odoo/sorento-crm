@@ -1435,7 +1435,7 @@ def test_a_pool_reserve_asking_more_than_the_pools_available_position_is_refused
     oversell case this test used to pin (captain, 19 August 2026, "if available quantity is
     negative ... we must have an order back") can no longer occur through this rung -
     ladder v2's `group_borrow` (see `test_a_group_borrow_raises_its_own_order_back` in
-    `tests/scm/test_project_supply_service_ladder_v2.py`) is where an order-back now comes
+    `tests/scm/test_project_supply_service_ladder.py`) is where an order-back now comes
     from instead.
 
     The pool holds 100 with 90 of it already owed to its own book (ranked behind our line),

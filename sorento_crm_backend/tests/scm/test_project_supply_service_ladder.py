@@ -1,5 +1,8 @@
-"""Ladder v2 - the source ladder as the captain answered it, 19 August 2026 evening
-(`documentation/plans/scm/PLAN-demo-followups-19aug-ladder-v2.md` section E).
+"""The source ladder, as the captain last ruled it: v3, 25 August 2026
+(`documentation/plans/scm/PLAN-scm-cs-planning-uat.md` section 1b, and 1c for the borrow a
+person picks). The file was `..._ladder_v2.py`; the version is out of the name because the
+ladder has now been renumbered twice and a name that dates itself goes stale on the next
+ruling rather than on the next rewrite.
 
 Service-level (`ProjectSupplyService.proposal_for` / `.confirm`), not HTTP: every scenario
 here is about the COMPOSITION and the write path, not the route layer, which
@@ -480,7 +483,7 @@ def test_a_product_nobody_states_a_lead_time_for_uses_the_documented_default():
     assert "beyond the lead time window" in far_components[0]["reason"]
 
 
-# --------------------------------------------------------------------------- rung 4: group borrow
+# ------------------------------------------ group borrow: offered, never a rung (AC-L3)
 
 
 def test_group_borrow_is_offered_not_proposed_and_a_manual_pick_raises_the_order_back():
@@ -645,7 +648,7 @@ def test_a_higher_ranked_donor_of_ANOTHER_agent_is_not_offered_at_all():
     assert offered == {"SO910002"}
 
 
-# --------------------------------------------------------------------------- rung 4: cross-group
+# --------------------------------------------------------------------- rung 4: cross-group
 
 
 def test_cross_group_borrow_is_capped_by_the_small_quantity_limit():
@@ -1216,3 +1219,269 @@ def test_group_pile_runs_o1_queries_for_a_board_of_n_lines_of_one_product_group(
 
     assert proposal["lines_total"] == n
     assert calls["group_pile"] == 1, calls
+
+
+# --------------------------------------------------------- the donor ranking's tie-breaks
+
+
+def _donor_row(**over):
+    """A `_ranked` row with every key the sort reads, so a case states only what it varies."""
+    row = {
+        "source": "other_location",
+        "warehouse_code": "BRW-IB",
+        "warehouse_id": "wh-ib",
+        "free_qty": "100",
+        "available_after_need": "60",
+        "available_qty": "80",
+        "rank_index": None,
+    }
+    row.update(over)
+    return row
+
+
+def test_the_queue_position_breaks_a_tie_between_two_donor_lines_at_one_pile():
+    """Two donor LINES at one pile agree about the pile, because availability is a fact
+    about the pile and not about the line. The safest to take from is the one furthest DOWN
+    the ranked queue - not the one holding the most, which is usually the nearest-dated."""
+    ranked = ProjectSupplyService._ranked(
+        [
+            _donor_row(
+                warehouse_code="MWH-BB", rung="group_borrow", donor_so_number="SO-NEAR",
+                free_qty="90", rank_index=1,
+            ),
+            _donor_row(
+                warehouse_code="MWH-BB", rung="group_borrow", donor_so_number="SO-FAR",
+                free_qty="10", rank_index=7,
+            ),
+        ]
+    )
+
+    assert [row["donor_so_number"] for row in ranked] == ["SO-FAR", "SO-NEAR"]
+    assert ranked[0]["recommended"] is True
+
+
+def test_a_donor_lines_queue_position_never_pushes_free_stock_down_the_list():
+    """The tie-break is between two ROWS THAT BOTH CARRY ONE. Free stock at a location has
+    no queue position - there is no donor line to rank - and a sentinel standing in for the
+    absence sorted it behind every group-borrow donor it tied with, which recommended
+    somebody else's committed quantity over stock nobody had claimed."""
+    ranked = ProjectSupplyService._ranked(
+        [
+            _donor_row(
+                warehouse_code="MWH-BB", rung="group_borrow", donor_so_number="SO-DONOR",
+                rank_index=7,
+            ),
+            _donor_row(warehouse_code="BRW-IB", source="other_location"),
+        ]
+    )
+
+    assert [row["warehouse_code"] for row in ranked] == ["BRW-IB", "MWH-BB"]
+    assert ranked[0]["recommended"] is True
+    assert ranked[1]["recommended"] is False
+
+
+def test_a_donor_project_hold_is_not_pushed_behind_a_donor_line_either():
+    """The same absence, the other shape: a hold another PROJECT carries names no
+    sales-order line, so it carries no queue position."""
+    ranked = ProjectSupplyService._ranked(
+        [
+            _donor_row(
+                warehouse_code="MWH-BB", rung="group_borrow", donor_so_number="SO-DONOR",
+                rank_index=7,
+            ),
+            _donor_row(
+                warehouse_code="JB", source="other_project",
+                donor_project_ref="PRJ-0052 Seri Emas Phase 2",
+            ),
+        ]
+    )
+
+    assert [row["warehouse_code"] for row in ranked] == ["JB", "MWH-BB"]
+    assert ranked[0]["recommended"] is True
+
+
+def test_availability_still_outranks_the_queue_position():
+    """The tie-break is a TIE-break: a donor that keeps more once this line is met still
+    wins, whatever either row's queue position says."""
+    ranked = ProjectSupplyService._ranked(
+        [
+            _donor_row(
+                warehouse_code="MWH-BB", rung="group_borrow", donor_so_number="SO-DEEP",
+                available_after_need="10", rank_index=9,
+            ),
+            _donor_row(
+                warehouse_code="DC1-BB", rung="group_borrow", donor_so_number="SO-ROOMY",
+                available_after_need="500", rank_index=2,
+            ),
+        ]
+    )
+
+    assert [row["donor_so_number"] for row in ranked] == ["SO-ROOMY", "SO-DEEP"]
+
+
+# ------------------------------------ authorising a same-agent borrow (section 1c, AC-L6)
+
+
+def _same_agent_world(db):
+    """This line and a donor line of the SAME agent, the donor ranked ABOVE it.
+
+    Ranked above is the whole point: a donor BELOW this line in the queue is ordinary
+    group borrow and needs no special permission. A donor above it is only reachable
+    because the agent who owns both orders can say so.
+    """
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, _pool = sites["BRW"]
+    agent = _agent(db, f"CYNDI{_uid()[:4]}", location_group=_group)
+    db.commit()
+
+    _donor_order, _dl, _dcso, donor_cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered="90",
+        required_date=REQUIRED_DATE - timedelta(days=30), line_no=2,
+        so_number="SO920001", sales_agent_id=agent.id,
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered="90",
+        required_date=REQUIRED_DATE, line_no=1, so_number="SO920002",
+        sales_agent_id=agent.id,
+    )
+    db.commit()
+    return company_id, eling, order, line, donor_cline, own
+
+
+def _borrow_body(line, warehouse, donor_cline, reason):
+    from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+
+    return ConfirmSupplyBody(
+        lines=[
+            ConfirmLine(
+                project_line_id=line.id,
+                borrow=[
+                    {
+                        "source": "other_location",
+                        "warehouse_id": str(warehouse.id),
+                        "qty": "90",
+                        "reason": reason,
+                        "donor_core_line_id": str(donor_cline.id),
+                        "donor_so_number": "SO920001",
+                        "donor_line_no": 2,
+                    }
+                ],
+            )
+        ]
+    )
+
+
+def test_a_same_agent_donor_ranked_above_this_line_is_refused_without_an_authorisation():
+    """AC-L6: the donor is offered at any rank BECAUSE the agent can authorise moving stock
+    between her own orders - so confirming it has to say she did.
+
+    Judged on the SERVER's own donor list, never on the payload's `same_agent` flag: that
+    flag is a client claim, and the rule it gates is a permission.
+    """
+    with blank_session() as db:
+        company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                _borrow_body(line, own, donor_cline, "The site is waiting."),
+                actor_user_id=eling,
+            )
+
+    failing = refused.value.detail["failing_lines"]
+    assert len(failing) == 1
+    assert failing[0]["reason"] == (
+        "SO920001 line 2 shares this line's sales agent and is ranked ahead of it, so it "
+        "can only be borrowed with that agent's authorisation. Say who authorised it in "
+        "the reason."
+    )
+
+
+def test_the_same_borrow_confirms_once_the_reason_names_who_authorised_it():
+    with blank_session() as db:
+        company_id, eling, order, line, donor_cline, own = _same_agent_world(db)
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            _borrow_body(
+                line, own, donor_cline,
+                "Authorised by agent CYNDI: agreed on the phone. The site is waiting.",
+            ),
+            actor_user_id=eling,
+        )
+        assert result["revision_no"] == 1
+
+        # And it is stored where AC-L6 says: beside the quantity it justifies.
+        from app.models.project_so import SOLineAllocation
+
+        rows = (
+            db.query(SOLineAllocation)
+            .filter(SOLineAllocation.so_line_id == line.id)
+            .all()
+        )
+        assert [r.reason for r in rows] == [
+            "Authorised by agent CYNDI: agreed on the phone. The site is waiting."
+        ]
+
+
+def test_another_agents_donor_ranked_below_needs_no_authorisation():
+    """The rule is narrow on purpose. A donor BELOW this line in the queue is ordinary
+    group borrow - the ladder would have taken it automatically under v2 - so demanding an
+    authorisation for it would make a mandatory field a rubber stamp."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        mine = _agent(db, f"CYNDI{_uid()[:4]}", location_group=_group)
+        theirs = _agent(db, f"JEREMY{_uid()[:4]}", location_group=_group)
+        db.commit()
+
+        _donor_order, _dl, _dcso, donor_cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE + timedelta(days=30), line_no=2,
+            so_number="SO920001", sales_agent_id=theirs.id,
+        )
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE, line_no=1, so_number="SO920002",
+            sales_agent_id=mine.id,
+        )
+        db.commit()
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            _borrow_body(line, own, donor_cline, "Their hand-over is in December."),
+            actor_user_id=eling,
+        )
+        assert result["revision_no"] == 1
+
+
+def test_a_same_agent_donor_ranked_BELOW_this_line_needs_no_authorisation_either():
+    """Same agent, but the donor is behind this line in the queue: no permission is being
+    exercised, so none is demanded."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        agent = _agent(db, f"CYNDI{_uid()[:4]}", location_group=_group)
+        db.commit()
+
+        _donor_order, _dl, _dcso, donor_cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE + timedelta(days=30), line_no=2,
+            so_number="SO920001", sales_agent_id=agent.id,
+        )
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE, line_no=1, so_number="SO920002",
+            sales_agent_id=agent.id,
+        )
+        db.commit()
+
+        result = ProjectSupplyService(db).confirm(
+            order,
+            _borrow_body(line, own, donor_cline, "Her later order can wait a week."),
+            actor_user_id=eling,
+        )
+        assert result["revision_no"] == 1

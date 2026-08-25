@@ -176,6 +176,11 @@ export function BorrowAddDialog({
                                   onChange={() => {
                                     setSelectedKey(key);
                                     setQty(openingQty(candidate));
+                                    // The authorisation names ONE agent and belongs to the
+                                    // donor it was typed for. Carrying it onto the next
+                                    // donor would file somebody else's approval against an
+                                    // order they never agreed to give stock from.
+                                    setAuthorisation('');
                                   }}
                                 />
                                 <span className="min-w-0">

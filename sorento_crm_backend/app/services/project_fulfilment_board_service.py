@@ -188,7 +188,15 @@ WHERE_OTHER_GROUP = "other_group"
 #: one place, so five rungs cannot phrase the same fact five ways.
 _COVERED_BEFORE = "Fully covered before this rung."
 
-#: Said by EVERY stock rung on a line beyond its ATP reserve window
+#: Said by rung 1 on a line beyond its ATP reserve window whose incoming does NOT reach the
+#: whole of it. The rung ran and offered what it had; the whole-line rule is what refused it,
+#: and "arrives in time" printed beside a Buy of the whole line reads as a defect.
+_RESERVE_WINDOW_INCOMING_SHORT_WHY = (
+    "The supply on its way does not cover the whole line, and the delivery date is beyond "
+    "the lead time window, so the whole line is bought rather than part-covered."
+)
+
+#: Said by EVERY STOCK rung on a line beyond its ATP reserve window
 #: (`front_planning_engine`): ladder v3 buys such a line whole and walks none of them, so the
 #: trail states the rule rather than reporting an empty search that never happened.
 _RESERVE_WINDOW_RUNG_WHY = (
@@ -1897,18 +1905,17 @@ class FulfilmentBoardService:
                 }
             )
 
-        # Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): the read-only own
-        # location, then incoming, then the pool(s), then group take, then group borrow,
-        # then cross-group borrow, then Buy. The own-location Reserve rung is GONE as a
-        # SOURCE (rule 7) - stock at L is never drawn - but it is kept as a rung rather
-        # than folded into the strip, because it is the one place the queue standing in
-        # front of THIS line, at ITS OWN pile, is named.
+        # Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b): the read-only own-location
+        # STRIP, then incoming, then the ownership group, then the pool(s), then group
+        # borrow, then cross-group borrow, then Buy.
 
-        # 0. Read-only: this line's own location. Never taken (rule 7 - stock at L is
-        #    committed to whichever sales order is queued for it, not to this one), but
-        #    it is the ONE rung `QueueLink`'s dialog can open, because that dialog opens
-        #    exactly `fulfilment_warehouse_id` - which is L, never the pool or a donor.
-        #    "the own-location strip stays read-only but its queue explanation stays."
+        # 0. Read-only: the queue standing in front of THIS line at ITS OWN pile.
+        #
+        #    Not a source rung - the own location IS drawn on under v3, but on the GROUP
+        #    rung two places below, where its capacity is stated as one of the group's
+        #    locations. This one exists because it is the only place the queue is named,
+        #    and it is the ONE rung `QueueLink`'s dialog can open: that dialog opens
+        #    exactly `fulfilment_warehouse_id`, which is L and never the pool or a donor.
         own_ahead_qty = fact.so_qty_ahead
         own_ahead_lines = fact.lines_ahead
         own_left = fact.available_to_this_line
@@ -1930,8 +1937,21 @@ class FulfilmentBoardService:
             ),
         )
 
+        # The ATP reserve window verdict, read once and answered the same way by every rung
+        # below. Rung 1 needs it too now: it RUNS for a far line (incoming is already
+        # bought), but a far line whose incoming falls short is bought WHOLE, and the rung
+        # has to say that rather than leaving "arrives in time" beside a Buy.
+        outside_window = bool(row.outside_reserve_window)
+
         # 1. Supply already on its way that lands on or before the required date.
+        #
+        #    WALKED ON BOTH SIDES OF THE WINDOW (section 1b: "rung 1 unchanged"). It is not
+        #    a stock rung: the quantity is already bought, and refusing it to a far line
+        #    bought the same units a second time.
         incoming_taken = took(TIMELY_SPO, own_code)
+        incoming_short = (
+            outside_window and incoming_taken <= _ZERO and fact.timely_qty > _ZERO
+        )
         add(
             "incoming",
             location=own_code,
@@ -1940,17 +1960,20 @@ class FulfilmentBoardService:
             offered=fact.timely_qty,
             taken=incoming_taken,
             note=self._incoming_note(fact),
-            why=lambda outcome: self._incoming_why(fact, outcome, incoming_taken),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_INCOMING_SHORT_WHY
+                if incoming_short
+                else self._incoming_why(fact, outcome, incoming_taken)
+            ),
         )
 
         # 2. The ownership group: positive Available at this line's own location and at
         #    every sibling of its group, own location first (ladder v3, section 1b rung
         #    2 - "consider the group location first (only available quantity)").
         #
-        #    NOT WALKED beyond the ATP reserve window: v3 buys such a line whole, so
-        #    `compose_line` builds no candidate list for it and the trail must say the
+        #    NOT WALKED beyond the ATP reserve window: v3 takes no stock for such a line,
+        #    so `compose_line` builds no candidate list for it and the trail must say the
         #    same thing rather than printing locations that were never consulted.
-        outside_window = bool(row.outside_reserve_window)
         group_take_candidates = (
             [] if outside_window else self.supply.group_take_candidates_for(fact)
         )
@@ -2398,16 +2421,27 @@ class FulfilmentBoardService:
     def _group_take_why(
         self, outcome: str, candidates: List[Dict[str, Any]], fact: Any
     ) -> str:
-        """Why rung 3 (group take) ended where it did (section E rule 3)."""
+        """Why rung 2 (the ownership group) ended where it did (section 1b).
+
+        THIS LINE'S OWN LOCATION IS IN THIS RUNG under v3, so the sentences say "group
+        location", not "sibling": telling a planner "no sibling has stock" while their own
+        location is the one that came up empty names the wrong place to go and look.
+        """
         if outcome == "none_needed":
             return _COVERED_BEFORE
         if not fact.group_code:
-            return "This location carries no ownership group, so there are no siblings to take from."
+            return (
+                "This location carries no ownership group, so there is no group to take "
+                "from."
+            )
         if not candidates:
-            return f"No {fact.group_code} sibling location has positive available stock."
+            return (
+                f"No {fact.group_code} location, this line's own included, has stock "
+                "available to it."
+            )
         if outcome == "took":
             taken_at = ", ".join(c["location"] for c in candidates)
-            return f"Positive available stock at {taken_at} was taken."
+            return f"Available stock at {taken_at} was taken."
         return "Not reached - the line was already covered by an earlier rung."
 
     @staticmethod
@@ -2425,7 +2459,7 @@ class FulfilmentBoardService:
     def _group_borrow_why(
         self, outcome: str, candidates: List[Dict[str, Any]], row: "_Row", fact: Any
     ) -> str:
-        """Why rung 4 (group borrow) ended where it did (section E rule 4, section 8)."""
+        """Why rung 4 (group borrow) ended where it did (section 1c)."""
         if outcome == "none_needed":
             return _COVERED_BEFORE
         if not candidates:
