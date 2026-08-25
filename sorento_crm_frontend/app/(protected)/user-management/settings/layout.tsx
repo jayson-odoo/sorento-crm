@@ -46,6 +46,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
         : 90,
+    // A new settings column reaches the FE only if it is in this manual mapper too.
+    defaultUomId: (raw.default_uom_id as string | null) ?? null,
+    defaultUomCode: (raw.default_uom_code as string | null) ?? null,
     takeoverCooldownSeconds:
       typeof raw.takeover_cooldown_seconds === 'number'
         ? raw.takeover_cooldown_seconds
@@ -148,6 +151,8 @@ function createDefaultSettings(): SystemSetting {
     currencyFormat: 'RM {value}',
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
+    defaultUomId: null,
+    defaultUomCode: null,
     takeoverCooldownSeconds: 60,
     formSlaGraceSeconds: 0,
     planGrain: 'product',
@@ -233,6 +238,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       'chatbot-media': {
         title: 'Chatbot Media',
         path: '/user-management/settings/chatbot-media',
+      },
+      'stock-visibility': {
+        title: 'Stock Visibility',
+        path: '/user-management/settings/stock-visibility',
       },
       'system-health': {
         title: 'System Health',

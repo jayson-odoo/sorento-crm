@@ -117,6 +117,15 @@ required date, quantity or open state of at least one planned line, when apply c
 upload confirmation screen shows the batch (`The book moved N planned lines on M orders`) with a
 link to review it. An upload that changes no planned line creates no batch and shows nothing.
 
+> **Amended 24 August 2026 (captain feedback on the SO screens).** "The upload confirmation
+> screen" is the **import job page** (`/system-management/import-jobs/{id}`), which carries the
+> "Planning changes" card and its Review link - the surface the section-4 evidence run verified.
+> The upload DIALOG's own copy of that card is gone: the captain's verdict on that dialog's
+> report was "too detailed, no one will look at it; if i click test i just need to know how many
+> succeed, how many fail, how many warning", so Test now shows the standard
+> `{valid, errors, warnings, summary}` verdict and nothing else. The batch is still born, still
+> reviewed, and still linked - one screen later, after the apply that actually creates it.
+
 **AC-R02 (step 1, the row).** Each row states the line (SO no, line, product, customer, project
 if any), the change (`kind` in `delayed | advanced | qty_up | qty_down | closed | added`, with
 `from` and `to`), what the active decision holds today (components with locations), the facts

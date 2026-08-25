@@ -280,6 +280,53 @@ def annotate(
     return agent
 
 
+def annotate_many(
+    db: Session,
+    agent_ids: list[str],
+    *,
+    demand_class: Optional[str] = None,
+    write_demand_class: bool = False,
+    location_group: Optional[str] = None,
+    write_location_group: bool = False,
+) -> int:
+    """Apply ONE annotation across a selection, and answer how many rows it touched.
+
+    `annotate` applied N times, deliberately: same `write_*` flags, same
+    `assert_demand_class`, same `normalize_location_group`, same NULL-class order backfill.
+    The captain's first upload created 38 unclassified codes and every one of them had to be
+    opened, edited and saved on its own; nothing about what a demand class IS changes here.
+
+    Every id must resolve. A missing one is a 404 naming nothing was written, rather than a
+    quiet "updated: 37" that leaves the operator to work out which row of his selection was
+    dropped and why. Flushes but does not commit, so a class the policy refuses leaves the
+    whole selection untouched - the same one-save-one-transaction rule the single-row
+    annotation route follows.
+    """
+    if not agent_ids:
+        return 0
+    # Judged ONCE, before a single row is touched. `annotate` judges it too (it is the one
+    # judge, and both paths call it), but doing it here as well is what makes "a refused
+    # class writes nothing" structural rather than a consequence of the loop's ordering.
+    if write_demand_class:
+        assert_demand_class(demand_class)
+    unique_ids = list(dict.fromkeys(str(a) for a in agent_ids))
+    rows = db.query(SalesAgent).filter(SalesAgent.id.in_(unique_ids)).all()
+    found = {str(a.id) for a in rows}
+    missing = [a for a in unique_ids if a not in found]
+    if missing:
+        raise AppException(
+            status_code=404,
+            message=f"{len(missing)} of the selected sales agents no longer exist.",
+        )
+    for agent in rows:
+        annotate(
+            db, agent,
+            demand_class=demand_class, write_demand_class=write_demand_class,
+            location_group=location_group, write_location_group=write_location_group,
+        )
+    return len(rows)
+
+
 def agents_for_group(db: Session, group: Optional[str]) -> list[SalesAgent]:
     """Every agent holding the given ownership group, normalised the same way it is stored.
 

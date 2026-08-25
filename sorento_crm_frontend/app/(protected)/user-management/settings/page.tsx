@@ -32,7 +32,9 @@ import {
   GeneralSettingsSchemaType,
   NO_DEFAULT_APPROVER_VALUE,
   NO_DEFAULT_SUPPLIER_VALUE,
+  NO_DEFAULT_UOM_VALUE,
 } from './forms/general-settings-schema';
+import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import {
   getUsersForApproverSelect,
   type UserForSelect,
@@ -117,6 +119,10 @@ export default function Page() {
     queryFn: () => getUsersForApproverSelect(),
     staleTime: 5 * 60 * 1000,
   });
+
+  // The units master is eight rows, so the shared static select is the right shape here -
+  // no server search, no paging, and it is the same list every other UoM picker reads.
+  const { data: uomOptions = [] } = useUOMSelectQuery();
 
   const savedSupplierId = settings?.defaultProductSupplierId ?? null;
   const savedSupplierMissingFromList =
@@ -222,6 +228,10 @@ export default function Page() {
         ? settings.defaultProductSupplierId
         : NO_DEFAULT_SUPPLIER_VALUE,
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
+    defaultUomId:
+      settings?.defaultUomId && settings.defaultUomId.length > 0
+        ? settings.defaultUomId
+        : NO_DEFAULT_UOM_VALUE,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
     // The rollout default (plan 5.1) when the blob carries no value yet.
@@ -274,6 +284,10 @@ export default function Page() {
           ? settings.defaultProductSupplierId
           : NO_DEFAULT_SUPPLIER_VALUE,
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
+      defaultUomId:
+        settings.defaultUomId && settings.defaultUomId.length > 0
+          ? settings.defaultUomId
+          : NO_DEFAULT_UOM_VALUE,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
       planGrain: settings.planGrain ?? 'product',
@@ -309,6 +323,8 @@ export default function Page() {
             ? null
             : values.defaultProductSupplierId,
         default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
+        default_uom_id:
+          values.defaultUomId === NO_DEFAULT_UOM_VALUE ? null : values.defaultUomId,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         form_sla_grace_seconds: values.formSlaGraceSeconds,
         plan_grain: values.planGrain,
@@ -782,6 +798,33 @@ export default function Page() {
                         ...suppliersForSelect.map((s) => ({
                           value: s.id,
                           label: `${s.supplier_code} - ${s.supplier_name}`,
+                        })),
+                      ]}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="defaultUomId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default unit of measure</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      key={`def-uom-${field.value}-${uomOptions.length}`}
+                      onChange={(v) => field.onChange(v || NO_DEFAULT_UOM_VALUE)}
+                      value={field.value}
+                      placeholder="Select unit"
+                      clearable
+                      options={[
+                        { value: NO_DEFAULT_UOM_VALUE, label: 'Automatic' },
+                        ...uomOptions.map((u) => ({
+                          value: u.id,
+                          label: `${u.uom_code} - ${u.uom_name}`,
                         })),
                       ]}
                     />

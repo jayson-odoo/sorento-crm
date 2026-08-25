@@ -438,12 +438,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "quantity_operator / quantity_value filter on-hand; status = critical|low|normal|overstock.\n"
             "Rows whose on-hand is 0 ONLY because the latest stock movement was a SYSTEM_ADJUSTMENT "
             "(e.g. 'missing from full stock take') are always hidden; a genuine 0 is still returned.\n\n"
+            "QUANTITY ASKED FOR: if the user said how many units they need ('do you have 50?', or just "
+            "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
+            "answered yes/no against it instead of with quantities, and without it the reply can only "
+            "ask how many units they need.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results. "
+            "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
         ),
         "/api/v1/inventory/stock/balance",
         (),
-        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status", "contact_id", "space_id"),
+        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status", "requested_qty", "contact_id", "space_id"),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
         escalation_team="warehouse",

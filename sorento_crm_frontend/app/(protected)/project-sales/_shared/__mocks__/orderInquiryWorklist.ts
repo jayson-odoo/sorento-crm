@@ -18,6 +18,7 @@ import type {
 export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
   {
     id: 'row-1',
+    inquiry_no: 'OI-000101',
     so_date: '2025-12-30',
     so_number: 'SO385126',
     item_code: 'SRTWB5400',
@@ -45,6 +46,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
   },
   {
     id: 'row-2',
+    inquiry_no: 'OI-000102',
     so_date: '2026-01-08',
     so_number: 'SO386461',
     item_code: 'SRTWC8605-SC-RL',
@@ -71,6 +73,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
   },
   {
     id: 'row-3',
+    inquiry_no: 'OI-000103',
     so_date: '2025-08-15',
     so_number: 'SO363150',
     item_code: 'SRTWT107',
@@ -94,6 +97,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
   },
   {
     id: 'row-4',
+    inquiry_no: null,
     so_date: null,
     so_number: 'PSO-000412',
     item_code: 'BT012-CR',

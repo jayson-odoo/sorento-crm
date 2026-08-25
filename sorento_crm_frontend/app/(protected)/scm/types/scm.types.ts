@@ -267,13 +267,50 @@ export interface SalesOrderLine {
   qty_ordered: number;
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
+  /** What is still to go out on this line, off the SERVER: `ordered - delivered` floored at
+   *  0, and **0 on a closed line** whatever those two say. A book re-upload closes a line by
+   *  absence without knowing what shipped, so the subtraction alone reads as the whole
+   *  quantity still being owed on an order that is done. */
+  outstanding_qty?: number;
   uom: string;
+  /** The line's money, as decimal STRINGS - the backend sends `Decimal` and Pydantic
+   *  serialises it as a string, which is what keeps RM 985.00 from arriving as
+   *  984.9999999. `null` when nobody priced the line, which is not the same as 0.
+   *  `line_total` is what the source document charged; the other two are its parts. */
+  unit_price?: string | null;
+  discount?: string | null;
+  line_total?: string | null;
   /** Where this line ships from. Per line: one order can land in two locations. */
   warehouse_code?: string;
   /** `open` or `closed`. A closed line is not a commitment however much it still shows. */
   line_status?: string;
   /** When this line's quantity is due. Per line, for the same reason as the location. */
   required_date?: string | null;
+  /**
+   * The order inquiry covering this line, reached through the planning record's mirror
+   * line, and the state purchasing left that instruction in. `null` when nobody has
+   * raised one for the line - which is the honest answer, not an empty object.
+   *
+   * Sent on the single order read only: the list has no column for it and would pay two
+   * more queries a page for a fact nothing there prints.
+   */
+  order_inquiry?: SalesOrderLineInquiry | null;
+  /**
+   * Which confirmed revision decided supply for this line: the ACTIVE decision's
+   * `revision_no` when its frozen snapshots cover the line, `null` otherwise. A line
+   * inside an order that has an active decision but was left out of it is not decided,
+   * and reads `null` exactly like a line on an order nobody has planned.
+   */
+  decision_revision?: number | null;
+}
+
+/** The inquiry an order line belongs to, in the two words a person reads it by. */
+export interface SalesOrderLineInquiry {
+  /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
+  inquiry_no?: string | null;
+  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`), not the
+   *  header's: "purchasing placed this line" is the question the column answers. */
+  state: string;
 }
 
 export interface SalesOrder {
@@ -290,6 +327,14 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
+  /** Every DISTINCT date this order's lines are due on (`sales_order_lines.required_date`),
+   *  earliest first. Empty when no line names one - an order is not due "today" because
+   *  nobody dated it. This is what the list's "Delivery date" column shows; the header's own
+   *  `requested_delivery_date` is a different figure and stays on the detail page.
+   *
+   *  A list, not the `delivery_date_from`/`_to` span it replaced: an order due on 12 January
+   *  and 10 March is due on two days, and a range claims the eight weeks between them. */
+  delivery_dates?: string[];
   /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
    *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
    *  never the id. Absent (all three null) when the order names no agent. */
@@ -300,6 +345,9 @@ export interface SalesOrder {
   total_qty: number;
   /** Undelivered qty = committed demand contributed to the dashboard. */
   committed_qty: number;
+  /** What the order is worth, summed from its lines. A decimal STRING for the same reason
+   *  the line figures are; `null` when not one line carries money, which is not 0. */
+  total_amount?: string | null;
   /** What the order says, and how much of it is still open. */
   line_count?: number;
   open_line_count?: number;
@@ -317,7 +365,24 @@ export interface SalesOrder {
   /** The purchase orders its lines wait on. Present on the LIST, absent on a single read. */
   linked_purchase_orders?: LinkedPurchaseOrder[];
   awaiting_purchase_orders?: number;
+  /** The order inquiries raised against this order - on the list AND the single read.
+   *  Empty for an order nobody has planned: the business sees sales orders and order
+   *  inquiries and nothing between them, so this is where an order says what has been
+   *  done about it. */
+  order_inquiries?: SalesOrderInquiry[];
   created_at: string;
+}
+
+/** One order inquiry raised against a sales order, by NUMBER - never by id. */
+export interface SalesOrderInquiry {
+  inquiry_no: string | null;
+  state: string;
+  /** ISO datetime, or null on a record that predates the column. */
+  raised_at: string | null;
+  raised_by_name: string | null;
+  /** How far purchasing has got: `rows_placed` of `rows_total` instructions placed. */
+  rows_total: number;
+  rows_placed: number;
 }
 
 export type SalesOrderSource = 'inquiry' | 'upload' | 'history' | 'manual';
@@ -330,9 +395,20 @@ export interface LinkedPurchaseOrder {
 }
 
 export interface SalesOrderFormData {
-  order_type: string;
+  /**
+   * The ERP document type. The CREATE modal still sends it; the detail page's edit does
+   * not - it edits the planning class under its own name (`demand_class` below), because
+   * that is what the screen renders and `order_type` is NULL on 96% of the book. An
+   * omitted key leaves the stored value alone.
+   */
+  order_type?: string;
+  /** The planning class the detail page shows and now writes: `project`, `retail`, or
+   *  `''`/`null` meaning "unclassified - leave the stored classification alone". */
+  demand_class?: string | null;
   customer_code: string;
   priority: SalesOrderPriority;
+  /** When the order was raised. ISO `yyyy-mm-dd`; omitted leaves it alone. */
+  order_date?: string | null;
   requested_delivery_date?: string | null;
   /**
    * `undefined` leaves the stored agent alone (the field was never sent); `null` or `''`
@@ -363,6 +439,11 @@ export interface SalesOrderFormData {
     /** ISO `yyyy-mm-dd`. Same omitted/clear/set semantics as `warehouse_code`. Shown on
      *  the detail page as "Delivery date". */
     required_date?: string | null;
+    /** What the customer pays, and what came off it. Decimal STRINGS (never floats - see
+     *  `SalesOrderLine`), with the same omitted/clear/set semantics as `uom`. The line
+     *  TOTAL is deliberately not writable: it is what the source document charged. */
+    unit_price?: string | null;
+    discount?: string | null;
   }[];
 }
 
@@ -397,9 +478,33 @@ export interface PurchaseOrderLine {
   product_name: string;
   qty_ordered: number;
   qty_received: number;
+  /** What is still to ARRIVE on this line, off the SERVER: `ordered - received` floored at
+   *  0, and **0 on a closed line** whatever those two say. Same rule and same reason as the
+   *  sales book's own `outstanding_qty`. */
+  outstanding_qty?: number;
   uom: string;
   /** The line's own destination - location is a line fact, never a header one. */
   warehouse_code?: string | null;
+  /** `open` or anything else. A line that has left the book is not a commitment however
+   *  much quantity it still shows. */
+  line_status?: string;
+  /** When this line's goods are due. Per line, for the same reason as the location. */
+  expected_date?: string | null;
+  /**
+   * What we pay for this line, and what came off it. Decimal STRINGS, never floats: the
+   * backend sends `Decimal`, Pydantic serialises it as a string, and a float sum of 200
+   * line totals drifts by a cent that then reads as a data problem.
+   *
+   * `unit_price` is the `purchase_order_lines.unit_cost` column under the name the sales
+   * screen uses for the same fact, so the two grids one click apart do not label one figure
+   * two ways. All three are null when the source document priced nothing - a 0 discount
+   * claims a discount of nothing was given, and a 0 total claims free goods.
+   */
+  unit_price?: string | null;
+  discount?: string | null;
+  line_total?: string | null;
+  /** The currency the figures above are IN. Blank predates the book having more than one. */
+  currency?: string | null;
 }
 
 export interface PurchaseOrder {
@@ -433,4 +538,42 @@ export interface PurchaseOrder {
   source?: 'recommendation' | 'import' | 'crm' | 'manual';
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
+  /** What the order is WORTH, summed on the backend from the same line figures the Lines
+   *  tab prints: each line's stated total where it has one, otherwise price x qty less
+   *  discount. `null` when not one line carries money, which is not the same as 0. */
+  total_amount?: string | null;
+  /** The currency the order is written in. Blank means ringgit. */
+  currency?: string | null;
+}
+
+/**
+ * What the detail page's Edit session writes. Mirrors `SalesOrderFormData`'s own
+ * omitted/clear/set rules, which the backend reads through `model_fields_set`.
+ */
+export interface PurchaseOrderUpdateData {
+  /** When the order was raised (`purchase_orders.issue_date`). ISO `yyyy-mm-dd`. */
+  order_date?: string | null;
+  /** When the goods are expected. ISO `yyyy-mm-dd`. */
+  expected_date?: string | null;
+  /** The supplier CODE, never the UUID. */
+  supplier_code?: string | null;
+  /**
+   * Omitted entirely on a header-only edit, so the backend does not re-upsert every line
+   * for nothing. A KEY left off a sent line leaves that line's stored value alone; an
+   * explicit `null` clears it.
+   */
+  lines?: {
+    /** The existing line's id, so the backend matches by id rather than falling back to
+     *  SKU - which is what keeps `qty_received` and any goods-receipt link attached. */
+    id?: string;
+    sku: string;
+    qty_ordered: number;
+    uom?: string | null;
+    warehouse_code?: string | null;
+    expected_date?: string | null;
+    /** Decimal STRINGS. The line TOTAL is deliberately not writable: it is what the
+     *  supplier's document charged. */
+    unit_price?: string | null;
+    discount?: string | null;
+  }[];
 }

@@ -1,7 +1,9 @@
 """Inventory management schemas."""
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
+
+from app.schemas.common import ListResponse
 
 
 class WarehouseBase(BaseModel):
@@ -177,6 +179,63 @@ class StockResponse(StockBase):
     
     class Config:
         from_attributes = True
+
+
+class StockVisibilityBlock(BaseModel):
+    """Which policy answered this request, echoed so n8n can branch without
+    re-deriving it (same passthrough habit as `field_access` / `lookup_companies`)."""
+
+    mode: str
+    #: null = every active warehouse; [] = none at all.
+    warehouse_codes: Optional[List[str]] = None
+    #: Whether the locations holding none of the product were withheld. Echoed so
+    #: n8n can phrase the reply without re-deriving the policy.
+    hide_zero_locations: bool = False
+    source: str
+
+
+class StockSummaryLocation(BaseModel):
+    warehouse_code: Optional[str] = None
+    quantity_on_hand: int
+
+
+class StockSummaryEntry(BaseModel):
+    """One `compact` block: a product, its total and its allowed locations."""
+
+    product_id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    total_on_hand: int
+    locations: List[StockSummaryLocation] = []
+    flags: Dict[str, Any] = {}
+
+
+class StockAvailabilityEntry(BaseModel):
+    """One `availability` answer. Deliberately carries NO quantity: `requested_qty`
+    is the contact's own number echoed back, and `available` is the whole reply."""
+
+    product_id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    needs_quantity: bool
+    requested_qty: Optional[int] = None
+    available: Optional[bool] = None
+
+
+class StockBalanceListResponse(ListResponse[StockResponse]):
+    """`GET /inventory/stock/balance`.
+
+    The three visibility blocks are declared HERE rather than left to the dict the
+    service returns: `response_model` silently drops anything it does not declare,
+    so an undeclared block reaches the chatbot as if the feature were never built.
+    """
+
+    stock_visibility: Optional[StockVisibilityBlock] = None
+    stock_summary: Optional[List[StockSummaryEntry]] = None
+    stock_availability: Optional[List[StockAvailabilityEntry]] = None
+    #: System-wide latest BULK_IMPORT time. Rows carry it as `updated_at`; the
+    #: summary modes have no rows, so it is stated on the payload too.
+    last_updated_at: Optional[datetime] = None
 
 
 class StockBatchBase(BaseModel):

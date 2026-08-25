@@ -96,7 +96,7 @@ describe('BoardAmendDialog: what it is and what it holds', () => {
       .getAllByTestId('amend-section')
       .map((section) => section.textContent?.split('\n')[0] ?? '');
     expect(labels).toEqual([
-      expect.stringContaining('Owed'),
+      expect.stringContaining('Outstanding'),
       expect.stringContaining('Incoming by the delivery date'),
       expect.stringContaining('Reserve'),
       expect.stringContaining('Borrow'),
@@ -262,12 +262,12 @@ describe('BoardAmendDialog: the balance, and what it stops', () => {
     renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }));
 
     expect(screen.getByTestId('amend-balance').textContent).toBe(
-      '100 owed = 0 incoming + 40 reserve + 0 borrow + 60 buy',
+      '100 outstanding = 0 incoming + 40 reserve + 0 borrow + 60 buy',
     );
 
     fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '10' } });
     expect(screen.getByTestId('amend-balance').textContent).toBe(
-      '100 owed = 0 incoming + 10 reserve + 0 borrow + 60 buy',
+      '100 outstanding = 0 incoming + 10 reserve + 0 borrow + 60 buy',
     );
   });
 
@@ -422,7 +422,7 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
     // instead" is the amendment a planner most often wants to make.
     expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
     expect(screen.getByTestId('amend-balance').textContent).toBe(
-      '43 owed = 0 incoming + 0 reserve + 10 borrow + 33 buy',
+      '43 outstanding = 0 incoming + 0 reserve + 10 borrow + 33 buy',
     );
   });
 

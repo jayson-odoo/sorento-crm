@@ -47,13 +47,17 @@ function position(overrides: Partial<BoardCellLocation> = {}): BoardCellLocation
   };
 }
 
-function renderTable(locations: BoardCellLocation[]) {
+function renderTable(locations: BoardCellLocation[], groupNote?: string | null) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   render(
     <QueryClientProvider client={client}>
-      <CellStockTable locations={locations} itemCode="B2155-NL-BLUE" />
+      <CellStockTable
+        locations={locations}
+        itemCode="B2155-NL-BLUE"
+        groupNote={groupNote}
+      />
     </QueryClientProvider>,
   );
 }
@@ -78,13 +82,15 @@ describe('CellStockTable: the position, tabulated', () => {
   it('carries AutoCount’s own words as its headers, in AutoCount’s order', () => {
     renderTable([position()]);
 
+    // No demand column. It read "Owed here" and it said what the Contributing lines table
+    // below already says line by line under Outstanding. No Free column either: it is
+    // `On hand - Reserved`, both of which are here, so it restated what the reader can see.
     expect(headers()).toEqual([
       '',
       'Location',
-      'Owed here',
+      'Where',
       'On hand',
       'Reserved',
-      'Free',
       'SO qty',
       'SPO qty',
       'Available',
@@ -112,10 +118,9 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW-BB')).toEqual([
       '',
       'BRW-BB',
-      '316',
+      'Own location',
       '478',
       '0',
-      '478',
       '47009',
       '0',
       '-46531',
@@ -123,10 +128,9 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW')).toEqual([
       '',
       'BRW',
-      '9',
+      'Own location',
       '1015',
       '12',
-      '1003',
       '9028',
       '500',
       '-7513',
@@ -176,9 +180,7 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells[2]).toBe('24');
     expect(cells.slice(3)).toEqual([
-      'Not stated',
       'Not stated',
       'Not stated',
       'Not stated',
@@ -204,19 +206,22 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('BRW-IB');
     expect(cells[3]).toBe('Not stated');
-    expect(cells[6]).toBe('10805');
-    expect(cells[7]).toBe('0');
-    expect(cells[8]).toBe('Not stated');
+    expect(cells[5]).toBe('10805');
+    expect(cells[6]).toBe('0');
+    expect(cells[7]).toBe('Not stated');
   });
 
   it('scrolls inside its own container, so the dialog never scrolls sideways', () => {
     renderTable([position()]);
 
     expect(screen.getByTestId('cell-stock-table').className).toContain('overflow-x-auto');
-    // Fixed cell widths on a `w-max` table, never `table-fixed`, which overlaps its columns as
-    // soon as the content is wider than the declared width.
+    // `w-full`, so the table reaches the edge of the dialog instead of stopping two thirds
+    // across and leaving a blank band beside it - and never `table-fixed`, which overlaps its
+    // columns as soon as the content is wider than the declared width. A narrow dialog still
+    // overflows past the per-column floors and the container above scrolls it.
     const table = screen.getByRole('table');
-    expect(table.className).toContain('w-max');
+    expect(table.className).toContain('w-full');
+    expect(table.className).not.toContain('w-max');
     expect(table.className).not.toContain('table-fixed');
   });
 
@@ -225,6 +230,87 @@ describe('CellStockTable: the position, tabulated', () => {
 
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.getByText('No stock position for this cell')).toBeInTheDocument();
+  });
+});
+
+describe('CellStockTable: where each location stands', () => {
+  /**
+   * The captain, on SO415472: the card read "Use own location 71 from BRW - Pool BRW has 1716
+   * available" over a table of five -BB warehouses, every one of them "Not stated". The pool is
+   * a warehouse of its own and it was not in the agent's group, so nothing listed it and the
+   * one figure the decision rested on could not be checked against anything.
+   *
+   * The server now sends every location the ladder consulted, each tagged with where it stands,
+   * and the tag is a column: a site pool holding 1716 and a group warehouse holding nothing are
+   * not the same kind of row, and unlabelled they look identical.
+   */
+  it('names where each location stands, so a site pool is not read as a group warehouse', () => {
+    renderTable([
+      position({ where: 'own' }),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        so_qty: '12',
+        spo_qty: '0',
+        available_qty: '1716',
+      }),
+      position({ location: 'BRW-IR', warehouse_id: 'wh-4', where: 'other_group' }),
+    ]);
+
+    expect(cellsOf('BRW-BB')[2]).toBe('Own location');
+    expect(cellsOf('DC1-BB')[2]).toBe('Group');
+    expect(cellsOf('BRW')[2]).toBe('Site pool');
+    expect(cellsOf('BRW-IR')[2]).toBe('Other group');
+    // And the figure the Suggestion card quotes is a row of the table, not a number only the
+    // sentence knows.
+    expect(screen.getByTestId('stock-available-BRW').textContent).toBe('1716');
+  });
+
+  it('subtotals a section of several rows once the table spans more than one', () => {
+    renderTable([
+      position({ where: 'group', qty_on_hand: '10', available_qty: '10' }),
+      position({
+        location: 'DC1-BB',
+        warehouse_id: 'wh-2',
+        where: 'group',
+        qty_on_hand: '5',
+        available_qty: '5',
+      }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        available_qty: '1716',
+      }),
+    ]);
+
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-group').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('Group subtotal');
+    expect(subtotal).toContain('15');
+    // One row IS its own subtotal, so the pool section does not repeat itself.
+    expect(screen.queryByTestId('stock-subtotal-site_pool')).not.toBeInTheDocument();
+    // The Total is still the whole table.
+    const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
+      (entry) => entry.textContent ?? '',
+    );
+    expect(footer).toContain('Total');
+    expect(footer).toContain('1743');
+  });
+
+  it('adds no subtotal when every location stands in the same place', () => {
+    // The subtotal would then be the Total, printed twice under two different words.
+    renderTable([
+      position(),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-2' }),
+    ]);
+
+    expect(screen.queryByTestId('stock-subtotal-own')).not.toBeInTheDocument();
   });
 });
 
@@ -237,6 +323,8 @@ describe('CellStockTable: the totals row', () => {
         warehouse_id: 'wh-2',
         qty: '9',
         qty_on_hand: '1015',
+        qty_reserved: '12',
+        qty_free: '1003',
         so_qty: '9028',
         spo_qty: '500',
         available_qty: '-7513',
@@ -246,12 +334,16 @@ describe('CellStockTable: the totals row', () => {
     const footer = [...(screen.getByRole('table').querySelectorAll('tfoot td, tfoot th') ?? [])].map(
       (cell) => cell.textContent ?? '',
     );
+    // EVERY column totals now, Reserved included: the rows are a whole ownership group rather
+    // than one warehouse, and "what does the group hold" is why it is listed.
     expect(footer).toContain('Total');
-    expect(footer).toContain('325');
     expect(footer).toContain('1493');
+    expect(footer).toContain('12');
     expect(footer).toContain('56037');
     expect(footer).toContain('500');
     expect(footer).toContain('-54044');
+    // The demand is not in it, because there is no demand column any more.
+    expect(footer).not.toContain('325');
   });
 
   /** One row IS its own total, and a totals row that repeats it is a row saying nothing. */
@@ -341,5 +433,52 @@ describe('CellStockTable: the documents, expanded in place', () => {
 
     expect(screen.queryByTestId('stock-expand-BRW-BB')).not.toBeInTheDocument();
     expect(screen.getByTitle('Not addressable')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The rows are normally the sales agent's whole ownership group - BRW-BB, MWH-BB and DC1-BB
+ * are one group belonging to the BB salespeople - because "can I fulfil this" is a question
+ * about the group, not about the one warehouse the line happens to name.
+ *
+ * When no group could be resolved the table says so. A single row with nothing said about it
+ * reads as "this product lives in exactly one place", which is the belief the group listing
+ * exists to correct.
+ */
+describe('CellStockTable: the ownership group', () => {
+  it('tabulates every location the server sent, group members included', () => {
+    renderTable([
+      position(),
+      position({ location: 'MWH-BB', warehouse_id: 'wh-2', qty: '0', qty_demand: '0', qty_on_hand: '25' }),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-3', qty: '0', qty_demand: '0', qty_on_hand: '0' }),
+    ]);
+
+    expect(screen.getByRole('table').querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(cellsOf('MWH-BB')[3]).toBe('25');
+    // Listed even holding nothing: "nothing at DC1-BB" is an answer, a missing row is not.
+    expect(cellsOf('DC1-BB')[3]).toBe('0');
+  });
+
+  it('says why, when the line\u2019s own location is all there is', () => {
+    renderTable([position()], 'Agent SEAN has no location group.');
+
+    expect(screen.getByTestId('cell-stock-group-note').textContent).toBe(
+      'Agent SEAN has no location group.',
+    );
+  });
+
+  it('says nothing extra when a group WAS resolved', () => {
+    renderTable([position()], null);
+
+    expect(screen.queryByTestId('cell-stock-group-note')).not.toBeInTheDocument();
+  });
+
+  it('still says why when there is no position to tabulate at all', () => {
+    renderTable([], 'No sales agent on the order, so no location group.');
+
+    expect(screen.getByText('No stock position for this cell')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-stock-group-note').textContent).toBe(
+      'No sales agent on the order, so no location group.',
+    );
   });
 });

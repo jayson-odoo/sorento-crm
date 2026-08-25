@@ -556,8 +556,11 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         </span>
         <div className="text-base font-semibold">Nothing to order</div>
         <p className="max-w-md text-sm text-muted-foreground">
-          No product is short in this plan. Upload the outstanding order book, or generate a plan,
-          to build a new report.
+          {/* "the outstanding order book" named an action that is now called Upload sales
+              orders / Upload purchase orders everywhere it can be started from. One action,
+              one name. */}
+          No product is short in this plan. Upload the order book, or generate a plan, to
+          build a new report.
         </p>
         {onBack ? (
           <Button variant="ghost" size="sm" onClick={onBack}>

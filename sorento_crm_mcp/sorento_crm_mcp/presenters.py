@@ -90,6 +90,23 @@ _RESULT_TYPE = {
     "crm_portal_link_get": "portal_link",
 }
 
+_STOCK_TOOL = "crm_inventory_stock_balance_list"
+
+# The stock tool answers in whichever shape the contact's visibility policy
+# allows, so its result_type is decided per RESPONSE, not per tool.
+_STOCK_MODE_RESULT_TYPE = {
+    "compact": "stock_compact",
+    "availability": "stock_availability",
+}
+
+_STOCK_COMPACT_INTRO = "Stock summary for the requested products."
+# The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
+# intro and nothing else for this mode), so the wording is the contract.
+_AVAILABILITY_ASK = "How many units do you need?"
+_AVAILABILITY_YES = "Yes, we have stock."
+_AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
+_AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
+
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
 _PASSTHROUGH_KEYS = (
@@ -114,6 +131,10 @@ _PASSTHROUGH_KEYS = (
     # deliberately NOT passed through - the consumer reads `summary.row_count`
     # and nothing reads the page geometry (reviewer R6: no key without a reader).
     "summary",
+    # Which stock-visibility policy answered, so the consumer can branch on the
+    # mode (which format to print, whether to ask the quantity question again)
+    # instead of inferring it from which block happens to be present.
+    "stock_visibility",
 )
 
 
@@ -233,6 +254,23 @@ class _Builder:
                     "unallocated": bool(unallocated),
                     "partially_allocated": bool(partially_allocated),
                 },
+            }
+        )
+
+    def raw_item(self, title: Any, fields: list[dict[str, Any]], flags: dict[str, Any]) -> None:
+        """An item whose fields and flags the SOURCE already shaped.
+
+        `item()` maps a raw CRM row: it drops empty values and stamps the five
+        standard flags. The stock-visibility blocks arrive pre-shaped by the
+        policy - an `availability` answer has no fields AT ALL (that is the
+        point of the mode) and carries its own two flags - so mapping them
+        through `item()` would delete the answer for being empty.
+        """
+        self.items.append(
+            {
+                "title": title if _filled(title) else None,
+                "fields": fields,
+                "flags": flags,
             }
         )
 
@@ -976,6 +1014,86 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         )
 
 
+def _stock_int(v: Any) -> Any:
+    """A quantity as a plain int. n8n prints `Total: ${value}` straight into the
+    message, so a Decimal-shaped string ("500.0000") would be read out as-is."""
+    if v is None:
+        return v
+    try:
+        return int(Decimal(str(v)))
+    except (InvalidOperation, TypeError, ValueError):
+        return v
+
+
+def _stock_compact(payload: dict, b: _Builder) -> None:
+    """`compact`: one item per product, Total then the allowed locations.
+
+    Location order is the backend's (already sorted by code). Re-sorting here
+    would let the two answers disagree about the same stock.
+    """
+    for entry in payload.get("stock_summary") or []:
+        if not isinstance(entry, dict):
+            continue
+        fields: list[dict[str, Any]] = [
+            {"label": "Total", "value": _stock_int(entry.get("total_on_hand"))}
+        ]
+        for loc in entry.get("locations") or []:
+            if not isinstance(loc, dict):
+                continue
+            # `warehouse_code` is what the backend declares. `system_location` is
+            # the same value under the Sage vocabulary name, read in case a
+            # sanitizer relabels the block on the way here.
+            code = loc.get("warehouse_code") or loc.get("system_location")
+            if not _filled(code):
+                continue
+            fields.append(
+                {"label": str(code), "value": _stock_int(loc.get("quantity_on_hand"))}
+            )
+        # No `key` on these pairs: the label IS data (the location the contact is
+        # allowed to see), not a CRM field name a consumer could match on.
+        b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
+
+
+def _stock_availability(payload: dict, b: _Builder) -> None:
+    """`availability`: yes / no / ask, and nothing else.
+
+    `fields` stays empty on purpose. This mode exists so a dealer is never told a
+    quantity, and an empty field list is the only shape that cannot carry one.
+    """
+    for entry in payload.get("stock_availability") or []:
+        if not isinstance(entry, dict):
+            continue
+        b.raw_item(
+            entry.get("product_code"),
+            [],
+            {
+                "needs_quantity": bool(entry.get("needs_quantity")),
+                "available": entry.get("available"),
+            },
+        )
+
+
+def _availability_intro(payload: dict) -> str:
+    """The whole reply, in one line.
+
+    Several products can disagree. Any product still missing its quantity makes
+    the turn a question, not an answer - so ask, and say nothing about the rest.
+    Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
+    so the intro steps back and the per-item flags carry it.
+    """
+    entries = [
+        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
+    ]
+    if any(e.get("needs_quantity") for e in entries):
+        return _AVAILABILITY_ASK
+    verdicts = {e.get("available") for e in entries}
+    if verdicts == {True}:
+        return _AVAILABILITY_YES
+    if verdicts == {False}:
+        return _AVAILABILITY_NO
+    return _AVAILABILITY_MIXED
+
+
 def _forms(rows: list[dict], b: _Builder) -> None:
     for f in rows:
         b.item(f.get("name"), [("Form Name", f.get("name"))])
@@ -1070,6 +1188,20 @@ def _company_names(lookup_companies: Any) -> str | None:
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _stock_mode(tool_name: str, data: dict[str, Any]) -> str:
+    """Which stock-visibility policy shaped this response.
+
+    Anything other than the two summary modes (including a response with no
+    policy block at all, i.e. every caller that is not a contact) is `detailed`,
+    which is the envelope this tool has always produced.
+    """
+    if tool_name != _STOCK_TOOL:
+        return "detailed"
+    block = data.get("stock_visibility")
+    mode = block.get("mode") if isinstance(block, dict) else None
+    return mode if mode in _STOCK_MODE_RESULT_TYPE else "detailed"
+
+
 # --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
@@ -1091,8 +1223,13 @@ def present_response(tool_name: str, raw: str) -> str:
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
 
     b = _Builder()
+    stock_mode = _stock_mode(tool_name, data)
     if tool_name == "crm_portal_link_get":
         _portal_link(data, b)
+    elif stock_mode == "compact":
+        _stock_compact(data, b)
+    elif stock_mode == "availability":
+        _stock_availability(data, b)
     else:
         builder = _BUILDERS.get(tool_name, _generic)
         builder(rows, b)
@@ -1125,11 +1262,16 @@ def present_response(tool_name: str, raw: str) -> str:
             if searched
             else "No matching results found."
         )
+    elif stock_mode == "compact":
+        intro = _STOCK_COMPACT_INTRO
+    elif stock_mode == "availability":
+        intro = _availability_intro(data)
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 
     envelope: dict[str, Any] = {
-        "result_type": _RESULT_TYPE.get(tool_name, "result"),
+        "result_type": _STOCK_MODE_RESULT_TYPE.get(stock_mode)
+        or _RESULT_TYPE.get(tool_name, "result"),
         "intro": intro,
         "items": b.items,
         "attachments": attachments,

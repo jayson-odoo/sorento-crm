@@ -24,6 +24,7 @@ import type {
   BoardDecision,
   BoardDraft,
   BoardOrderStanding,
+  BoardProductRow,
   BoardRowAxis,
   ConfirmBorrowComponent,
   ConfirmLine,
@@ -838,16 +839,55 @@ export function rowMatchesSearch(
  */
 export function rankingNote(
   cell: Pick<BoardCell, 'contributions' | 'distinct_order_count' | 'rank_separates'>,
-): { cell: string; note: string } | null {
+): { cell: string; note: string | null } | null {
   if (cell.rank_separates) return null;
   // A cell that states neither flag was not ranked as one queue: a pivoted cell spans several
   // piles, so it has no single ranking sentence and each line keeps its own score.
   if (cell.rank_separates === undefined && cell.distinct_order_count === undefined) return null;
+  // ONE line in the cell still reads "Not ranked" in the Rank column - a flat 0.00 there would
+  // claim a ranking nothing computed - but it carries NO sentence (25 August 2026). "Only line
+  // in this cell" restated the single row the reader was already looking at, and a sentence
+  // that repeats the screen is one more thing to read past on the way to the decision.
+  if (cell.contributions.length === 1) return { cell: 'Not ranked', note: null };
   const note =
-    cell.contributions.length === 1
-      ? 'Only line in this cell'
-      : (cell.distinct_order_count ?? 0) === 1
-        ? 'Same sales order; line order decided which line was served first'
-        : 'The active policy separates none of these rows';
+    (cell.distinct_order_count ?? 0) === 1
+      ? 'Same sales order; line order decided which line was served first'
+      : 'The active policy separates none of these rows';
   return { cell: 'Not ranked', note };
+}
+
+/**
+ * The list view's row order: the board's OWN product order, product by product.
+ *
+ * The grid and the list are two readings of one payload, and the reader toggles between them
+ * to find the same line. The grid's vertical axis is `productRows`, which the server sends in
+ * its own order; the list was handed `contributions` in the order the demand query returned
+ * them, so the same product sat in two different places and the toggle became a re-search.
+ *
+ * One ordering, and it is the payload's: a line sorts by where its product appears on the
+ * grid's axis, then by required date, sales order and line number so the sequence is TOTAL - a
+ * partial rule gives a different answer on each render and the two views drift apart again.
+ * A product the axis does not name keeps its relative position at the end rather than being
+ * dropped; the list is the overview of the WHOLE selection, so it may legitimately hold a line
+ * the (windowed) grid does not show.
+ */
+export function orderByProductRows<T extends { item_code: string; required_date?: string | null; so_number?: string; line_no?: number }>(
+  contributions: readonly T[],
+  productRows: readonly BoardProductRow[],
+): T[] {
+  const rank = new Map<string, number>();
+  productRows.forEach((row, index) => rank.set(row.item_code, index));
+  const after = productRows.length;
+  return [...contributions].sort((a, b) => {
+    const byProduct = (rank.get(a.item_code) ?? after) - (rank.get(b.item_code) ?? after);
+    if (byProduct !== 0) return byProduct;
+    if (a.item_code !== b.item_code) return a.item_code.localeCompare(b.item_code);
+    // A line nobody dated sorts last within its product, the same way an undated order sorts
+    // last on every other listing in this product.
+    const byDate = (a.required_date ?? '9999-12-31').localeCompare(b.required_date ?? '9999-12-31');
+    if (byDate !== 0) return byDate;
+    const byOrder = (a.so_number ?? '').localeCompare(b.so_number ?? '');
+    if (byOrder !== 0) return byOrder;
+    return (a.line_no ?? 0) - (b.line_no ?? 0);
+  });
 }

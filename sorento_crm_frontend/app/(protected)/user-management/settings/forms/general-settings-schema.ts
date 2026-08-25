@@ -6,6 +6,10 @@ export const NO_DEFAULT_SUPPLIER_VALUE = '__none__';
 /** Select value when no default approver is configured. */
 export const NO_DEFAULT_APPROVER_VALUE = '__none__';
 
+/** Select value when no default unit of measure is chosen (backend: null -> the built-in
+ *  `EA` fallback). */
+export const NO_DEFAULT_UOM_VALUE = '__none__';
+
 export const GeneralSettingsSchema = z.object({
   name: z.string().min(1, 'Company name is required'),
   logoFile: z
@@ -32,6 +36,8 @@ export const GeneralSettingsSchema = z.object({
   currencyFormat: z.string(),
   defaultProductSupplierId: z.string(),
   defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
+  /** The unit a product gets when the source states none (product import included). */
+  defaultUomId: z.string(),
   takeoverCooldownSeconds: z.coerce.number().int().min(0).max(3600),
   formSlaGraceSeconds: z.coerce.number().int().min(0).max(600),
   /** SCM front planning: the grain new plans are decided at (AC-F01). */

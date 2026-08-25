@@ -7,16 +7,18 @@ import { parseDetailSearch } from '@/lib/listNavQuery';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 
 /**
- * Prev/next over the purchase-order list, the way the users and orders screens do it.
+ * Prev/next over the purchase-order list, the twin of `SalesOrderNavigation`.
  *
- * The neighbours come from the SAME page of the SAME filtered, sorted list the user was
- * looking at, reconstructed from the query the list carried into the detail URL. Paging
- * against a default query instead would step to whatever row happens to be next in an
- * order the user never chose, which is worse than having no pager: reviewing 1,586 imported
- * orders one by one is exactly the case this exists for.
+ * The neighbours come from the SAME filtered, sorted list the user was looking at,
+ * reconstructed from the query the list carried into the detail URL. It used to rebuild only
+ * `status` and `supplier` while the list writes `status`, `product_code` and `outstanding` -
+ * so the pager walked a DIFFERENT set from the one on screen, and the row after the one you
+ * opened was not the row under it in the list.
  *
- * Neighbours are drawn from the loaded page rather than a dedicated endpoint, so the pager
- * walks within the page and the counter says where in the whole list that page sits.
+ * **The walk is the CURRENT PAGE, and it stops at both ends.** It used to count "1 / 13,856"
+ * against the whole result set, which read as a promise to walk 13,856 records one chevron
+ * at a time. The page is the set the reader chose to look at, so the counter says where they
+ * are within it and the chevron greys out at its edge.
  */
 export default function PurchaseOrderNavigation({
   purchaseOrderId,
@@ -36,7 +38,14 @@ export default function PurchaseOrderNavigation({
       sorting: parsed.sorting,
       searchQuery: parsed.searchQuery,
       status: parsed.filters.status || null,
-      supplier: parsed.filters.supplier || null,
+      supplier: null,
+      productCode: parsed.filters.product_code || null,
+      // Three states, not two: the list's All / Outstanding / Completed toggle writes
+      // `true`, `false` or nothing at all, and reading a missing param as `false` would
+      // silently narrow the walk to the completed orders.
+      outstanding: parsed.filters.outstanding
+        ? parsed.filters.outstanding === 'true'
+        : null,
     };
   }, [searchParams]);
 
@@ -56,8 +65,9 @@ export default function PurchaseOrderNavigation({
       basePath="/scm/purchase-orders"
       currentId={purchaseOrderId}
       items={items}
-      totalCount={data?.pagination.total}
-      pageItemOffset={listParams.pageIndex * listParams.pageSize}
+      // No wrap: the last row on the page is the last row, and a chevron that jumps back to
+      // the top of the page without saying so reads as a broken step, not as a feature.
+      circular={false}
       onSelect={handleSelect}
       ariaLabel="purchase order"
       className={className}

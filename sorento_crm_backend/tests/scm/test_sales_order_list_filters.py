@@ -21,6 +21,7 @@ import pytest
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.sales_agent import SalesAgent
 from app.services.scm.sales_order_service import SalesOrderService
 from tests._pg_fixture import pg_session, unique_code
 
@@ -51,7 +52,9 @@ def world(db):
     other = Customer(id=_u(), customer_code=unique_code("C"), customer_name=f"{MARKER} Other")
     db.add_all([product, acme, other])
     db.flush()
-    return {"product": product, "acme": acme, "other": other}
+    # The category and the unit ride along so the search tests can seed a SECOND product
+    # (one order carries it, one does not) without restating the chain.
+    return {"product": product, "acme": acme, "other": other, "category": cat, "uom": uom}
 
 
 def _order(db, world, *, when: date, customer, ordered=100, delivered=0,
@@ -74,6 +77,15 @@ def _numbers(db, **filters) -> set[str]:
     out = SalesOrderService(db).list(
         page=1, limit=200, sort="so_number", direction="asc",
         query=MARKER, status=None, priority=None, **filters,
+    )
+    return {row["so_number"] for row in out["data"]}
+
+
+def _search(db, term: str) -> set[str]:
+    """The SO numbers the free-text search returns for `term`."""
+    out = SalesOrderService(db).list(
+        page=1, limit=200, sort="so_number", direction="asc",
+        query=term, status=None, priority=None,
     )
     return {row["so_number"] for row in out["data"]}
 
@@ -253,6 +265,128 @@ def test_an_unrecognised_demand_class_matches_nothing(db, world):
     _order(db, world, when=date(2026, 3, 1), customer=world["acme"], demand_class="project")
 
     assert _numbers(db, demand_class="not-a-real-class") == set()
+
+
+# --------------------------------------------------------------------------- #
+# free-text search
+# --------------------------------------------------------------------------- #
+# The four things a person holds when they come looking for an order: the document number,
+# who it is for, WHAT IS ON IT, and WHO SOLD IT. The first two were matched; the last two
+# were not, so "which orders have that sink on them" and "show me Eric's orders" both
+# answered nothing. Matched with EXISTS subqueries rather than joins - an order with three
+# matching lines is one row in the result, not three.
+
+
+def _product(db, world, code_stem: str, name: str) -> Product:
+    p = Product(id=_u(), product_code=unique_code(code_stem), product_name=name,
+                category_id=world["category"].id, base_uom_id=world["uom"].id,
+                list_price=0, is_active=True, is_discontinued=False)
+    db.add(p)
+    db.flush()
+    return p
+
+
+def _agent(db, code: str, person_label=None) -> SalesAgent:
+    a = SalesAgent(id=_u(), sales_agent=code, person_label=person_label, is_active=True,
+                   source="manual")
+    db.add(a)
+    db.flush()
+    return a
+
+
+def _order_with(db, world, *, product=None, agent=None) -> SalesOrder:
+    so = SalesOrder(id=_u(), so_number=unique_code(MARKER), status="open",
+                    order_date=date(2026, 3, 1), customer_id=world["acme"].id,
+                    sales_agent_id=agent.id if agent else None)
+    db.add(so)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=(product or world["product"]).id,
+        qty_ordered=10, qty_delivered=0, line_status="open",
+        purchasing_status="not_reviewed", required_date=date(2026, 3, 1),
+    ))
+    db.flush()
+    return so
+
+
+def test_the_search_finds_an_order_by_a_lines_product_code(db, world):
+    wanted = _product(db, world, "SINKX", f"{MARKER} sink")
+    on_it = _order_with(db, world, product=wanted)
+    not_on_it = _order_with(db, world)
+
+    got = _search(db, wanted.product_code[-8:])
+
+    assert on_it.so_number in got
+    assert not_on_it.so_number not in got
+
+
+def test_the_search_finds_an_order_by_a_lines_product_name(db, world):
+    wanted = _product(db, world, "P", f"{MARKER} Granite Sink 900")
+    on_it = _order_with(db, world, product=wanted)
+    not_on_it = _order_with(db, world)
+
+    got = _search(db, "granite sink 900")
+
+    assert on_it.so_number in got
+    assert not_on_it.so_number not in got
+
+
+def test_an_order_is_returned_once_however_many_of_its_lines_match(db, world):
+    """EXISTS, not a join: a matching product on three lines is still one order."""
+    wanted = _product(db, world, "P", f"{MARKER} Repeated Item")
+    so = _order_with(db, world, product=wanted)
+    for _ in range(2):
+        db.add(SalesOrderLine(
+            id=_u(), sales_order_id=so.id, product_id=wanted.id, qty_ordered=5,
+            qty_delivered=0, line_status="open", purchasing_status="not_reviewed",
+        ))
+    db.flush()
+
+    out = SalesOrderService(db).list(
+        page=1, limit=200, sort="so_number", direction="asc",
+        query="Repeated Item", status=None, priority=None,
+    )
+
+    numbers = [row["so_number"] for row in out["data"]]
+    assert numbers.count(so.so_number) == 1
+    assert out["pagination"]["total"] == 1
+
+
+def test_the_search_finds_an_order_by_its_agent_code(db, world):
+    eric = _agent(db, unique_code("ERICNG"))
+    his = _order_with(db, world, agent=eric)
+    hers = _order_with(db, world)
+
+    got = _search(db, "ERICNG")
+
+    assert his.so_number in got
+    assert hers.so_number not in got
+
+
+def test_the_search_finds_an_order_by_the_person_behind_the_code(db, world):
+    """The codes are `SEAN I` / `SEAN III`; the person is what anybody actually types."""
+    sean = _agent(db, unique_code("S3"), person_label=f"{MARKER} Sean Lim")
+    his = _order_with(db, world, agent=sean)
+    hers = _order_with(db, world)
+
+    got = _search(db, "sean lim")
+
+    assert his.so_number in got
+    assert hers.so_number not in got
+
+
+def test_the_search_still_finds_an_order_by_number_and_customer(db, world):
+    """The two that already worked keep working - widening a search must not narrow it."""
+    so = _order_with(db, world)
+
+    assert so.so_number in _search(db, so.so_number)
+    assert so.so_number in _search(db, world["acme"].customer_name)
+
+
+def test_a_term_nothing_carries_matches_nothing(db, world):
+    _order_with(db, world)
+
+    assert _search(db, "ZZTSOF-NOTHING-CARRIES-THIS") == set()
 
 
 # --------------------------------------------------------------------------- #

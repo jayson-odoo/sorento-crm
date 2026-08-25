@@ -17,6 +17,7 @@ import type {
   BoardDateBucket,
   BoardGranularity,
   BoardLineDecision,
+  BoardLineOrderInquiry,
   BoardOrderStanding,
   BoardPolicy,
   BoardProductRow,
@@ -78,6 +79,13 @@ export interface BoardDemandLine {
    * and says nothing about a queue it is not in.
    */
   decision?: BoardLineDecision | null;
+  /**
+   * The order inquiry purchasing was given for this line, and how far they got with it.
+   *
+   * Absent on most of the board, exactly as it is on the server: an inquiry exists only once
+   * somebody has confirmed supply, so `null` is the ordinary case rather than a gap.
+   */
+  order_inquiry?: BoardLineOrderInquiry | null;
 }
 
 /**
@@ -558,7 +566,7 @@ function trailFor(input: {
     outcome: 'not_eligible',
     why:
       input.ahead.lines > 0
-        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} owed to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
+        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} outstanding to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
         : `${fromMinor(input.offered)} at ${input.location}, nothing ranked ahead of this line there. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`,
   });
   add('incoming', {
@@ -718,6 +726,7 @@ export function buildBoard(
       rank_factors: [],
       covered: Boolean(line.decision),
       decision: line.decision ?? null,
+      order_inquiry: line.order_inquiry ?? null,
     };
     const bucket = contributionsByCell.get(cellKey);
     if (bucket) bucket.push(contribution);

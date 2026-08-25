@@ -53,6 +53,7 @@ ACTION = "projects.order_inquiry.action"
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
 #: test asserts the two agree.
 WorklistSort = Literal[
+    "inquiry_no",
     "so_date",
     "so_number",
     "item_code",

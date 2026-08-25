@@ -233,6 +233,18 @@ _WAREHOUSE_KEY_RELABEL = {
     "warehouse_id": "system_location_id",
 }
 
+# The stock-visibility policy blocks. Held OUT of the stock sanitizers below and
+# put back verbatim, because those sanitizers are written for a stock ROW and
+# would take the answer apart:
+#   * `available` is in `_STOCK_HIDDEN_FIELDS` (on a row it means
+#     quantity_available and must never be shown). On the availability block it
+#     is the ENTIRE answer, so one recursive pass deletes every dealer's reply.
+#   * the Sage relabel renames `warehouse_code` -> `system_location` everywhere it
+#     walks, and inside a summary location that key is the label the reader sees.
+# The blocks are already the narrowest thing the policy allows - there is nothing
+# left in them to strip.
+_STOCK_POLICY_BLOCK_KEYS = ("stock_visibility", "stock_summary", "stock_availability")
+
 # Stock tool nested `warehouse` object: trim to literal text identifiers only.
 # Drops UUID + description so the AI assistant always answers with the human-
 # readable system_location code + warehouse label.
@@ -613,7 +625,11 @@ def _to_malaysia_iso(value: Any) -> Any:
 #: reported a UTC instant, and the per-file "Uploaded" line is the DAY of that
 #: instant, so anything uploaded after 16:00 MYT (08:00Z) renders as the previous
 #: date to a Malaysian reader.
-_MALAYSIA_TIME_KEYS = ("updated_at", "uploaded_at")
+# `last_updated_at` is a PAYLOAD-level timestamp (the stock tool's "data last
+# updated" moment). The summary visibility modes carry no rows, so it is the only
+# freshness stamp their answer has - left alone it would report UTC while every
+# other answer reports Malaysia time, i.e. eight hours early.
+_MALAYSIA_TIME_KEYS = ("updated_at", "uploaded_at", "last_updated_at")
 
 
 def _normalize_updated_at(value: Any) -> Any:
@@ -1359,6 +1375,8 @@ def _sanitize_tool_response(
       warehouse, system_location_id). Backend Pydantic response unchanged.
     * For `crm_inventory_stock_*` tools, finally slim the nested `warehouse`
       object on each row to its literal-text identifiers.
+    * The stock-visibility blocks (`_STOCK_POLICY_BLOCK_KEYS`) sit out those three
+      row-shaped passes and are restored verbatim - see the constant.
     * For `crm_procurement_grn_*` tools, slim picking response (rename to
       document_number/receiving_date, drop internal status/cost/inspection).
     * For the multi-company labelled tools (`_COMPANY_ID_STRIP_TOOLS`), drop
@@ -1368,12 +1386,19 @@ def _sanitize_tool_response(
     if data is None:
         return raw
     data = _normalize_updated_at(data)
+    held_policy_blocks: dict[str, Any] = {}
+    if tool_name.startswith(STOCK_TOOL_PREFIX) and isinstance(data, dict):
+        for key in _STOCK_POLICY_BLOCK_KEYS:
+            if key in data:
+                held_policy_blocks[key] = data.pop(key)
     if tool_name.startswith(STOCK_TOOL_PREFIX):
         data = _strip_stock_hidden_fields(data)
     if tool_name.startswith(INVENTORY_TOOL_PREFIX):
         data = _relabel_warehouse_keys(data)
     if tool_name.startswith(STOCK_TOOL_PREFIX):
         data = _slim_stock_nested_warehouse(data)
+    if held_policy_blocks and isinstance(data, dict):
+        data.update(held_policy_blocks)
     if tool_name in _ORDERS_SLIM_TOOLS:
         product_query = (query or {}).get("product_query") if isinstance(query, dict) else None
         data = _slim_orders_list_response(data, product_query if isinstance(product_query, str) else None)

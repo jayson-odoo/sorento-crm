@@ -52,11 +52,14 @@ describe('UploadDataMenu - every channel is reachable', () => {
   it('offers all four files, grouped by what they do to the plan', async () => {
     openMenu();
 
-    // The order book: what the plan is computed from.
-    expect(await screen.findByRole('menuitem', { name: /Outstanding sales orders/i }))
+    // The order book: what the plan is computed from. Neither entry says "outstanding" -
+    // each file carries the WHOLE book, and the two list toolbars and the dialog title all
+    // word this one action the same way.
+    expect(await screen.findByRole('menuitem', { name: /Upload sales orders/i }))
       .toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Outstanding purchase orders/i }))
+    expect(screen.getByRole('menuitem', { name: /Upload purchase orders/i }))
       .toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Outstanding/i })).toBeNull();
     // History and linkage: what the order book does not carry.
     expect(screen.getByRole('menuitem', { name: /Purchase history/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /Order inquiry sheet/i })).toBeInTheDocument();
@@ -72,8 +75,8 @@ describe('UploadDataMenu - every channel is reachable', () => {
 
 describe('UploadDataMenu - each entry routes to the importer that understands the file', () => {
   const cases: ReadonlyArray<readonly [RegExp, string]> = [
-    [/Outstanding sales orders/i, 'outstanding:sales-orders'],
-    [/Outstanding purchase orders/i, 'outstanding:purchase-orders'],
+    [/Upload sales orders/i, 'outstanding:sales-orders'],
+    [/Upload purchase orders/i, 'outstanding:purchase-orders'],
     [/Purchase history/i, 'history:purchase-history'],
     [/Order inquiry sheet/i, 'history:order-inquiry'],
   ];
