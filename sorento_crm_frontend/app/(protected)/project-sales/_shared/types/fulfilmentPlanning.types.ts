@@ -1207,6 +1207,14 @@ export interface BoardCellLocation {
   so_qty?: string | null;
   spo_qty?: string | null;
   available_qty?: string | null;
+  /**
+   * The open PURCHASE-order balance here, less what an order-inquiry row already claims off
+   * those lines. SPO documents are excluded - they are `spo_qty` already.
+   *
+   * INFORMATION ONLY and outside `available_qty` on purpose: a purchase order reaches a
+   * project line through a link, never by sitting at the location.
+   */
+  po_open_qty?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;

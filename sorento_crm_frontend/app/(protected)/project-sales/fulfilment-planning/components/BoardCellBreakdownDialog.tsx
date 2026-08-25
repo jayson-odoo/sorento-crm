@@ -31,6 +31,7 @@ import {
   rowOf,
   rowText,
   suggestionBreakdown,
+  takenByLocation,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
@@ -125,6 +126,12 @@ export function BoardCellBreakdownDialog({
    * transfers their tick is about to raise rather than discovering them on another page.
    */
   const moves = React.useMemo(() => movesText(movesOf(cell, draft)), [cell, draft]);
+  /**
+   * How much the cell draws from each location, for the Taken column of the table above
+   * (AC-B3). The decision when there is one and the suggestion otherwise, which is the same
+   * switch the cell's colour bar uses.
+   */
+  const taken = React.useMemo(() => takenByLocation(cell, draft), [cell, draft]);
   /**
    * Did ANY contributing line record what the engine suggested?
    *
@@ -592,6 +599,7 @@ export function BoardCellBreakdownDialog({
             locations={cell.locations}
             itemCode={cell.item_code}
             groupNote={cell.location_group_note}
+            taken={taken}
           />
         </DialogHeader>
 

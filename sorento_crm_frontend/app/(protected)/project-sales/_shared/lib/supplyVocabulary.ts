@@ -119,7 +119,8 @@ export interface SupplyPart {
   donor_so_number?: string | null;
 }
 
-function locationOf(part: SupplyPart): string | null {
+/** The warehouse a part names, whichever of the two wire spellings it arrived under. */
+export function locationOf(part: SupplyPart): string | null {
   return part.location ?? part.source_location ?? null;
 }
 
@@ -614,29 +615,65 @@ export function contributionSupply(
   contribution: BoardContribution,
   drafted?: BoardDecision | null,
 ): { segments: SupplySegment[]; decided: boolean } {
+  const { parts, decided } = contributionParts(contribution, drafted);
+  return { segments: segmentsOf(parts, contribution.fulfilment_location), decided };
+}
+
+/**
+ * The SAME switch, one step earlier: the parts a line's bar is drawn from, before they are
+ * summed by kind.
+ *
+ * The location table's Taken column needs the parts themselves (which warehouse, how much),
+ * and reading the decision-or-proposal question a second time is how the bar and the table
+ * come to disagree about a line the planner has just amended.
+ */
+export function contributionParts(
+  contribution: BoardContribution,
+  drafted?: BoardDecision | null,
+): { parts: SupplyPart[]; decided: boolean } {
   if (drafted && drafted.verdict !== 'rejected') {
     const composed = drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
-    const parts = composed
-      ? decisionParts(contribution, drafted)
-      : contribution.sources;
     return {
-      segments: segmentsOf(parts, contribution.fulfilment_location),
+      parts: composed ? decisionParts(contribution, drafted) : contribution.sources,
       decided: true,
     };
   }
   if (!drafted && contribution.covered && contribution.decision) {
-    return {
-      segments: segmentsOf(
-        decisionParts(contribution, contribution.decision),
-        contribution.fulfilment_location,
-      ),
-      decided: true,
-    };
+    return { parts: decisionParts(contribution, contribution.decision), decided: true };
   }
-  return {
-    segments: segmentsOf(contribution.sources, contribution.fulfilment_location),
-    decided: false,
-  };
+  return { parts: contribution.sources, decided: false };
+}
+
+/**
+ * How much the cell draws FROM EACH LOCATION, summed over its contributing lines (AC-B3).
+ *
+ * The answer to "why not MWH", said by the row itself rather than by its absence: MWH was
+ * listed, it held 12, and nothing was needed from it. A location not drawn on has no entry
+ * here and the table reads 0 for it.
+ *
+ * The decision when there is one, the suggestion otherwise - `contributionParts`, which is the
+ * same switch the cell's colour bar uses, so a line amended from Buy to the shared pool moves
+ * its Taken the moment the tick lands.
+ *
+ * Only a RESERVE or a BORROW is drawn from somewhere. A Buy is not held anywhere yet and an
+ * incoming arrives on somebody else's document, so neither takes anything off a location's
+ * pile - the same rule `movesOf` applies for the same reason.
+ */
+export function takenByLocation(
+  cell: Pick<BoardCell, 'contributions'>,
+  draft: Record<string, BoardDecision>,
+): Map<string, string> {
+  const minor = new Map<string, number>();
+  for (const contribution of cell.contributions) {
+    const { parts } = contributionParts(contribution, draft[contribution.key] ?? null);
+    for (const part of parts) {
+      if (part.kind !== 'reserve' && part.kind !== 'borrow') continue;
+      const at = locationOf(part);
+      if (!at) continue;
+      minor.set(at, (minor.get(at) ?? 0) + toMinor(part.qty));
+    }
+  }
+  return new Map([...minor].map(([location, qty]) => [location, fromMinor(qty)]));
 }
 
 /**

@@ -51,8 +51,10 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     DECISION_ACTIVE,
+    INQUIRY_PLACED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -69,6 +71,7 @@ from app.services.project_supply_service import (
 )
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -426,6 +429,15 @@ class FulfilmentBoardService:
         # The cell's location table lists the pool a proposal cites, tagged as a pool rather
         # than left to look like one of the agent's own group warehouses.
         self._pool_warehouses: Dict[str, str] = {}
+        # Warehouse id -> the pool warehouse id it draws on, for every active warehouse. What
+        # makes "this line's OWN site pool" a fact off `warehouses.pool_warehouse_id` rather
+        # than a comparison of code prefixes - the naming coincidence is not the rule.
+        self._pool_of: Dict[str, str] = {}
+        # (product, warehouse) -> open PURCHASE-order balance there, netted for the
+        # order-inquiry rows already placed on those lines. Information beside the decision:
+        # `available_qty` stays on hand - SO + SPO, because a PO reaches a project line only
+        # through a link (PLAN section I).
+        self._po_open: Dict[Tuple[str, str], Decimal] = {}
         # PROJECT line ids `build()` was asked to preview as uncovered (`exclude_covered_line_ids`).
         self._exclude_covered_line_ids: set = set()
 
@@ -1539,6 +1551,7 @@ class FulfilmentBoardService:
             for warehouse_id, pool in self.supply.site_pool_warehouses().items()
         }
         warehouse_ids |= set(self._pool_warehouses)
+        self._pool_of = self._pool_by_warehouse()
         # Every stock fact the board states comes from these reads and no other, so the
         # availability printed beside a proposal is the availability the proposal was computed
         # from.
@@ -1547,6 +1560,7 @@ class FulfilmentBoardService:
         self._held = self.supply.held_stock_by_location(product_ids)
         self._pressure = self._demand_pressure(product_ids, warehouse_ids)
         self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
+        self._po_open = self._open_po_balance(product_ids, warehouse_ids)
         # Facts for every plannable row, covered ones included: a covered line is not run
         # through the ladder (its share fields come back empty, and `_apply_frozen` reads
         # none of them), but its DONORS are still read below, from the same fact - Amend on a
@@ -2764,6 +2778,91 @@ class FulfilmentBoardService:
             pairs.sort(key=lambda pair: pair[1])
         return dict(out)
 
+    def _pool_by_warehouse(self) -> Dict[str, str]:
+        """`{warehouse_id: pool_warehouse_id}` for every active warehouse, one query.
+
+        The FK is the authoritative test, not the code's shape: on the live book `BRW-BB`
+        draws on `BRW` and both are plain codes, but a client whose codes look nothing like
+        Sorento's repoints rows rather than needing code (`Warehouse.pool_warehouse_id`).
+        """
+        rows = (
+            self.db.query(Warehouse.id, Warehouse.pool_warehouse_id)
+            .filter(
+                Warehouse.is_active.is_(True),
+                Warehouse.pool_warehouse_id.isnot(None),
+            )
+            .all()
+        )
+        return {str(warehouse_id): str(pool_id) for warehouse_id, pool_id in rows}
+
+    def _open_po_balance(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """Open PURCHASE-order balance per (product, location), netted for what is linked.
+
+        The captain, 25 August: the location table needs a "PO qty" beside the stock, so a
+        planner deciding between Buy and a transfer can see that 500 are already on order at
+        DC1. It is INFORMATION ONLY - `available_qty` stays `on hand - SO + SPO` - because a
+        purchase order reaches a project line only through a link (PLAN section I).
+
+        Three rules, each with its own reason:
+
+          * an SPO document is not a PO ("those are SPO, not PO" - the captain, live-testing).
+            It is already counted as `spo_qty`, so counting it here would state one arrival
+            twice. Excluded by both the source stamp and the number, because the two feeds
+            that write the table stamp it differently;
+          * a line whose ordered quantity is fully received has no balance to report;
+          * what an order-inquiry row already claims is netted OFF, per line and floored at
+            zero - the same arithmetic `project_order_inquiry_service._open_po_lines_for_product`
+            does, so the figure here and the quantity that dialog offers cannot disagree.
+
+        Placements are read off `order_inquiry_rows.po_line_id`, which is where a placement
+        lives today; PLAN section I's `projects.order_inquiry_links` is its successor.
+
+        ONE query for the whole board, not one per location.
+        """
+        products = list(product_ids)
+        warehouses = list(warehouse_ids)
+        if not products or not warehouses:
+            return {}
+        placed = (
+            self.db.query(
+                OrderInquiryRow.po_line_id.label("po_line_id"),
+                func.sum(OrderInquiryRow.qty).label("qty"),
+            )
+            .filter(
+                OrderInquiryRow.state == INQUIRY_PLACED,
+                OrderInquiryRow.po_line_id.isnot(None),
+            )
+            .group_by(OrderInquiryRow.po_line_id)
+            .subquery()
+        )
+        rows = (
+            self.db.query(
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.warehouse_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                placed.c.qty,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(placed, placed.c.po_line_id == PurchaseOrderLine.id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(products),
+                PurchaseOrderLine.warehouse_id.in_(warehouses),
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                func.coalesce(PurchaseOrder.source_system, "") != SPO_HISTORY_SOURCE,
+                PurchaseOrder.po_number.notlike("SPO-%"),
+            )
+            .all()
+        )
+        out: Dict[Tuple[str, str], Decimal] = defaultdict(lambda: _ZERO)
+        for product_id, warehouse_id, ordered, received, taken in rows:
+            left = _dec(ordered) - _dec(received) - _dec(taken)
+            if left > _ZERO:
+                out[(str(product_id), str(warehouse_id))] += left
+        return dict(out)
+
     def _group_note(self, members: Sequence[_Row], group_codes: Sequence[str]) -> Optional[str]:
         """Why this cell is showing one location instead of a group, when it is.
 
@@ -2803,6 +2902,7 @@ class FulfilmentBoardService:
             if group and group in self._group_warehouses
         })
         locations.extend(self._group_locations(members, locations, group_codes))
+        locations.extend(self._pool_locations(members, locations))
         locations.extend(self._cited_locations(members, locations))
         return {
             "item_code": item_code,
@@ -2865,6 +2965,55 @@ class FulfilmentBoardService:
                         where=WHERE_GROUP,
                     )
                 )
+        return out
+
+    def _pool_locations(
+        self, members: Sequence[_Row], already: Sequence[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """EVERY active site pool, this line's own site first (AC-B1).
+
+        The captain, on SO415472: "why is BRW the only pool considered? What about MWH, DC1,
+        WH3?" They were considered - `_pool_chain` walks all of them for the ladder - but the
+        table listed only the pool a proposal happened to cite, so a pool that was opened and
+        gave nothing looked exactly like one that was never opened. A row reading 0 answers
+        the question; a missing row leaves it open.
+
+        Read off the SAME warehouses the ladder walks (`supply.site_pool_warehouses`) through
+        the SAME per-location reader every other row uses, so the pool's figures here and the
+        figures the proposal was computed from cannot come apart.
+
+        Emitted only for a cell holding ONE product, for `_group_locations`' reason: a pivoted
+        cell spans several, and this table has no column to say which one a row counts.
+        """
+        if not self._pool_warehouses:
+            return []
+        product_id = self._single_product(members)
+        if product_id is None:
+            return []
+        # This line's own pool leads, off the FK rather than off a shared code prefix: a cell
+        # can hold lines at several locations, so there can be more than one.
+        own_pools: List[str] = []
+        for row in members:
+            pool_id = self._pool_of.get(row.warehouse_id) if row.warehouse_id else None
+            if pool_id and pool_id in self._pool_warehouses and pool_id not in own_pools:
+                own_pools.append(pool_id)
+        rest = sorted(
+            (pool_id for pool_id in self._pool_warehouses if pool_id not in own_pools),
+            key=lambda pool_id: self._pool_warehouses[pool_id],
+        )
+        seen = {entry["location"] for entry in already}
+        out: List[Dict[str, Any]] = []
+        for pool_id in [*own_pools, *rest]:
+            code = self._pool_warehouses[pool_id]
+            if code in seen:
+                continue
+            seen.add(code)
+            out.append(
+                self._location(
+                    code, (), product_id=product_id, warehouse_id=pool_id,
+                    where=WHERE_SITE_POOL,
+                )
+            )
         return out
 
     @staticmethod
@@ -2957,7 +3106,15 @@ class FulfilmentBoardService:
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
         stated = location is not None and warehouse_id is not None
-        owed, _covered = self._pressure.get(key, (None, None))
+        # A STATED location with no `stock` row at all holds ZERO, and says so (AC-B2). The
+        # last upload counted none there, which is a fact; "not stated" is the answer to a
+        # different question and it is reserved for the row below, whose sales order names no
+        # warehouse for anybody to count.
+        if stated and on_hand is None:
+            on_hand, reserved = _ZERO, _ZERO
+        # Same rule, and the same default `qty_owed_all_orders` below has always used: a
+        # location nothing is owed at owes 0. The two said different things about one number.
+        owed, _covered = self._pressure.get(key, (_ZERO, _ZERO) if stated else (None, None))
         incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if stated else None
         # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
         # water. It may be NEGATIVE and is never clamped - "oversold here by 632" is the signal
@@ -3024,6 +3181,13 @@ class FulfilmentBoardService:
             "spo_qty": qty_text(incoming_qty) if stated else None,
             #: "Available Qty": on hand - SO + SPO. Signed.
             "available_qty": qty_text(available) if available is not None else None,
+            #: Open PURCHASE-order balance here, less what an order-inquiry row already
+            #: claims. Information only, and deliberately NOT in `available_qty`: a purchase
+            #: order reaches a project line through a link, never by sitting at the location
+            #: (PLAN section I).
+            "po_open_qty": (
+                qty_text(self._po_open.get(key, _ZERO)) if stated else None
+            ),
             "incoming": [
                 {
                     "spo_number": ref.spo_number,

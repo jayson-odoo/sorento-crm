@@ -23,6 +23,7 @@ import {
   movesOf,
   movesText,
   suggestionBreakdown,
+  takenByLocation,
 } from './supplyVocabulary';
 import type {
   BoardCell,
@@ -752,5 +753,113 @@ describe('movesOf', () => {
 
     expect(movesText(movesOf(cell([proposal]), draft))).toBe('71 BRW -> BRW-BB');
     expect(movesText(movesOf(cell([proposal]), {}))).toBe('');
+  });
+});
+
+/**
+ * The Taken column of the cell's location table (AC-B3).
+ *
+ * The captain's question was "why not MWH", and the answer is a row rather than an absence:
+ * MWH was listed, it held stock, and nothing was needed from it. So every location the table
+ * shows reads a quantity, and the ones nothing was drawn from read 0.
+ */
+describe('takenByLocation', () => {
+  const covered = (over: Partial<BoardLineDecision> = {}) =>
+    line({
+      covered: true,
+      qty: '932',
+      decision: {
+        reserve: [
+          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
+          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
+          { warehouse_id: 'wh-wh3', location: 'WH3-BB', qty: '211', rung: 'group_take' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+        timely_spo_qty: '0',
+        ...over,
+      } as BoardLineDecision,
+    });
+
+  it('sums to the quantity needed when the line is covered from stock', () => {
+    const taken = takenByLocation(cell([covered()]), {});
+
+    expect([...taken]).toEqual([
+      ['DC1-BB', '454'],
+      ['MWH-BB', '267'],
+      ['WH3-BB', '211'],
+    ]);
+    const total = [...taken.values()].reduce((sum, qty) => sum + Number(qty), 0);
+    expect(total).toBe(932);
+  });
+
+  it('draws on nothing for a Buy-only cell', () => {
+    const buy = line({ sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })] });
+
+    expect([...takenByLocation(cell([buy]), {})]).toEqual([]);
+  });
+
+  it('leaves incoming supply out: it arrives, it is not taken off a pile', () => {
+    const taken = takenByLocation(
+      cell([
+        covered({
+          reserve: [
+            { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
+          ],
+          timely_spo_qty: '478',
+        } as Partial<BoardLineDecision>),
+      ]),
+      {},
+    );
+
+    expect([...taken]).toEqual([['DC1-BB', '454']]);
+  });
+
+  it('reads the SUGGESTION while a line is undecided', () => {
+    const proposal = line({
+      sources: [
+        source({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' }),
+      ],
+    });
+
+    expect([...takenByLocation(cell([proposal]), {})]).toEqual([['BRW', '71']]);
+  });
+
+  it('follows the DRAFT, the same switch the cell bar uses', () => {
+    const proposal = line({ sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })] });
+    const draft: Record<string, BoardDecision> = {
+      [proposal.key]: {
+        verdict: 'amended',
+        reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' }],
+        borrow: [],
+        buy_qty: '0',
+      } as BoardDecision,
+    };
+
+    expect([...takenByLocation(cell([proposal]), draft)]).toEqual([['BRW', '71']]);
+    // Tick cleared, and the cell goes back to drawing on nothing.
+    expect([...takenByLocation(cell([proposal]), {})]).toEqual([]);
+  });
+
+  it('sums two lines drawing on the same location', () => {
+    const taken = takenByLocation(cell([covered(), { ...covered(), key: 'so-1:20' }]), {});
+
+    expect(taken.get('DC1-BB')).toBe('908');
+    expect(taken.get('MWH-BB')).toBe('534');
+  });
+
+  it('counts a borrow, which is stock carried off a location like any other', () => {
+    const borrowed = line({
+      sources: [
+        source({
+          kind: 'borrow',
+          rung: 'cross_group_borrow',
+          qty: '35',
+          location: 'BRW-IB',
+        }),
+      ],
+    });
+
+    expect([...takenByLocation(cell([borrowed]), {})]).toEqual([['BRW-IB', '35']]);
   });
 });

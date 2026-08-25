@@ -417,41 +417,23 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, On hand, Reserved, SO qty, SPO qty, Available - after the chevron cell,
-    // which carries no text. No demand column: the table below says that per line. No Free
-    // column either: it is `On hand - Reserved`, and both of those are right here.
+    // Location, On hand, SO qty, SPO qty, Available, PO qty, Taken - after the chevron cell,
+    // which carries no text. No demand column: the table below says that per line. No
+    // Reserved and no Free either: Free was `On hand - Reserved`, and Reserved itself was read
+    // by nothing on this screen once `Available` turned out not to use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
       'Own location',
       '478',
-      'Not stated',
       '47009',
       '0',
       // A negative available is the whole point: it is the shortfall, and clamping it to zero
       // would turn the one number that says "this cannot be met" into one that says it can.
       '-46531',
+      // PO qty and Taken: the server stated neither, and a row that names a location reads 0.
+      '0',
+      '0',
     ]);
-  });
-
-  /**
-   * Reserved was in the pill's tooltip, where a touch screen could not reach it and nobody who
-   * did not hover ever saw it. It is a column now. Free was too, and it has since gone: it is
-   * `On hand - Reserved`, both of which are on the row.
-   */
-  it('states the engine’s own reserved split in the table itself', () => {
-    renderCell(
-      stockedCell({
-        location: 'BRW-BB',
-        qty_on_hand: '500',
-        qty_reserved: '380',
-        qty_free: '120',
-      }),
-    );
-
-    const row = stockRow('BRW-BB');
-    expect(row[3]).toBe('500');
-    expect(row[4]).toBe('380');
-    expect(row).not.toContain('120');
   });
 
   /**
@@ -470,16 +452,17 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[5]).toBe('10805');
+    expect(row[4]).toBe('10805');
+    expect(row[5]).toBe('0');
+    // A stated location with no figure of its own reads 0 (AC-B2): an absent stock row means
+    // the last upload counted none there. Only a line with NO location keeps its blanks.
+    expect(row[3]).toBe('0');
     expect(row[6]).toBe('0');
-    // Absent is absent: neither invented as 0 nor allowed to hide the ones that are stated.
-    expect(row[3]).toBe('Not stated');
-    expect(row[7]).toBe('Not stated');
   });
 
-  it('says NOT STATED, never 0, when the sales order named no location', () => {
-    // The opposite instruction: 0 free means do not look here, nothing is stated means
-    // nobody has said where to look.
+  it('leaves the figures blank when the sales order named no location', () => {
+    // The one row AC-B2's zero rule does not reach: 0 at a location means do not look there,
+    // and this row has no location to look at.
     renderCell(
       stockedCell({
         location: null,
@@ -494,13 +477,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual([
-      'Not stated',
-      'Not stated',
-      'Not stated',
-      'Not stated',
-      'Not stated',
-    ]);
+    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 
