@@ -18,7 +18,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { cn } from '@/lib/utils';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
@@ -502,44 +501,38 @@ export function BoardCellBreakdownDialog({
 
             <div data-testid="cell-suggestion" className="rounded-lg border border-border p-3">
               <p className="mb-1.5 text-xs text-muted-foreground">Suggestion</p>
-              {/* The four rows are ALWAYS all four, in one order, so Buy is in the same place
-                  whether it reads 0 or 300 - a row that came and went would move the others
-                  every time the cell changed. An empty one is muted, never hidden. */}
+              {/* Only the kinds the ladder actually proposes something for, in one fixed order
+                  (`suggestionBreakdown`), so Buy still sits above the stock rows wherever it
+                  appears. The empty ones used to be listed and muted, and on a real cell that
+                  was three lines of nothing around the one line that said what to do. */}
               <div className="space-y-1">
-                {suggestion.map((row) => {
-                  const empty = toMinor(row.qty) === 0;
-                  return (
-                    <div
-                      key={row.key}
-                      data-testid={`suggestion-${row.key}`}
-                      className="flex flex-wrap items-center gap-1.5 text-sm"
-                    >
-                      <Badge
-                        variant={empty ? 'secondary' : 'primary'}
-                        appearance="light"
-                        size="sm"
-                      >
-                        {row.label}
-                      </Badge>
-                      <span
-                        className={cn(
-                          'min-w-0 break-words tabular-nums',
-                          empty && 'text-muted-foreground',
-                        )}
-                      >
-                        {row.qty}
-                        {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
-                      </span>
-                      {/* The engine's own sentence, and only when every source on the row
-                          gives the same one: a Buy for "nothing free anywhere" and a Buy for
-                          "beyond the lead time window" are the same number for opposite
-                          reasons, and this card is where that is decided. */}
-                      {!empty && row.note ? (
-                        <span className="w-full text-xs text-muted-foreground">{row.note}</span>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {suggestion.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing proposed for this cell
+                  </p>
+                ) : null}
+                {suggestion.map((row) => (
+                  <div
+                    key={row.key}
+                    data-testid={`suggestion-${row.key}`}
+                    className="flex flex-wrap items-center gap-1.5 text-sm"
+                  >
+                    <Badge variant="primary" appearance="light" size="sm">
+                      {row.label}
+                    </Badge>
+                    <span className="min-w-0 break-words tabular-nums">
+                      {row.qty}
+                      {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
+                    </span>
+                    {/* The engine's own sentence, and only when every source on the row
+                        gives the same one: a Buy for "nothing free anywhere" and a Buy for
+                        "beyond the lead time window" are the same number for opposite
+                        reasons, and this card is where that is decided. */}
+                    {row.note ? (
+                      <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+                    ) : null}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -547,9 +540,9 @@ export function BoardCellBreakdownDialog({
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
               repeated under every rank, eleven identical grey sentences saying nothing
               row-specific. */}
-          {ranking && (
+          {ranking?.note ? (
             <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
-          )}
+          ) : null}
 
           {/* What is actually AT each location, not only what is outstanding from it - the captain's
               "where will I need to source to fulfil", answered with facts, and the dialog has to

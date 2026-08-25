@@ -839,17 +839,20 @@ export function rowMatchesSearch(
  */
 export function rankingNote(
   cell: Pick<BoardCell, 'contributions' | 'distinct_order_count' | 'rank_separates'>,
-): { cell: string; note: string } | null {
+): { cell: string; note: string | null } | null {
   if (cell.rank_separates) return null;
   // A cell that states neither flag was not ranked as one queue: a pivoted cell spans several
   // piles, so it has no single ranking sentence and each line keeps its own score.
   if (cell.rank_separates === undefined && cell.distinct_order_count === undefined) return null;
+  // ONE line in the cell still reads "Not ranked" in the Rank column - a flat 0.00 there would
+  // claim a ranking nothing computed - but it carries NO sentence (25 August 2026). "Only line
+  // in this cell" restated the single row the reader was already looking at, and a sentence
+  // that repeats the screen is one more thing to read past on the way to the decision.
+  if (cell.contributions.length === 1) return { cell: 'Not ranked', note: null };
   const note =
-    cell.contributions.length === 1
-      ? 'Only line in this cell'
-      : (cell.distinct_order_count ?? 0) === 1
-        ? 'Same sales order; line order decided which line was served first'
-        : 'The active policy separates none of these rows';
+    (cell.distinct_order_count ?? 0) === 1
+      ? 'Same sales order; line order decided which line was served first'
+      : 'The active policy separates none of these rows';
   return { cell: 'Not ranked', note };
 }
 

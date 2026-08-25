@@ -88,6 +88,7 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(headers()).toEqual([
       '',
       'Location',
+      'Where',
       'On hand',
       'Reserved',
       'SO qty',
@@ -117,6 +118,7 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW-BB')).toEqual([
       '',
       'BRW-BB',
+      'Own location',
       '478',
       '0',
       '47009',
@@ -126,6 +128,7 @@ describe('CellStockTable: the position, tabulated', () => {
     expect(cellsOf('BRW')).toEqual([
       '',
       'BRW',
+      'Own location',
       '1015',
       '12',
       '9028',
@@ -177,7 +180,7 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells.slice(2)).toEqual([
+    expect(cells.slice(3)).toEqual([
       'Not stated',
       'Not stated',
       'Not stated',
@@ -202,10 +205,10 @@ describe('CellStockTable: the position, tabulated', () => {
     ]);
 
     const cells = cellsOf('BRW-IB');
-    expect(cells[2]).toBe('Not stated');
-    expect(cells[4]).toBe('10805');
-    expect(cells[5]).toBe('0');
-    expect(cells[6]).toBe('Not stated');
+    expect(cells[3]).toBe('Not stated');
+    expect(cells[5]).toBe('10805');
+    expect(cells[6]).toBe('0');
+    expect(cells[7]).toBe('Not stated');
   });
 
   it('scrolls inside its own container, so the dialog never scrolls sideways', () => {
@@ -227,6 +230,87 @@ describe('CellStockTable: the position, tabulated', () => {
 
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.getByText('No stock position for this cell')).toBeInTheDocument();
+  });
+});
+
+describe('CellStockTable: where each location stands', () => {
+  /**
+   * The captain, on SO415472: the card read "Use own location 71 from BRW - Pool BRW has 1716
+   * available" over a table of five -BB warehouses, every one of them "Not stated". The pool is
+   * a warehouse of its own and it was not in the agent's group, so nothing listed it and the
+   * one figure the decision rested on could not be checked against anything.
+   *
+   * The server now sends every location the ladder consulted, each tagged with where it stands,
+   * and the tag is a column: a site pool holding 1716 and a group warehouse holding nothing are
+   * not the same kind of row, and unlabelled they look identical.
+   */
+  it('names where each location stands, so a site pool is not read as a group warehouse', () => {
+    renderTable([
+      position({ where: 'own' }),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        so_qty: '12',
+        spo_qty: '0',
+        available_qty: '1716',
+      }),
+      position({ location: 'BRW-IR', warehouse_id: 'wh-4', where: 'other_group' }),
+    ]);
+
+    expect(cellsOf('BRW-BB')[2]).toBe('Own location');
+    expect(cellsOf('DC1-BB')[2]).toBe('Group');
+    expect(cellsOf('BRW')[2]).toBe('Site pool');
+    expect(cellsOf('BRW-IR')[2]).toBe('Other group');
+    // And the figure the Suggestion card quotes is a row of the table, not a number only the
+    // sentence knows.
+    expect(screen.getByTestId('stock-available-BRW').textContent).toBe('1716');
+  });
+
+  it('subtotals a section of several rows once the table spans more than one', () => {
+    renderTable([
+      position({ where: 'group', qty_on_hand: '10', available_qty: '10' }),
+      position({
+        location: 'DC1-BB',
+        warehouse_id: 'wh-2',
+        where: 'group',
+        qty_on_hand: '5',
+        available_qty: '5',
+      }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        available_qty: '1716',
+      }),
+    ]);
+
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-group').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('Group subtotal');
+    expect(subtotal).toContain('15');
+    // One row IS its own subtotal, so the pool section does not repeat itself.
+    expect(screen.queryByTestId('stock-subtotal-site_pool')).not.toBeInTheDocument();
+    // The Total is still the whole table.
+    const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
+      (entry) => entry.textContent ?? '',
+    );
+    expect(footer).toContain('Total');
+    expect(footer).toContain('1743');
+  });
+
+  it('adds no subtotal when every location stands in the same place', () => {
+    // The subtotal would then be the Total, printed twice under two different words.
+    renderTable([
+      position(),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-2' }),
+    ]);
+
+    expect(screen.queryByTestId('stock-subtotal-own')).not.toBeInTheDocument();
   });
 });
 
@@ -370,9 +454,9 @@ describe('CellStockTable: the ownership group', () => {
     ]);
 
     expect(screen.getByRole('table').querySelectorAll('tbody tr')).toHaveLength(3);
-    expect(cellsOf('MWH-BB')[2]).toBe('25');
+    expect(cellsOf('MWH-BB')[3]).toBe('25');
     // Listed even holding nothing: "nothing at DC1-BB" is an answer, a missing row is not.
-    expect(cellsOf('DC1-BB')[2]).toBe('0');
+    expect(cellsOf('DC1-BB')[3]).toBe('0');
   });
 
   it('says why, when the line\u2019s own location is all there is', () => {

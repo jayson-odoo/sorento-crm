@@ -61,17 +61,33 @@ function row(rows: ReturnType<typeof suggestionBreakdown>, label: string) {
   return found;
 }
 
-describe('suggestionBreakdown', () => {
-  it('always states the four kinds, in the same order, even at zero', () => {
-    const rows = suggestionBreakdown(cell([line()]));
+/** Is this label on the card at all? A row with no quantity is not. */
+function has(rows: ReturnType<typeof suggestionBreakdown>, label: string) {
+  return rows.some((entry) => entry.label === label);
+}
 
-    expect(rows.map((entry) => entry.label)).toEqual([
-      'Buy',
-      'Use shared stock',
-      'Use own location',
-      'Borrow other location',
-    ]);
-    expect(rows.every((entry) => entry.qty === '0')).toBe(true);
+describe('suggestionBreakdown', () => {
+  it('states only the kinds with a quantity, keeping their fixed order', () => {
+    // Reversed 25 August 2026, from "always all four, an empty one muted". Three of the four
+    // read 0 on almost every real cell, so the card was three lines of nothing around the one
+    // line that said what to do - and the reader had to find it each time. What the card is
+    // for is the decision, so it shows the decision.
+    const rows = suggestionBreakdown(
+      cell([
+        line({
+          sources: [
+            source({ kind: 'buy', rung: 'buy', qty: '3', location: null }),
+            source({ kind: 'reserve', rung: 'pool', qty: '13', location: 'BRW' }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(rows.map((entry) => entry.label)).toEqual(['Buy', 'Use own location']);
+  });
+
+  it('says nothing at all for a cell the ladder proposes nothing for', () => {
+    expect(suggestionBreakdown(cell([line()]))).toEqual([]);
   });
 
   it('reads a pool rung at the line own site as its own location', () => {
@@ -87,7 +103,7 @@ describe('suggestionBreakdown', () => {
 
     expect(row(rows, 'Use own location').qty).toBe('13');
     expect(row(rows, 'Use own location').locations).toEqual(['BRW']);
-    expect(row(rows, 'Use shared stock').qty).toBe('0');
+    expect(has(rows, 'Use shared stock')).toBe(false);
   });
 
   it('reads a pool rung at ANOTHER site as shared stock', () => {
@@ -132,7 +148,7 @@ describe('suggestionBreakdown', () => {
     );
 
     expect(row(rows, 'Use own location').qty).toBe('3');
-    expect(row(rows, 'Borrow other location').qty).toBe('0');
+    expect(has(rows, 'Borrow other location')).toBe(false);
   });
 
   it('reads a cross-group borrow as borrowing another location, whatever its code', () => {
@@ -153,7 +169,7 @@ describe('suggestionBreakdown', () => {
 
     expect(row(rows, 'Borrow other location').qty).toBe('9');
     expect(row(rows, 'Borrow other location').locations).toEqual(['BRW-HP']);
-    expect(row(rows, 'Use own location').qty).toBe('0');
+    expect(has(rows, 'Use own location')).toBe(false);
   });
 
   it('reads a buy as a buy, and names no location because it is held nowhere yet', () => {

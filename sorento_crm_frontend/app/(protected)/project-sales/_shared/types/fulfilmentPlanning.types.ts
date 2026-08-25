@@ -1137,8 +1137,20 @@ export interface BoardIncomingLeg {
  * null as "0" would tell the planner there is nothing in stock when the truth is that nobody
  * said where to look, and those are opposite instructions.
  */
+/**
+ * Where a location stands relative to the cell, as the server tags it.
+ *
+ * The table lists every location the LADDER consulted, not only the agent's ownership group,
+ * so the reader has to be able to tell them apart: `BRW` (a site pool holding 1716) and
+ * `DC1-BB` (a group warehouse holding nothing) were two identical-looking rows, and the card
+ * quoted a figure only one of them could explain.
+ */
+export type BoardLocationWhere = 'own' | 'group' | 'site_pool' | 'other_group';
+
 export interface BoardCellLocation {
   location: string | null;
+  /** Own location / ownership group / site pool / outside the group. Defaults to `own`. */
+  where?: BoardLocationWhere;
   /**
    * The product and warehouse this position is about, for the drill-down only, never rendered.
    *

@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
-import type { BoardCellLocation } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardCellLocation,
+  BoardLocationWhere,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
 /**
@@ -18,6 +21,25 @@ const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
 const LOCATION_COL = 'w-full min-w-[120px]';
 /** A floor, not a fixed width: the numbers keep their room and never overlap. */
 const NUMBER_COL = 'min-w-[100px]';
+/** Wide enough for "Own location", which is the longest of the four tags. */
+const WHERE_COL = 'min-w-[104px]';
+
+/**
+ * Where a location stands, in the order the reader walks it: this line's own first, then the
+ * agent's group, then the pools the ladder drew on, then anything outside the group.
+ *
+ * The table lists every location the LADDER consulted, and unlabelled they all look the same:
+ * on SO415472 the pool holding 1716 sat beside five group warehouses holding nothing, and the
+ * Suggestion card quoted a figure that appeared to come from nowhere.
+ */
+const WHERE_ORDER: BoardLocationWhere[] = ['own', 'group', 'site_pool', 'other_group'];
+
+const WHERE_LABELS: Record<BoardLocationWhere, string> = {
+  own: 'Own location',
+  group: 'Group',
+  site_pool: 'Site pool',
+  other_group: 'Other group',
+};
 
 /**
  * What is AT each location behind a cell, tabulated (captain, 18 August 2026).
@@ -95,6 +117,16 @@ export function CellStockTable({
   }
 
   const showTotals = locations.length > 1;
+  /**
+   * The rows grouped by where they stand, in `WHERE_ORDER`. A section of SEVERAL rows carries a
+   * subtotal, and only while the table spans more than one section - with a single section the
+   * subtotal is the Total, printed twice under two different words.
+   */
+  const sections = WHERE_ORDER.map((where) => ({
+    where,
+    rows: locations.filter((entry) => (entry.where ?? 'own') === where),
+  })).filter((section) => section.rows.length > 0);
+  const showSubtotals = sections.length > 1;
 
   return (
     <div className="space-y-1">
@@ -112,6 +144,9 @@ export function CellStockTable({
             <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
               Location
             </th>
+            <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
+              Where
+            </th>
             {NUMERIC_COLUMNS.map((column) => (
               <th key={column.key} scope="col" className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}>
                 {column.label}
@@ -121,7 +156,8 @@ export function CellStockTable({
         </thead>
 
         <tbody>
-          {locations.map((entry) => {
+          {sections.flatMap((section) => [
+          ...section.rows.map((entry) => {
             const key = entry.location ?? '__none__';
             const testKey = entry.location ?? 'none';
             // Only a position the server ADDRESSED can be opened: two products share the code
@@ -171,6 +207,14 @@ export function CellStockTable({
                       {entry.location ?? 'No location'}
                     </span>
                   </td>
+                  <td className={cn(WHERE_COL, BODY_CELL)}>
+                    <span
+                      className="block truncate text-muted-foreground"
+                      title={WHERE_LABELS[entry.where ?? 'own']}
+                    >
+                      {WHERE_LABELS[entry.where ?? 'own']}
+                    </span>
+                  </td>
                   {NUMERIC_COLUMNS.map((column) => {
                     const value = column.of(entry);
                     // Signed and never clamped: a negative Available IS the shortfall, and the
@@ -198,7 +242,7 @@ export function CellStockTable({
                   <tr data-testid={`stock-expansion-${testKey}`}>
                     {/* Under the row it belongs to, spanning the whole table: the documents are
                         this location's evidence, not a column of it. */}
-                    <td colSpan={2 + NUMERIC_COLUMNS.length} className="border-b border-border p-0">
+                    <td colSpan={3 + NUMERIC_COLUMNS.length} className="border-b border-border p-0">
                       <StockDocumentsPanel
                         productId={entry.product_id as string}
                         warehouseId={entry.warehouse_id as string}
@@ -210,7 +254,43 @@ export function CellStockTable({
                 )}
               </React.Fragment>
             );
-          })}
+          }),
+          // What this section holds, added up: "Pool BRW has 1716 available" has to be the sum
+          // of rows the reader can see, not a figure only the Suggestion card knows.
+          ...(showSubtotals && section.rows.length > 1
+            ? [
+                <tr
+                  key={`subtotal-${section.where}`}
+                  data-testid={`stock-subtotal-${section.where}`}
+                >
+                  <td className={cn(CHEVRON_COL, FOOT_CELL)} />
+                  <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>
+                    {`${WHERE_LABELS[section.where]} subtotal`}
+                  </td>
+                  <td className={cn(WHERE_COL, FOOT_CELL)} />
+                  {NUMERIC_COLUMNS.map((column) => {
+                    if (!column.total) {
+                      return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
+                    }
+                    const total = sumOf(section.rows, column.of);
+                    return (
+                      <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
+                        <span
+                          className={cn(
+                            'block truncate text-end tabular-nums',
+                            total === null && 'font-normal text-muted-foreground',
+                            column.signed && isNegative(total) && 'text-destructive',
+                          )}
+                        >
+                          {total ?? 'Not stated'}
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>,
+              ]
+            : []),
+          ])}
         </tbody>
 
         {showTotals && (
@@ -220,6 +300,7 @@ export function CellStockTable({
             <tr>
               <td className={cn(CHEVRON_COL, FOOT_CELL)} />
               <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>Total</td>
+              <td className={cn(WHERE_COL, FOOT_CELL)} />
               {NUMERIC_COLUMNS.map((column) => {
                 if (!column.total) {
                   return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;

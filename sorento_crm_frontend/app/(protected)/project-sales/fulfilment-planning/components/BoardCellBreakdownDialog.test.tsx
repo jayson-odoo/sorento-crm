@@ -189,15 +189,17 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
    */
   const row = (key: string) => screen.getByTestId(`suggestion-${key}`);
 
-  it('always states the four kinds, in one order, whether or not they carry a quantity', () => {
+  it('states only the kinds it proposes something for, in one order', () => {
+    // 100 outstanding, 40 free at the line's own location: Buy and Use own location, and
+    // nothing else. The card used to list all four always and mute the empty ones, and on a
+    // real cell that was three lines of nothing around the line that said what to do.
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
 
     const labels = [...screen.getByTestId('cell-suggestion').querySelectorAll('[data-testid^="suggestion-"]')]
       .map((node) => node.textContent ?? '');
+    expect(labels).toHaveLength(2);
     expect(labels[0]).toContain('Buy');
-    expect(labels[1]).toContain('Use shared stock');
-    expect(labels[2]).toContain('Use own location');
-    expect(labels[3]).toContain('Borrow other location');
+    expect(labels[1]).toContain('Use own location');
   });
 
   it('splits the cell between what is taken and what is bought, and says from where', () => {
@@ -231,11 +233,12 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
     expect(row('buy')).toHaveTextContent('30');
   });
 
-  it('reads 0 rather than disappearing, so the four never move', () => {
+  it('leaves out the kinds with no quantity, rather than reading 0 at them', () => {
     renderDialog([demand({ qty: '100' })]);
 
-    expect(row('shared')).toHaveTextContent('0');
-    expect(row('borrow_other')).toHaveTextContent('0');
+    expect(screen.queryByTestId('suggestion-shared')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('suggestion-borrow_other')).not.toBeInTheDocument();
+    expect(row('buy')).toHaveTextContent('100');
   });
 });
 
@@ -416,6 +419,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     // column either: it is `On hand - Reserved`, and both of those are right here.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
+      'Own location',
       '478',
       'Not stated',
       '47009',
@@ -442,8 +446,8 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-BB');
-    expect(row[2]).toBe('500');
-    expect(row[3]).toBe('380');
+    expect(row[3]).toBe('500');
+    expect(row[4]).toBe('380');
     expect(row).not.toContain('120');
   });
 
@@ -463,11 +467,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[4]).toBe('10805');
-    expect(row[5]).toBe('0');
+    expect(row[5]).toBe('10805');
+    expect(row[6]).toBe('0');
     // Absent is absent: neither invented as 0 nor allowed to hide the ones that are stated.
-    expect(row[2]).toBe('Not stated');
-    expect(row[6]).toBe('Not stated');
+    expect(row[3]).toBe('Not stated');
+    expect(row[7]).toBe('Not stated');
   });
 
   it('says NOT STATED, never 0, when the sales order named no location', () => {
@@ -487,7 +491,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(2)).toEqual([
+    expect(row.slice(3)).toEqual([
       'Not stated',
       'Not stated',
       'Not stated',
@@ -626,14 +630,20 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
    * order's lines in one week share their date, document date and terms - which is not a policy
    * failure, and reading it as one sent people hunting a broken weighting.
    */
-  it('says a single line is simply the only one here', () => {
+  it('says nothing at all about a cell holding one line', () => {
+    // "Only line in this cell" restated the single row underneath it. Removed 25 August 2026:
+    // the Rank column still reads "Not ranked", because a flat 0.00 there would claim a
+    // ranking nobody ran, but no sentence is printed for it.
     const cell = cellOf([demand()]);
     renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
 
-    expect(screen.getByText('Only line in this cell')).toBeInTheDocument();
+    expect(screen.queryByText('Only line in this cell')).not.toBeInTheDocument();
     expect(
       screen.queryByText(/The active policy separates none of these rows/),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent,
+    ).toBe('Not ranked');
   });
 
   it('names line order when one sales order is competing with itself', () => {
@@ -1430,7 +1440,18 @@ describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
   });
 
   it('still shows the calculation on a cell the policy could not rank', () => {
-    const cell = { ...rankedCell(FACTORS, 0), rank_separates: false, distinct_order_count: 2 };
+    const base = rankedCell(FACTORS, 0);
+    const cell = {
+      ...base,
+      rank_separates: false,
+      distinct_order_count: 2,
+      // TWO lines, because that is the case the sentence is about: a cell holding one line
+      // says nothing at all about its ranking any more, and this test is about the sentence.
+      contributions: [
+        base.contributions[0],
+        { ...base.contributions[0], key: 'so-b|1|WESERP10B|2026-08-31', sales_order_id: 'so-b' },
+      ],
+    };
     renderCell(cell);
     openRank(cell);
 
@@ -1441,7 +1462,7 @@ describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
     );
     expect(
       within(screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`)).getByText(
-        'Only line in this cell',
+        'The active policy separates none of these rows',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('rank-factor-need_by_date')).toBeInTheDocument();

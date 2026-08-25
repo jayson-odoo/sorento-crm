@@ -670,6 +670,12 @@ class BoardCellLocation(BaseModel):
     """
 
     location: Optional[str] = None
+    #: Where this location stands relative to the cell: `own` (a location the cell's own lines
+    #: name), `group` (the sales agent's ownership group), `site_pool` (a pool the ladder drew
+    #: from and a proposal cites) or `other_group` (outside the group, where a Borrow was
+    #: proposed from). The table lists every location the ladder consulted, so this is what
+    #: tells the pool holding 1716 from a group warehouse holding nothing.
+    where: str = "own"
     #: Addressing only: what the stock drill-down is opened by. Never rendered, and never
     #: derived on the client from a warehouse code or an item code.
     product_id: Optional[str] = None

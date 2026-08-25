@@ -731,7 +731,7 @@ class ProjectSupplyService:
             "lines": payload_lines,
         }
 
-    def _outside_reserve_window(
+    def outside_reserve_window(
         self, fact: _LineFacts, *, as_of: Optional[date] = None
     ) -> bool:
         """Is this line due beyond the window inside which it may still take stock?
@@ -740,6 +740,12 @@ class ProjectSupplyService:
         INSIDE it - the same boundary rule rung 0's coverage date follows. An UNDATED line is
         never outside anything: there is no delivery date to be beyond, and deciding on a date
         nobody stated is exactly the guess the rest of this engine refuses to make.
+
+        PUBLIC because the verdict has three readers and must never have three answers: the
+        ladder that skips two rungs on it, the sheet that offers no donor beside it, and the
+        board that has to say so on the row and in the trail. The board read it as "nothing
+        free at L, and borrowing is possible from ..." on SO414341 precisely because it had no
+        way to ask.
         """
         if fact.required_date is None:
             return False
@@ -823,7 +829,7 @@ class ProjectSupplyService:
         # are not walked for it - and their candidate lists, which cost queries, are not built
         # either. The trail still lists what was there, so "considered and not taken" is
         # visible rather than silent.
-        outside_window = self._outside_reserve_window(fact, as_of=as_of)
+        outside_window = self.outside_reserve_window(fact, as_of=as_of)
         group_borrow = [] if outside_window else self._group_borrow_auto_candidates(fact)
         cross_group = (
             []
@@ -953,6 +959,15 @@ class ProjectSupplyService:
                 if warehouse.is_active
             }
         return self._site_pools_cache
+
+    def site_pool_warehouses(self) -> Dict[str, Warehouse]:
+        """`{warehouse_id: Warehouse}` for every pool rung 2 may draw, public for the board.
+
+        The board lists the pool a proposal cites among the cell's locations - "Pool BRW has
+        1716 available" has to be a row of the table, not a figure only the sentence knows -
+        and it has to read the SAME set the ladder walks, cached on the same request.
+        """
+        return self._site_pool_warehouses()
 
     def _pool_chain(
         self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
@@ -1558,9 +1573,12 @@ class ProjectSupplyService:
             # Ranked against what this line still has to cover - the Buy the ladder just
             # proposed - because that is the quantity a donor would be asked for (13.11).
             # An unplannable line is offered nobody's stock: there is no need to rank against.
+            # Neither is a line beyond its reserve window (the ATP rule): rungs 4 and 5 are
+            # not walked for it, so a donor list beside it would OFFER the one thing the rule
+            # exists to refuse.
             "borrow_candidates": (
                 []
-                if fact.unplannable_reason
+                if fact.unplannable_reason or self.outside_reserve_window(fact)
                 else self._borrow_candidates(
                     fact,
                     need=sum(

@@ -4,10 +4,12 @@ import type { BoardCell, BoardContribution, BoardSource } from '../types/fulfilm
 /**
  * What the ladder proposes for a whole cell, said as quantities by KIND OF SOURCE.
  *
- * The dialog opens on a decision, so the decision leads: four rows, always present and always
- * in this order, so "Buy" sits in the same place whether it reads 0 or 300. A row that
- * appeared only when it had a quantity would move the other three every time a cell changed,
- * and a reader would have to re-find the one they came for.
+ * The dialog opens on a decision, so the decision leads: the kinds with a quantity, in this
+ * fixed order. ONLY the kinds with a quantity, since 25 August 2026 - the card used to state
+ * all four always, muting the empty ones, and on a real cell three of the four read 0, so the
+ * one line that said what to do sat inside three lines of nothing and had to be found each
+ * time. The fixed ORDER is what keeps the card readable between cells; a row of zero was
+ * never what did that.
  *
  * THE LABELS ARE NOT THE RUNG NAMES. The engine's vocabulary (`pool`, `group_take`,
  * `group_borrow`, `cross_group_borrow`, `buy` - `app/services/scm/front_planning_engine.py`)
@@ -129,9 +131,11 @@ export function suggestionBreakdown(
     };
   };
 
-  const rows = ORDER.map(rowFor);
-
-  if ((minor.get(INCOMING) ?? 0) > 0) rows.push(rowFor(INCOMING));
+  // Only what the ladder actually proposes. `Incoming supply` was already conditional on
+  // having a quantity; the other four now follow the same rule rather than a different one.
+  const rows = [...ORDER, INCOMING]
+    .filter((key) => (minor.get(key) ?? 0) !== 0)
+    .map(rowFor);
 
   return rows;
 }

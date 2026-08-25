@@ -369,6 +369,29 @@ def test_a_line_beyond_the_reserve_window_buys_rather_than_borrowing_a_nearer_or
     assert "beyond the lead time window" in components[0]["reason"]
 
 
+def test_a_line_beyond_the_reserve_window_is_offered_no_donor_to_borrow_from():
+    """Not composed AND not offered. The sheet ranked a donor list beside the line anyway, so
+    Amend still put the one move the rule forbids in front of the planner - the same defect
+    the board showed on SO414341, on the other screen."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        outside = _warehouse(db, f"ZZTHP-{_uid()[:4]}")
+        _stock(db, product, outside, on_hand=650)
+        _lead_time(db, product, 90)
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="441",
+            # 174 days out, against 90 of lead time plus the 14-day buffer.
+            required_date=date.today() + timedelta(days=174),
+        )
+        line = ProjectSupplyService(db).proposal_for(order)["lines"][0]
+
+    assert line["components"][0]["kind"] == "buy"
+    assert line["borrow_candidates"] == []
+
+
 def test_a_line_beyond_the_window_still_reserves_stock_that_is_genuinely_surplus():
     """The pool rung is capped at the location's SIGNED availability, so what it offers is
     what nothing else there is owed. Refusing a far line that would buy stock the business
