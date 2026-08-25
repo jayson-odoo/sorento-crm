@@ -5,8 +5,8 @@
 The contract under test (sorento_crm_n8n `plans/order-quantity-summary-plan.md` §3):
 measures are computed over the WHOLE filter, never the page; delivered is the
 canonical predicate (status delivered/completed AND actual_delivery_date set);
-the summary exists only when a product narrower was applied (customer-only lists
-carry none and pay no extra query); absent-not-null everywhere; an empty result
+the summary exists only when the caller asks (`include_summary=True`; customer-only
+asks get counts, product-scoped asks get quantities); absent-not-null everywhere; an empty result
 carries no summary.
 
 Postgres only, blank scratch schema (tests/_pg_fixture.blank_session) — so the
@@ -94,7 +94,7 @@ def scenario(db):
 
 def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
     cust, prod, _ = scenario
-    result = OrderService(db).list_orders(customer_ids=[cust.id], product_ids=[prod.id])
+    result = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])
 
     s = result["summary"]
     assert s["scope"] == "filter"
@@ -113,8 +113,8 @@ def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
 def test_qs_c2_summary_ignores_the_page(db, scenario):
     cust, prod, _ = scenario
     svc = OrderService(db)
-    full = svc.list_orders(customer_ids=[cust.id], product_ids=[prod.id])
-    paged = svc.list_orders(customer_ids=[cust.id], product_ids=[prod.id], limit=2)
+    full = svc.list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])
+    paged = svc.list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id], limit=2)
 
     assert len(paged["data"]) == 2
     assert paged["pagination"]["total"] == 5
@@ -123,14 +123,27 @@ def test_qs_c2_summary_ignores_the_page(db, scenario):
     assert paged["summary"]["products"][0]["delivered_quantity"] == 48  # not the 2-row sum
 
 
-def test_qs_c3_no_product_narrower_means_no_summary_at_all(db, scenario):
-    """"Any delivery to Hanlim" wants the DOs, not a headline - and pays no extra
-    query. The summary exists only on product-scoped calls (captain, 2026-08-25)."""
-    cust, _, _ = scenario
-    result = OrderService(db).list_orders(customer_ids=[cust.id])
+def test_qs_c0_not_asked_means_no_summary_and_no_extra_work(db, scenario):
+    """"Any delivery to Hanlim for SRTWC286" wants the DOs, not a headline. Without
+    include_summary the reply is byte-identical to before and no aggregate runs
+    (captain, 2026-08-25: the QUESTION FORM is the signal, not the filter)."""
+    cust, prod, _ = scenario
+    svc = OrderService(db)
+    a = svc.list_orders(customer_ids=[cust.id], product_ids=[prod.id])
+    b = svc.list_orders_by_product(product_ids=[prod.id], customer_ids=[cust.id])
+    assert a["pagination"]["total"] == 5 and "summary" not in a
+    assert b["pagination"]["total"] == 5 and "summary" not in b
 
-    assert result["pagination"]["total"] == 5
-    assert "summary" not in result
+
+def test_qs_c3_no_product_narrower_means_counts_only(db, scenario):
+    """"How many DOs did Hanlim take?" - asked, but no product: counts and names, no
+    per-product quantity (a sum across unrelated products is not a number)."""
+    cust, _, _ = scenario
+    result = OrderService(db).list_orders(customer_ids=[cust.id], include_summary=True)
+
+    s = result["summary"]
+    assert "products" not in s
+    assert s["order_count"] == 5 and s["delivered_count"] == 3 and s["pending_count"] == 2
 
 
 def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
@@ -139,7 +152,7 @@ def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
     _do(db, cust=other, prod=prod, wh=wh, qty=7, status_code="DELIVERED", delivered_on=date(2026, 8, 1))
     db.commit()
 
-    s = OrderService(db).list_orders(product_ids=[prod.id])["summary"]
+    s = OrderService(db).list_orders(include_summary=True, product_ids=[prod.id])["summary"]
     assert s["customer_count"] == 2
     assert set(s["customers"]) == {"ECO WORLD SDN BHD", "HANLIM TRADING SDN BHD"}
     assert s["products"][0]["delivered_quantity"] == 55
@@ -154,7 +167,7 @@ def test_qs_c4b_customer_count_is_not_capped_by_the_named_list(db, scenario):
         _do(db, cust=c, prod=prod, wh=wh, qty=1, status_code="DELIVERED", delivered_on=date(2026, 8, 1))
     db.commit()
 
-    s = OrderService(db).list_orders(product_ids=[prod.id])["summary"]
+    s = OrderService(db).list_orders(include_summary=True, product_ids=[prod.id])["summary"]
     assert s["customer_count"] == 7          # ECO WORLD + 6
     assert len(s["customers"]) == 3          # the named list stays short
     assert s["customers"] == sorted(s["customers"])
@@ -164,7 +177,7 @@ def test_qs_c5_empty_result_carries_no_summary(db, scenario):
     _, prod, _ = scenario
     ghost = customer(db, company_id=DEFAULT_COMPANY_ID, name="NOBODY SDN BHD")
     db.commit()
-    result = OrderService(db).list_orders(customer_ids=[ghost.id], product_ids=[prod.id])
+    result = OrderService(db).list_orders(include_summary=True, customer_ids=[ghost.id], product_ids=[prod.id])
 
     assert result["empty"] is True
     assert "summary" not in result
@@ -172,7 +185,7 @@ def test_qs_c5_empty_result_carries_no_summary(db, scenario):
 
 def test_qs_c1b_delivered_bucket_and_summary_agree(db, scenario):
     cust, prod, _ = scenario
-    result = OrderService(db).list_orders(customer_ids=[cust.id], product_ids=[prod.id],
+    result = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id],
                                           order_status="delivered")
     assert result["pagination"]["total"] == 3
     s = result["summary"]
@@ -184,7 +197,7 @@ def test_qs_c1b_delivered_bucket_and_summary_agree(db, scenario):
 
 def test_qs_c6_by_product_accepts_delivered_bucket(db, scenario):
     cust, prod, _ = scenario
-    result = OrderService(db).list_orders_by_product(
+    result = OrderService(db).list_orders_by_product(include_summary=True, 
         product_ids=[prod.id], customer_ids=[cust.id], order_status="delivered"
     )
     numbers = {o.order_number for o in result["data"]}
@@ -198,7 +211,7 @@ def test_qs_c6_by_product_accepts_delivered_bucket(db, scenario):
 
 def test_qs_c7_by_product_outstanding_bucket_is_the_negation(db, scenario):
     cust, prod, _ = scenario
-    result = OrderService(db).list_orders_by_product(
+    result = OrderService(db).list_orders_by_product(include_summary=True, 
         product_ids=[prod.id], customer_ids=[cust.id], order_status="outstanding"
     )
     assert result["pagination"]["total"] == 2
@@ -213,8 +226,8 @@ def test_qs_c7_by_product_outstanding_bucket_is_the_negation(db, scenario):
 def test_qs_c6b_by_product_summary_without_bucket_matches_list_orders(db, scenario):
     cust, prod, _ = scenario
     svc = OrderService(db)
-    a = svc.list_orders(customer_ids=[cust.id], product_ids=[prod.id])["summary"]
-    b = svc.list_orders_by_product(product_ids=[prod.id], customer_ids=[cust.id])["summary"]
+    a = svc.list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])["summary"]
+    b = svc.list_orders_by_product(include_summary=True, product_ids=[prod.id], customer_ids=[cust.id])["summary"]
     assert a == b
 
 
@@ -222,7 +235,7 @@ def test_qs_c6c_date_only_predicate_is_not_delivered(db, scenario):
     """The old `has_actual_delivery_date=yes` filter still exists and still admits the
     dated-but-NEW DO; the summary on top of it must still say 3 delivered, not 4."""
     cust, prod, _ = scenario
-    result = OrderService(db).list_orders_by_product(
+    result = OrderService(db).list_orders_by_product(include_summary=True, 
         product_ids=[prod.id], customer_ids=[cust.id], has_actual_delivery_date="yes"
     )
     assert result["pagination"]["total"] == 4

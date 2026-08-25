@@ -129,25 +129,25 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
          "products": [{"product_code": "SRTWC8605",
                        "delivered_quantity": 48, "pending_quantity": 12}]}
 
-    Computed ONLY when ``product_ids`` (the product narrower the caller actually
-    applied) is given. A customer-only or date-only list ("any delivery to
-    Hanlim") wants the DOs, not a headline, and pays no extra query; a quantity
-    summed across unrelated products is not a number anyone asked for anyway.
-    ``delivered_from/to`` are present only when something was delivered.
-    Delivered = the canonical predicate (``_delivered_clause``), pending = its
-    negation.
+    Computed ONLY when the caller asked for it (``include_summary=true`` on the
+    endpoint - n8n sends it when the parser saw a quantity question: "how many",
+    "have take", "have sales"). "Any delivery to Hanlim for SRTWC286" wants the
+    DOs, not a headline, and pays no extra query. ``products`` is present only
+    when ``product_ids`` (the product narrower the caller actually applied) is
+    given - a quantity summed across unrelated products is not a number anyone
+    asked for. ``delivered_from/to`` are present only when something was
+    delivered. Delivered = the canonical predicate (``_delivered_clause``),
+    pending = its negation.
 
-    Cost on the product-scoped path: one aggregate over the filtered order ids
-    (same class as the ``COUNT(*)`` the list already runs for ``pagination``),
-    one grouped SUM over their lines, one distinct-name pass.
+    Cost when asked: one aggregate over the filtered order ids (same class as
+    the ``COUNT(*)`` the list already runs for ``pagination``), one distinct-name
+    pass, and one grouped SUM over the lines when product-scoped.
 
     Best-effort: any failure warns and leaves the payload untouched, so a list
     answer never dies because its headline could not be computed. An empty
     result gets no summary at all.
     """
     pids = [str(p) for p in (product_ids or []) if p]
-    if not pids:
-        return
     try:
         ids_sq = (
             filtered_q.order_by(None)
@@ -256,8 +256,12 @@ class OrderService:
         product_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
         ids_only: bool = False,
+        include_summary: bool = False,
     ):
         """List orders with filtering and pagination.
+
+        ``include_summary`` stamps ``payload["summary"]`` (filter-wide measures,
+        see ``stamp_order_summary``); off by default so a plain list pays nothing.
 
         When ``ids_only`` is True the method skips counting, pagination, and
         eager-loading and returns the full ordered list of order ids
@@ -643,7 +647,8 @@ class OrderService:
             },
             "empty": total == 0
         }
-        stamp_order_summary(self.db, payload, summary_q, product_ids=_product_uuid_filter)
+        if include_summary:
+            stamp_order_summary(self.db, payload, summary_q, product_ids=_product_uuid_filter)
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched.
         stamp_lookup_companies(
@@ -1250,6 +1255,7 @@ class OrderService:
         customer_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
         order_status: Optional[str] = None,
+        include_summary: bool = False,
     ):
         """List distinct orders matched by product search.
 
@@ -1626,12 +1632,13 @@ class OrderService:
             },
             "empty": total == 0,
         }
-        stamp_order_summary(
-            self.db,
-            payload,
-            summary_q,
-            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
-        )
+        if include_summary:
+            stamp_order_summary(
+                self.db,
+                payload,
+                summary_q,
+                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+            )
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched. Both
         # the typed uuid filter and the ids resolved from free-text product tokens

@@ -1062,3 +1062,6 @@ def test_qs_c6_by_product_catalog_accepts_order_status():
     from sorento_crm_mcp.catalog import CATALOG
     spec = next(s for s in CATALOG if s.name == "crm_order_management_orders_by_product_list")
     assert "order_status" in spec.query_params
+    assert "include_summary" in spec.query_params
+    lst = next(s for s in CATALOG if s.name == "crm_order_management_orders_list")
+    assert "include_summary" in lst.query_params
