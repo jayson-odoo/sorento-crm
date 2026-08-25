@@ -317,6 +317,11 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      // Always sent, empty list included: the backend's `_resolve_warehouse_ids` reads a
+      // falsy scope as EVERY active warehouse (`if warehouse_codes:` ... else every active
+      // one), so `[]` is how "all warehouses" is expressed on the wire (P1). Unlike
+      // `product_codes` the key has always been present, so sending it empty - rather than
+      // omitting it - is what keeps an unnarrowed run byte-identical to before.
       warehouse_codes: req.warehouse_codes,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,
