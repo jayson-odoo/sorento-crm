@@ -37,6 +37,7 @@ function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {
 const POLICY = {
   mode: 'compact',
   warehouses: [{ id: 'wh-1', code: 'BRW', name: 'Rawang Main Warehouse' }],
+  hide_zero_locations: true,
   source: 'contact',
   source_label: null,
 };
@@ -78,7 +79,7 @@ describe('one path per tier', () => {
     apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
     await saveStockVisibility(
       { kind: 'access_type', accessTypeCode: 'dealer' },
-      { mode: 'availability', warehouse_ids: ['wh-1', 'wh-2'] },
+      { mode: 'availability', warehouse_ids: ['wh-1', 'wh-2'], hide_zero_locations: false },
     );
     const [url, init] = lastCall();
     expect(url).toBe('/api/v1/inventory/stock-visibility/access-types/dealer');
@@ -86,15 +87,38 @@ describe('one path per tier', () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       mode: 'availability',
       warehouse_ids: ['wh-1', 'wh-2'],
+      hide_zero_locations: false,
     });
+  });
+
+  it('round-trips hide_zero_locations: sent on the PUT, read back off the policy', async () => {
+    // The backend defaults the key to false, so a body that omitted it would turn
+    // the toggle off on every Save - and the card would look like it never stuck.
+    apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
+    const res = await saveStockVisibility(
+      { kind: 'contact', contactId: 'c-1' },
+      { mode: 'compact', warehouse_ids: ['wh-1'], hide_zero_locations: true },
+    );
+
+    expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
+      mode: 'compact',
+      warehouse_ids: ['wh-1'],
+      hide_zero_locations: true,
+    });
+    expect(res.override?.hide_zero_locations).toBe(true);
+    expect(res.effective.hide_zero_locations).toBe(true);
   });
 
   it('sends warehouse_ids: null for "every active warehouse"', async () => {
     apiFetch.mockResolvedValue(jsonResponse({ effective: POLICY, override: POLICY }));
-    await saveStockVisibility({ kind: 'default' }, { mode: 'detailed', warehouse_ids: null });
+    await saveStockVisibility(
+      { kind: 'default' },
+      { mode: 'detailed', warehouse_ids: null, hide_zero_locations: false },
+    );
     expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({
       mode: 'detailed',
       warehouse_ids: null,
+      hide_zero_locations: false,
     });
   });
 
@@ -164,7 +188,10 @@ describe('errors reach the caller as the API worded them', () => {
       jsonResponse({ detail: 'Unknown warehouse: wh-nope' }, { ok: false, status: 422 }),
     );
     await expect(
-      saveStockVisibility({ kind: 'default' }, { mode: 'detailed', warehouse_ids: ['wh-nope'] }),
+      saveStockVisibility(
+        { kind: 'default' },
+        { mode: 'detailed', warehouse_ids: ['wh-nope'], hide_zero_locations: false },
+      ),
     ).rejects.toThrow('Unknown warehouse: wh-nope');
   });
 

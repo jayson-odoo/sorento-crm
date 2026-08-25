@@ -25,6 +25,10 @@ class StockVisibilityPolicyOut(BaseModel):
     mode: Literal["detailed", "compact", "availability"]
     #: null = every active warehouse; [] = none at all.
     warehouses: Optional[List[StockVisibilityWarehouse]] = None
+    #: Withhold the locations holding none of the product. See the model docstring:
+    #: `detailed` drops the row, `compact` the location line, `availability` is
+    #: unaffected, and a negative quantity is never hidden.
+    hide_zero_locations: bool = False
     source: Literal["contact", "access_type", "default"]
     #: The access type's NAME when `source` is `access_type`, so the badge can
     #: read "Access type: Dealer". A name, never the code.
@@ -47,4 +51,12 @@ class StockVisibilityInput(BaseModel):
     #: location - the one edit an admin can make without meaning to.
     warehouse_ids: Optional[List[str]] = Field(
         ..., description="null = every active warehouse; [] = none."
+    )
+    #: Defaulted rather than required, unlike `warehouse_ids`: omitting THAT one
+    #: widened a policy to every location, while omitting this one only ever
+    #: shows more than was hidden, so the literal reading is also the safe one.
+    #: The card sends it on every Save.
+    hide_zero_locations: bool = Field(
+        False,
+        description="Hide the locations holding none of the product. Negatives stay visible.",
     )

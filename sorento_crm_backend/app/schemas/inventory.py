@@ -188,6 +188,9 @@ class StockVisibilityBlock(BaseModel):
     mode: str
     #: null = every active warehouse; [] = none at all.
     warehouse_codes: Optional[List[str]] = None
+    #: Whether the locations holding none of the product were withheld. Echoed so
+    #: n8n can phrase the reply without re-deriving the policy.
+    hide_zero_locations: bool = False
     source: str
 
 

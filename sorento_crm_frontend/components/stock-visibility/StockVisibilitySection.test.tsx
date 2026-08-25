@@ -11,6 +11,8 @@
  *   E5 Remove goes through ConfirmDeleteDialog (never `confirm()`), DELETEs, and
  *      the card falls back to the inherited policy
  *   E8 empty Locations reads "All locations" and saves `warehouse_ids: null`
+ *   E9 "Hide zero-quantity locations" renders from the effective policy, toggles,
+ *      and rides the same wholesale Save
  *
  * Mocked at the SERVICE boundary: the card + hooks are real, `stockVisibilityService`
  * is not. Which URL each of those functions calls is the service's own contract and is
@@ -200,8 +202,15 @@ function policy(
   warehouses: StockVisibilityWarehouse[] | null,
   source: StockVisibilityPolicy['source'],
   sourceLabel: string | null = null,
+  hideZeroLocations = false,
 ): StockVisibilityPolicy {
-  return { mode, warehouses, source, source_label: sourceLabel };
+  return {
+    mode,
+    warehouses,
+    hide_zero_locations: hideZeroLocations,
+    source,
+    source_label: sourceLabel,
+  };
 }
 
 /**
@@ -426,6 +435,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id, BRW_BB.id],
+        hide_zero_locations: false,
       }),
     );
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Stock visibility saved'));
@@ -454,6 +464,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'availability',
         warehouse_ids: null,
+        hide_zero_locations: false,
       }),
     );
   });
@@ -481,6 +492,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'availability',
         warehouse_ids: [],
+        hide_zero_locations: false,
       }),
     );
   });
@@ -504,6 +516,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: [],
+        hide_zero_locations: false,
       }),
     );
 
@@ -521,6 +534,7 @@ describe('E4 / E8 - Save', () => {
       expect(service.saveStockVisibility).toHaveBeenLastCalledWith(CONTACT_SCOPE, {
         mode: 'compact',
         warehouse_ids: null,
+        hide_zero_locations: false,
       }),
     );
   });
@@ -662,6 +676,7 @@ describe('Scope parity', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
         mode: 'compact',
         warehouse_ids: [BRW.id, MWH.id, DC1.id],
+        hide_zero_locations: false,
       }),
     );
   });
@@ -687,6 +702,117 @@ describe('Scope parity', () => {
       expect(service.saveStockVisibility).toHaveBeenCalledWith(DEFAULT_SCOPE, {
         mode: 'compact',
         warehouse_ids: null,
+        hide_zero_locations: false,
+      }),
+    );
+  });
+});
+
+describe('E9 - Hide zero-quantity locations', () => {
+  function hideZeroSwitch(): HTMLElement {
+    return screen.getByRole('switch', { name: 'Hide zero-quantity locations' });
+  }
+
+  it('renders the effective policy value, off and on', async () => {
+    respondWith(() => {
+      const own = policy('detailed', [BRW], 'contact');
+      return { effective: own, override: own };
+    });
+    const off = renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(hideZeroSwitch()).toHaveAttribute('data-state', 'unchecked');
+    off.unmount();
+
+    respondWith(() => {
+      const own = policy('compact', [BRW], 'contact', null, true);
+      return { effective: own, override: own };
+    });
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(hideZeroSwitch()).toHaveAttribute('data-state', 'checked');
+  });
+
+  it('is inherited from the tier above, like the other two fields', async () => {
+    // The card opens on the policy in FORCE, whichever tier wrote it, so a dealer
+    // rule set once on the access type is what an inheriting contact shows.
+    respondWith(() => ({
+      effective: policy('compact', [BRW, MWH], 'access_type', 'Dealer', true),
+      override: null,
+    }));
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    expect(screen.getByText('Access type: Dealer')).toBeInTheDocument();
+    expect(hideZeroSwitch()).toHaveAttribute('data-state', 'checked');
+  });
+
+  it('toggling it is a change, and Save sends it with the rest of the row', async () => {
+    const own = policy('compact', [BRW], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    const saved = policy('compact', [BRW], 'contact', null, true);
+    service.saveStockVisibility.mockResolvedValue({ effective: saved, override: saved });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    // Nothing else touched, so Save is only reachable if the toggle is dirty.
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+
+    fireEvent.click(hideZeroSwitch());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'compact',
+        warehouse_ids: [BRW.id],
+        hide_zero_locations: true,
+      }),
+    );
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Stock visibility saved'));
+  });
+
+  it('turns back off, and the round trip through the service shows the stored value', async () => {
+    // A PUT replaces the whole row, so switching the toggle off has to reach the
+    // API as `false` rather than as an omitted key the backend would default.
+    const own = policy('compact', [BRW], 'contact', null, true);
+    respondWith(() => ({ effective: own, override: own }));
+    const saved = policy('compact', [BRW], 'contact');
+    service.saveStockVisibility.mockResolvedValue({ effective: saved, override: saved });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+    expect(hideZeroSwitch()).toHaveAttribute('data-state', 'checked');
+
+    fireEvent.click(hideZeroSwitch());
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'compact',
+        warehouse_ids: [BRW.id],
+        hide_zero_locations: false,
+      }),
+    );
+    // The write seeds the card from what came back, so the switch reads the
+    // STORED value rather than the one that was clicked.
+    await waitFor(() => expect(hideZeroSwitch()).toHaveAttribute('data-state', 'unchecked'));
+  });
+
+  it('is written on the access-type and default tiers from the same card', async () => {
+    const own = policy('availability', [BRW, MWH, DC1], 'access_type', 'Dealer');
+    respondWith(() => ({ effective: own, override: own }));
+    service.saveStockVisibility.mockResolvedValue({ effective: own, override: own });
+
+    renderSection(ACCESS_TYPE_SCOPE);
+    await waitForCard();
+    fireEvent.click(hideZeroSwitch());
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
+        mode: 'availability',
+        warehouse_ids: [BRW.id, MWH.id, DC1.id],
+        hide_zero_locations: true,
       }),
     );
   });

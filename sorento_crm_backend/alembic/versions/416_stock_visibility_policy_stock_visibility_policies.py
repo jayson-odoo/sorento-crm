@@ -13,6 +13,11 @@ existing contact sees. ``seed_default_row`` is a module-level function rather
 than inline SQL so the test suite can exercise the seed on its own against a
 ``create_all`` schema, where ``upgrade()``'s ``create_table`` would collide.
 
+``hide_zero_locations`` carries a ``server_default`` of false rather than being
+backfilled: it is part of this same unmerged revision, so every row that will
+ever exist is created with the column already there, and the default is the
+behaviour every policy had before the toggle existed.
+
 Three PARTIAL uniques rather than one constraint: Postgres treats NULLs as
 distinct, so a plain ``UNIQUE (contact_id, access_type_code)`` would happily
 admit a second global default row and the resolution chain would then pick one
@@ -69,6 +74,12 @@ def upgrade() -> None:
         ),
         sa.Column("mode", sa.String(length=20), nullable=False),
         sa.Column("warehouse_ids", ARRAY(UUID(as_uuid=False)), nullable=True),
+        sa.Column(
+            "hide_zero_locations",
+            sa.Boolean(),
+            server_default=sa.text("false"),
+            nullable=False,
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=False),

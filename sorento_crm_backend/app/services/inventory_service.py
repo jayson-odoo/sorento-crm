@@ -738,6 +738,23 @@ class StockService:
             else:
                 q = q.filter(sa_false())
 
+        # `hide_zero_locations` on the DETAILED mode is a row filter: a location
+        # holding none of the product is a line the reader has no use for. The two
+        # summary modes clear `data` anyway and drop their zero LOCATION LINES in
+        # `_apply_stock_visibility`, where the product still keeps its block - so
+        # this filter must not reach `policy_q`, which those modes aggregate over.
+        #
+        # `!= 0`, never `> 0`. A negative on-hand is not "none left", it is a count
+        # that cannot be true, and the person who can fix it is the one reading
+        # this listing. Every row filtering out simply takes the empty path the
+        # caller already handles.
+        if (
+            policy is not None
+            and policy.hide_zero_locations
+            and policy.mode == "detailed"
+        ):
+            q = q.filter(Stock.quantity_on_hand != 0)
+
         resolved_wh_ids = resolve_identifier(
             self.db,
             warehouse_id,
@@ -1005,7 +1022,13 @@ class StockService:
         """
         from sqlalchemy import func, or_ as sa_or
 
-        payload["stock_visibility"] = {"mode": policy.mode, "source": policy.source}
+        payload["stock_visibility"] = {
+            "mode": policy.mode,
+            "source": policy.source,
+            # Echoed in every mode, `availability` included: it names no location,
+            # so it discloses nothing, and n8n reads it to phrase the reply.
+            "hide_zero_locations": policy.hide_zero_locations,
+        }
         if policy.mode != "availability":
             # NULL stays null on the wire: "every location" is a different answer
             # from "these named ones", and collapsing it to a list would make the
@@ -1109,6 +1132,10 @@ class StockService:
                     "product_id": pid,
                     "product_code": getattr(products_by_id.get(pid), "product_code", None),
                     "product_name": getattr(products_by_id.get(pid), "product_name", None),
+                    # Summed over EVERY allowed location, including the ones the
+                    # flag withholds. A withheld line held none of the product, so
+                    # the total it fed is the same number either way - and the
+                    # total is the answer to the question that was asked.
                     "total_on_hand": sum(int(r.on_hand or 0) for r in per_product[pid]),
                     "locations": [
                         {
@@ -1117,6 +1144,14 @@ class StockService:
                         }
                         for r in sorted(
                             per_product[pid], key=lambda r: r.warehouse_code or ""
+                        )
+                        # `hide_zero_locations`: a line reading `BRW-BB: 0` is noise
+                        # in a WhatsApp message. A NEGATIVE line stays - it is an
+                        # anomaly, not an absence - and a product whose lines all go
+                        # keeps its block, reading `Total: 0`, because dropping the
+                        # block would say "I never found it" instead of "none left".
+                        if not (
+                            policy.hide_zero_locations and int(r.on_hand or 0) == 0
                         )
                     ],
                     "flags": {

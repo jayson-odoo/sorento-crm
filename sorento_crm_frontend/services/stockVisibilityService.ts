@@ -22,6 +22,11 @@
  *          // null  = every active warehouse (the stored `warehouse_ids` is NULL)
  *          // []    = no warehouse at all, so the contact is told about no stock
  *          // Resolved rows, not bare ids: the UI renders `CODE - name` and never a UUID.
+ *     "hide_zero_locations": false,
+ *          // Withhold the locations holding NONE of the product: the row under
+ *          // `detailed`, the location line under `compact` (the total is unchanged),
+ *          // nothing under `availability`, which has no line to withhold. A NEGATIVE
+ *          // quantity is never hidden - it is an anomaly, not an absence.
  *     "source": "contact" | "access_type" | "default",
  *     "source_label": "Dealer" | null
  *          // The access type NAME when source == "access_type", else null. A NAME, not
@@ -43,10 +48,13 @@
  *
  *   GET    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *   PUT    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
- *            body: { "mode": "compact", "warehouse_ids": ["<uuid>", ...] | null }
+ *            body: { "mode": "compact", "warehouse_ids": ["<uuid>", ...] | null,
+ *                     "hide_zero_locations": false }
  *            Upsert. `warehouse_ids` is REQUIRED (nullable, not defaulted) and is
  *            replaced wholesale, never merged: a PUT replaces the whole row, so an
  *            omitted key would silently widen the policy to every location.
+ *            `hide_zero_locations` defaults to false server-side; this app always
+ *            sends it, because a PUT replaces the row and the card holds its value.
  *   DELETE /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *            Hard delete of the override row. The body carries the tier the contact
  *            falls back to, so the UI re-renders the inherited policy without a refetch.
@@ -110,6 +118,8 @@ export interface StockVisibilityPolicy {
   mode: StockVisibilityMode;
   /** null = every active warehouse; [] = none at all. */
   warehouses: StockVisibilityWarehouse[] | null;
+  /** Withhold the locations holding none of the product. Negatives stay visible. */
+  hide_zero_locations: boolean;
   source: StockVisibilitySource;
   /** Access type NAME when `source` is `access_type`, else null. */
   source_label: string | null;
@@ -125,6 +135,12 @@ export interface StockVisibilityInput {
   mode: StockVisibilityMode;
   /** null = every active warehouse; [] = none. Replaces the stored list wholesale. */
   warehouse_ids: string[] | null;
+  /**
+   * Withhold the locations holding none of the product. Optional on the wire (the
+   * backend defaults it to false), required here: a PUT replaces the whole row, so
+   * the card sends the value it is showing rather than leaving it to a default.
+   */
+  hide_zero_locations: boolean;
 }
 
 /**

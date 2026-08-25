@@ -56,12 +56,19 @@ class Policy:
     ``warehouse_ids`` None = every active warehouse their company scope allows;
     an empty frozenset = none at all. ``source_label`` carries the access type's
     NAME (not its code) so the admin badge can read "Access type: Dealer".
+
+    ``hide_zero_locations`` drops the locations holding NONE of the product:
+    the row in ``detailed``, the location line in ``compact`` (the total is
+    unchanged), and nothing at all in ``availability``, which has no line to
+    drop. Negatives survive both - a count that cannot be true is an anomaly
+    somebody has to act on, not "none left".
     """
 
     mode: str
     warehouse_ids: Optional[frozenset[str]]
     source: str
     source_label: Optional[str] = None
+    hide_zero_locations: bool = False
 
 
 def _all_companies(db: Session):
@@ -92,6 +99,7 @@ def _policy_from_row(row, source: str, source_label: Optional[str] = None) -> Po
         warehouse_ids=_row_warehouse_ids(row),
         source=source,
         source_label=source_label,
+        hide_zero_locations=bool(row.hide_zero_locations),
     )
 
 
@@ -135,8 +143,15 @@ def access_type_override(db: Session, access_type_code: str):
 
 
 def _merge_access_type_rows(rows: list[tuple[Any, Optional[str]]]) -> Policy:
-    """Most restrictive mode, intersection of warehouses (NULL = all)."""
+    """Most restrictive mode, intersection of warehouses (NULL = all), and
+    hiding wins over showing.
+
+    ``hide_zero_locations`` is OR-ed for the same reason the mode is ranked: a
+    contact tagged both `dealer` (hide) and `end_user` (show) must not have the
+    stricter rule undone the day somebody adds the second tag.
+    """
     mode = max((row.mode for row, _ in rows), key=lambda m: _MODE_RANK.get(m, 0))
+    hide_zero = any(bool(row.hide_zero_locations) for row, _ in rows)
 
     merged: Optional[frozenset[str]] = None
     for row, _ in rows:
@@ -156,6 +171,7 @@ def _merge_access_type_rows(rows: list[tuple[Any, Optional[str]]]) -> Policy:
         warehouse_ids=merged,
         source=SOURCE_ACCESS_TYPE,
         source_label=deciding[1],
+        hide_zero_locations=hide_zero,
     )
 
 
@@ -311,6 +327,7 @@ def upsert_policy(
     *,
     mode: str,
     warehouse_ids,
+    hide_zero_locations: bool = False,
     contact_id: Optional[str] = None,
     access_type_code: Optional[str] = None,
 ):
@@ -344,6 +361,7 @@ def upsert_policy(
     # `Column[...]` at rest, and pyright rejects the direct form.
     setattr(row, "mode", mode)
     setattr(row, "warehouse_ids", warehouse_ids)
+    setattr(row, "hide_zero_locations", bool(hide_zero_locations))
     db.commit()
     db.refresh(row)
     return row
@@ -406,6 +424,7 @@ def policy_payload(db: Session, policy: Policy) -> dict:
     return {
         "mode": policy.mode,
         "warehouses": policy_warehouses(db, policy.warehouse_ids),
+        "hide_zero_locations": policy.hide_zero_locations,
         "source": policy.source,
         "source_label": policy.source_label,
     }

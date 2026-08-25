@@ -140,6 +140,7 @@ def put_contact_policy(
         db,
         mode=body.mode,
         warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        hide_zero_locations=body.hide_zero_locations,
         contact_id=resolved,
     )
     effective = _contact_effective(db, resolved)
@@ -196,6 +197,7 @@ def put_access_type_policy(
         db,
         mode=body.mode,
         warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        hide_zero_locations=body.hide_zero_locations,
         access_type_code=code,
     )
     return _response(
@@ -245,6 +247,7 @@ def put_default_policy(
         db,
         mode=body.mode,
         warehouse_ids=validated_warehouse_ids(db, body.warehouse_ids),
+        hide_zero_locations=body.hide_zero_locations,
     )
     payload = policy_payload(db, default_policy(db))
     return {"effective": payload, "override": payload}

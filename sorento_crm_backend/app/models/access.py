@@ -724,6 +724,14 @@ class StockVisibilityPolicy(Base):
     mode = Column(String(20), nullable=False)
     #: NULL = every active warehouse; [] = none.
     warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
+    #: Drop the locations holding NONE of the product from the answer. `detailed`
+    #: withholds the row, `compact` the location line (the total is unchanged),
+    #: and `availability` has no line to withhold so it is unaffected. NEGATIVES
+    #: stay visible in both: a count that cannot be true is an anomaly somebody
+    #: has to act on, not "none left".
+    hide_zero_locations = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

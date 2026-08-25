@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   SearchableSelect,
@@ -51,6 +52,11 @@ import {
  * locations" button is the way back to `null`. The placeholder names which of the two
  * empty readings is in force, because a card that draws them the same way shows the
  * strictest policy as the loosest one - and Save writes what it drew.
+ *
+ * "Hide zero-quantity locations" sits with Locations because that is what it edits:
+ * the locations holding none of the product drop out of the answer. It is part of
+ * the same wholesale Save, so it is drafted, dirty-tracked and re-seeded with the
+ * other two fields rather than written on toggle.
  */
 
 export interface StockVisibilitySectionProps {
@@ -60,7 +66,11 @@ export interface StockVisibilitySectionProps {
   className?: string;
 }
 
-type Draft = { mode: StockVisibilityMode; warehouseIds: string[] | null };
+type Draft = {
+  mode: StockVisibilityMode;
+  warehouseIds: string[] | null;
+  hideZeroLocations: boolean;
+};
 
 const MODE_OPTIONS: SearchableSelectOption[] = STOCK_VISIBILITY_MODE_ORDER.map((mode) => ({
   value: mode,
@@ -103,7 +113,11 @@ export function StockVisibilitySection({
   const dealerPool = useDealerPoolWarehouses();
   const searchWarehouses = useStockVisibilityWarehouseSearch();
 
-  const [draft, setDraft] = useState<Draft>({ mode: 'detailed', warehouseIds: null });
+  const [draft, setDraft] = useState<Draft>({
+    mode: 'detailed',
+    warehouseIds: null,
+    hideZeroLocations: false,
+  });
   const [warehouseCache, setWarehouseCache] = useState<
     Record<string, StockVisibilityWarehouse>
   >({});
@@ -133,11 +147,16 @@ export function StockVisibilitySection({
     const signature = JSON.stringify([
       effective.mode,
       warehouseIds === null ? null : [...warehouseIds].sort(),
+      effective.hide_zero_locations,
     ]);
     if (syncedRef.current === signature) return;
     syncedRef.current = signature;
     cacheWarehouses(effective.warehouses ?? []);
-    setDraft({ mode: effective.mode, warehouseIds });
+    setDraft({
+      mode: effective.mode,
+      warehouseIds,
+      hideZeroLocations: !!effective.hide_zero_locations,
+    });
   }, [data, cacheWarehouses]);
 
   const fetchOptions = useCallback(
@@ -162,6 +181,7 @@ export function StockVisibilitySection({
   const isDirty =
     !!baseline &&
     (baseline.mode !== draft.mode ||
+      !!baseline.hide_zero_locations !== draft.hideZeroLocations ||
       !sameIds(
         baseline.warehouses ? baseline.warehouses.map((w) => w.id) : null,
         draft.warehouseIds,
@@ -268,6 +288,19 @@ export function StockVisibilitySection({
               All locations
             </Button>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="stock-visibility-hide-zero"
+              checked={draft.hideZeroLocations}
+              onCheckedChange={(checked) =>
+                setDraft((prev) => ({ ...prev, hideZeroLocations: checked }))
+              }
+              disabled={isBusy}
+            />
+            <Label htmlFor="stock-visibility-hide-zero" className="font-normal">
+              Hide zero-quantity locations
+            </Label>
+          </div>
         </div>
       </div>
 
@@ -281,6 +314,7 @@ export function StockVisibilitySection({
               // the two policies unreachable from this card.
               mode: draft.mode,
               warehouse_ids: draft.warehouseIds,
+              hide_zero_locations: draft.hideZeroLocations,
             })
           }
           disabled={!canSave}

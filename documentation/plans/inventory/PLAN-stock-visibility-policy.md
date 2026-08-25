@@ -1,6 +1,6 @@
 # PLAN: Stock visibility policy (per contact, per access type)
 
-**Status:** Review fixes done; browser verification + S5 n8n pending. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 done (mock swapped for the real API), S6 review fixes landed test-first (16 findings: the `alternatives` leak, contact-identity divergence, the false "no information" hint, `requested_qty` 0, `space_id` on the contact tier, audit, malformed ids, the FE `[]`-vs-null reading, an empty dealer pool, the availability location echo, a required `warehouse_ids`, two vacuous vitest assertions, company-scoped policy warehouses, unpaged summary aggregation, a DB query in a router).
+**Status:** Review fixes done; browser verification + S5 n8n pending. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 done (mock swapped for the real API), S6 review fixes landed test-first (16 findings: the `alternatives` leak, contact-identity divergence, the false "no information" hint, `requested_qty` 0, `space_id` on the contact tier, audit, malformed ids, the FE `[]`-vs-null reading, an empty dealer pool, the availability location echo, a required `warehouse_ids`, two vacuous vitest assertions, company-scoped policy warehouses, unpaged summary aggregation, a DB query in a router). S7 hide-zero done.
 **UAC:** `stock-visibility-policy-acceptance-criteria.md` (alongside)
 **Domain:** inventory / chatbot (n8n `sub-get-results` `Fss5aAaXthJSWpZCgKiKR`, MCP `crm_inventory_stock_balance_list`)
 
@@ -65,6 +65,7 @@ stock_visibility_policies
   access_type_code   varchar(50) NULL FK contact_access_types.code ON UPDATE CASCADE ON DELETE CASCADE
   mode               varchar(20) NOT NULL  CHECK (mode IN ('detailed','compact','availability'))
   warehouse_ids      uuid[] NULL          -- NULL = every active warehouse; [] = none
+  hide_zero_locations boolean NOT NULL DEFAULT false  -- withhold the locations holding none
   created_at / updated_at
 
   CHECK (contact_id IS NULL OR access_type_code IS NULL)   -- a row is exactly one tier
@@ -89,13 +90,35 @@ decided, so this PR cannot change what any existing dealer sees.
 2. Row where `contact_id = <id>` -> use it.
 3. Else rows where `access_type_code IN (contact's access type codes)`. If more than one matches,
    **most restrictive wins**: mode order `availability > compact > detailed`, warehouses =
-   intersection. (A contact tagged `dealer` + `end_user` must not be widened by the looser type.)
+   intersection, `hide_zero_locations` = OR (hiding is the restrictive reading). (A contact tagged
+   `dealer` + `end_user` must not be widened by the looser type.)
 4. Else the default row.
 5. Contact params present but contact unresolvable -> same fail-closed behaviour as company
    scope today: zero rows. No contact params (staff web UI, n8n legacy callers without ids) ->
    default row.
 
-`Policy = {mode, warehouse_ids: set[uuid] | None, source: 'contact'|'access_type'|'default'}`.
+`Policy = {mode, warehouse_ids: set[uuid] | None, hide_zero_locations: bool,
+source: 'contact'|'access_type'|'default'}`.
+
+### `hide_zero_locations` (S7)
+
+One boolean on the same row, toggled per contact / access type / default like the rest of the
+policy. It withholds the locations holding NONE of the product, because a `BRW-BB: 0` line is
+noise in a WhatsApp reply:
+
+- `detailed` drops the stock ROWS with `quantity_on_hand == 0` (`!= 0`, never `> 0` - a NEGATIVE
+  on-hand is an anomaly somebody has to act on, not an absence). Every row of a request filtering
+  out simply takes the existing empty path.
+- `compact` drops the zero LOCATION LINES from `locations`. `total_on_hand` is unchanged (a
+  withheld line contributed 0), and a product whose every location is zero KEEPS its entry with
+  `total_on_hand: 0` / `locations: []` - dropping the block would say "I never found it" instead
+  of "none left" (the B13 reasoning).
+- `availability` is unaffected: it has no line and no number to withhold.
+
+The row filter is applied ONLY in `detailed`, so it never reaches `policy_q` (the snapshot the
+two summary modes aggregate over): they keep counting every allowed row and lose only the LINE.
+`stock_visibility.hide_zero_locations` echoes the value in every mode - it names no location, so
+it discloses nothing, and n8n can phrase the reply without re-deriving the policy.
 
 ### Enforcement: backend `GET /inventory/stock/balance`
 
@@ -220,6 +243,9 @@ badge (`Contact override` / `Access type: <name>` / `Default`), a mode `Searchab
 - System settings: a new `Stock Visibility` tab (`user-management/settings/stock-visibility`)
   holding the default row.
 - No explanations in-UI (Outline guide instead). No UUIDs shown; warehouses render as `code - name`.
+- **"Hide zero-quantity locations" is a Switch under Locations**, because that is what it edits.
+  Part of the same wholesale Save (drafted, dirty-tracked, re-seeded with the other two fields),
+  never written on toggle. No explanatory copy: the guide carries the why.
 - **Locations keeps its three readings apart.** A list; `null` = every active warehouse
   (placeholder "All locations"); `[]` = no stock at all (placeholder "No locations"). The picker
   can only hand back a list, so removing the last chip means `[]`, and an "All locations" button
@@ -249,7 +275,7 @@ GET /api/v1/inventory/warehouses?segment=dealer&is_active=true   -> new `segment
 Locations picker itself needs nothing new - it server-searches the same route with `query=`.
 
 Every policy route returns the same body: `{effective: Policy, override: Policy | null}`, where
-`Policy = {mode, warehouses: [{id, code, name}] | null, source, source_label}`. Warehouses come
+`Policy = {mode, warehouses: [{id, code, name}] | null, hide_zero_locations, source, source_label}`. Warehouses come
 back RESOLVED, not as bare ids, so the UI renders `CODE - name` without a second round trip and
 without a UUID on screen. `override` is null when the tier inherits; DELETE returns the tier the
 caller falls back to. The full contract, request and response, is documented at the top of
@@ -291,6 +317,7 @@ the other half. `StockVisibilityPolicy` is `__audit_track__`, and DELETE goes th
 | S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | done - mock deleted, `apiFetch` + `extractApiError` + `buildDataGridParams`; `StockVisibilitySection.test.tsx` (15) + `stockVisibilityService.test.ts` (10) |
 | S5 | n8n: transformer + structurer + pending-quantity turn; live-envelope harness capture | separate n8n plan-build-test-promote; promote = user's call | |
 | S6 | Browser verification via agent-browser from `/` by sidebar; `/code-review`; DoD gate; PR | Phase 3 | review fixes done (16 findings, test-first); browser run pending |
+| S7 | `hide_zero_locations` on the policy row: migration 416 amended in place (unmerged, unstamped), model + schemas + resolver merge + enforcement, the Switch on the card | Phase 2 | done - backend B17 (12 tests, `tests/test_stock_visibility_policy.py` 69 passed), FE E9 (`StockVisibilitySection.test.tsx` + `stockVisibilityService.test.ts`, 36 passed). No MCP change: the presenter renders the locations the backend sent |
 
 ## Risks / non-goals
 

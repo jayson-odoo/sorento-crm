@@ -120,6 +120,7 @@ def _policy_row(
     warehouse_ids=None,
     contact=None,
     access_type=None,
+    hide_zero_locations: bool = False,
 ) -> StockVisibilityPolicy:
     row = StockVisibilityPolicy(
         id=str(uuid.uuid4()),
@@ -127,6 +128,7 @@ def _policy_row(
         access_type_code=access_type.code if access_type else None,
         mode=mode,
         warehouse_ids=warehouse_ids,
+        hide_zero_locations=hide_zero_locations,
     )
     db.add(row)
     db.flush()
@@ -398,6 +400,7 @@ def test_detailed_filters_warehouses(db):
         "mode": "detailed",
         "warehouse_codes": ["ZZTBRW", "ZZTBRW-BB"],
         "source": "contact",
+        "hide_zero_locations": False,
     }
 
 
@@ -1302,7 +1305,11 @@ def test_availability_block_never_names_a_location(db):
         product_ids=[p.id], contact_id=contact.id, requested_qty=1
     )
 
-    assert result["stock_visibility"] == {"mode": "availability", "source": "contact"}
+    assert result["stock_visibility"] == {
+        "mode": "availability",
+        "source": "contact",
+        "hide_zero_locations": False,
+    }
     assert "ZZTBRW" not in json.dumps(result, default=str)
 
 
@@ -1661,3 +1668,297 @@ def test_unknown_access_type_is_rejected_by_the_service(db):
     with pytest.raises(AppException) as raised:
         require_access_type(db, "ZZT-NO-SUCH-CODE")
     assert raised.value.status_code == 404
+
+
+# ============================================ B17. the zero-quantity locations
+
+
+def test_detailed_hides_zero_rows_but_keeps_the_negative_ones(db):
+    """B17. `hide_zero_locations` drops the rows a reader has no use for - a
+    location holding none of the product - without touching the anomalies.
+
+    A negative on-hand is not "none left", it is a count that cannot be true, and
+    the person who can fix it is the one reading this listing. Filtering on
+    `quantity_on_hand != 0` keeps it; a `> 0` filter would have hidden exactly
+    the rows somebody has to act on.
+    """
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 0), (dc1, -4)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, dc1.id}
+    assert result["pagination"]["total"] == 2
+    assert result["stock_visibility"]["hide_zero_locations"] is True
+
+
+def test_detailed_without_the_flag_still_shows_the_zero_rows(db):
+    """B17. The flag defaults to false, so an existing policy answers exactly what
+    it answered before this slice - the zero row included."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 0)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert {row.warehouse_id for row in result["data"]} == {brw.id, brw_bb.id}
+    assert result["stock_visibility"]["hide_zero_locations"] is False
+
+
+def test_detailed_hide_zero_takes_the_existing_empty_path(db):
+    """B17. Every row of the request filtered out is the same answer as no row at
+    all: `data: []`, `total: 0`, `empty: true`. The mode is unchanged, so the
+    caller gets the empty shape it already handles rather than a new one."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert result["data"] == []
+    assert result["pagination"]["total"] == 0
+    assert result["empty"] is True
+
+
+def test_compact_drops_the_zero_locations_and_keeps_the_total(db):
+    """B17. In `compact` the flag works on the location LINES, not on the rows:
+    a line reading `BRW-BB: 0` is noise in a WhatsApp message, while the total is
+    the answer to the question that was asked and must not move. A negative line
+    stays for the same reason it does in `detailed`."""
+    brw, brw_bb, dc1 = _three_warehouses(db)
+    brw_ib = _wh(db, "ZZTBRW-IB", segment="project")
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 500), (brw_bb, 0), (brw_ib, -20)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(
+        db,
+        mode="compact",
+        warehouse_ids=[brw.id, brw_bb.id, brw_ib.id],
+        contact=contact,
+        hide_zero_locations=True,
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    block = result["stock_summary"][0]
+    assert block["locations"] == [
+        {"warehouse_code": "ZZTBRW", "quantity_on_hand": 500},
+        {"warehouse_code": "ZZTBRW-IB", "quantity_on_hand": -20},
+    ]
+    # The withheld line held nothing, so the total it contributed to is the same
+    # number it always was.
+    assert block["total_on_hand"] == 480
+    assert result["stock_visibility"]["hide_zero_locations"] is True
+
+
+def test_compact_keeps_a_product_whose_every_location_is_zero(db):
+    """B17 + B13. Hiding the lines must not hide the PRODUCT: a block reading
+    `Total: 0` with no locations says "we have none", and dropping the block
+    entirely says "I never found what you asked for". They are different answers
+    and the contact cannot tell them apart from silence."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ALLZERO")
+    for wh in (brw, brw_bb):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=0)
+    contact = _contact(db)
+    _policy_row(db, mode="compact", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+    assert len(result["stock_summary"]) == 1
+    block = result["stock_summary"][0]
+    assert block["product_code"] == "ZZT-SKU-ALLZERO"
+    assert block["total_on_hand"] == 0
+    assert block["locations"] == []
+    # It carries an answer, so it is not the "nothing found" shape (B15).
+    assert result["empty"] is False
+
+
+def test_availability_ignores_hide_zero_locations(db):
+    """B17. The dealer mode has no lines and no numbers to hide, so the flag
+    changes nothing about the verdict: the yes/no is still judged on the sum over
+    every allowed location, zero rows included."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 40), (brw_bb, 0)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="availability", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    yes = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_qty=40
+    )
+    no = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_qty=41
+    )
+
+    assert yes["stock_availability"][0]["available"] is True
+    assert no["stock_availability"][0]["available"] is False
+    # Still no location named, flag or no flag.
+    assert "warehouse_codes" not in yes["stock_visibility"]
+
+
+def test_access_types_merge_hide_zero_with_or(db):
+    """B17. Most restrictive wins, and hiding is the restrictive reading: a
+    contact tagged both `dealer` (hide) and `end_user` (show) must not have the
+    dealer rule undone by the looser tag - the same rule the mode rank and the
+    warehouse intersection already follow."""
+    contact = _contact(db)
+    hiding = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    showing = _access_type(db, unique_code("end_user")[:50], "End user")
+    _tag(db, contact, hiding)
+    _tag(db, contact, showing)
+    _policy_row(db, mode="detailed", access_type=hiding, hide_zero_locations=True)
+    _policy_row(db, mode="detailed", access_type=showing, hide_zero_locations=False)
+    db.flush()
+
+    policy = resolve_policy(db, contact.id)
+
+    assert policy.hide_zero_locations is True
+    assert policy.source == "access_type"
+
+
+def test_a_contact_override_carries_its_own_hide_zero(db):
+    """The override wins wholesale, in both directions: it can switch the flag ON
+    over an access type that leaves it off, and OFF over one that sets it."""
+    contact = _contact(db)
+    dealer = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    _tag(db, contact, dealer)
+    _policy_row(db, mode="detailed", access_type=dealer, hide_zero_locations=True)
+    override = _policy_row(db, mode="detailed", contact=contact, hide_zero_locations=False)
+    db.flush()
+
+    assert resolve_policy(db, contact.id).hide_zero_locations is False
+
+    setattr(override, "hide_zero_locations", True)
+    db.flush()
+    assert resolve_policy(db, contact.id).hide_zero_locations is True
+
+
+def test_hide_zero_locations_round_trips_through_the_put(client, db):
+    """C1, for the third field. The card sends it on every Save, so it has to
+    survive the upsert, the read back and the effective/override payloads - a
+    field the API drops looks to the admin like a toggle that will not stay on."""
+    brw, _, _ = _three_warehouses(db)
+    contact = _contact(db)
+    db.flush()
+
+    saved = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={
+            "mode": "compact",
+            "warehouse_ids": [brw.id],
+            "hide_zero_locations": True,
+        },
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["override"]["hide_zero_locations"] is True
+    assert body["effective"]["hide_zero_locations"] is True
+
+    assert client.get(f"{BASE}/contacts/{contact.id}").json()["override"][
+        "hide_zero_locations"
+    ] is True
+    row = (
+        db.query(StockVisibilityPolicy)
+        .filter(StockVisibilityPolicy.contact_id == contact.id)
+        .one()
+    )
+    assert row.hide_zero_locations is True
+
+
+def test_a_put_that_omits_hide_zero_locations_reads_as_false(client, db):
+    """The default is off, and a PUT replaces the whole row: a body that says
+    nothing about the flag turns it off rather than leaving the old value in
+    place. `warehouse_ids` is required for the opposite reason - omitting it
+    widened the policy - while omitting this one only ever narrows what is
+    hidden, so the safe reading is the literal one."""
+    contact = _contact(db)
+    db.flush()
+
+    client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "compact", "warehouse_ids": None, "hide_zero_locations": True},
+    )
+    body = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "compact", "warehouse_ids": None},
+    ).json()
+
+    assert body["override"]["hide_zero_locations"] is False
+    row = (
+        db.query(StockVisibilityPolicy)
+        .filter(StockVisibilityPolicy.contact_id == contact.id)
+        .one()
+    )
+    assert row.hide_zero_locations is False
+
+
+def test_the_other_two_tiers_carry_the_flag_too(client, db):
+    """One card serves three tiers, so the field cannot exist on only one of the
+    three routes - the dealer rule is set once on the access type, and the global
+    switch-over is one edit on the default row."""
+    dealer = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    db.flush()
+
+    access_type = client.put(
+        f"{BASE}/access-types/{dealer.code}",
+        json={"mode": "compact", "warehouse_ids": None, "hide_zero_locations": True},
+    ).json()
+    assert access_type["effective"]["hide_zero_locations"] is True
+
+    default = client.put(
+        f"{BASE}/default",
+        json={"mode": "detailed", "warehouse_ids": None, "hide_zero_locations": True},
+    ).json()
+    assert default["effective"]["hide_zero_locations"] is True
+    assert client.get(f"{BASE}/default").json()["effective"]["hide_zero_locations"] is True
+
+
+def test_the_response_model_declares_hide_zero_locations(client, db):
+    """B11, for the new field. `response_model` drops what it does not declare,
+    so the echo n8n branches on would arrive as if the toggle had never been set."""
+    from app.schemas.inventory import StockVisibilityBlock
+    from app.schemas.stock_visibility import (
+        StockVisibilityInput,
+        StockVisibilityPolicyOut,
+    )
+
+    assert "hide_zero_locations" in StockVisibilityBlock.model_fields
+    assert "hide_zero_locations" in StockVisibilityPolicyOut.model_fields
+    assert "hide_zero_locations" in StockVisibilityInput.model_fields
+
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    for wh, qty in ((brw, 12), (brw_bb, 0)):
+        stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=wh.id, on_hand=qty)
+    contact = _contact(db)
+    _policy_row(db, mode="compact", contact=contact, hide_zero_locations=True)
+    db.flush()
+
+    body = client.get(
+        "/api/v1/inventory/stock/balance",
+        params={"product_ids": p.id, "contact_id": contact.id, "space_id": "364817"},
+    ).json()
+
+    assert body["stock_visibility"]["hide_zero_locations"] is True
+    assert body["stock_summary"][0]["locations"] == [
+        {"warehouse_code": "ZZTBRW", "quantity_on_hand": 12}
+    ]
