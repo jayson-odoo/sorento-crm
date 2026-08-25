@@ -1,0 +1,131 @@
+<!doctype html><html><head><meta charset="utf-8"><title>CS planning UAT plan</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1100px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.sub{color:var(--mut);margin-bottom:24px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+.sw{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
+.card b{display:block;margin-bottom:4px}
+.q{background:#fffbeb;border-color:#fcd34d}
+.bar{display:flex;height:6px;border-radius:3px;overflow:hidden;width:120px;margin-top:4px}
+.cell{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:150px;margin:4px 8px 4px 0;background:#fff;vertical-align:top}
+.cell .n{font-weight:600}.cell .l{font-size:11px;color:var(--mut)}
+.faded{opacity:.5}
+ol li,ul li{margin:3px 0}
+code{background:#f5f5f4;padding:1px 4px;border-radius:3px;font-size:12px}
+</style></head><body>
+<h1>CS fulfilment planning: UAT fixes</h1>
+<div class="sub">r3, all questions ruled, READY for go. Plan file: <code>documentation/plans/scm/PLAN-scm-cs-planning-uat.md</code> + UAC alongside. Lane: scm-so-feedback (:3060). CS part only; order-inquiry side next session.</div>
+
+<h2>1. What is actually wrong (verified in code + DB)</h2>
+<table><tr><th>You saw</th><th>Cause</th><th>Fix</th></tr>
+<tr><td>"Use own location, 71 from BRW"</td><td>FE splits own/shared by site PREFIX: BRW and BRW-BB share a site, so a pool draw reads "own". <code>boardSuggestion.ts rowOf()</code></td><td>Key on the engine's <code>rung</code>: pool = shared, group_take = own, group_borrow / cross_group_borrow = borrow.</td></tr>
+<tr><td>"Only BRW considered, not MWH / DC1 / WH3"</td><td>Engine DOES walk every pool (BRW, MWH, DC1, WH3, RSW). BRW covered all 71 so it stopped. Popover table only lists the agent group + own pool, so the others look ignored.</td><td>Table lists every pool + every group sibling with a Where tag and a Taken column (0 when listed but not needed).</td></tr>
+<tr><td>Transfer after approve</td><td>No stock transfer entity exists. AutoCount is the ledger, not integrated.</td><td><b>New entity</b> <code>projects.stock_transfers</code> (TR-000001, from/to, qty, kind, state proposed / approved / moved / cancelled, AutoCount ref) written at confirm for every reserve whose source differs from the line's location. <b>Transfers page</b> under Project sales: a person approves, marks moved with the AutoCount ref. Never closes by itself.</td></tr>
+<tr><td>Suggested vs decided on the BOARD page</td><td>Snapshot freezes only the DECIDED components; the proposal is never stored.</td><td><b>Decision strip of cards</b> above the grid on <code>/project-sales/fulfilment-planning</code>: Buy / Own / Shared / Borrow / Incoming, each with Suggested and Decided totals, differing pair marked, click filters the grid. Popover gets a Decision card beside Suggestion. List view + SO detail get the two columns as secondary.</td></tr>
+<tr><td>SO324132: X and Y not on the order inquiry</td><td>Sets withdrawn. Decision rev 1 (25 Aug 08:42): CWCX605-RL and CWCY605 were decided <b>Use own location</b> (group take from DC1-BB / MWH-BB / WH3-BB, 932 each), not Buy. Only Buy rows become OI ORDER rows; a reserve has no purchase to ask for, so it left no trace. SC and WESERP10B were Buy 932 and did flow.</td><td>With the transfer entity those reserves become six Transfers (e.g. DC1-BB -> BRW-BB 454) on the Transfers page. OI stays purchasing's list. Nothing else to fix.</td></tr>
+<tr><td>PO-2026/07-0029 occupancy</td><td>Data exists (3 placed OI rows: SO416191 6+7 at BRW, SO324132 487 at BRW-BB, PO line at DC1). PO page shows none of it.</td><td>Read-only "Allocated to" section BELOW the lines table + "Split for AutoCount" text. Re-upload matcher hardened for shifted line numbers.</td></tr>
+<tr><td>Header "TPE-9204 · BRW On hand 241 ..."</td><td><code>StockDocumentsPanel.tsx:293</code></td><td>Remove.</td></tr>
+<tr><td>OI page subtitle; who pushed the SO to OI and when; search by CS name</td><td><code>order_inquiries.raised_by / raised_at</code> already stored at confirm; never shown, not searchable.</td><td>Drop subtitle. Raised by + Raised at columns, search + filter on the CS name, re-stamped on reconfirm.</td></tr>
+<tr><td>"Place PO" wording; only pool locations?; link SPO too</td><td>Candidates = open PO lines of the product, any location, earliest date; <code>SPO-</code> docs excluded (G2 rule 3). Forms cite both PO (202604-S0083) and SPO (SPO-2026/08-0061); that PO has BRW-IB lines CS cited for BRW-IB rows.</td><td>Rename Link PO / Auto-link / Unlink. SPO link targets read <code>spo_allocations</code> (see next row), SPO first then PO by date. Tiers: same location, same group at another site, pool, sibling at the site; never excluded.</td></tr>
+<tr><td>SO414285: 9 SO lines, 11 OI rows</td><td>Yes, partial placement: the cascade SPLITS the OI row per PO line. M310-CR-PJ 8 = rows 5 + 3 (two lines of 202607-S0105); MSK11C 67 = rows 10 + 57 (202608-S0002).</td><td>One OI row per SO line, full qty. New child table <code>order_inquiry_links</code> (row, PO line or SPO allocation, qty). Row state raised / partly linked / linked; <code>committed_v</code> nets the unlinked remainder. Worklist reads "Linked 8 of 8: L3 5, L7 3". Backfill merges split rows.</td></tr>
+<tr><td>SO detail: see the PO linked to each SO line</td><td>SO detail Lines tab shows Order inquiry no + Decision rev only.</td><td>New <b>Linked to</b> column on <code>/scm/sales-orders/{id}</code> Lines: PO / SPO document + line + qty per link, read from the OI row's links. Same reader as worklist and PO panel.</td></tr>
+<tr><td>Cascade: earliest PO first by doc date?</td><td>Today: PO LINE <code>expected_date</code> ascending, nulls last. Not the document date.</td><td>Proposed: keep expected date (arrival is what a delivery date cares about), tie-break by PO issue date, show both dates on the candidate list. Doc date first is a one-line swap if you prefer (Q7).</td></tr>
+<tr><td>SPO belongs in spo_allocations</td><td>PO book import files every <code>SPO-</code> document into <code>purchase_orders</code> (source scm_spo_history); <code>spo_allocations</code> has 1 row. <code>on_order_v</code> reads spo_allocations only, so no SPO counts as incoming and ladder rung 1 never fires.</td><td>Import writes one <code>spo_allocations</code> row per SPO line (upsert on spo_number + line); existing SPO rows migrated across once and removed. SPO becomes incoming supply everywhere at once.</td></tr>
+<tr><td>UAT basis: SO381895 + three CS forms</td><td>SO381895 (76 lines), SO414033, SO414050 in the SO book; cited 202604-S0083, 202606-S0082, 202607-S0031, 202607-S0067, 202608-S0015, SPO-2026/08-0061 in <code>purchase_orders</code> with open lines. SPO-2026/08-0046 and 202606-S0019's items NOT present. <code>spo_allocations</code> has 1 row on dev.</td><td>Fixture sheet: every form row with expected verb / qty / location / link target + Actual column. ORDER BACK with a cited doc must link to THAT doc.</td></tr>
+</table>
+
+<h2>1b. Ladder v3 (your ruling)</h2>
+<table><tr><th>Rung</th><th>v2 today</th><th>v3</th></tr>
+<tr><td>0</td><td>beyond coverage date -> Buy; beyond ATP window -> surplus rungs only</td><td>beyond <code>as_of + lead time + 14</code> -> <b>Buy the whole line, nothing else tried</b></td></tr>
+<tr><td>1</td><td>timely incoming (SPO)</td><td>same, now real because SPO lives in spo_allocations</td></tr>
+<tr><td>2</td><td>site pools, own site first</td><td><b>own group first</b>: own location, then *-BB siblings by site, available qty only</td></tr>
+<tr><td>3</td><td>group take at other sites, own location never</td><td>pools: BRW, then MWH / DC1 / WH3 / RSW</td></tr>
+<tr><td>4</td><td>group borrow from lower-ranked SOs</td><td><b>not proposed automatically</b>; manual pick in Amend only</td></tr>
+<tr><td>5</td><td>cross-group borrow, capped</td><td>rung 4: other locations' available qty, cap kept</td></tr>
+<tr><td>6</td><td>whole line or Buy</td><td>same</td></tr>
+</table>
+
+<h2>2. One vocabulary, one palette (board, SO detail, cell colour)</h2>
+<table><tr><th>Rung</th><th>Label</th><th>Colour</th></tr>
+<tr><td>group_take (own location / any *-BB sibling)</td><td>Use own location</td><td><span class="sw" style="background:var(--em)"></span>emerald</td></tr>
+<tr><td>pool (BRW / MWH / DC1 / WH3 / RSW)</td><td>Use shared stock</td><td><span class="sw" style="background:var(--sky)"></span>sky</td></tr>
+<tr><td>group_borrow</td><td>Borrow from another order</td><td><span class="sw" style="background:var(--amb)"></span>amber</td></tr>
+<tr><td>cross_group_borrow</td><td>Borrow other location</td><td><span class="sw" style="background:var(--amb)"></span>amber</td></tr>
+<tr><td>buy</td><td>Buy</td><td><span class="sw" style="background:var(--rose)"></span>rose</td></tr>
+<tr><td>incoming</td><td>Incoming supply</td><td><span class="sw" style="background:var(--vio)"></span>violet</td></tr>
+</table>
+
+<h2>3. Cell colour mock</h2>
+<div class="cell"><div class="n">71 <span class="l">1 order</span></div><div class="bar faded"><div style="flex:1;background:var(--sky)"></div></div><div class="l">Shared 71 · suggested</div></div>
+<div class="cell"><div class="n">932 <span class="l">1 order</span></div><div class="bar"><div style="flex:1;background:var(--em)"></div></div><div class="l">Own 932 · decided</div></div>
+<div class="cell"><div class="n">60 <span class="l">2 orders</span></div><div class="bar faded"><div style="flex:40;background:var(--sky)"></div><div style="flex:20;background:var(--rose)"></div></div><div class="l">Shared 40 · Buy 20</div></div>
+<div class="cell"><div class="n">932 <span class="l">1 order</span></div><div class="bar"><div style="flex:1;background:var(--rose)"></div></div><div class="l">Buy 932 · decided</div></div>
+<p class="l" style="color:var(--mut);font-size:12px">Bar = decision when decided (solid), else suggestion (faded). "Already past" tint moves to the column header only, so rose on a cell means Buy and nothing else. <b>Legend lives on the fulfilment-planning page</b>, above the grid, always visible; same on the list view.</p>
+
+<h2>4. Order of work</h2>
+<ol>
+<li><b>A + C + header + H</b> board labels, cell bars, OI raised-by / search / subtitle.</li>
+<li><b>Ladder v3</b> engine + golden set.</li>
+<li><b>D</b> board decision strip + popover Decision card + snapshot key.</li>
+<li><b>K</b> SPO into spo_allocations, then <b>I</b> Link PO / Link SPO with tiers; <b>J</b> fixture sheet first.</li>
+<li><b>G</b> PO occupancy panel, then the import matcher.</li>
+<li><b>E</b> stock transfers entity + page.</li>
+<li><b>B</b> popover location table.</li>
+</ol>
+
+<h2>5. Your rulings (recorded)</h2>
+<div class="card"><b>Q1</b> beyond lead time buy; within: group locations (available) -> pools -> borrow other locations' available. Ladder v3 above.</div>
+<div class="card"><b>Q2</b> stock transfer entity; a person approves on the Transfers page.</div>
+<div class="card"><b>Q3</b> withdrawn, SC is a product. Row 6 above answers the real question.</div>
+<div class="card"><b>Q4</b> colours ok.</div>
+<div class="card"><b>Q5</b> same location, same group location, pool, sibling.</div>
+<div class="card"><b>Q6</b> SPO in spo_allocations.</div>
+<div class="card"><b>Q7</b> ruled: PO date first, then line expected date, then document number.</div>
+<div class="card"><b>Group borrow</b> ruled: manual Amend pick only.</div>
+<div class="card q"><b>Go?</b> Part 1 order: A+C+header+H, ladder v3, D, K then I (J first), G, E, B. Part 2 order: P1+P4+P5+P6, P3, P8, P2, P7. Say go, or reorder.</div>
+<h2>Part 3: a changed sales order (SO381895 form 2 -> 3)</h2>
+<p style="font-size:12px;color:var(--mut)">Exists already: Planning changes (batch per SO re-upload, own page, Keep / Release / Replan / Reduce / Retire, Apply). Your idea, with corrections:</p>
+<table><tr><th>You said</th><th>Keep / change</th><th>Why</th></tr>
+<tr><td>select the SO, go to planning change</td><td><b>Trigger = SO re-upload.</b> Entry: Planning changes list -> Plan, or SO list "Changed" badge -> Plan. Opens the board with <code>?orders=SO381895&amp;batch=…</code></td><td>AutoCount SO is the truth; the email form is not an input</td></tr>
+<tr><td>same page as fulfilment, change annotated, decide per change</td><td><b>Yes.</b> Cell shows was -> now, held decision, suggestion pre-marked. Unchanged lines keep their decision. Confirm = batch apply + new revision. Separate batch page retired</td><td>one vocabulary, one screen</td></tr>
+<tr><td>3 OI lines -> one becomes 25, two become 0, cancelled</td><td><b>Yes</b>, but the 25 row is updated in place (one row per SO line). Closed lines -> Retire -> rows cancelled</td><td>recreating drops links</td></tr>
+<tr><td>PO/SPO on the 0 lines shift to the 25 line</td><td><b>Yes, automatic:</b> links move to the surviving row of the same product on the same SO first, cascade fills the rest. Link arriving after the new date stays, flagged "arrives late"</td><td>nothing lost, nothing silently re-dealt</td></tr>
+<tr><td>(not said) qty down, over-linked</td><td>unlink excess from the latest-dated link first; replaces CANCEL_BALANCE</td><td>one rule</td></tr>
+<tr><td>(not said) transfer already moved, line retired</td><td>flag on the change; no auto reverse</td><td>physical move, a person decides</td></tr>
+</table>
+<p>One PR, after part 1 I (links table). UAC: re-upload SO381895 with the (3) change -> 3 annotated lines on the board -> Approve all -> OI row 25 with the moved links, two rows cancelled.</p>
+
+<h2>6. Part 2: purchasing side (new, <code>PLAN-scm-purchasing-uat-journey.md</code>)</h2>
+<h3 style="font-size:14px;margin:12px 0 6px">The journey</h3>
+<table><tr><th>#</th><th>Who</th><th>Does</th><th>Recorded</th><th>Next reader sees</th></tr>
+<tr><td>1</td><td>CS</td><td>Approves on the board</td><td>OI ORDER row per SO line (full qty); Transfers for reserves</td><td>OI worklist raised, Raised by; Transfers page</td></tr>
+<tr><td>2</td><td>System</td><td>Auto-link on confirm</td><td>ORDER rows: PO lines only. <b>ORDER BACK rows: SPO allocations first (cited doc first), then PO lines.</b> Tiers same loc &gt; group other site &gt; pool &gt; sibling; earliest expected date; partial ok. New verb <code>ORDER_BACK</code> set by CS on the board or by the form upload (delivery-date cell = ORDER BACK).</td><td>OI: Linked n of q; PO: Allocated to; SO: Linked to</td></tr>
+<tr><td>3</td><td>System</td><td>Daily / manual plan</td><td><b>Project demand = unlinked remainder of raised OI rows, nothing else.</b> Retail = SO book. Supply = free stock + spo_allocations. PO is NOT supply for project (consumed in step 2); nets for retail</td><td>Plan Project column = asked minus already on PO/SPO</td></tr>
+<tr><td>4</td><td>Buyer</td><td>Accept / adjust / skip</td><td>draft PO per supplier</td><td>PO list draft</td></tr>
+<tr><td>5</td><td>Buyer</td><td>Confirm PO</td><td>active + number; auto-link links the new lines to the rows that sized the buy, then cascades</td><td>OI rows Linked to PO-…; PO Allocated to</td></tr>
+<tr><td>6</td><td>Buyer</td><td>Keys into AutoCount per split, re-uploads PO book</td><td>lines matched by (product, warehouse) then line_no; links survive</td><td>OI, PO, SO agree</td></tr>
+<tr><td>7</td><td>Purchasing</td><td>Uploads SPO</td><td>spo_allocations rows</td><td>rung 1 fires; Link SPO; plan sees incoming</td></tr>
+</table>
+<p style="font-size:12px;color:var(--mut)">Rule: a project requirement lives in ONE place at a time: board until approved, raised OI row until linked, PO/SPO once linked. Reorder planning reads only the middle state.</p>
+
+<h3 style="font-size:14px;margin:12px 0 6px">What you saw on the reorder plan</h3>
+<table><tr><th>Seen</th><th>Cause (verified)</th><th>Fix</th></tr>
+<tr><td>M310-CR-PJ project demand at BRW-BB though all OI rows placed</td><td><code>committed_v</code> has two project legs. Confirmed leg (raised OI rows) = 0, correct. The SHEET leg still counts open lines of project orders with <code>demand_origin = scm_order_inquiry</code> (old Joey-sheet feed) that nobody confirmed on the board: SO394803 10 + SO411133 6 = 16.</td><td><b>P3</b> retire the sheet leg for project class. Project = confirmed leg only; sheet-origin orders without a decision = "awaiting CS", reported, never netted.</td></tr>
+<tr><td>MSK11B many demand lines vs 2 OI rows</td><td>Same: 243 at BRW-IB = SO409325 sheet-origin lines; 26 at BRW-BB = the two OI rows.</td><td>P3</td></tr>
+<tr><td>Why consider PO again at reorder?</td><td>OI links retire demand; S15 "Use PO" cover offers the same PO on the plan. Double handling for project.</td><td>Project rows: no PO in the plan, links only. Retail rows: keep Use PO (no OI there). QP2.</td></tr>
+<tr><td>Manual plan: warehouses required</td><td><code>RunPlanningModal.tsx:103</code></td><td>P1 empty = all, same as products.</td></tr>
+<tr><td>Plan page slow in production</td><td>Ten run-wide sidecars, none paged. b805ba89 (5,511 recs): trajectory 2.6 MB, level-suggestions 3.2 MB, purchase-trend 2.6 MB, recommendations(500) 2.1 MB, price-history 1.35 MB, cover-sources 0.7, product-economics 0.8, po-book 0.3 = ~14 MB JSON (gzip on). Local BE 0.03-0.72 s each; prod adds remote DB + slower box.</td><td><b>P2</b> scope sidecars to the visible page's rec ids, refetch on page change, cache per run; per-endpoint timing log in prod for one day first. Target &lt; 2 s first paint on 8k rows.</td></tr>
+<tr><td>Unclassified column</td><td>shown when any visible row has unclassified qty</td><td>P4 remove; NULL class counts as retail; SO import warns per unclassified order.</td></tr>
+<tr><td>History popover shows both Project and Retail badges</td><td><code>DemandContextHeader</code></td><td>P5 one badge, the row's channel.</td></tr>
+<tr><td>"Consider 490 more - orders rose 3233%"</td><td><code>PlanLineDecisionCell.tsx:326</code></td><td>P6 remove.</td></tr>
+<tr><td>Confirm plan PO must tie back to OI</td><td><code>bulk_confirm</code> already auto-links (trigger po_confirm) but by earliest date, not to the rows that sized the buy</td><td>P7 link the sizing rows first, then cascade; PO detail shows it.</td></tr>
+</table>
+<p><b>Order:</b> P1 + P4 + P5 + P6 (a morning) -> P3 -> P8 -> P2 -> P7.</p>
+<div class="card"><b>QP1</b> ruled: refuse the SO import until every order has a class; one-time re-import classifies the existing NULLs; column removed.</div>
+<div class="card"><b>QP2</b> ruled: keep Use PO for retail rows.</div>
+<div class="card"><b>QP3</b> ruled: OK for UAT, no backfill.</div>
+
+</body></html>
