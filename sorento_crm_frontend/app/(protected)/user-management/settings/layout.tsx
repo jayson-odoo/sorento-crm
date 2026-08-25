@@ -234,6 +234,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Chatbot Media',
         path: '/user-management/settings/chatbot-media',
       },
+      'stock-visibility': {
+        title: 'Stock Visibility',
+        path: '/user-management/settings/stock-visibility',
+      },
       'system-health': {
         title: 'System Health',
         path: '/user-management/settings/system-health',

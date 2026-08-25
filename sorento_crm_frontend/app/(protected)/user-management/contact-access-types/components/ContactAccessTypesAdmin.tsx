@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Boxes, Plus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StockVisibilitySection } from '@/components/stock-visibility/StockVisibilitySection';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -85,6 +86,9 @@ export default function ContactAccessTypesAdmin() {
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [editingType, setEditingType] = useState<ContactAccessTypeAdmin | null>(null);
   const [deleteTypeCode, setDeleteTypeCode] = useState<string | null>(null);
+  // Stock visibility is one row per access type, so it is edited from the row it
+  // belongs to rather than as a column every type would have to carry.
+  const [policyType, setPolicyType] = useState<ContactAccessTypeAdmin | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [typeForm, setTypeForm] = useState({
     code: '',
@@ -244,12 +248,21 @@ export default function ContactAccessTypesAdmin() {
       {
         id: 'actions',
         header: '',
-        size: 140,
+        size: 180,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
         cell: ({ row }) => (
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setPolicyType(row.original)}
+              aria-label="Stock visibility"
+              title="Stock visibility"
+            >
+              <Boxes className="size-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => openEditType(row.original)} aria-label="Edit">
               <Pencil className="size-4" />
             </Button>
@@ -400,6 +413,25 @@ export default function ContactAccessTypesAdmin() {
               {editingType ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stock visibility policy for one access type */}
+      <Dialog open={!!policyType} onOpenChange={(open) => !open && setPolicyType(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Stock visibility - {policyType?.name}</DialogTitle>
+          </DialogHeader>
+          {policyType ? (
+            <StockVisibilitySection
+              heading={null}
+              scope={{
+                kind: 'access_type',
+                accessTypeCode: policyType.code,
+                accessTypeName: policyType.name,
+              }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 

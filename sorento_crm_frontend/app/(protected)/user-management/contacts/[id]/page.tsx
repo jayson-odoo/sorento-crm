@@ -21,6 +21,7 @@ import { useContact } from './components/contact-context';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
 import ContactEditDialog from './components/ContactEditDialog';
+import { StockVisibilitySection } from '@/components/stock-visibility/StockVisibilitySection';
 
 export default function ContactProfilePage() {
   const { contact, isLoading, contactId } = useContact();
@@ -172,6 +173,18 @@ export default function ContactProfilePage() {
             </div>
             <ContactMarketSegmentSection contactId={contactId} />
             <ContactAttachmentTypesSection contactId={contactId} />
+            {/* Which locations the chatbot may quote to this contact, and in which
+                answer shape. Full width: the two pickers do not fit a grid cell at
+                375px without clipping their chips. */}
+            <div className="md:col-span-2">
+              <StockVisibilitySection
+                scope={{
+                  kind: 'contact',
+                  contactId,
+                  accessTypeCodes: (contact.access_types ?? []).map((t) => t.code),
+                }}
+              />
+            </div>
             <div>
               <p className="text-sm text-muted-foreground">Respond.io Workspace</p>
               {contact.workspace_id ? (
