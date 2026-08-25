@@ -1,0 +1,202 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SCM UI mockups</title>
+<style>
+:root{--fg:#1c1917;--mut:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed}
+body{font:13px/1.45 -apple-system,Inter,system-ui,sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:28px;max-width:1180px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:36px 0 10px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.note{color:#92400e;background:#fffbeb;border-left:3px solid #f59e0b;font-size:11px;margin:6px 0 10px;padding:3px 8px}.note::before{content:'annotation, not in UI: ';font-weight:600}
+.screen{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.crumb{font-size:12px;color:var(--mut);margin-bottom:8px}
+.ttl{font-size:16px;font-weight:600;margin-bottom:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid var(--line);border-radius:6px;padding:5px 10px;background:#fff;font-size:12px}
+.btn.p{background:#2563eb;color:#fff;border-color:#2563eb}
+.input{border:1px solid var(--line);border-radius:6px;padding:5px 10px;color:var(--mut);font-size:12px;background:#fff;min-width:220px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{background:#f3f4f6;font-weight:600}
+.pill{display:inline-block;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:500}
+.pill.raised{background:#fee2e2;color:#991b1b}.pill.partly{background:#fef3c7;color:#92400e}.pill.linked{background:#d1fae5;color:#065f46}.pill.g{background:#e5e7eb;color:#374151}.pill.b{background:#dbeafe;color:#1e40af}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--mut);margin:8px 0}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0}
+.card{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.card .k{font-size:11px;color:var(--mut)}.card .v{font-size:15px;font-weight:600}.card .v small{font-weight:400;color:var(--mut);font-size:11px}
+.grid td{padding:0}.cell{padding:6px 8px;min-height:44px}
+.cell .n{font-weight:600}.cell .s{font-size:11px;color:var(--mut)}
+.bar{display:flex;height:5px;border-radius:3px;overflow:hidden;margin:4px 0 2px}
+.faded{opacity:.45}
+.chg{background:#fffbeb}
+.tag{font-size:10px;border-radius:4px;padding:0 5px;background:#fef3c7;color:#92400e;font-weight:600}
+.pop{border:1px solid var(--line);border-radius:10px;padding:14px;width:620px;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.08)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.box{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.box b{display:block;font-size:12px;margin-bottom:4px}
+.box .l{display:flex;justify-content:space-between;font-size:12px;padding:2px 0}
+.tabs{display:flex;gap:16px;border-bottom:1px solid var(--line);margin-bottom:10px;font-size:12px}
+.tabs span{padding:6px 0}.tabs .on{border-bottom:2px solid #2563eb;font-weight:600}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#f3f4f6;padding:8px 10px;border-radius:6px}
+.q{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:12px}
+.mini{width:auto;font-size:11px;margin-top:4px}.mini th,.mini td{padding:1px 6px 1px 0;border:0;background:none}.mini th{color:var(--mut);font-weight:500}
+.form{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 18px}.form .f{font-size:12px}.form .f span{display:block;color:var(--mut);font-size:11px}
+</style></head><body>
+<h1>SCM UI mockups for alignment</h1>
+<div class="note">Wireframes in the app's look. Yellow annotations are for us, never rendered in the product (CLAUDE.md: no explanations inside the UI). Numbers are the real UAT cases (SO415472, SO324132, SO414285, PO-2026/07-0029, SO381895). Annotate anything to change.</div>
+
+<h2>M1. Fulfilment planning board (part 1 A, C, D)</h2>
+<div class="screen">
+<div class="crumb">Project sales / Fulfilment planning</div>
+<div class="row"><div class="ttl" style="margin:0">Planning 2 sales orders together</div><span class="input">Search sales order, customer, product</span><span class="btn">Rows: Product</span><span class="btn">List view</span><span class="btn p">Confirm 2 orders</span></div>
+<div class="cards">
+<div class="card"><div class="k"><span class="sw" style="background:var(--rose)"></span>Buy</div><div class="v">1,864 <small>suggested</small></div><div class="v">932 <small>decided</small> <span class="tag">changed</span></div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--em)"></span>Use own location</div><div class="v">1,864 <small>suggested</small></div><div class="v">2,796 <small>decided</small> <span class="tag">changed</span></div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--sky)"></span>Use shared stock</div><div class="v">71 <small>suggested</small></div><div class="v">71 <small>decided</small></div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--amb)"></span>Borrow</div><div class="v">0 <small>suggested</small></div><div class="v">0 <small>decided</small></div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--vio)"></span>Incoming supply</div><div class="v">0 <small>suggested</small></div><div class="v">0 <small>decided</small></div></div>
+</div>
+<div class="legend"><span><span class="sw" style="background:var(--rose)"></span>Buy</span><span><span class="sw" style="background:var(--em)"></span>Use own location</span><span><span class="sw" style="background:var(--sky)"></span>Use shared stock</span><span><span class="sw" style="background:var(--amb)"></span>Borrow</span><span><span class="sw" style="background:var(--vio)"></span>Incoming</span><span>· solid = decided, faded = suggested</span></div>
+<table class="grid"><tr><th style="width:160px">Product</th><th>14 Sep 2026</th><th>1 Jan 2030</th></tr>
+<tr><td style="padding:6px 8px">SRT382-6-DIY</td><td><div class="cell"><span class="n">71</span> <span class="s">1 order</span><div class="bar faded"><div style="flex:1;background:var(--sky)"></div></div><div class="s">Shared 71 from BRW</div></div></td><td></td></tr>
+<tr><td style="padding:6px 8px">CWCX605-RL</td><td></td><td><div class="cell"><span class="n">932</span> <span class="s">1 order</span> <span class="pill linked">decided</span><div class="bar"><div style="flex:1;background:var(--em)"></div></div><div class="s">Own 932: DC1-BB 354 · MWH-BB 79 · WH3-BB 499</div></div></td></tr>
+<tr><td style="padding:6px 8px">CWCSC605</td><td></td><td><div class="cell"><span class="n">932</span> <span class="s">1 order</span> <span class="pill linked">decided</span><div class="bar"><div style="flex:1;background:var(--rose)"></div></div><div class="s">Buy 932</div></div></td></tr>
+<tr><td style="padding:6px 8px">MSK11C</td><td><div class="cell"><span class="n">144</span> <span class="s">2 orders</span><div class="bar faded"><div style="flex:67;background:var(--sky)"></div><div style="flex:77;background:var(--rose)"></div></div><div class="s">2 lines: one Shared 67, one Buy 77</div></div></td><td></td></tr>
+</table>
+</div>
+
+<h2>M2. Cell popover (part 1 A, B, D, E)</h2>
+<div class="pop">
+<div class="ttl">SRT382-6-DIY · 14 Sep 2026</div>
+<div class="two">
+<div class="box"><b>Suggestion</b><div class="l"><span><span class="sw" style="background:var(--sky)"></span>Use shared stock</span><span>71 from BRW</span></div><div class="l" style="color:var(--mut)">Pool BRW has 1,716 available</div></div>
+<div class="box" style="opacity:.55"><b>Decision</b><div class="l" style="color:var(--mut)">Not decided yet. Approve takes the suggestion; Amend changes it.</div></div>
+</div>
+<table style="margin-top:10px"><tr><th>Location</th><th>Where</th><th>On hand</th><th>SO qty</th><th>SPO qty</th><th>PO qty</th><th>Available</th><th>Taken</th></tr>
+<tr><td>BRW-BB</td><td><span class="pill g">Own location</span></td><td>0</td><td>1,553</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>DC1-BB</td><td><span class="pill g">Own group</span></td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>MWH-BB</td><td><span class="pill g">Own group</span></td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>WH3-BB</td><td><span class="pill g">Own group</span></td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>BRW</td><td><span class="pill b">Shared pool</span></td><td>1,728</td><td>12</td><td>0</td><td>165</td><td>1,716</td><td><b>71</b></td></tr>
+<tr><td>MWH</td><td><span class="pill b">Shared pool</span></td><td>40</td><td>0</td><td>0</td><td>0</td><td>40</td><td>0</td></tr>
+<tr><td>DC1</td><td><span class="pill b">Shared pool</span></td><td>0</td><td>0</td><td>0</td><td>500</td><td>0</td><td>0</td></tr>
+<tr><td>WH3</td><td><span class="pill b">Shared pool</span></td><td>15</td><td>0</td><td>0</td><td>0</td><td>15</td><td>0</td></tr>
+</table>
+<div class="note" style="margin-top:2px">PO qty = open PO balance at that location not yet linked to an order inquiry. Shown for information; Available = On hand - SO + SPO, PO is not counted (a PO reaches a project line only through an order-inquiry link).</div>
+<div class="note" style="margin-top:2px">Whole-line rule: a line is covered entirely from stock (own group, pools, borrow, incoming, in any mix) or it is Buy for the whole quantity. Never "10 from BRW, buy 400". The engine already does this (rung 6); Amend will refuse a stock + Buy mix on one line too. A cell can still show both colours when it holds several lines.</div>
+<div class="note" style="margin-top:8px">Moves after approval: 71 BRW -> BRW-BB (becomes Transfer TR-000012, proposed)</div>
+<table><tr><th>Contributing line</th><th>Customer · agent</th><th>Qty</th><th>Delivery</th><th>Location</th><th></th></tr>
+<tr><td>SO415472 L1</td><td>KEE LIN TRADING · CINDY LEE</td><td>71</td><td>15/09/2026</td><td>BRW-BB</td><td><span class="btn">Approve</span> <span class="btn">Amend</span> <span class="btn">Reject</span></td></tr></table>
+</div>
+<div class="note">Removed: the "TPE-9204 · BRW On hand 241 - SO 3334 + SPO 0 = Available -3093" header on the stock documents popover.</div>
+
+<h2>M2b. Amend: urgent order borrows from the same agent's other order (rung 4, manual)</h2>
+<div class="pop">
+<div class="ttl">Amend · SRT382-6-DIY · SO415472 L1 · 71 needed by 15/09/2026</div>
+<div class="two">
+<div class="box"><b>Cover from</b><div class="l"><span><span class="sw" style="background:var(--sky)"></span>Use shared stock (BRW)</span><span>0</span></div><div class="l"><span><span class="sw" style="background:var(--amb)"></span>Borrow from another order</span><span>71</span></div><div class="l"><span><span class="sw" style="background:var(--rose)"></span>Buy (whole line)</span><span>off</span></div></div>
+<div class="box"><b>Donors at BRW-BB, same agent CINDY LEE</b>
+<div class="l"><span>☑ SO394803 L2 · M SUMMIT BUILDERS · holds 100 · due 11/05/2027</span><span>71</span></div>
+<div class="l" style="color:var(--mut)"><span>☐ SO409325 L4 · OTM GROUP · agent JUSTIN · ranked above</span><span>not offered</span></div>
+<div class="note">Same-agent donors at any rank; the agent authorises. Other agents' orders only when ranked below.</div></div>
+</div>
+<div class="row" style="margin-top:8px"><span class="input" style="min-width:420px">Authorised by agent: Cindy Lee, WhatsApp 25/08 (reason, required)</span><span class="btn p">Save amend</span></div>
+<div class="note" style="margin-top:8px">On confirm: 71 allocated from SO394803 L2 (same location, no transfer); SO394803 L2 gets an <b>Order back</b> row (OI, verb Order back, 71, due 11/05/2027) that links to SPO/PO like any order-back. Donor's board cell shows "71 lent to SO415472".</div>
+</div>
+
+<h2>M3. Board with a changed sales order (part 3)</h2>
+<div class="screen">
+<div class="crumb">Project sales / Fulfilment planning <span class="tag">Change batch 19 Aug 17:23 · SO381895 · 3 lines changed</span></div>
+<table class="grid"><tr><th style="width:170px">Product</th><th>19 Aug 2026 <span class="tag">new</span></th><th>25 Aug 2026</th><th>5 Sep 2026</th><th>10 Sep 2026</th></tr>
+<tr><td style="padding:6px 8px">SRTWCX7405-RL-S-PJ</td>
+<td class="chg"><div class="cell"><span class="n">25</span> <span class="s">1 order</span> <span class="tag">changed</span><div class="bar faded"><div style="flex:1;background:var(--rose)"></div></div>
+<table class="mini"><tr><th></th><th>Was</th><th>Now</th></tr><tr><td>Qty</td><td>10</td><td><b>25</b></td></tr><tr><td>Date</td><td>25 Aug</td><td><b>19 Aug</b></td></tr><tr><td>Decision</td><td><span class="sw" style="background:var(--rose)"></span>Buy 10</td><td><span class="sw" style="background:var(--rose)"></span>Buy 25</td></tr></table></div></td>
+<td class="chg"><div class="cell"><span class="n" style="text-decoration:line-through">10</span> <span class="tag">closed</span><table class="mini"><tr><th></th><th>Was</th><th>Now</th></tr><tr><td>Qty</td><td>10</td><td><b>0</b></td></tr><tr><td>Decision</td><td>Buy 10</td><td><span class="pill g">Closed</span></td></tr></table></div></td>
+<td class="chg"><div class="cell"><span class="n" style="text-decoration:line-through">5</span> <span class="tag">closed</span><table class="mini"><tr><th></th><th>Was</th><th>Now</th></tr><tr><td>Qty</td><td>5</td><td><b>0</b></td></tr><tr><td>Decision</td><td>Buy 5</td><td><span class="pill g">Closed</span></td></tr></table></div></td>
+<td></td></tr>
+<tr><td style="padding:6px 8px">C-FH14</td><td></td><td><div class="cell"><span class="n">30</span> <span class="pill linked">decided</span><div class="bar"><div style="flex:1;background:var(--rose)"></div></div><div class="s">Buy 30 · unchanged</div></div></td><td><div class="cell"><span class="n">30</span> <span class="pill linked">decided</span><div class="bar"><div style="flex:1;background:var(--rose)"></div></div><div class="s">Buy 30 · unchanged</div></div></td><td><div class="cell"><span class="n">15</span> <span class="pill linked">decided</span><div class="bar"><div style="flex:1;background:var(--rose)"></div></div><div class="s">Buy 15 · unchanged</div></div></td></tr>
+</table>
+<div class="note">Links move behind the scenes on Confirm; they show on the OI worklist and the SO Lines tab, not here.</div>
+<div class="row" style="margin-top:8px"><span class="btn">Accept all suggestions (3)</span><span class="btn p">Confirm SO381895</span><span class="note" style="margin:0">Unchanged lines keep their decision; only the 3 annotated cells need a tick.</span></div>
+</div>
+
+<h2>M4. Order inquiries worklist (part 1 H, I)</h2>
+<div class="screen">
+<div class="crumb">Project sales / Order inquiries</div>
+<div class="row"><span class="input">Search item, SO, project, CS name</span><span class="btn">Raised by: Cindy Lee ×</span><span class="btn">Verb: All</span><span class="btn">Linked: All</span><span class="btn">Auto-link</span><span class="btn">Unlink all</span></div>
+<table style="margin-top:8px"><tr><th>OI</th><th>S/O</th><th>Item</th><th>Qty</th><th>Delivery</th><th>Location</th><th>Verb</th><th>Raised by</th><th>Linked to</th><th>State</th></tr>
+<tr><td>OI-000006</td><td>SO324132</td><td>WESERP10B</td><td>932</td><td>01/01/2030</td><td>BRW-BB</td><td>Order</td><td>Cindy Lee · 25/08 08:42</td><td>PO-2026/07-0029 L1 487 <span class="tag">at DC1</span></td><td><span class="pill partly">Linked 487 of 932</span></td></tr>
+<tr><td>OI-000006</td><td>SO324132</td><td>CWCSC605</td><td>932</td><td>01/01/2030</td><td>BRW-BB</td><td>Order</td><td>Cindy Lee · 25/08 08:42</td><td>-</td><td><span class="pill raised">Raised</span></td></tr>
+<tr><td>OI-000009</td><td>SO414285</td><td>M310-CR-PJ</td><td>8</td><td>28/07/2026</td><td>BRW-BB</td><td>Order</td><td>Johnson · 22/08 14:10</td><td>202607-S0105 L3 5 · L7 3</td><td><span class="pill linked">Linked 8 of 8</span></td></tr>
+<tr><td>OI-000011</td><td>SO381895</td><td>SRTWCY7405-PJ</td><td>10</td><td>19/08/2026</td><td>BRW-IB</td><td>Order back</td><td>Cyndi · 19/08 17:23</td><td>SPO-2026/08-0061 L4 10</td><td><span class="pill linked">Linked 10 of 10</span></td></tr>
+</table>
+<div class="note">One row per SO line. Links are child records; a row is never split. "Order back" rows may link to SPO allocations; "Order" rows link to PO lines only. Subtitle "Every project and every adopted sales order…" removed.</div>
+</div>
+
+<h2>M5. Purchase order detail: Allocated to (part 1 G)</h2>
+<div class="screen">
+<div class="crumb">SCM / Purchase orders / PO-2026/07-0029</div>
+<div class="tabs"><span>General</span><span class="on">Lines</span><span>Receipts</span></div>
+<table><tr><th>Item</th><th>Location</th><th>Ordered</th><th>Received</th><th>Outstanding</th><th>Allocated</th><th>Free</th><th>Delivery date</th></tr>
+<tr><td>WESERP10B</td><td>DC1</td><td>500</td><td>0</td><td>500</td><td>500</td><td>0</td><td>04/08/2026</td></tr></table>
+<div class="ttl" style="margin-top:14px;font-size:13px">Allocated to</div>
+<table><tr><th>PO line</th><th>Order inquiry</th><th>S/O</th><th>Customer · agent</th><th>Qty</th><th>Needed at</th><th>PO location</th><th></th></tr>
+<tr><td>L1 WESERP10B</td><td>OI-000001</td><td>SO416191</td><td>YOTU BUILDER · CYNDI</td><td>6</td><td>BRW</td><td>DC1</td><td><span class="tag">location differs</span></td></tr>
+<tr><td>L1 WESERP10B</td><td>OI-000001</td><td>SO416191</td><td>YOTU BUILDER · CYNDI</td><td>7</td><td>BRW</td><td>DC1</td><td><span class="tag">location differs</span></td></tr>
+<tr><td>L1 WESERP10B</td><td>OI-000006</td><td>SO324132</td><td>ECO WORLD · CINDY LEE</td><td>487</td><td>BRW-BB</td><td>DC1</td><td><span class="tag">location differs</span></td></tr></table>
+<div class="note">Allocated to lives on the Lines tab. Read-only. Our PO lines are never split; the user keys the split into AutoCount and re-uploads; links follow the lines by product + warehouse.</div>
+</div>
+
+<h2>M6. Stock transfers page (part 1 E)</h2>
+<div class="screen">
+<div class="crumb">Inventory management / Stock transfers</div>
+<div class="row"><span class="input">Search transfer, SO, product</span><span class="btn">State: Proposed</span><span class="btn">From: All</span><span class="btn">To: All</span><span class="btn p">Approve selected (2)</span></div>
+<table style="margin-top:8px"><tr><th></th><th>Transfer</th><th>Product</th><th>Qty</th><th>From</th><th>To</th><th>Kind</th><th>S/O line</th><th>Decision</th><th>State</th><th></th></tr>
+<tr><td>☑</td><td>TR-000012</td><td>SRT382-6-DIY</td><td>71</td><td>BRW</td><td>BRW-BB</td><td>Shared pool</td><td>SO415472 L1</td><td>rev 1 · Cindy Lee</td><td><span class="pill raised">Proposed</span></td><td><span class="btn">Approve</span> <span class="btn">Cancel</span></td></tr>
+<tr><td>☑</td><td>TR-000013</td><td>CWCX605-RL</td><td>354</td><td>DC1-BB</td><td>BRW-BB</td><td>Own group</td><td>SO324132 L2</td><td>rev 1 · Cindy Lee</td><td><span class="pill raised">Proposed</span></td><td><span class="btn">Approve</span> <span class="btn">Cancel</span></td></tr>
+<tr><td>☐</td><td>TR-000010</td><td>CWCY605</td><td>454</td><td>DC1-BB</td><td>BRW-BB</td><td>Own group</td><td>SO324132 L3</td><td>rev 1 · Cindy Lee</td><td><span class="pill partly">Approved</span></td><td><span class="btn">Mark moved</span></td></tr>
+<tr><td>☐</td><td>TR-000008</td><td>CWCY605</td><td>267</td><td>MWH-BB</td><td>BRW-BB</td><td>Own group</td><td>SO324132 L3</td><td>rev 1 · Cindy Lee</td><td><span class="pill linked">Moved · AC ref ST-2608-014</span></td><td></td></tr>
+</table>
+<div class="note">Sidebar: Inventory management. Running number TR-000001 from the numbering service (sequence <code>stock_transfer</code>), same as OI-000001. Approve = confirm dialog. Mark moved asks for the AutoCount transfer ref. Never closes by itself.</div>
+</div>
+
+<h2>M6b. Stock transfer detail (form view)</h2>
+<div class="screen">
+<div class="crumb">Inventory management / Stock transfers / TR-000012</div>
+<div class="row"><div class="ttl" style="margin:0">TR-000012 <span class="pill raised">Proposed</span></div><span class="btn">‹</span><span style="font-size:12px;color:var(--mut)">12 / 48</span><span class="btn">›</span><span style="flex:1"></span><span class="btn p">Approve</span><span class="btn">Mark moved</span><span class="btn">Cancel</span></div>
+<div class="tabs"><span class="on">General</span><span>History</span></div>
+<div class="form">
+<div class="f"><span>Product</span>SRT382-6-DIY · Sorento 382 basin, DIY</div>
+<div class="f"><span>Quantity</span>71</div>
+<div class="f"><span>Kind</span>Shared pool</div>
+<div class="f"><span>From</span>BRW</div>
+<div class="f"><span>To</span>BRW-BB</div>
+<div class="f"><span>Needed by</span>15/09/2026</div>
+<div class="f"><span>Sales order line</span>SO415472 L1 · KEE LIN TRADING · CINDY LEE</div>
+<div class="f"><span>Decision</span>Rev 1 · Cindy Lee · 25/08/2026 08:42</div>
+<div class="f"><span>Proposed</span>25/08/2026 08:42</div>
+<div class="f"><span>Approved by</span>-</div>
+<div class="f"><span>Moved by</span>-</div>
+<div class="f"><span>AutoCount transfer ref</span>-</div>
+</div>
+<div class="note" style="margin-top:10px">Same layout in view and edit; edit only touches Quantity, To and AutoCount ref. History tab = state changes with who and when.</div>
+</div>
+
+<h2>M7. Sales order detail, Lines tab (part 1 D, I)</h2>
+<div class="screen">
+<div class="crumb">SCM / Sales orders / SO414285</div>
+<div class="tabs"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Transfers</span></div>
+<table><tr><th>#</th><th>Item</th><th>Qty</th><th>Outstanding</th><th>Delivery</th><th>Location</th><th>Suggested</th><th>Decided</th><th>Order inquiry</th><th>Linked to</th></tr>
+<tr><td>1</td><td>M310-CR-PJ</td><td>8</td><td>8</td><td>28/07/2026</td><td>BRW-BB</td><td><span class="sw" style="background:var(--rose)"></span>Buy 8</td><td><span class="sw" style="background:var(--rose)"></span>Buy 8 · rev 1</td><td>OI-000009</td><td>202607-S0105 L3 5 · L7 3</td></tr>
+<tr><td>2</td><td>MSK11C</td><td>67</td><td>67</td><td>28/07/2026</td><td>BRW-BB</td><td><span class="sw" style="background:var(--sky)"></span>Shared 67 (BRW)</td><td><span class="sw" style="background:var(--rose)"></span>Buy 67 · rev 1 <span class="tag">changed</span></td><td>OI-000009</td><td>202608-S0002 L2 10 · L5 57</td></tr>
+<tr><td>3</td><td>MSK11B</td><td>13</td><td>13</td><td>28/07/2026</td><td>BRW-BB</td><td><span class="sw" style="background:var(--rose)"></span>Buy 13</td><td>-</td><td>-</td><td>-</td></tr></table>
+</div>
+
+<h2>M8. Reorder plan (part 2 P1, P4, P5, P6)</h2>
+<div class="screen">
+<div class="crumb">SCM / Reorder planning / Plan 25 Aug 09:57</div>
+<div class="two">
+<div class="box"><b>Manual plan</b><div class="l"><span>Warehouses</span><span class="input" style="min-width:160px">All warehouses</span></div><div class="note">Leave empty to plan every warehouse.</div><div class="l"><span>Products</span><span class="input" style="min-width:160px">All products</span></div><div class="note">Leave empty to plan every product.</div></div>
+<div class="box"><b>Plan row: M310-CR-PJ · BRW-BB</b><div class="l"><span>Project</span><span>0 <span class="note" style="display:inline">(asked 16, all on a PO or awaiting CS)</span></span></div><div class="l"><span>Retail</span><span>0</span></div><div class="l"><span>Suggestion</span><span>Nothing to buy</span></div><div class="note">No Unclassified column. No "Consider N more - orders rose X%" line. History popover: "Project, last 12 full months: 753" only, on a project row.</div></div>
+</div>
+</div>
+
+<div class="q"><b>To align:</b> M1 cards + bar in the cell OK? M2 table order (own, group, pools) OK? M3 change annotation enough, or a side panel? M4 "Linked 487 of 932" wording? M5 split text format? M6 columns? Mark anything on the page.</div>
+</body></html>
