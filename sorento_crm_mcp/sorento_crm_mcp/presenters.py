@@ -359,9 +359,11 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 # with different wording was an n8n LIVE promote, and n8n keying on
 # `delivered_quantity` is the label-table drift class the structurer paid for
 # once. So the consumer gets `summary_lines` - the exact lines - and prints them.
-# This is a line-for-line port of the tested n8n block
-# (sorento_crm_n8n tests/offline/order-quantity-summary/hunk.js @ 16e5853b);
-# its probe cases are the tests below. Numbers come from `summary`, never from
+# This is a line-for-line port of the tested n8n block (QS-6; quoted in
+# sorento_crm_n8n tests/diffs/order-quantity-summary.md, its recorded outputs
+# in tests/offline/order-quantity-summary/fixture-qs6-envelopes.json - the
+# hunk file itself was superseded by the passthrough); its probe cases are
+# the tests below. Numbers come from `summary`, never from
 # a sum over rows (the external page is capped at 20).
 #
 # WHO COMES FROM THE FILTER, NEVER FROM THE PARSER: `summary.customers` /
