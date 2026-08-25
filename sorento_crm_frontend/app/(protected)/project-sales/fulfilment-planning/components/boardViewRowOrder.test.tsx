@@ -135,7 +135,7 @@ describe('the grid and the list agree about the product order', () => {
         rows={PRODUCT_ROWS.map((row) => ({ key: row.item_code, label: row.item_code }))}
         rowHeader="Product"
         cells={[]}
-        decidedKeys={new Set()}
+        draft={{}}
         onOpenCell={() => {}}
       />,
     );

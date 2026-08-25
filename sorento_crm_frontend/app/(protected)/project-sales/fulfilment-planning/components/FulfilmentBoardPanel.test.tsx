@@ -1959,3 +1959,50 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * The legend is ON the page, above the board, on both views (AC-C5).
+ *
+ * The captain: "make sure the legend is in the fulfilment planning page so the user knows what
+ * each colour means". One instance above the grid/list switch rather than one per view, so the
+ * two views cannot end up explaining the same colours differently.
+ */
+describe('FulfilmentBoardPanel: the supply legend', () => {
+  it('names all six kinds above the grid, before it scrolls', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const legend = screen.getByTestId('supply-legend');
+    expect(legend.textContent).toContain('Buy');
+    expect(legend.textContent).toContain('Use shared stock');
+    expect(legend.textContent).toContain('Use own location');
+    expect(legend.textContent).toContain('Borrow from another order');
+    expect(legend.textContent).toContain('Borrow other location');
+    expect(legend.textContent).toContain('Incoming supply');
+    expect(legend.querySelectorAll('span[data-kind]')).toHaveLength(6);
+
+    // Above the board, not below it: a legend a reader has to scroll to is not a legend.
+    expect(
+      legend.compareDocumentPosition(screen.getByTestId('fulfilment-board-matrix')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('shows the same legend on the list view', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulfilment-board-matrix')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('supply-legend').querySelectorAll('span[data-kind]')).toHaveLength(
+      6,
+    );
+  });
+});

@@ -380,6 +380,10 @@ function allocate(
     if (reserved > 0) {
       sources.push({
         kind: 'reserve',
+        // THE RUNG IS PART OF WHAT THE ENGINE SENDS, and the whole vocabulary is keyed on it
+        // (`supplyVocabulary.rowOf`). This fixture draws from the LINE'S OWN location, which
+        // ladder v3 reaches on the group-take rung.
+        rung: 'group_take',
         qty: fromMinor(reserved),
         location,
         warehouse_id: `wh-${location}`,
@@ -389,6 +393,7 @@ function allocate(
     if (buy > 0) {
       sources.push({
         kind: 'buy',
+        rung: 'buy',
         qty: fromMinor(buy),
         location: null,
         reason:
@@ -446,6 +451,9 @@ function applyFrozen(contribution: BoardContribution): void {
   for (const row of decision.reserve ?? []) {
     sources.push({
       kind: 'reserve',
+      // A frozen composition carries no rung of its own, so the fixture states the one the
+      // engine would have: the line's own warehouse is a group take, anything else is a pool.
+      rung: row.location === contribution.fulfilment_location ? 'group_take' : 'pool',
       qty: row.qty,
       location: row.location ?? null,
       warehouse_id: row.warehouse_id,
@@ -455,6 +463,7 @@ function applyFrozen(contribution: BoardContribution): void {
   if (toMinor(decision.timely_spo_qty) > 0) {
     sources.push({
       kind: 'timely_spo',
+      rung: 'incoming',
       qty: decision.timely_spo_qty,
       location: contribution.fulfilment_location ?? null,
       warehouse_id: contribution.fulfilment_warehouse_id,
@@ -464,6 +473,7 @@ function applyFrozen(contribution: BoardContribution): void {
   for (const row of decision.borrow ?? []) {
     sources.push({
       kind: 'borrow',
+      rung: row.rung ?? (row.donor_so_number ? 'group_borrow' : 'cross_group_borrow'),
       qty: row.qty,
       location: row.location ?? null,
       warehouse_id: row.warehouse_id,
@@ -473,6 +483,7 @@ function applyFrozen(contribution: BoardContribution): void {
   if (toMinor(decision.buy_qty) > 0) {
     sources.push({
       kind: 'buy',
+      rung: 'buy',
       qty: decision.buy_qty,
       location: null,
       reason: `Bought, as confirmed in revision ${decision.revision_no}.`,

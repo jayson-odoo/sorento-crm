@@ -21,7 +21,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
-import { suggestionBreakdown } from '../../_shared/lib/boardSuggestion';
+import { rowText, suggestionBreakdown } from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -520,10 +520,10 @@ export function BoardCellBreakdownDialog({
                     <Badge variant="primary" appearance="light" size="sm">
                       {row.label}
                     </Badge>
-                    <span className="min-w-0 break-words tabular-nums">
-                      {row.qty}
-                      {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
-                    </span>
+                    {/* The quantity PER LOCATION ("454 from DC1-BB, 267 from MWH-BB"), not a
+                        total beside a bare list of codes: the split IS the instruction, and
+                        somebody has to key each movement of it. */}
+                    <span className="min-w-0 break-words tabular-nums">{rowText(row)}</span>
                     {/* The engine's own sentence, and only when every source on the row
                         gives the same one: a Buy for "nothing free anywhere" and a Buy for
                         "beyond the lead time window" are the same number for opposite

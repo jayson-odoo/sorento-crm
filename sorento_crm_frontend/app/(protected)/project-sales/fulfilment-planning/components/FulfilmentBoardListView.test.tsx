@@ -200,3 +200,61 @@ describe('FulfilmentBoardListView marks a row whose supply is already decided', 
     expect(screen.queryByTestId('board-decided-marker')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * The list draws the SAME bar the grid does, off the same draft (PLAN section C).
+ *
+ * Two readings of one board that disagreed about a colour would be worse than one reading: the
+ * planner would have to work out which of them was lying.
+ */
+describe('FulfilmentBoardListView agrees with the grid about the supply bar', () => {
+  it('draws the proposal faded on an undecided row', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          sources: [
+            { kind: 'reserve', rung: 'pool', qty: '43', location: 'BRW', reason: 'pool' },
+          ],
+        }),
+      ],
+    });
+
+    const bar = await screen.findByTestId('supply-bar');
+    expect(bar).toHaveAttribute('data-decided', 'false');
+    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
+  });
+
+  it('draws the DECISION, solid, once the row is ticked in the draft', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          sources: [
+            { kind: 'buy', rung: 'buy', qty: '43', reason: 'Nothing free at any location.' },
+            {
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '0',
+              location: 'BRW',
+              warehouse_id: 'wh-brw',
+              reason: 'pool',
+            },
+          ],
+        }),
+      ],
+      draft: {
+        'so-1:line-10': {
+          verdict: 'amended',
+          reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '43' }],
+          borrow: [],
+          buy_qty: '0',
+          reason: 'The pool can cover it',
+        },
+      },
+    });
+
+    const bar = await screen.findByTestId('supply-bar');
+    expect(bar).toHaveAttribute('data-decided', 'true');
+    expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
+    expect(bar.querySelector('span[data-kind="buy"]')).toBeNull();
+  });
+});

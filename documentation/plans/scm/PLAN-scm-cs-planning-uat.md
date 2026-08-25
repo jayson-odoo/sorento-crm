@@ -1,6 +1,8 @@
 # PLAN - CS fulfilment planning: UAT fixes (board vocabulary, colour, transfers, set heads, PO occupancy)
 
-Status: READY r3, every question ruled 25 Aug (section 9). Awaiting go on the section 4 order.
+Status: IN PROGRESS. Section 4 item 1, the A + C + item 7 half, is BUILT on `feat/scm-uat-cs-board`
+(FE only: `supplyVocabulary.ts`, `SupplyBar`, `SupplyLegend`, cell colour, per-location suggestion
+wording, stock-documents header removed). H and everything from item 2 down are still to do.
 Lane: `.claude/worktrees/scm-so-feedback` (branch `feat/scm-so-upload-and-detail-feedback`, FE :3060, BE :8070), the same lane the scm-feedback session works in. One coder per worktree; queue behind that session or cut a sibling lane from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
 

@@ -64,6 +64,7 @@ import type {
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
+import { SupplyLegend } from './SupplyLegend';
 
 /** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
 type BoardView = 'grid' | 'list';
@@ -235,8 +236,6 @@ export function FulfilmentBoardPanel({
       return next;
     });
   }, []);
-
-  const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
 
   const { confirm } = useReconciliationMutations();
   const { adopt } = useFulfilmentPlanningMutations();
@@ -999,6 +998,10 @@ export function FulfilmentBoardPanel({
               popover on a row names the policy above its factor table, which is where somebody
               IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
+          {/* What the colours mean, above whichever view is on screen and never behind a
+              scroll (AC-C5). One instance, so the grid and the list cannot drift apart. */}
+          <SupplyLegend />
+
           {view === 'list' ? (
             /* D2: one row per contributing line across every cell of the WHOLE selection, not
                the pivoted/windowed rows the grid shows - the point is an overview, so the row
@@ -1036,7 +1039,7 @@ export function FulfilmentBoardPanel({
                     ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
                   }
                   cells={axis.cells}
-                  decidedKeys={decidedKeys}
+                  draft={draft}
                   onOpenCell={(cell) => setOpenCell(cell)}
                 />
               )}

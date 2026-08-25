@@ -321,7 +321,9 @@ describe('BoardCellBreakdownDialog: the table', () => {
     const key = cellOf(lines, freeStock).contributions[0].key;
     renderDialog(lines, freeStock);
 
-    expect(screen.getByText(/Reserve 40/)).toBeInTheDocument();
+    // The RUNG's own word, because the fixture's reserve is a group take: the strip has
+    // named the rung rather than the balance-invariant `kind` since ladder v2.
+    expect(screen.getByText(/Group take 40/)).toBeInTheDocument();
     expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
     // The rule's own sentence is behind the info icon now, not a plain `title` - so the
     // numbers above stay directly readable and only the prose needs a hover.
@@ -1721,7 +1723,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const cell = cellOf(lines, freeStock);
     renderDialog(lines, freeStock);
 
-    expect(screen.getByText(/Reserve 100/)).toBeInTheDocument();
+    expect(screen.getByText(/Group take 100/)).toBeInTheDocument();
     expect(screen.getByText('Contested')).toBeInTheDocument();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain('left for this line');
@@ -2018,7 +2020,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
 
-    expect(screen.getByText('Borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
+    expect(screen.getByText('Cross-group borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
   });
 
   it('says nothing about a queue it is not in', async () => {
@@ -2130,5 +2132,81 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     const row = contributionTable().querySelectorAll('tbody tr')[0] as HTMLElement;
     expect(within(row).queryByText(/^OI-/)).not.toBeInTheDocument();
     expect(within(row).getAllByText('-').length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The Suggestion card names the LOCATIONS WITH THEIR QUANTITIES (AC-A1, AC-A2).
+ *
+ * The captain, on SO415472: "Use own location, 71 from BRW reads wrong" - BRW is the shared
+ * pool, and the line's own location is its `-BB` warehouse. And on SO324132 rev 1: a row reading
+ * "932 from DC1-BB, MWH-BB, WH3-BB" left the split to be guessed, when the split IS the
+ * instruction: three separate movements of stock, each keyed by hand.
+ */
+describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', () => {
+  function renderWithSources(sources: BoardContribution['sources']) {
+    const base = cellOf([demand({ qty: '932' })]);
+    const cell: BoardCell = {
+      ...base,
+      contributions: base.contributions.map((entry) => ({ ...entry, sources })),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('calls a pool draw shared stock, and names the pool (AC-A1)', () => {
+    renderWithSources([
+      { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+    ]);
+
+    const card = screen.getByTestId('cell-suggestion');
+    expect(card).toHaveTextContent('Use shared stock');
+    expect(card).toHaveTextContent('71 from BRW');
+    expect(card).not.toHaveTextContent('Use own location');
+  });
+
+  it('names each location with what is taken from it on a group take (AC-A2)', () => {
+    renderWithSources([
+      { kind: 'reserve', rung: 'group_take', qty: '454', location: 'DC1-BB', reason: 'a' },
+      { kind: 'reserve', rung: 'group_take', qty: '267', location: 'MWH-BB', reason: 'b' },
+      { kind: 'reserve', rung: 'group_take', qty: '211', location: 'WH3-BB', reason: 'c' },
+    ]);
+
+    const card = screen.getByTestId('cell-suggestion');
+    expect(card).toHaveTextContent('Use own location');
+    expect(card).toHaveTextContent('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+  });
+
+  it('tells the two borrows apart by rung (AC-A3)', () => {
+    renderWithSources([
+      {
+        kind: 'borrow',
+        rung: 'group_borrow',
+        qty: '3',
+        location: 'BRW-BB',
+        reason: 'a',
+      },
+      {
+        kind: 'borrow',
+        rung: 'cross_group_borrow',
+        qty: '9',
+        location: 'BRW-HP',
+        reason: 'b',
+      },
+    ]);
+
+    const card = screen.getByTestId('cell-suggestion');
+    expect(card).toHaveTextContent('Borrow from another order');
+    expect(card).toHaveTextContent('Borrow other location');
   });
 });
