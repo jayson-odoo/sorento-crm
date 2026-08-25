@@ -484,6 +484,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
             "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' (omit for all). "
+            "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
+            "took of a product — the response then carries `summary` (filter-wide delivered/pending "
+            "quantity per product, counts, customers, date span). Omit for a plain DO list. "
             "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
             "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
             "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
@@ -495,7 +498,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",
@@ -520,7 +523,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",

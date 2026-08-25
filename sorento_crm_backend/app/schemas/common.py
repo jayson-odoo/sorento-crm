@@ -60,6 +60,13 @@ class ListResponse(BaseModel, Generic[T]):
     # unchanged - and an empty two-company result can still say which companies
     # were checked.
     lookup_companies: Optional[List[Dict[str, Any]]] = None
+    # Measures over the WHOLE filter (never the page) for list endpoints that
+    # compute them - today the two order lists (see
+    # `order_service.stamp_order_summary`). Absent when the endpoint does not
+    # summarise or the result is empty, so every other list reply is unchanged.
+    # A consumer renders what is here; it never sums `data` rows itself, because
+    # external callers see at most one capped page.
+    summary: Optional[Dict[str, Any]] = None
 
 
 class ErrorResponse(BaseModel):

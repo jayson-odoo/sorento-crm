@@ -346,6 +346,15 @@ async def get_orders(
             "'belum hantar', 'not delivered yet'. AND'd with the other filters."
         ),
     ),
+    include_summary: bool = Query(
+        False,
+        description=(
+            "true = also return `summary`: filter-wide measures (order/delivered/pending "
+            "counts, customers, delivered date span, per-product delivered/pending quantity "
+            "when product_ids is given). Send it when the user asks HOW MANY / how much was "
+            "taken; omit for a plain DO list."
+        ),
+    ),
     has_order_lines: Optional[str] = Query(
         None,
         description="Filter by lines: 'yes' = at least one line, 'no' = no lines, omit = all",
@@ -417,6 +426,7 @@ async def get_orders(
             customer_id=customer_id,
             order_status_id=order_status_id,
             order_status=order_status,
+            include_summary=include_summary,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=_parse_flex_date(order_date_from),
@@ -571,6 +581,22 @@ async def get_orders_by_product(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
     ),
+    order_status: Optional[str] = Query(
+        None,
+        description=(
+            "Delivery bucket filter, same semantics as the orders list: 'outstanding' = "
+            "orders NOT yet delivered, 'delivered' = status delivered/completed AND "
+            "actual_delivery_date set, omit/null = all."
+        ),
+    ),
+    include_summary: bool = Query(
+        False,
+        description=(
+            "true = also return `summary`: filter-wide measures (order/delivered/pending "
+            "counts, customers, delivered date span, per-product delivered/pending quantity). "
+            "Send it when the user asks HOW MANY / how much was taken; omit for a plain DO list."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -648,6 +674,8 @@ async def get_orders_by_product(
             product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
+            order_status=order_status,
+            include_summary=include_summary,
             order_date_from=_parse_flex_date(order_date_from),
             order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
             actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),

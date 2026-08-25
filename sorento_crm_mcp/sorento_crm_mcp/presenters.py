@@ -28,8 +28,10 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 from __future__ import annotations
 
 import json
+import logging
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Optional
 
 # Tools that support `view=render`. Used by server._compile_tool to inject the
 # `view` param into the generated input schema, and by the dispatcher below.
@@ -51,6 +53,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_portal_link_get",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_INTRO = {
     "crm_order_management_orders_list": "Here are the orders I found.",
@@ -121,6 +125,12 @@ _PASSTHROUGH_KEYS = (
     # this" from "it has not happened yet" - so it guesses, and it guesses the
     # second one out loud.
     "field_access",
+    # Filter-wide measures for list answers (backend `stamp_order_summary`,
+    # only when the caller asked with include_summary). Not interpreted here:
+    # the backend computes, n8n presents. Absent when absent. `pagination` is
+    # deliberately NOT passed through - the consumer reads `summary.row_count`
+    # and nothing reads the page geometry (reviewer R6: no key without a reader).
+    "summary",
     # Which stock-visibility policy answered, so the consumer can branch on the
     # mode (which format to print, whether to ask the quantity question again)
     # instead of inferring it from which block happens to be present.
@@ -377,6 +387,151 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
                 ("Products", prods),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# order quantity summary -> summary_items in the ITEM shape (QS-8, plan §3d)
+# ---------------------------------------------------------------------------
+# WHY THIS SHAPE. The render envelope already has one shape the consumer knows
+# how to print: items[] {title, fields[{key,label,value}]}. The summary uses the
+# same shape and the same renderer - no sentences composed anywhere, no
+# vocabulary in n8n, and any consumer can match on `key`, never on a label.
+# The numbers come from `summary` (SQL over the WHOLE filter); nothing here
+# adds anything up. Names come from what the backend filtered on, never from
+# the parser; an unnameable entry is dropped, not coerced.
+# NEVER RAISES on its own account - and the render path wraps it anyway.
+
+_SUMMARY_FIELDS = (
+    ("customer", "Customer"),
+    ("product_code", "Product Code"),
+    ("order_count", "DOs"),
+    ("delivered_quantity", "Delivered Qty"),
+    ("pending_quantity", "Pending Qty"),
+    ("delivered_between", "Delivered"),
+)
+
+
+def _sl_num(v: Any):
+    """A renderable count or None. Integral -> int (48.0 -> 48), else float."""
+    if v is None or isinstance(v, bool) or v == "":
+        return None
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not d.is_finite() or abs(d) >= Decimal("1e15"):
+        return None
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+def _sl_date(v: Any) -> Optional[str]:
+    """dd/mm/yyyy for a date-only string; None on anything unparseable."""
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        if len(s) == 10:
+            d = datetime.strptime(s, "%Y-%m-%d")
+        else:
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if d.tzinfo is not None:
+                d = d.astimezone()
+    except (ValueError, TypeError, OverflowError):
+        return None
+    out = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
+    if d.hour or d.minute or d.second:
+        out += f" {d.hour:02d}:{d.minute:02d}:{d.second:02d}"
+    return out
+
+
+def _sl_between(row: dict) -> Optional[str]:
+    a, b = _sl_date(row.get("delivered_from")), _sl_date(row.get("delivered_to"))
+    if a and b:
+        return a if a == b else f"{a} – {b}"
+    return a or b
+
+
+def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
+    """One render item from a groups[]/products[] row; None when nothing can be named."""
+    code = row.get("product_code")
+    if not isinstance(code, str) or not code.strip():
+        return None
+    code = code.strip()
+    values = {
+        "customer": customer,
+        "product_code": code,
+        "order_count": _sl_num(row.get("order_count")),
+        "delivered_quantity": _sl_num(row.get("delivered_quantity")),
+        "pending_quantity": _sl_num(row.get("pending_quantity")),
+        "delivered_between": _sl_between(row),
+    }
+    fields = [
+        {"key": k, "label": lbl, "value": values[k]}
+        for k, lbl in _SUMMARY_FIELDS
+        if _filled(values[k])
+    ]
+    if len(fields) <= 1:  # the code alone says nothing
+        return None
+    title = f"{customer} · {code}" if customer else code
+    return {"title": title, "fields": fields}
+
+
+def summary_items(summary: Any) -> list[dict]:
+    """The summary as render items: per product, a leading Total when more than one
+    customer took it, then one item per customer x product. [] when nothing renders."""
+    if not isinstance(summary, dict):
+        return []
+    products = summary.get("products") if isinstance(summary.get("products"), list) else []
+    groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
+    items: list[dict] = []
+    seen_codes: set[str] = set()
+    for p in products:
+        if not isinstance(p, dict) or not isinstance(p.get("product_code"), str):
+            continue
+        code = p["product_code"].strip()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        rows = [
+            g for g in groups
+            if isinstance(g, dict) and isinstance(g.get("product_code"), str)
+            and g["product_code"].strip() == code
+            and isinstance(g.get("customer"), str) and g["customer"].strip()
+        ]
+        # N is the CRM's exact per-product customer count when it has one; the visible
+        # groups[] slice can be short of it after the ceiling (cross-model review F).
+        n_cust = _sl_num(p.get("customer_count"))
+        n_cust = int(n_cust) if (n_cust is not None and n_cust >= 0) else len(rows)
+        if n_cust > 1 or (summary.get("groups_truncated") is True and rows):
+            total = _summary_item(f"All customers ({max(n_cust, len(rows))})", p)
+            if total:
+                items.append(total)
+        for g in rows:
+            it = _summary_item(g["customer"].strip(), g)
+            if it:
+                items.append(it)
+        if not rows:
+            # no nameable customer row - the product total still says what was asked
+            solo = _summary_item(None, p)
+            if solo:
+                items.append(solo)
+    return items
+
+
+def summary_intro(summary: Any, n_items: int) -> Optional[str]:
+    """Page geometry, said once, in the presenter-owned intro."""
+    if not isinstance(summary, dict):
+        return None
+    rc = _sl_num(summary.get("row_count"))
+    if rc is None:
+        return None
+    n = int(rc)
+    text = f"Summary over {n} DO{'' if n == 1 else 's'}"
+    # "showing N of them" - never "latest": the presenter cannot see the sort.
+    text += f" (showing {n_items} of them below)." if n > n_items else "."
+    if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
+        text += " Not every breakdown is shown — add a customer, a product or a date range."
+    return text
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired
@@ -1127,5 +1282,20 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    # QS-8: the summary in the ITEM shape, printed by the same renderer as the
+    # rows. Only over a real answer (has_result AND rows on the page); absent
+    # otherwise, never []. Exception boundary: a hostile leaf inside `summary`
+    # must cost the summary, never the envelope the rows already rendered into.
+    if has_result and b.items and isinstance(data.get("summary"), dict):
+        try:
+            _sitems = summary_items(data["summary"])
+            _sintro = summary_intro(data["summary"], len(b.items))
+        except Exception as _exc:  # pragma: no cover - by contract
+            logger.warning("summary_items skipped: %s", _exc)
+            _sitems, _sintro = [], None
+        if _sitems:
+            envelope["summary_items"] = _sitems
+            if _sintro:
+                envelope["intro"] = _sintro
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
