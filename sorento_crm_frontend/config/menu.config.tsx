@@ -363,6 +363,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
       },
+      {
+        title: 'Stock Transfers',
+        path: '/inventory-management/stock-transfers',
+        permission: 'inventory.stock_transfers.view',
+      },
     ],
   },
 
@@ -1751,6 +1756,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+      {
+        title: 'Stock Transfers',
+        path: '/inventory-management/stock-transfers',
+        permission: 'inventory.stock_transfers.view',
       },
     ],
   },

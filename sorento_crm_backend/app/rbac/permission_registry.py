@@ -247,6 +247,7 @@ PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
+PERMISSION_REGISTRY.extend(_crud("inventory", "stock_transfers", "Stock Transfers"))
 
 # Marketing
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotions", "Promotions"))

@@ -49,6 +49,19 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The Transfers tab renders the SAME grid the Transfers page does; that component has its
+// own tests, so here only the wiring (which order it is pinned to) has to be proven.
+vi.mock(
+  '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel',
+  () => ({
+    StockTransfersPanel: (props: { salesOrderId?: string; showFilters?: boolean }) => (
+      <div data-testid="stock-transfers-panel" data-sales-order={props.salesOrderId}>
+        {String(props.showFilters)}
+      </div>
+    ),
+  }),
+);
+
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
@@ -169,7 +182,7 @@ function renderDetail() {
  * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down (a plain `click` event
  * in jsdom leaves the tab strip exactly where it was, which reads as a section that vanished).
  */
-function openTab(name: 'General' | 'Lines' | 'Delivery') {
+function openTab(name: 'General' | 'Lines' | 'Delivery' | 'Transfers') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
@@ -260,6 +273,18 @@ describe('SalesOrderDetail - states', () => {
     expect(within(amount as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 
+  it('shows the order\'s stock transfers on their own tab, pinned to it (AC-E6)', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    openTab('Transfers');
+
+    const panel = screen.getByTestId('stock-transfers-panel');
+    expect(panel).toHaveAttribute('data-sales-order', 'so-1');
+    // Pinned, so the page-level filter bar and bulk approve are off.
+    expect(panel).toHaveTextContent('false');
+  });
+
   it('carries one tab per concern of the order, General first', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
@@ -268,6 +293,7 @@ describe('SalesOrderDetail - states', () => {
       'General',
       'Lines',
       'Delivery',
+      'Transfers',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',

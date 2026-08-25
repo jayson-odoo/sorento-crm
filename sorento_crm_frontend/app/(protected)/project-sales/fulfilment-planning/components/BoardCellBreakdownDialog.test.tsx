@@ -2260,6 +2260,58 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
     return cell;
   }
 
+  /**
+   * AC-E6 / section E: the Decision card ends with the MOVEMENTS the decision implies, so a
+   * planner sees the transfers Approve is about to raise before pressing it.
+   */
+  it('ends with a Moves line naming what has to be carried, and to where', () => {
+    renderComposition({
+      covered: true,
+      proposed: {
+        components: [
+          { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'nothing free' },
+        ],
+      },
+      sources: [],
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
+          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+
+    expect(screen.getByTestId('decision-moves')).toHaveTextContent(
+      'Moves: 454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB',
+    );
+    // Never on the Suggestion card: nothing has been decided to move.
+    expect(screen.queryByTestId('suggestion-moves')).not.toBeInTheDocument();
+  });
+
+  it('draws no Moves line when everything is already at the line\'s own location', () => {
+    renderComposition({
+      covered: true,
+      proposed: { components: [] },
+      sources: [],
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-brw-bb', location: 'BRW-BB', qty: '71', rung: 'group_take' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+
+    expect(screen.getByTestId('cell-decision')).toBeInTheDocument();
+    expect(screen.queryByTestId('decision-moves')).not.toBeInTheDocument();
+  });
+
   it('says Not recorded, never "nothing proposed", on a revision that froze no proposal', () => {
     // Verified live on SO324132 rev 1, whose four lines all predate the field: the card read
     // "Nothing proposed for this cell", which is a claim about the LADDER rather than about

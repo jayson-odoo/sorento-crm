@@ -13,6 +13,20 @@ the engine and is a manual pick; the whole-line rule reaches Amend; the Amend Bu
 whole-line switch; a same-agent borrow asks who authorised it; the donor cell says what was
 lent. AC-L1/L2/L3/L5/L6 pass.
 
+Section 4 item 6, **E (stock transfers)**, is BUILT on `feat/scm-uat-stock-transfers`
+(stacked on the decision strip): `projects.stock_transfers` (migration `419_stock_transfers`,
+`TR-000001` numbering, the grant sweep off `inventory.stock.*` + `projects.projects.*`);
+`project_supply_service._write_transfers` raises one `proposed` row per decided component
+drawn from anywhere but the line's own location and cancels the superseded revision's open
+rows ("Superseded by revision N"); `/api/v1/inventory/stock-transfers` with approve /
+mark-moved / cancel / bulk-approve; the page at `/inventory-management/stock-transfers` plus
+its detail (General | History, `RecordNavigation`, the three verbs); Transfers tabs on the SCM
+SO detail and the sales-agent detail; a Moves line under the board popover's Decision card.
+AC-E1/E3/E4/E5/E6 pass; `committed_v` and `on_order_v` are byte-identical before and after
+(pytest). **AC-E2's six transfers for SO324132 rev 1 are not backfilled**: transfers are
+written at confirm, and rev 1 predates the writer, so the six appear on the next reconfirm of
+that order.
+
 Section 4 item 3, **D (suggested vs decided)**, is BUILT on `feat/scm-uat-decision-strip`
 (stacked on ladder v3): confirm freezes `line_snapshots[].proposed_components` beside the
 decided `components`; the board contribution carries `proposed` (the frozen composition on a
@@ -153,7 +167,9 @@ The captain means `/project-sales/fulfilment-planning?orders=...`, not the SO de
 Captain: "we need a stock transfer entity" and "a person needs to deliberately approve the transfer in the transfer page".
 - New table `projects.stock_transfers` (CompanyScopedMixin): `transfer_no` (TR-000001, same numbering shape as `inquiry_no`), `so_line_id` (core), `project_sales_order_id`, `supply_decision_id`, `product_id`, `from_warehouse_id`, `to_warehouse_id`, `qty`, `kind` (`own_group | pool | borrow`, from the rung), `state` (`proposed | approved | moved | cancelled`), `proposed_at`, `approved_by/at`, `moved_by/at`, `cancelled_reason`, `autocount_ref` (the transfer document number keyed into AutoCount, free text). Migration next after the lane head.
 - Written at confirm for every reserve/borrow component whose source differs from the line's location, state `proposed`. Reconfirm cancels the open ones ("Superseded by revision N") and writes fresh rows. A same-location component writes nothing.
-- **Transfers page** `/inventory/stock-transfers` (sidebar under Inventory management, captain 25 Aug) with a detail form view `/inventory/stock-transfers/{id}` (General | History, `RecordNavigation` "12 / 48" like Users, Approve / Mark moved / Cancel in the header; same layout view and edit): DataGrid, filters state / from / to / product / SO / agent, search; row actions Approve (confirm dialog), Mark moved (asks for the AutoCount ref), Cancel (reason). Bulk Approve on the selection. Detail popover shows the SO line, the decision revision, and the location table for the product.
+- **Transfers page** `/inventory-management/stock-transfers` (sidebar under Inventory management, captain 25 Aug) with a detail form view `/inventory-management/stock-transfers/{id}` (General | History, `RecordNavigation` "12 / 48" like Users, Approve / Mark moved / Cancel in the header; same layout view and edit): DataGrid, filters state / kind / from / to / product, search; row actions Approve (confirm dialog), Mark moved (asks for the AutoCount ref), Cancel (reason). Bulk Approve on the selection. Detail shows the SO line, the decision revision, and the product's stock by location (`ProductStockTab`, the product page's own component).
+  - BUILT as `/inventory-management/...`, not `/inventory/...`: every other inventory screen in this app lives under that segment (`warehouses`, `stock`, `stock-batches`, `stock-ledger`), and one page in a route group of its own is a second place to look.
+  - **SO and AGENT are typed into the search box, never picked from a select.** The page's audience is the warehouse, and neither `master_data.sales_agents.view` nor `scm.dashboard.view` - the two reads an agent select would need - is granted to a warehouse role, so a dropdown would 403 for exactly the people the page is for. The search matches the SO number, the agent code and the person label; `sales_order_id` / `sales_agent_id` stay as API params, which is what the two detail tabs below pass.
 - Not demand, not supply, no view change: `committed_v` / `on_order_v` untouched. Stock figures move only when the next stock upload lands; the page shows "moved, awaiting stock upload" until then (no automatic closure, per the ruling).
 - Board popover Decision card ends with "Moves: 454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB" before Approve; SO detail gains a Transfers tab; the sales-agent detail too.
 

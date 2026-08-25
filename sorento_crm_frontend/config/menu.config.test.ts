@@ -239,6 +239,33 @@ describe('menu.config - Planning changes entry', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Stock transfers - PLAN-scm-cs-planning-uat.md section E, AC-E5
+// ---------------------------------------------------------------------------
+
+describe('menu.config - Stock transfers entry', () => {
+  // The two sidebars name the group differently - `Inventory` on the main one,
+  // `Inventory Management` on the compact one - which is exactly why both copies get
+  // asserted rather than one being assumed to mirror the other.
+  it('sits under Inventory in BOTH sidebars, right after Stock Ledger', () => {
+    for (const [menu, group] of [
+      [MENU_SIDEBAR, 'Inventory'],
+      [MENU_SIDEBAR_COMPACT, 'Inventory Management'],
+    ] as const) {
+      const inventory = findGroup(menu, group);
+      expect(inventory).toBeDefined();
+      const entry = findLeaf(inventory!.children!, 'Stock Transfers');
+      expect(entry).toMatchObject({
+        title: 'Stock Transfers',
+        path: '/inventory-management/stock-transfers',
+        permission: 'inventory.stock_transfers.view',
+      });
+      const titles = inventory!.children!.map((item) => item.title);
+      expect(titles[titles.indexOf('Stock Ledger') + 1]).toBe('Stock Transfers');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // New gates
 // ---------------------------------------------------------------------------
 
