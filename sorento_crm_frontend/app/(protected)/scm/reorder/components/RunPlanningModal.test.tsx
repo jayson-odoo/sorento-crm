@@ -4,10 +4,10 @@
  * backend/post-run-only capability, tightened on the plan afterwards). NO
  * market-insight toggle (market never enters a run), and the legacy `buy_scope`
  * input is gone (planning is always per-warehouse). Warehouse is MULTI-select with a
- * Select-all shortcut and at least one is required; products are MULTI-select and
- * OPTIONAL, where empty means every product, so existing behaviour and the scheduled
- * daily run are unchanged. Submit emits { warehouse_codes, product_codes,
- * plan_horizon_date }.
+ * Select-all shortcut and is OPTIONAL, where empty means every warehouse (P1, captain
+ * 25 Aug); products are MULTI-select and OPTIONAL the same way, where empty means every
+ * product, so existing behaviour and the scheduled daily run are unchanged. Submit emits
+ * { warehouse_codes, product_codes, plan_horizon_date }.
  *
  * SearchableMultiSelect + the option hooks are stubbed so the pick is deterministic.
  */
@@ -93,7 +93,7 @@ describe('RunPlanningModal (M8-D5)', () => {
     renderModal();
     expect(screen.getByText('Manual plan')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
-    expect(screen.getByLabelText('Select warehouses')).toBeInTheDocument();
+    expect(screen.getByLabelText('All warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
     expect(screen.getByLabelText('All products')).toBeInTheDocument();
     // No cash budget field (captain, 20 Aug), no market insight toggle and no
@@ -103,11 +103,16 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
 
-  it('blocks submit and shows the required-warehouse error when none is picked', () => {
+  it('submits with NO warehouse picked: empty means every warehouse (P1)', () => {
     const { onSubmit } = renderModal();
     fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.getByText(/Select at least one warehouse/i)).toBeInTheDocument();
+    expect(onSubmit).toHaveBeenCalledWith({
+      warehouse_codes: [],
+      product_codes: [],
+      plan_horizon_date: '',
+    });
+    expect(screen.queryByText(/Select at least one warehouse/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Leave empty to plan every warehouse.')).toBeInTheDocument();
   });
 
   it('emits { warehouse_codes, product_codes, plan_horizon_date } on submit (M8-D5 / AC-B8a)', () => {

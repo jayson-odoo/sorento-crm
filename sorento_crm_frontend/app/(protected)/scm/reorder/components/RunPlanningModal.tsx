@@ -21,9 +21,16 @@ import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOption
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
  *  via `CashBudgetPanel`/`applyBudget`, never set at launch). No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
- *  (Slice E). The legacy `buy_scope` is removed. Warehouse is now MULTI-select (pick
- *  several, or Select all) so a manual run can cover any subset like the daily run. */
+ *  (Slice E). The legacy `buy_scope` is removed. Warehouse is MULTI-select and
+ *  OPTIONAL (pick several, or Select all, or leave it empty for every warehouse) so a
+ *  manual run can cover any subset - or the same ground as the daily run. */
 export interface ManualPlanInputs {
+  /**
+   * Optional warehouse scope. **Empty means every warehouse** (P1, captain 25 Aug),
+   * exactly as empty products already means every product - the backend resolves an
+   * empty list to every active warehouse, so an unnarrowed manual plan covers the
+   * same ground as the scheduled daily run.
+   */
   warehouse_codes: string[];
   /**
    * Optional product scope (AC-B8a). **Empty means all products**, so the existing
@@ -100,10 +107,6 @@ export function RunPlanningModal({
 
   const submit = () => {
     setError(null);
-    if (warehouses.length === 0) {
-      setError('Select at least one warehouse to plan for.');
-      return;
-    }
     // A past cutoff nets every open line against demand that "must" have been needed
     // before today, which is every line - the run then silently returns zero demand
     // rather than saying why (nit, code review 20 Aug 2026).
@@ -112,6 +115,9 @@ export function RunPlanningModal({
       return;
     }
     onSubmit({
+      // Empty = every warehouse (P1), the same rule products already carry: narrowing
+      // is the exception, and requiring a pick made every manual run harder than the
+      // daily one it stands in for.
       warehouse_codes: warehouses,
       // Empty = all products. Products are deliberately NOT required: narrowing to
       // one is the exception, and forcing a pick would make every run harder than
@@ -154,12 +160,11 @@ export function RunPlanningModal({
               onChange={setWarehouses}
               options={warehouseOptions ?? []}
               disabled={warehousesLoading}
-              placeholder={warehousesLoading ? 'Loading warehouses...' : 'Select warehouses'}
+              placeholder={warehousesLoading ? 'Loading warehouses...' : 'All warehouses'}
               emptyMessage={warehousesError ? 'Could not load warehouses.' : 'No warehouses found.'}
             />
             <p className="mt-1 text-2xs text-muted-foreground">
-              Pick one or more warehouses, or Select all. The scheduled daily run always covers all
-              warehouses.
+              Leave empty to plan every warehouse.
             </p>
           </div>
 

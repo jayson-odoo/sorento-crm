@@ -428,6 +428,8 @@ export interface ReorderRun {
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope
  *  is fixed server-side (M8-D5) - `buy_scope` is no longer a request field. */
 export interface CreateReorderRunRequest {
+  /** Empty means EVERY warehouse (P1) - the backend resolves an empty scope to every
+   *  active warehouse, the same rule `product_codes` already carries. */
   warehouse_codes: string[];
   /**
    * Optional product scope (AC-B8a) - human product codes, never ids. Omitted or
