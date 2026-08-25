@@ -189,6 +189,7 @@ PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": 
 # for every customer, so it gets its own permission rather than riding on products.edit.
 PERMISSION_REGISTRY.extend(_crud("master_data", "spec_registry", "Spec Registry"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "product_sets", "Product Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))

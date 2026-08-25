@@ -43,6 +43,7 @@ from app.services.entity_resolver import (
 # aliases so callers can pass either the alias or the concrete type.
 _RESOLVER_ENTITY_TYPES: frozenset[str] = frozenset({
     "product",
+    "product_set",
     "customer_order",
     "customer",
     "inbound_shipment",
@@ -2107,7 +2108,7 @@ def resolve_reference_post(
     # The whole intersection + count happens in the service (zero SQL here); this
     # veneer only maps the outcome onto the wire shape the spine already reads.
     if payload.require:
-        from app.services.product_set_service import resolve_product_set
+        from app.services.product_predicate_service import resolve_product_set
 
         outcome = resolve_product_set(
             db,

@@ -471,7 +471,7 @@ def _stock(db, product, qty):
 
 
 def test_f9_a_require_only_row_shows_its_spec_values(db):
-    from app.services.product_set_service import resolve_product_set
+    from app.services.product_predicate_service import resolve_product_set
 
     described = _product(
         db,
@@ -488,7 +488,7 @@ def test_f9_a_require_only_row_shows_its_spec_values(db):
 
 
 def test_f9_a_row_with_no_spec_block_says_so(db):
-    from app.services.product_set_service import resolve_product_set
+    from app.services.product_predicate_service import resolve_product_set
 
     bare = _product(db, "ZZTKSBARE", "SORENTO MYSTERY ITEM", derive=False)
     _stock(db, bare, 1)

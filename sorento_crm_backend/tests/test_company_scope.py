@@ -441,7 +441,21 @@ def test_every_company_id_table_is_registered():
     # existing PO / skip, or a mixture - kept CURRENT rather than append-only. Owned because it
     # is that company's own decision queue, the same reason `recommendation_override` beside
     # it is owned.
-    expected_owned = 118
+    #
+    # PLAN-product-sets.md adds 2: `product_sets` is the flyer code that names an assembly
+    # (`SRTWC8608-RL` = pedestal + cistern + seat cover). Owned because every product code in
+    # the catalogue exists once under Sorento and once under Mocha, so a set naming those
+    # products belongs to exactly one of them - the unique index is `(company_id, set_code)`
+    # for the same reason. `product_set_members` is deliberately NOT owned: it reaches its
+    # scope through its parent set, the way `certificate_products` reaches it through
+    # `Certificate`. `product_set_proposal_batches` is owned for the identical reason: a
+    # proposal batch is one company's own pass over its own catalogue, deriving candidate
+    # sets from product codes that exist once under Sorento and once under Mocha, so the
+    # batch belongs to exactly one of them - the same fact `product_sets` is owned for.
+    # `product_set_proposals`, the candidate rows inside a batch, are deliberately NOT owned
+    # for the same reason `product_set_members` is not: each one is reachable only through
+    # its parent batch, which is already scoped, so a second filter would drop it twice.
+    expected_owned = 120
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

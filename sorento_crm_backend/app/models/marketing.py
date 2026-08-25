@@ -190,6 +190,10 @@ class PromotionProduct(Base, CompanyScopedMixin):
     list_to_dealer_margin_amount = Column(Numeric(12, 2), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
+    # Which PRODUCT SET fanned this link out, if any. NULL means an exact code.
+    linked_via_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
     
     promotion = relationship("Promotion", back_populates="promotion_products")
     promotion_group = relationship("PromotionGroup", back_populates="promotion_products")
