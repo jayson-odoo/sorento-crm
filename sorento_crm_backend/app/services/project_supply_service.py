@@ -1696,6 +1696,15 @@ class ProjectSupplyService:
             out[line_id] = {
                 "open_qty": str(snapshot.get("open_qty") or "0"),
                 "components": list(snapshot.get("components") or []),
+                # What the engine had proposed, beside what was decided (AC-D1). NONE, not
+                # an empty list, when the key is absent: a revision written before this
+                # field existed recorded no proposal, which the board says out loud rather
+                # than printing as "the engine proposed nothing".
+                "proposed_components": (
+                    list(snapshot["proposed_components"])
+                    if snapshot.get("proposed_components") is not None
+                    else None
+                ),
                 # Read back beside the components it explains. A snapshot written before the
                 # field existed simply has none, which is the same answer as "nobody amended
                 # this line" and reads identically on screen.
@@ -2627,6 +2636,42 @@ class ProjectSupplyService:
 
     # ------------------------------------------------------------------- writing
 
+    def _proposals_for(
+        self, checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]]
+    ) -> Dict[str, Tuple[Component, ...]]:
+        """The engine's composition for each line being confirmed, keyed by mirror line id.
+
+        The SAME walk `proposal_for` runs, own-site pool ledger included: two lines of one
+        order drawing the same pool cannot each be proposed the whole of it, or the frozen
+        proposal would claim a pool position that never existed. A line the ladder cannot
+        walk at all (no core line, no open quantity, no location) proposes an empty tuple,
+        which is a different answer from an absent key.
+        """
+        pool_left: Dict[str, Decimal] = {}
+        out: Dict[str, Tuple[Component, ...]] = {}
+        for line, _entry, fact in checked:
+            if fact.unplannable_reason:
+                out[str(line.id)] = ()
+                continue
+            pool_key = fact.pool_key
+            if pool_key and pool_key not in pool_left:
+                pool_left[pool_key] = fact.pool_free
+            components = self.compose_line(
+                fact, pool_free_left=pool_left.get(pool_key, _ZERO)
+            )
+            if pool_key and fact.pool_code:
+                drawn = sum(
+                    (
+                        c.qty
+                        for c in components
+                        if c.kind == RESERVE and c.source_location == fact.pool_code
+                    ),
+                    _ZERO,
+                )
+                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
+            out[str(line.id)] = components
+        return out
+
     def _write_decision(
         self,
         order: ProjectSalesOrder,
@@ -2647,10 +2692,17 @@ class ProjectSupplyService:
         latest = self.latest_decision(str(order.id))
         revision_no = (latest.revision_no if latest else 0) + 1
         now = datetime.utcnow()
+        # What the ENGINE would have said about each named line, read once, here (AC-D1).
+        # Beside the decision rather than instead of it: a line the planner amended is the
+        # whole reason the board can ask "suggested what, decided what".
+        proposals = self._proposals_for(checked)
         # The named lines as decided now, then the carried ones exactly as they were
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
-            self._snapshot(line, entry, fact) for line, entry, fact in checked
+            self._snapshot(
+                line, entry, fact, proposed=proposals.get(str(line.id), ())
+            )
+            for line, entry, fact in checked
         ] + [entry.snapshot for entry in carried]
 
         decision = SOSupplyDecision(
@@ -2961,9 +3013,23 @@ class ProjectSupplyService:
         return out
 
     def _snapshot(
-        self, line: ProjectSalesOrderLine, entry: Any, fact: _LineFacts
+        self,
+        line: ProjectSalesOrderLine,
+        entry: Any,
+        fact: _LineFacts,
+        *,
+        proposed: Sequence[Component] = (),
     ) -> Dict[str, Any]:
-        """Freeze the line as it was decided, in the words it was decided in (AC-G01)."""
+        """Freeze the line as it was decided, in the words it was decided in (AC-G01),
+        AND what the engine had proposed for it at that moment (AC-D1).
+
+        `proposed` is the ladder's own composition for this line, read once by
+        `_write_decision` just before the revision is written. It is frozen rather than
+        recomputed on read for the same reason the decision is: the ladder answers against
+        live stock, and a proposal recomputed a week later is a different proposal. Without
+        it an amended line loses what the engine had said, so the board can only ever show
+        what was decided and "Suggested" is unanswerable the next day.
+        """
         components: List[Dict[str, Any]] = []
         reserve_by_id = {
             str(w.id): code for code, w in self._reserve_ladder_locations(fact).items()
@@ -3082,6 +3148,13 @@ class ProjectSupplyService:
             ),
             "buy_qty": qty_text(_dec(entry.buy_qty)),
             "components": components,
+            # What the ENGINE proposed for this line at this moment, beside what was
+            # decided (AC-D1). Always present, empty on a line the ladder could not plan -
+            # an ABSENT key is the one thing that means "this revision predates the field",
+            # and the board renders that as "not recorded" rather than as "nothing".
+            "proposed_components": [
+                self._proposed_component(component, fact) for component in proposed
+            ],
             "suggestion_basis": {
                 "is_dealer_hot_selling": fact.is_dealer_hot_selling,
                 "is_project_hot_selling": fact.is_project_hot_selling,
@@ -3101,6 +3174,35 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
+        }
+
+    def _proposed_component(
+        self, component: Component, fact: _LineFacts
+    ) -> Dict[str, Any]:
+        """One component of the engine's proposal, in the SAME keys a decided one is
+        frozen under, so both halves of a snapshot are read by one reader.
+
+        The `rung` comes off the component itself here rather than being inferred from the
+        location the way a decided Reserve's has to be: the engine knows which rung it drew
+        from, and re-deriving it would be a second opinion about its own answer.
+        """
+        return {
+            "kind": component.kind,
+            "qty": qty_text(component.qty),
+            "source_location": component.source_location,
+            "source_warehouse_id": self.warehouse_id_for_code(component.source_location),
+            "reason": component.reason,
+            "rung": component.rung,
+            "donor_so_number": component.donor_so_number,
+            "donor_line_no": component.donor_line_no,
+            "donor_agent_code": component.donor_agent_code,
+            "same_agent": bool(component.same_agent),
+            "donor_core_line_id": component.donor_core_line_id,
+            "donor_required_date": (
+                component.donor_required_date.isoformat()
+                if component.donor_required_date
+                else None
+            ),
         }
 
     def _reserve_reason(self, fact: _LineFacts, location: Optional[str]) -> str:

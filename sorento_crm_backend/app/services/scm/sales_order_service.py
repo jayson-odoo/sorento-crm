@@ -357,6 +357,9 @@ class SalesOrderService:
         customer = so.customer
         inquiries = self._line_inquiries(so) if line_planning else {}
         decided = self._decided_lines(so) if line_planning else {}
+        # What was decided and what had been suggested, per line (AC-D4). Same read as
+        # `_decided_lines` and off by default for the same reason: the list prints neither.
+        compositions = self._decided_compositions(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -423,6 +426,11 @@ class SalesOrderService:
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
                 "decision_revision": decided.get(str(ln.id)),
+                # The two compositions in the planning board's vocabulary. Both null on a
+                # line no active revision covers; `supply_proposed` also null on a revision
+                # frozen before the proposal was recorded (AC-D1).
+                "supply_decided": (compositions.get(str(ln.id)) or {}).get("decided"),
+                "supply_proposed": (compositions.get(str(ln.id)) or {}).get("proposed"),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -526,6 +534,65 @@ class SalesOrderService:
             str(core_id): {"inquiry_no": inquiry_no, "state": state}
             for core_id, inquiry_no, state in rows
         }
+
+    @staticmethod
+    def _supply_components(components) -> list[dict]:
+        """A frozen composition in the board's own vocabulary (PLAN section 2).
+
+        The components, never a sentence: the words are written once, on the screen
+        (`supplyVocabulary.ts`), and composing them here would be a second implementation of
+        the same vocabulary free to drift against the board's.
+        """
+        return [
+            {
+                "kind": (component or {}).get("kind"),
+                "qty": str((component or {}).get("qty") or "0"),
+                "source_location": (component or {}).get("source_location"),
+                "rung": (component or {}).get("rung"),
+                "donor_so_number": (component or {}).get("donor_so_number"),
+            }
+            for component in components or []
+        ]
+
+    def _decided_compositions(self, so: SalesOrder) -> dict[str, dict]:
+        """Per core line, what the ACTIVE revision decided and what it had been offered.
+
+        Off the SAME `line_snapshots` `_decided_lines` reads - one query, one parse - so the
+        revision number and the composition beside it can never describe different rows.
+
+        `proposed` is `None` (not `[]`) when the snapshot carries no `proposed_components`:
+        the revision was written before the proposal was frozen (AC-D1), and "not recorded"
+        is a different statement from "the engine suggested nothing".
+        """
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+        decision = (
+            self.db.query(SOSupplyDecision.line_snapshots)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .filter(
+                ProjectSalesOrder.so_id == so.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if decision is None:
+            return {}
+        out: dict[str, dict] = {}
+        for snapshot in decision[0] or []:
+            core_line_id = (snapshot or {}).get("core_line_id")
+            if not core_line_id:
+                continue
+            proposed = (snapshot or {}).get("proposed_components")
+            out[str(core_line_id)] = {
+                "decided": self._supply_components((snapshot or {}).get("components")),
+                "proposed": (
+                    None if proposed is None else self._supply_components(proposed)
+                ),
+            }
+        return out
 
     def _decided_lines(self, so: SalesOrder) -> dict[str, int]:
         """Which of this order's lines the ACTIVE revision covers, and at what revision.

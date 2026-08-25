@@ -5506,3 +5506,230 @@ def test_two_orders_borrowing_off_one_donor_line_both_appear_on_its_cell():
             ("40", "ZZT-SO-TAKER-A"),
             ("20", "ZZT-SO-TAKER-B"),
         ]
+
+
+# --------------------------------------------------------------------------- #
+# AC-D1 / AC-D2: suggested BESIDE decided
+#
+# The board could only ever say what was DECIDED for a covered line - the frozen
+# composition is what `_apply_frozen` prints as its sources - so "what did the engine
+# suggest before somebody changed it" had no answer on screen. The snapshot now freezes
+# the proposal too, and the contribution carries it under `proposed`.
+# --------------------------------------------------------------------------- #
+
+
+def _suggested_world(db):
+    """One order, two lines at one pooled location: one to decide, one to leave alone."""
+    actor = _user(db, f"{MARKER} planner")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own, pool = _pooled_warehouses(db)
+    _stock(db, product, pool, on_hand=80)
+    order = _order(db, so_number=f"ZZT-SO-SUGG-{_uid()[:6]}", order_date=date(2026, 1, 1))
+    decided = _line(db, order, product, qty="10", required_date=date(2026, 9, 3),
+                    warehouse=own)
+    _line(db, order, product, qty="7", required_date=date(2026, 9, 3), warehouse=own)
+    pso_id = _adopt(db, str(order.id))
+
+    from app.models.project_so import ProjectSalesOrderLine
+
+    mirror = (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            ProjectSalesOrderLine.core_sales_order_line_id == decided.id,
+        )
+        .first()
+    )
+    return {
+        "actor": actor,
+        "product": product,
+        "own": own,
+        "pool": pool,
+        "order": order,
+        "pso_id": pso_id,
+        "mirror_line_id": str(mirror.id),
+    }
+
+
+def _contribution(board, qty: str) -> dict:
+    return next(
+        contribution
+        for cell in board["cells"]
+        for contribution in cell["contributions"]
+        if contribution["qty"] == qty
+    )
+
+
+def test_a_covered_line_says_what_the_engine_had_suggested_beside_what_was_decided():
+    """AC-D1/AC-D2: the frozen proposal reaches the board under `proposed`, rung and all,
+    while `decision` goes on being the decided side. The planner bought a line the pool
+    could have covered; a day later the board still shows both halves of that."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "10",
+                    "amend_reason": "Site asked for new stock.",
+                }
+            ],
+        )
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "10")
+
+        assert contribution["covered"] is True
+        assert contribution["decision"]["buy_qty"] == "10"
+        # The engine had the pool, and says so, on the rung it drew from.
+        assert [
+            (c["kind"], c["qty"], c["location"], c["rung"])
+            for c in contribution["proposed"]["components"]
+        ] == [("reserve", "10", world["pool"].warehouse_code, "pool")]
+
+
+def test_an_undecided_line_proposes_the_live_ladder_under_the_same_key():
+    """One key, both states: the strip sums `proposed` over every contribution and must not
+    have to ask which of two fields to read per line."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "7")
+
+        assert contribution["covered"] in (False, None)
+        assert contribution["proposed"]["components"] == contribution["sources"]
+        assert [c["rung"] for c in contribution["proposed"]["components"]] == ["pool"]
+
+
+def test_a_covered_lines_frozen_reserve_carries_the_rung_it_was_drawn_from():
+    """The board used to rebuild a covered line's composition WITHOUT the rung, so every
+    reserve row of a decided line arrived as `rung: null` and the screen had to guess the
+    vocabulary back from the warehouse code. The rung is frozen; it travels."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": str(world["pool"].id), "qty": "10"}],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "10")
+
+        assert contribution["decision"]["reserve"] == [
+            {
+                "warehouse_id": str(world["pool"].id),
+                "location": world["pool"].warehouse_code,
+                "qty": "10",
+                "rung": "pool",
+            }
+        ]
+        assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
+            ("reserve", "pool")
+        ]
+
+
+def test_a_revision_written_before_the_field_existed_says_not_recorded_not_nothing():
+    """An absent key is not an empty proposal. The board answers `null`, and the screen
+    says "not recorded" rather than claiming the engine suggested nothing."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.project_so import SOSupplyDecision
+
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": str(world["pool"].id), "qty": "10"}],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == world["pso_id"])
+            .first()
+        )
+        decision.line_snapshots = [
+            {k: v for k, v in snapshot.items() if k != "proposed_components"}
+            for snapshot in decision.line_snapshots
+        ]
+        flag_modified(decision, "line_snapshots")
+        db.flush()
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        assert _contribution(board, "10")["proposed"] is None
+
+
+def test_the_suggested_side_reaches_the_wire():
+    """A field the service returns and the response model does not declare is dropped."""
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "10",
+                    "amend_reason": "Site asked for new stock.",
+                }
+            ],
+        )
+        db.commit()
+
+        client, originals = _client(db, world["actor"], [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={
+                        "orders": world["order"].so_number,
+                        "granularity": "week",
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        contribution = _contribution(response.json(), "10")
+        assert contribution["proposed"] is not None
+        proposed = contribution["proposed"]["components"]
+        assert [(c["kind"], c["qty"], c["rung"]) for c in proposed] == [
+            ("reserve", "10", "pool")
+        ]
+        assert proposed[0]["location"] == world["pool"].warehouse_code

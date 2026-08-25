@@ -280,6 +280,12 @@ class BoardDecisionReserve(BaseModel):
     #: The warehouse CODE, which is what the screen reads. The id beside it is addressing.
     location: Optional[str] = None
     qty: str
+    #: Which rung the confirmation froze this share under (`group_take` / `pool` / ...).
+    #: Carried rather than dropped: without it every reserve row of a covered line reached
+    #: the screen unrunged and the vocabulary had to be guessed back from the warehouse
+    #: code, which is the reading PLAN section 2 exists to replace. `None` on a revision
+    #: frozen before the rung was recorded.
+    rung: Optional[str] = None
 
 
 class BoardDecisionBorrow(BaseModel):
@@ -355,6 +361,16 @@ class BoardLineLending(BaseModel):
     so_number: Optional[str] = None
     #: Its line on that order, so two lines of one order are told apart.
     line_no: Optional[int] = None
+
+
+class BoardProposed(BaseModel):
+    """What the engine suggested for one line, in the same words a source is stated in.
+
+    A wrapper rather than a bare list, so the suggestion has somewhere to grow a fact ABOUT
+    itself (when it was frozen, which revision) without every reader re-shaping.
+    """
+
+    components: List[BoardSource] = []
 
 
 class BoardContribution(BaseModel):
@@ -451,6 +467,14 @@ class BoardContribution(BaseModel):
     rank_score: float
     rank_factors: List[BoardRankFactor] = []
     sources: List[BoardSource] = []
+    #: What the ENGINE suggested for this line, beside what was decided (AC-D2).
+    #:
+    #: The LIVE ladder on an undecided line (the same list as `sources`), and the composition
+    #: frozen at confirm on a covered one - where `sources` states the DECISION and the
+    #: suggestion would otherwise be lost the moment somebody amended it. Null, never an
+    #: empty object, on a revision written before the proposal was frozen: "not recorded" and
+    #: "the engine suggested nothing" are different answers and the screen says which.
+    proposed: Optional[BoardProposed] = None
     #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
