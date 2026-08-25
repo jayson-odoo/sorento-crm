@@ -302,13 +302,14 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   order_date: string;
   requested_delivery_date: string | null;
-  /** The span of the LINE delivery dates (`sales_order_lines.required_date`): the earliest
-   *  and the latest date any of its lines names. Both `null` when no line names one - an
-   *  order is not due "today" because nobody dated it. This is what the list's "Delivery
-   *  date" column shows; the header's own `requested_delivery_date` is a different figure
-   *  and stays on the detail page. */
-  delivery_date_from?: string | null;
-  delivery_date_to?: string | null;
+  /** Every DISTINCT date this order's lines are due on (`sales_order_lines.required_date`),
+   *  earliest first. Empty when no line names one - an order is not due "today" because
+   *  nobody dated it. This is what the list's "Delivery date" column shows; the header's own
+   *  `requested_delivery_date` is a different figure and stays on the detail page.
+   *
+   *  A list, not the `delivery_date_from`/`_to` span it replaced: an order due on 12 January
+   *  and 10 March is due on two days, and a range claims the eight weeks between them. */
+  delivery_dates?: string[];
   /** Who sold it - the `sales_agents` master. The id rides along only so an edit select
    *  can pre-select the current agent; a person reads `sales_agent_code` / `_label`,
    *  never the id. Absent (all three null) when the order names no agent. */

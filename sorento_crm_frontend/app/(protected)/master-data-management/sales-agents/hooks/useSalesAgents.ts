@@ -29,10 +29,7 @@ export function useSalesAgents(params: DataGridApiFetchParams) {
   });
 }
 
-/**
- * One agent by id. Unused by the list + modal this slice ships, and kept because the
- * AutoCount branch's `[id]` detail page imports exactly this symbol (see PLAN amendment 11).
- */
+/** One agent by id, for the record page at `/master-data-management/sales-agents/{id}`. */
 export function useSalesAgent(id: string | null) {
   return useQuery({
     queryKey: ['sales-agent', id],

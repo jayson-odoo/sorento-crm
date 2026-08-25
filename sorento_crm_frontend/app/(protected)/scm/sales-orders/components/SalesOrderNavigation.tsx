@@ -45,6 +45,12 @@ export default function SalesOrderNavigation({
       dateTo: parsed.filters.date_to || null,
       customerId: parsed.filters.customer_code || null,
       outstanding: parsed.filters.outstanding === 'true',
+      // Both were carried into the detail URL by the list and dropped here, so a walk that
+      // began on "SEAN III's project orders" stepped through the unfiltered book instead.
+      // The agent one matters twice over now: the sales-agent record's Sales orders tab
+      // links every row with `sales_agent_id` set, and that IS the set being walked.
+      salesAgentId: parsed.filters.sales_agent_id || null,
+      demandClass: parsed.filters.demand_class || null,
     };
   }, [searchParams]);
 

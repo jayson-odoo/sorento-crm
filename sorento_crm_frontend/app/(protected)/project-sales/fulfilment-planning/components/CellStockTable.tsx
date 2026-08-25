@@ -9,8 +9,15 @@ import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type { BoardCellLocation } from '../../_shared/types/fulfilmentPlanning.types';
 
 const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
-const LOCATION_COL = 'w-[120px] min-w-[120px] max-w-[120px]';
-const NUMBER_COL = 'w-[100px] min-w-[100px] max-w-[100px]';
+/**
+ * The column that takes the SLACK. `w-full` on one cell of an auto-layout table is what makes
+ * that column absorb whatever the fixed ones did not, so the table reaches the edge of the
+ * dialog instead of stopping two thirds across and leaving a blank band beside it. The floor
+ * keeps a short code readable when the dialog is narrow.
+ */
+const LOCATION_COL = 'w-full min-w-[120px]';
+/** A floor, not a fixed width: the numbers keep their room and never overlap. */
+const NUMBER_COL = 'min-w-[100px]';
 
 /**
  * What is AT each location behind a cell, tabulated (captain, 18 August 2026).
@@ -24,19 +31,20 @@ const NUMBER_COL = 'w-[100px] min-w-[100px] max-w-[100px]';
  * word by word to compare. The same facts as a row each, under AutoCount's own headers, are read
  * by running an eye down a column.
  *
- * TWO THINGS MOVED OUT OF A TOOLTIP AND INTO THE TABLE. Reserved and Free were in the pill's
- * `title`, unreachable on a touch screen and invisible to anyone who did not hover; they are
- * columns now, so `On hand - Reserved - held = Free` closes on screen. The incoming legs were
- * there too, and they are SPO rows in the expansion, which is where the document that carries
- * them already lives.
+ * RESERVED MOVED OUT OF A TOOLTIP AND INTO THE TABLE, unreachable as it was on a touch screen
+ * and invisible to anyone who did not hover. Free came with it and has since gone again: it is
+ * `On hand - Reserved`, both of which are columns, so it restated what the reader could already
+ * see. The incoming legs were in that tooltip too, and they are SPO rows in the expansion, which
+ * is where the document that carries them already lives.
  *
  * NOT a DataGrid, and this is the carve-out `FulfilmentBoardMatrix` documents and PLAN 13.10
  * states: this is a fixed matrix of eight named figures, not a listing - no column config, sort,
  * resize or pagination applies to it, and its expansion is the point rather than a row action.
  * The three obligations of that carve-out are met here as they are there: the table scrolls
- * INSIDE its own container so the dialog never scrolls sideways, cells carry fixed widths on a
- * `w-max` table (never `table-fixed`, which overlaps its columns the moment content exceeds the
- * declared width), and long text truncates with a `title`.
+ * INSIDE its own container so the dialog never scrolls sideways, it is `w-full` with a min-width
+ * FLOOR per column and the Location column taking the slack (never `table-fixed`, which overlaps
+ * its columns the moment content exceeds the declared width), and long text truncates with a
+ * `title`.
  *
  * A NULL FIGURE IS "Not stated", NEVER 0. The two are opposite instructions - 0 free means do
  * not look here, nothing stated means nobody has said where to look - and a line whose sales
@@ -94,7 +102,10 @@ export function CellStockTable({
       data-testid="cell-stock-table"
       className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
     >
-      <table className="w-max border-separate border-spacing-0 text-xs">
+      {/* `w-full`, never `table-fixed`: the table fills the dialog (the captain's screenshot
+          had it stopping at two thirds with an empty band on the right), the numeric columns
+          hold a min-width floor, and the Location column above carries the slack. */}
+      <table className="w-full border-separate border-spacing-0 text-xs">
         <thead>
           <tr>
             <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
@@ -260,8 +271,8 @@ const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-
  *
  * EVERY column totals. The rows are now a whole ownership group rather than the one warehouse
  * a line named, and "what does the group hold" is the question the group was listed to answer -
- * so Reserved and Free are summed too. They were left out when a "total" could only ever add a
- * location to itself.
+ * so Reserved is summed too. It was left out when a "total" could only ever add a location to
+ * itself.
  */
 const NUMERIC_COLUMNS: {
   key: string;
@@ -274,7 +285,9 @@ const NUMERIC_COLUMNS: {
 }[] = [
   { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
   { key: 'reserved', label: 'Reserved', of: (entry) => entry.qty_reserved ?? null, total: true },
-  { key: 'free', label: 'Free', of: (entry) => entry.qty_free ?? null, total: true },
+  // No Free column. It is `On hand - Reserved` and the two columns beside it already state
+  // both, so it was a third number saying what the reader can see - and on a table this wide
+  // every column costs the ones that answer a question nothing else does.
   { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
   { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
   {

@@ -12,7 +12,6 @@ import {
   BASE_CURRENCY,
   EM_DASH,
   fmtDate,
-  fmtDateRange,
   fmtDateTime,
   fmtMoney,
   fmtMoneyIn,
@@ -132,23 +131,4 @@ describe('fmtDateTime', () => {
   });
 });
 
-describe('fmtDateRange', () => {
-  it('collapses to ONE date when both ends fall on the same day', () => {
-    // The common case on the sales-order book: every line of the order is due together,
-    // and "12/01/2026 - 12/01/2026" would make one date look like two.
-    expect(fmtDateRange('2026-01-12', '2026-01-12')).toBe('12/01/2026');
-  });
 
-  it('writes the span when the ends differ', () => {
-    expect(fmtDateRange('2026-01-12', '2026-03-10')).toBe('12/01/2026 - 10/03/2026');
-  });
-
-  it('shows an em dash when neither end is known', () => {
-    expect(fmtDateRange(null, null)).toBe(EM_DASH);
-  });
-
-  it('prints the single date it actually has when only one end is known', () => {
-    expect(fmtDateRange('2026-01-12', null)).toBe('12/01/2026');
-    expect(fmtDateRange(null, '2026-03-10')).toBe('10/03/2026');
-  });
-});

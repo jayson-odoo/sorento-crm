@@ -521,6 +521,149 @@ def test_no_coverage_date_set_never_gates_a_line():
     assert proposed[0].kind == "reserve"
 
 
+# ------------------------------------------------- rung 0b: the ATP reserve window
+
+
+def test_a_line_beyond_its_reserve_window_never_borrows_stock_another_order_holds():
+    """A line due long after purchasing could simply buy for it must not take stock a
+    nearer-dated order is already holding.
+
+    The borrow rungs are exactly that: rung 4 takes another sales order's committed quantity
+    and rung 5 takes free stock outside the group that its own book expects. Neither is
+    surplus, so a line outside its window is not offered them at all, and the whole-line rule
+    turns what is left into a Buy.
+    """
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=True,
+            group_borrow_candidates=[
+                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
+            ],
+            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("40")}],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("40")
+    assert "beyond the lead time window" in proposed[0].reason
+    assert "kept for nearer orders" in proposed[0].reason
+
+
+def test_a_line_beyond_its_window_still_takes_stock_that_is_genuinely_surplus():
+    """The pool and group-take rungs are already capped at the location's SIGNED availability
+    (`on hand - SO qty + SPO qty`), so what they offer is what nothing else at that location
+    is owed. A far line may have that: refusing it would buy stock the business already holds
+    and nobody needs."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=True,
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("40"), "available": Decimal("40")}
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["reserve"]
+    assert proposed[0].qty == Decimal("40")
+
+
+def test_a_line_beyond_its_window_buys_the_whole_of_it_when_the_surplus_falls_short():
+    """The whole-line rule, unchanged: 25 of surplus against 40 owed is not "reserve 25, buy
+    15", it is a Buy - and the reason names the window rather than the arithmetic, because the
+    window is why the other rungs were not tried."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=True,
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("25"), "available": Decimal("25")}
+            ],
+            group_borrow_candidates=[
+                {"location": "MWH-BB", "qty": Decimal("15"), "donor_so_number": "SO-9"},
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("40")
+    assert "beyond the lead time window" in proposed[0].reason
+
+
+def test_a_line_inside_its_window_is_untouched_by_the_rule():
+    """The near line keeps every rung it always had, borrow included."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=date(2026, 9, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=False,
+            group_borrow_candidates=[
+                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["borrow"]
+    assert proposed[0].qty == Decimal("40")
+
+
+def test_the_window_is_the_lead_time_plus_the_buffer_and_the_boundary_is_inside_it():
+    """`reserve_window_end` is the one place the arithmetic lives, so the engine, the service
+    and the sentence a planner reads cannot disagree about which day the window ends on."""
+    from app.services.scm.front_planning_engine import (
+        RESERVE_BUFFER_DAYS,
+        reserve_window_end,
+    )
+
+    assert RESERVE_BUFFER_DAYS == 14
+    # 90 days of lead time plus the 14-day buffer, counted from today.
+    assert reserve_window_end(date(2026, 8, 25), 90) == date(2026, 12, 7)
+    # A line due ON the last day of the window is INSIDE it, the same boundary rule the
+    # coverage date above follows.
+    assert reserve_window_end(date(2026, 8, 25), 0) == date(2026, 9, 8)
+
+
+def test_a_line_with_no_date_is_never_outside_its_window():
+    """An undated line has no delivery date to be beyond anything: the ladder runs for it as
+    it always did, and the caller decides nothing on a date nobody stated."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("40"),
+            required_date=None,
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=False,
+            group_borrow_candidates=[
+                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
+            ],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["borrow"]
+
+
 # --------------------------------------------------------------- rung 3: group take
 
 

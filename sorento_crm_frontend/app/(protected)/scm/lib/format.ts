@@ -202,25 +202,6 @@ export function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
 }
 
-/**
- * A SPAN of dates as one cell: `12/01/2026` when both ends fall on the same day,
- * `12/01/2026 - 10/03/2026` when they differ, `-` when neither end is known.
- *
- * Written from `fmtDate`'s parts rather than beside them, so a range and a single date on
- * the same screen cannot end up in two different date shapes. One end known and the other
- * not is printed as the single date it actually is: `12/01/2026 - -` states nothing.
- */
-export function fmtDateRange(
-  from: string | null | undefined,
-  to: string | null | undefined,
-): string {
-  const start = fmtDate(from);
-  const end = fmtDate(to);
-  if (start === EM_DASH) return end;
-  if (end === EM_DASH) return start;
-  return start === end ? start : `${start} - ${end}`;
-}
-
 /** 24-hour, both parts padded: `21:05`, and `09:28` rather than `9:28`. No am/pm to
  *  misread, and the same 2-digit reasoning as `DATE_PARTS`. */
 export const TIME_PARTS = {

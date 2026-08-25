@@ -328,6 +328,74 @@ def test_an_over_long_person_label_is_refused(client, db):
 
 
 # --------------------------------------------------------------------------- #
+# Retiring a code
+# --------------------------------------------------------------------------- #
+# `is_active` decides whether a code is offered by the Agent pickers
+# (`sales_order_service.list_agents` filters on it). Until the record page carried a switch
+# for it there was no way to retire a code at all, so a person who had left was still
+# offered on every order. It is sales-agent-only: the shared `MirrorAnnotationUpdate` the
+# other mirror entities use does not accept it, because for them the column is synced and a
+# UI write would be clobbered by the next re-sync.
+def test_the_patch_can_retire_an_agent(client, db):
+    agent = _seed(db, sales_agent="ZZT RETIRE", is_active=True)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": False})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is False
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is False
+
+
+def test_the_patch_can_bring_a_retired_agent_back(client, db):
+    agent = _seed(db, sales_agent="ZZT REHIRE", is_active=False)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is True
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+def test_omitting_is_active_leaves_it_alone(client, db):
+    """The same `model_fields_set` rule as every other field: a save that only renames the
+    person must not quietly reactivate a code somebody retired."""
+    agent = _seed(db, sales_agent="ZZT KEEPRETIRED", is_active=False)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"person_label": "ZZT P"})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is False
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is False
+
+
+def test_a_refused_class_leaves_the_activation_unwritten(client, db):
+    """One save, one transaction - the same rule the label already follows."""
+    agent = _seed(db, sales_agent="ZZT HALFRETIRE", is_active=True)
+
+    res = client.patch(
+        f"{BASE}/{agent.id}/annotation",
+        json={"is_active": False, "demand_class": "dealer"},
+    )
+    assert res.status_code == 400, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+def test_retiring_is_gated_on_the_edit_permission(read_only_client, db):
+    agent = _seed(db, sales_agent="ZZT NOEDIT ACTIVE")
+
+    res = read_only_client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": False})
+    assert res.status_code == 403, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+# --------------------------------------------------------------------------- #
 # Bulk annotation
 # --------------------------------------------------------------------------- #
 # 38 codes arrived unclassified from the client's first upload and every one of them had

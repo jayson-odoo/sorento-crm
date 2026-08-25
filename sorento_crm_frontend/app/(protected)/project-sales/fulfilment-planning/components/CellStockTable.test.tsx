@@ -83,13 +83,13 @@ describe('CellStockTable: the position, tabulated', () => {
     renderTable([position()]);
 
     // No demand column. It read "Owed here" and it said what the Contributing lines table
-    // below already says line by line under Outstanding.
+    // below already says line by line under Outstanding. No Free column either: it is
+    // `On hand - Reserved`, both of which are here, so it restated what the reader can see.
     expect(headers()).toEqual([
       '',
       'Location',
       'On hand',
       'Reserved',
-      'Free',
       'SO qty',
       'SPO qty',
       'Available',
@@ -119,7 +119,6 @@ describe('CellStockTable: the position, tabulated', () => {
       'BRW-BB',
       '478',
       '0',
-      '478',
       '47009',
       '0',
       '-46531',
@@ -129,7 +128,6 @@ describe('CellStockTable: the position, tabulated', () => {
       'BRW',
       '1015',
       '12',
-      '1003',
       '9028',
       '500',
       '-7513',
@@ -185,7 +183,6 @@ describe('CellStockTable: the position, tabulated', () => {
       'Not stated',
       'Not stated',
       'Not stated',
-      'Not stated',
     ]);
     expect(cells).not.toContain('0');
   });
@@ -206,19 +203,22 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('BRW-IB');
     expect(cells[2]).toBe('Not stated');
-    expect(cells[5]).toBe('10805');
-    expect(cells[6]).toBe('0');
-    expect(cells[7]).toBe('Not stated');
+    expect(cells[4]).toBe('10805');
+    expect(cells[5]).toBe('0');
+    expect(cells[6]).toBe('Not stated');
   });
 
   it('scrolls inside its own container, so the dialog never scrolls sideways', () => {
     renderTable([position()]);
 
     expect(screen.getByTestId('cell-stock-table').className).toContain('overflow-x-auto');
-    // Fixed cell widths on a `w-max` table, never `table-fixed`, which overlaps its columns as
-    // soon as the content is wider than the declared width.
+    // `w-full`, so the table reaches the edge of the dialog instead of stopping two thirds
+    // across and leaving a blank band beside it - and never `table-fixed`, which overlaps its
+    // columns as soon as the content is wider than the declared width. A narrow dialog still
+    // overflows past the per-column floors and the container above scrolls it.
     const table = screen.getByRole('table');
-    expect(table.className).toContain('w-max');
+    expect(table.className).toContain('w-full');
+    expect(table.className).not.toContain('w-max');
     expect(table.className).not.toContain('table-fixed');
   });
 
@@ -250,12 +250,11 @@ describe('CellStockTable: the totals row', () => {
     const footer = [...(screen.getByRole('table').querySelectorAll('tfoot td, tfoot th') ?? [])].map(
       (cell) => cell.textContent ?? '',
     );
-    // EVERY column totals now, Reserved and Free included: the rows are a whole ownership
-    // group rather than one warehouse, and "what does the group hold" is why it is listed.
+    // EVERY column totals now, Reserved included: the rows are a whole ownership group rather
+    // than one warehouse, and "what does the group hold" is why it is listed.
     expect(footer).toContain('Total');
     expect(footer).toContain('1493');
     expect(footer).toContain('12');
-    expect(footer).toContain('1481');
     expect(footer).toContain('56037');
     expect(footer).toContain('500');
     expect(footer).toContain('-54044');

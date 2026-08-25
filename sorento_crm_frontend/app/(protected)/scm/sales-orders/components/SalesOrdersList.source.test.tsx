@@ -321,7 +321,7 @@ describe('SalesOrdersList - the empty book', () => {
     stub([]);
     renderList();
 
-    fireEvent.change(screen.getByPlaceholderText('Search SO or customer...'), {
+    fireEvent.change(screen.getByPlaceholderText('Search SO, customer, product or agent...'), {
       target: { value: 'SO999999' },
     });
 

@@ -179,26 +179,26 @@ beforeEach(() => {
  * responsive-header rule in CLAUDE.md exists to prevent.
  */
 describe('FulfilmentBoardPanel: the header', () => {
-  it('puts Back to the worklist in the actions on the right, after the granularity control', async () => {
+  it('puts Back to sales orders in the actions on the right, after the granularity control', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
     const actions = screen.getByTestId('board-header-actions');
-    const back = within(actions).getByRole('button', { name: 'Back to the worklist' });
+    const back = within(actions).getByRole('button', { name: 'Back to sales orders' });
     const granularity = within(actions).getByLabelText('granularity');
     expect(back.compareDocumentPosition(granularity)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
   });
 
-  it('still returns to the worklist', async () => {
+  it('still calls back, which is now the sales-order list', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
     const onBack = vi.fn();
 
     renderPanel(['SO403340'], onBack);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to the worklist' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to sales orders' }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 

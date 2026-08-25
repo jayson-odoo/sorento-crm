@@ -420,16 +420,13 @@ class SalesOrderService:
             "requested_delivery_date": (
                 so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
             ),
-            # When its lines are due, from the earliest to the latest. Both None when no
-            # line names a date - an order nobody dated is not due today, and the header's
-            # own `requested_delivery_date` above is a DIFFERENT figure that must not be
+            # Every DISTINCT date this order's lines are due on, earliest first. Not a
+            # span: an order due on 12 January and 10 March is due on two days, and a
+            # range invents the eight weeks in between. Empty when no line names a date -
+            # an order nobody dated is not due today, and the header's own
+            # `requested_delivery_date` above is a DIFFERENT figure that must not be
             # substituted for it.
-            "delivery_date_from": (
-                min(required_dates).isoformat() if required_dates else None
-            ),
-            "delivery_date_to": (
-                max(required_dates).isoformat() if required_dates else None
-            ),
+            "delivery_dates": [d.isoformat() for d in sorted(set(required_dates))],
             # Who sold it. `sales_agent_id` rides along only so the edit screen's select can
             # pre-select the current agent; a person reads the code + label, never the id.
             "sales_agent_id": so.sales_agent_id,
@@ -673,10 +670,47 @@ class SalesOrderService:
                 .exists()
             )
         if query:
-            like = f"%{query}%"
+            like = f"%{query.strip()}%"
+            # The four things a person holds when they come looking for an order: the
+            # document number, who it is for, WHAT IS ON IT, and WHO SOLD IT. The last two
+            # were not matched, so "which orders have that sink on them" and "show me
+            # Eric's orders" both answered nothing and sent the reader to the filter panel
+            # for a question the search box looks like it takes.
+            #
+            # EXISTS subqueries, never joins: an order with three matching lines must come
+            # back as ONE row, and a join would also break `total` (which counts the same
+            # query) and the page boundaries computed from it.
+            on_a_line = (
+                self.db.query(SalesOrderLine.id)
+                .join(Product, Product.id == SalesOrderLine.product_id)
+                .filter(
+                    SalesOrderLine.sales_order_id == SalesOrder.id,
+                    or_(
+                        Product.product_code.ilike(like),
+                        Product.product_name.ilike(like),
+                    ),
+                )
+                .exists()
+            )
+            # Code AND person: the codes are `SEAN I` / `SEAN III`, and the person behind
+            # them is what anybody actually types. Same pair `list_agents` searches, so the
+            # Agent picker and this box understand the same words.
+            sold_by = (
+                self.db.query(SalesAgent.id)
+                .filter(
+                    SalesAgent.id == SalesOrder.sales_agent_id,
+                    or_(
+                        SalesAgent.sales_agent.ilike(like),
+                        SalesAgent.person_label.ilike(like),
+                    ),
+                )
+                .exists()
+            )
             q = q.filter(
                 (SalesOrder.so_number.ilike(like))
                 | (SalesOrder.customer.has(Customer.customer_name.ilike(like)))
+                | on_a_line
+                | sold_by
             )
         sort_cols = {
             "so_number": SalesOrder.so_number,

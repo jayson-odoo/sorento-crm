@@ -43,7 +43,7 @@ confirmation, and a binary float does not survive that.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -77,6 +77,57 @@ RUNG_CROSS_GROUP_BORROW = "cross_group_borrow"
 RUNG_BUY = "buy"
 
 BUY_REASON = "remaining uncovered need"
+
+# --------------------------------------------------------------------------- #
+# The ATP reserve window
+# --------------------------------------------------------------------------- #
+#
+# A line due long after purchasing could simply buy for it must not take stock that
+# nearer-dated demand needs. The window it may reserve inside is
+#
+#     as_of + (the product's lead time) + RESERVE_BUFFER_DAYS
+#
+# and a line due beyond it is offered only stock that is genuinely SURPLUS - the pool and
+# group-take rungs, whose capacity is already `max(min(free, available), 0)` at the
+# location, i.e. what is left once everything that location's book owes is met. The BORROW
+# rungs are not offered at all: rung 4 takes another sales order's committed quantity and
+# rung 5 takes free stock outside the group that its own book expects, and neither is
+# surplus by any reading. What the surplus does not cover falls to the whole-line rule and
+# is bought, with the reason naming the window rather than the arithmetic.
+#
+# BOTH CONSTANTS ARE FUTURE POLICY FIELDS. They belong beside `reorder_coverage_until` on
+# `PriorityPolicy` (the same admin screen, the same revisioned row) the day somebody needs
+# to tune them per tenant; they are literals here because one number that nobody has asked
+# to configure does not need a table, a migration and a form first. The trigger for
+# promoting them: the first request to change either without a deploy.
+
+#: Days of slack on top of the lead time. Purchasing needs the order raised before the
+#: lead time runs out, not on the last possible day, and a fortnight is the smallest
+#: interval anybody in this business plans in.
+RESERVE_BUFFER_DAYS = 14
+
+#: The lead time to assume for a product nobody has stated one for. MEASURED, not guessed:
+#: `product_suppliers.standard_lead_time_days` on the live book is 90 days on 11,671 of its
+#: 17,667 rows (median 90; the other two values are 14 and 45), and `system_settings
+#: .default_product_standard_lead_time_days` independently defaults to 90.
+DEFAULT_LEAD_TIME_DAYS = 90
+
+
+def reserve_window_end(as_of: date, lead_time_days: Optional[int] = None) -> date:
+    """The last day a line may still reserve stock for, from `as_of`.
+
+    ONE place for the arithmetic, so the engine, the service that decides which side of it a
+    line falls on, and the sentence a planner reads cannot disagree about the day. A line due
+    ON this date is INSIDE the window - the same boundary rule rung 0's coverage date follows.
+    """
+    days = DEFAULT_LEAD_TIME_DAYS if lead_time_days is None else max(int(lead_time_days), 0)
+    return as_of + timedelta(days=days + RESERVE_BUFFER_DAYS)
+
+
+def _reserve_window_buy_reason() -> str:
+    return (
+        "Delivery date beyond the lead time window; stock kept for nearer orders"
+    )
 
 _MONTHS = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -263,6 +314,7 @@ def propose_line(
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    outside_reserve_window: bool = False,
 ) -> Tuple[Component, ...]:
     """The proposed composition for one line, ladder v2's own order (section E).
 
@@ -277,9 +329,9 @@ def propose_line(
     4. group borrow: `group_borrow_candidates` - the caller passes ONLY the donors this
        rung may draw on automatically (ranked below this line); a same-agent donor ranked
        above it is never in this list, only in the offered candidate list a person picks
-       from;
+       from. SKIPPED for a line `outside_reserve_window`, see below;
     5. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
-       donors within the small-quantity cap;
+       donors within the small-quantity cap. SKIPPED for the same reason;
     6. the whole-line rule: if 1-5 reach the whole of `open_qty`, that composition is
        returned, in rung order; otherwise every partial component is DROPPED and the whole
        line is proposed as a single Buy - never "reserve 213, buy 145".
@@ -291,6 +343,15 @@ def propose_line(
 
     A component contributing nothing is not proposed at all: emitting a zero would force a
     reason for a quantity that does not exist.
+
+    `outside_reserve_window` is the ATP rule (see the constants at the top of this module):
+    the line is due beyond `as_of + lead time + RESERVE_BUFFER_DAYS`, so purchasing can still
+    buy for it in time and it must not take stock a nearer-dated order needs. Rungs 2 and 3
+    still run - what they offer is capped at the location's SIGNED availability and is
+    therefore surplus - and rungs 4 and 5, which take stock another order holds or another
+    group's book expects, do not run at all. Anything left over is bought under the
+    whole-line rule with the window named as the reason. The CALLER decides which side of the
+    window a line falls on, because only it knows the product's lead time.
     """
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
@@ -370,8 +431,10 @@ def propose_line(
 
     # 4. group borrow: other sales orders' committed quantity, donors ranked below this
     #    line only - the caller has already excluded a higher-ranked (non-same-agent)
-    #    donor from this list.
-    for candidate in group_borrow_candidates or []:
+    #    donor from this list. Not offered at all to a line beyond its reserve window: this
+    #    rung takes stock a nearer-dated order is holding, which is the one thing that rule
+    #    exists to stop.
+    for candidate in [] if outside_reserve_window else (group_borrow_candidates or []):
         if remaining <= ZERO:
             break
         location = candidate.get("location")
@@ -397,8 +460,9 @@ def propose_line(
         )
         remaining -= take
 
-    # 5. cross-group borrow: free stock outside this group, already cap-filtered.
-    for candidate in cross_group_borrow_candidates or []:
+    # 5. cross-group borrow: free stock outside this group, already cap-filtered. Skipped
+    #    beyond the window for the same reason as rung 4 - it is another group's book.
+    for candidate in [] if outside_reserve_window else (cross_group_borrow_candidates or []):
         if remaining <= ZERO:
             break
         location = candidate.get("location")
@@ -424,7 +488,14 @@ def propose_line(
             Component(
                 kind=BUY,
                 qty=open_amount,
-                reason=_whole_line_buy_reason(covered, open_amount),
+                # Beyond the window the shortfall is not the interesting fact - the window is
+                # why two of the five rungs were never walked, and a reason reading "23 of 40
+                # covered" would send the reader looking for the missing 17.
+                reason=(
+                    _reserve_window_buy_reason()
+                    if outside_reserve_window
+                    else _whole_line_buy_reason(covered, open_amount)
+                ),
                 rung=RUNG_BUY,
             ),
         )

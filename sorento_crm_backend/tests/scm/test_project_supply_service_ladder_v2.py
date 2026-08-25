@@ -40,7 +40,14 @@ from ..test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixture
     _warehouse,
 )
 
-REQUIRED_DATE = date(2027, 3, 1)
+#: The delivery date every scenario here plans against.
+#:
+#: RELATIVE to today, and inside the ATP reserve window on purpose (see
+#: `front_planning_engine.reserve_window_end`): the borrow rungs this file exists to pin are
+#: not offered to a line due beyond `today + lead time + buffer`, so a fixed far-future date
+#: would test the window rule instead of the rungs. The window's own behaviour is asserted in
+#: `test_front_planning_engine.py` and in this file's own reserve-window scenarios.
+REQUIRED_DATE = date.today() + timedelta(days=30)
 
 
 def _world(db):
@@ -301,6 +308,143 @@ def test_whole_line_rule_a_full_cover_keeps_its_composition():
     assert len(components) == 1
     assert components[0]["kind"] == "reserve"
     assert components[0]["qty"] == "358"
+
+
+# ------------------------------------------------------------- rung 0b: the reserve window
+
+
+def _lead_time(db, product, supplier_days: int) -> None:
+    """State a supplier agreement for the product, which is where the lead time comes from."""
+    import uuid as _uuid
+
+    from app.models.procurement import ProductSupplier, Supplier
+
+    supplier = Supplier(
+        id=str(_uuid.uuid4()),
+        supplier_code=f"ZZT-SUP-{_uuid.uuid4().hex[:8]}".upper(),
+        supplier_name="ZZT lead-time supplier",
+    )
+    db.add(supplier)
+    db.flush()
+    db.add(
+        ProductSupplier(
+            id=str(_uuid.uuid4()),
+            product_id=product.id,
+            supplier_id=supplier.id,
+            standard_lead_time_days=supplier_days,
+        )
+    )
+    db.commit()
+
+
+def test_a_line_beyond_the_reserve_window_buys_rather_than_borrowing_a_nearer_orders_stock():
+    """The rule, end to end: a line due long after purchasing could simply buy for it does
+    not take stock a nearer-dated order is holding. Its whole quantity is a Buy, and the
+    reason names the window rather than the arithmetic."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _lead_time(db, product, 30)
+
+        # A donor at the same location, due later still - the rung-4 candidate this line
+        # would take from if it were inside its window.
+        _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            required_date=date.today() + timedelta(days=400), line_no=2,
+            so_number="SO371334",
+        )
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            # 30 days of lead time + 14 of buffer = a window of 44 days; this is well beyond.
+            required_date=date.today() + timedelta(days=300), line_no=1,
+            so_number="SO331506",
+        )
+
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert len(components) == 1
+    assert components[0]["kind"] == "buy"
+    assert components[0]["qty"] == "145"
+    assert "beyond the lead time window" in components[0]["reason"]
+
+
+def test_a_line_beyond_the_window_still_reserves_stock_that_is_genuinely_surplus():
+    """The pool rung is capped at the location's SIGNED availability, so what it offers is
+    what nothing else there is owed. Refusing a far line that would buy stock the business
+    already holds and nobody needs."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        _stock(db, product, pool, on_hand=358)
+        _lead_time(db, product, 30)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="358",
+            required_date=date.today() + timedelta(days=300),
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert len(components) == 1
+    assert components[0]["kind"] == "reserve"
+    assert components[0]["qty"] == "358"
+
+
+def test_a_line_inside_the_window_is_untouched_by_the_rule():
+    """The near line keeps rung 4, exactly as it always had it."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _lead_time(db, product, 30)
+
+        _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            required_date=date.today() + timedelta(days=40), line_no=2,
+            so_number="SO371334",
+        )
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            required_date=date.today() + timedelta(days=10), line_no=1,
+            so_number="SO331506",
+        )
+
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert components[0]["kind"] == "borrow"
+    assert components[0]["rung"] == "group_borrow"
+
+
+def test_a_product_nobody_states_a_lead_time_for_uses_the_documented_default():
+    """No supplier agreement, no measured performance: 90 days (the median of the live book)
+    plus the 14-day buffer, so a line 300 days out is still outside its window and a line 60
+    days out is still inside it."""
+    from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+
+    assert DEFAULT_LEAD_TIME_DAYS == 90
+
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        # Deliberately no `_lead_time` call.
+
+        _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            required_date=date.today() + timedelta(days=400), line_no=2,
+            so_number="SO371334",
+        )
+        far, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="145",
+            required_date=date.today() + timedelta(days=300), line_no=1,
+            so_number="SO331506",
+        )
+        far_components = _components(ProjectSupplyService(db).proposal_for(far))
+
+    assert far_components[0]["kind"] == "buy"
+    assert "beyond the lead time window" in far_components[0]["reason"]
 
 
 # --------------------------------------------------------------------------- rung 4: group borrow

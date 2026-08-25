@@ -494,7 +494,7 @@ class FulfilmentBoardService:
             for item in products:
                 served.extend(cells_by_key.get((item, bucket_key), []))
 
-        self._allocate(served)
+        self._allocate(served, as_of=as_of)
 
         cells: List[Dict[str, Any]] = []
         for bucket in buckets:
@@ -1250,7 +1250,7 @@ class FulfilmentBoardService:
 
     # -------------------------------------------------------------- sourcing
 
-    def _allocate(self, served: Sequence[_Row]) -> None:
+    def _allocate(self, served: Sequence[_Row], *, as_of: Optional[date] = None) -> None:
         """Compose every contributing line through the SHEET'S OWN ladder, in board order.
 
         Two questions, and they belong to different owners.
@@ -1421,7 +1421,11 @@ class FulfilmentBoardService:
             # draw: the trail states what each source held, and reading it back afterwards
             # would state what was left instead.
             pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
-            components = self.supply.compose_line(fact, pool_free_left=pool_open)
+            # `as_of` is the board's own, never the clock: which side of the ATP reserve
+            # window a line falls on has to be the same answer a pinned simulation gives.
+            components = self.supply.compose_line(
+                fact, pool_free_left=pool_open, as_of=as_of
+            )
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
             # location `warehouse_ids` (own + pool only, above) does not cover.
             for component in components:

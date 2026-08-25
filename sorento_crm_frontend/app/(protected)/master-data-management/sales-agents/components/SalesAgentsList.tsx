@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -9,7 +11,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { LoaderCircleIcon, MapPin, Pencil, Search, Tag, X } from 'lucide-react';
+import { LoaderCircleIcon, MapPin, Search, Tag, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,21 +36,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  useAnnotateSalesAgent,
-  useBulkAnnotateSalesAgents,
-  useSalesAgents,
-} from '../hooks/useSalesAgents';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useBulkAnnotateSalesAgents, useSalesAgents } from '../hooks/useSalesAgents';
 import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
-import type { SalesAgent, SalesAgentAnnotationPayload } from '../types/salesAgent.types';
-import { EditSalesAgentModal } from './EditSalesAgentModal';
-
-/** How a row got here. `import` is a row an order upload created on meeting a new code. */
-const SOURCE_LABEL: Record<SalesAgent['source'], string> = {
-  autocount: 'AutoCount',
-  manual: 'Manual',
-  import: 'Import',
-};
+import { salesAgentSourceLabel } from '../lib/salesAgentSource';
+import type { SalesAgent } from '../types/salesAgent.types';
 
 /** Which annotation a bulk dialog is setting. One field at a time, deliberately: a dialog
  *  that sets two at once has to answer "did I mean to clear the other one" every time. */
@@ -72,7 +64,6 @@ export default function SalesAgentsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sales_agent', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [editing, setEditing] = useState<SalesAgent | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkField, setBulkField] = useState<BulkField | null>(null);
   const [bulkValue, setBulkValue] = useState('');
@@ -92,12 +83,28 @@ export default function SalesAgentsList() {
     sorting,
     searchQuery: debouncedSearch,
   });
-  const annotate = useAnnotateSalesAgent();
   const bulkAnnotate = useBulkAnnotateSalesAgents();
+  const router = useRouter();
 
   const rows = useMemo<SalesAgent[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
   const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
+
+  // Carried into the record URL so its prev/next pager walks the SAME searched, sorted page
+  // the user was reading (same param names as the list GET). Mirrors the sales-order list.
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch({
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery: debouncedSearch,
+      }),
+    [pagination.pageIndex, pagination.pageSize, sorting, debouncedSearch],
+  );
+
+  const detailHref = (agent: SalesAgent) =>
+    `/master-data-management/sales-agents/${agent.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
   /** The location groups this book already uses, offered before free entry so a typo does
    *  not quietly create a fourth group that matches no warehouse suffix. */
@@ -118,10 +125,18 @@ export default function SalesAgentsList() {
       {
         accessorKey: 'sales_agent',
         header: ({ column }) => <DataGridColumnHeader title="Agent code" column={column} />,
+        // The code IS the way in, the same as the SO number on the sales-order list. A real
+        // anchor, so middle-click and copy-link work, and it stops its own click propagating
+        // to the row handler that would otherwise navigate twice.
         cell: ({ row }) => (
-          <span className="truncate font-medium" title={row.original.sales_agent}>
+          <Link
+            href={detailHref(row.original)}
+            onClick={(e) => e.stopPropagation()}
+            className="truncate font-medium text-primary hover:underline"
+            title={row.original.sales_agent}
+          >
             {row.original.sales_agent}
-          </span>
+          </Link>
         ),
         size: 180,
         meta: { headerTitle: 'Agent code', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -173,7 +188,7 @@ export default function SalesAgentsList() {
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         cell: ({ row }) => (
           <Badge variant="secondary" appearance="light" size="md">
-            {SOURCE_LABEL[row.original.source] ?? row.original.source}
+            {salesAgentSourceLabel(row.original.source)}
           </Badge>
         ),
         size: 130,
@@ -191,30 +206,10 @@ export default function SalesAgentsList() {
         size: 120,
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-14" /> },
       },
-      {
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              aria-label={`Edit ${row.original.sales_agent}`}
-              title="Edit"
-              onClick={() => setEditing(row.original)}
-            >
-              <Pencil className="size-4" />
-            </Button>
-          </div>
-        ),
-        size: 80,
-        enableSorting: false,
-        enableHiding: false,
-        meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
-      },
+      // No actions column. Editing is the record page's job - the row already opens it, and
+      // a pencil beside a clickable row is a second door to the same screen.
     ],
-    [],
+    [detailSearch],
   );
 
   const table = useReactTable({
@@ -235,12 +230,6 @@ export default function SalesAgentsList() {
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
-
-  const save = async (payload: SalesAgentAnnotationPayload) => {
-    if (!editing) return;
-    await annotate.mutateAsync({ id: editing.id, data: payload });
-    setEditing(null);
-  };
 
   const openBulk = (field: BulkField) => {
     if (selectedIds.length === 0) return;
@@ -299,6 +288,9 @@ export default function SalesAgentsList() {
         listingKey="master_data.sales_agents.view"
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage="No sales agents found."
+        // The whole row opens the record. The agent-code link stays a real anchor so
+        // middle-click and copy-link still work, and stops its own click propagating.
+        onRowClick={(row) => router.push(detailHref(row))}
       >
         <Card>
           <CardHeader className="block">
@@ -345,16 +337,6 @@ export default function SalesAgentsList() {
           </CardFooter>
         </Card>
       </DataGrid>
-
-      <EditSalesAgentModal
-        open={editing !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-        agent={editing}
-        isSaving={annotate.isPending}
-        onSave={save}
-      />
 
       {/* Pick the value, then confirm - the write touches every selected row, so it states
           the count on the button rather than after the fact. */}

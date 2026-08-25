@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -122,25 +122,52 @@ beforeEach(() => {
 
 describe('SalesOrdersList - Delivery date column', () => {
   it('is headed "Delivery date", not "Requested delivery"', async () => {
-    stub([order({ delivery_date_from: '2026-01-12', delivery_date_to: '2026-01-12' })]);
+    stub([order({ delivery_dates: ['2026-01-12'] })]);
     renderList();
 
     expect(await screen.findByText('Delivery date')).toBeInTheDocument();
     expect(screen.queryByText('Requested delivery')).toBeNull();
   });
 
-  it('prints ONE date when every dated line falls on the same day', async () => {
-    stub([order({ delivery_date_from: '2026-01-12', delivery_date_to: '2026-01-12' })]);
+  it('prints ONE date, and no expander, when every dated line falls on the same day', async () => {
+    stub([order({ delivery_dates: ['2026-01-12'] })]);
     renderList();
 
     expect(await screen.findByText('12/01/2026')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delivery dates/ })).toBeNull();
   });
 
-  it('prints the span when the lines are due on different days', async () => {
-    stub([order({ delivery_date_from: '2026-01-12', delivery_date_to: '2026-03-10' })]);
+  it('prints the earliest and offers the rest, never a range', async () => {
+    // A range would claim the eight weeks between the two dates. The order is due on two
+    // DAYS, so the cell names the first and puts the others one click away - and the row
+    // keeps its size whether the order is due on one day or on nine.
+    stub([order({ delivery_dates: ['2026-01-12', '2026-03-10'] })]);
     renderList();
 
-    expect(await screen.findByText('12/01/2026 - 10/03/2026')).toBeInTheDocument();
+    expect(await screen.findByText('12/01/2026')).toBeInTheDocument();
+    expect(screen.queryByText('12/01/2026 - 10/03/2026')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Show all 2 delivery dates' }),
+    ).toHaveTextContent('+1');
+  });
+
+  it('lists every distinct date when the expander is opened', async () => {
+    stub([order({ delivery_dates: ['2026-01-12', '2026-02-04', '2026-03-10'] })]);
+    renderList();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all 3 delivery dates' }));
+
+    expect(await screen.findByText('04/02/2026')).toBeInTheDocument();
+    expect(screen.getByText('10/03/2026')).toBeInTheDocument();
+  });
+
+  it('opening the dates does not open the order', async () => {
+    stub([order({ delivery_dates: ['2026-01-12', '2026-03-10'] })]);
+    renderList();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all 2 delivery dates' }));
+
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('reads "-" when no line names a delivery date', async () => {
@@ -149,8 +176,7 @@ describe('SalesOrdersList - Delivery date column', () => {
     stub([
       order({
         requested_delivery_date: '2026-09-01',
-        delivery_date_from: null,
-        delivery_date_to: null,
+        delivery_dates: [],
       }),
     ]);
     renderList();

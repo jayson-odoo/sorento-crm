@@ -18,8 +18,10 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { cn } from '@/lib/utils';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
+import { suggestionBreakdown } from '../../_shared/lib/boardSuggestion';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -87,6 +89,16 @@ export function BoardCellBreakdownDialog({
   const decided = cell.contributions.filter(
     (entry) => Boolean(draft[entry.key]) || entry.covered,
   ).length;
+  /**
+   * Does this cell hold more than one product? On the product axis it never does - the cell IS
+   * a product - and on a pivoted axis it routinely does.
+   */
+  const multiProduct = React.useMemo(
+    () => new Set(cell.contributions.map((entry) => entry.item_code)).size > 1,
+    [cell.contributions],
+  );
+  /** What the ladder proposes for the whole cell, by kind of source. */
+  const suggestion = React.useMemo(() => suggestionBreakdown(cell), [cell]);
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -148,23 +160,28 @@ export function BoardCellBreakdownDialog({
         minSize: 120,
         meta: { headerTitle: 'Sales order' },
       },
-      {
-        // The product per line. Redundant on the product axis, where the title already names
-        // it, and load-bearing on the pivoted ones: a sales-order row's cell holds several
-        // products, and a list of lines that does not say which product each one is cannot be
-        // read at all.
-        id: 'item_code',
-        accessorFn: (row) => row.item_code,
-        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.item_code}>
-            {row.original.item_code}
-          </span>
-        ),
-        size: 150,
-        minSize: 120,
-        meta: { headerTitle: 'Product' },
-      },
+      // The product per line, ONLY when the cell holds more than one. On the product axis the
+      // dialog's own title names it and every row repeats it, which is a column of one
+      // repeated word on a table that is already wide; on a pivoted axis a sales-order row's
+      // cell genuinely holds several products, and a list of lines that does not say which
+      // product each one is cannot be read at all.
+      ...(multiProduct
+        ? [
+            {
+              id: 'item_code',
+              accessorFn: (row: BoardContribution) => row.item_code,
+              header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+              cell: ({ row }) => (
+                <span className="block truncate text-sm" title={row.original.item_code}>
+                  {row.original.item_code}
+                </span>
+              ),
+              size: 150,
+              minSize: 120,
+              meta: { headerTitle: 'Product' },
+            } as ColumnDef<BoardContribution>,
+          ]
+        : []),
       {
         id: 'customer_name',
         accessorFn: (row) => row.customer_name ?? '',
@@ -421,7 +438,7 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, draft, onDecide, ranking],
+    [cell.contributions, draft, multiProduct, onDecide, ranking],
   );
 
   return (
@@ -434,17 +451,69 @@ export function BoardCellBreakdownDialog({
           <DialogTitle className="min-w-0 break-words">
             {`${cell.item_code} · ${bucketLabel}`}
           </DialogTitle>
-          <DialogDescription className="min-w-0 break-words">
-            {`${cell.total_qty} across ${cell.contributions.length} line${
-              cell.contributions.length === 1 ? '' : 's'
-            }, ${decided} decided`}
+          {/* The decision, first and in two small cards: what is being asked for, and what
+              the ladder proposes to do about it. The dialog used to open on a sentence and a
+              table of lines, and the planner had to read a source strip per row to work out
+              what the whole cell was being asked to decide - which is the one thing they came
+              for. "across 1 line" is gone with it: the table below is the lines. */}
+          <DialogDescription className="sr-only">
+            {`${cell.total_qty} outstanding, ${decided} decided`}
           </DialogDescription>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div
+              data-testid="cell-quantity-needed"
+              className="rounded-lg border border-border p-3"
+            >
+              <p className="text-xs text-muted-foreground">Quantity needed</p>
+              <p className="text-2xl font-semibold tabular-nums">{cell.total_qty}</p>
+              <p className="text-xs text-muted-foreground">
+                {`${decided} decided`}
+              </p>
+            </div>
 
-          {/* No balance equation here. It restated the heading's own figure and then split it
-              across four terms the Contributing lines table already carries under Outstanding
-              and Sourced from - a second arithmetic of the same facts, in a vocabulary the
-              screen no longer uses. The heading says what the cell is; the table says how it
-              is met. */}
+            <div data-testid="cell-suggestion" className="rounded-lg border border-border p-3">
+              <p className="mb-1.5 text-xs text-muted-foreground">Suggestion</p>
+              {/* The four rows are ALWAYS all four, in one order, so Buy is in the same place
+                  whether it reads 0 or 300 - a row that came and went would move the others
+                  every time the cell changed. An empty one is muted, never hidden. */}
+              <div className="space-y-1">
+                {suggestion.map((row) => {
+                  const empty = toMinor(row.qty) === 0;
+                  return (
+                    <div
+                      key={row.key}
+                      data-testid={`suggestion-${row.key}`}
+                      className="flex flex-wrap items-center gap-1.5 text-sm"
+                    >
+                      <Badge
+                        variant={empty ? 'secondary' : 'primary'}
+                        appearance="light"
+                        size="sm"
+                      >
+                        {row.label}
+                      </Badge>
+                      <span
+                        className={cn(
+                          'min-w-0 break-words tabular-nums',
+                          empty && 'text-muted-foreground',
+                        )}
+                      >
+                        {row.qty}
+                        {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
+                      </span>
+                      {/* The engine's own sentence, and only when every source on the row
+                          gives the same one: a Buy for "nothing free anywhere" and a Buy for
+                          "beyond the lead time window" are the same number for opposite
+                          reasons, and this card is where that is decided. */}
+                      {!empty && row.note ? (
+                        <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
               repeated under every rank, eleven identical grey sentences saying nothing

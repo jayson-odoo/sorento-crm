@@ -77,6 +77,24 @@ class _MirrorBase(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class SalesAgentAnnotationUpdate(MirrorAnnotationUpdate):
+    """The sales-agent PATCH body: the shared annotations plus ``is_active``.
+
+    Sales-agent-only, and deliberately NOT on ``MirrorAnnotationUpdate``. For the other
+    mirror entities ``is_active`` is a SYNCED column - accepting it there would answer 200
+    to a write the next re-sync silently undoes, which is the failure that looks like
+    success. These rows come from `manual` and `import`, nothing syncs them, and the column
+    decides whether the code is still offered by the Agent pickers
+    (`sales_order_service.list_agents` filters on it): until the record page carried a
+    switch for it there was no way to retire a code who had left.
+
+    Same ``extra="forbid"`` and same ``model_fields_set`` semantics as its parent, so an
+    omitted ``is_active`` leaves the row's own answer alone.
+    """
+
+    is_active: Optional[bool] = None
+
+
 class SalesAgentResponse(_MirrorBase):
     sales_agent: str
     description: Optional[str] = None

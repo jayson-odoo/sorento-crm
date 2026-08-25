@@ -55,14 +55,19 @@ class SalesOrder(BaseModel):
     status: str
     order_date: str
     requested_delivery_date: Optional[str] = None
-    #: The SPAN of this order's LINE delivery dates (`sales_order_lines.required_date`):
-    #: the earliest and the latest date any line names. Both `None` when no line names one,
-    #: because an order nobody dated is not due today. This is what the list's "Delivery
-    #: date" column shows - one order routinely ships across two dates, so the header's own
-    #: `requested_delivery_date` (a different figure, and blank on most of this book) could
-    #: never answer "when is this due". That field is unchanged and still on the detail page.
-    delivery_date_from: Optional[str] = None
-    delivery_date_to: Optional[str] = None
+    #: Every DISTINCT date this order's LINES are due on (`sales_order_lines.required_date`),
+    #: earliest first. Empty when no line names one, because an order nobody dated is not
+    #: due today. This is what the list's "Delivery date" column shows - one order routinely
+    #: ships on several days, so the header's own `requested_delivery_date` (a different
+    #: figure, and blank on most of this book) could never answer "when is this due". That
+    #: field is unchanged and still on the detail page.
+    #:
+    #: A LIST, not the `delivery_date_from`/`_to` span it replaced: an order due on the 12th
+    #: of January and the 10th of March is due on two days, and printing it as a range
+    #: claims a stretch of eight weeks nothing in the data says. The list's sort key keeps
+    #: the old name (`min(required_date)` under `delivery_date_from`) because that is the
+    #: column's id, and renaming it drops every saved column layout that names it.
+    delivery_dates: List[str] = Field(default_factory=list)
     #: Who sold it, resolved from `sales_orders.sales_agent_id` (`sales_agents` master).
     #: The id is carried only so the detail page's edit select can pre-select the current
     #: agent - the code + label are what a person reads; never a bare UUID in the UI.

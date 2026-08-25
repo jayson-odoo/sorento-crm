@@ -3,8 +3,10 @@
 Deliberately not a CRUD master. There is no create and no delete: a row appears when an
 upload meets a code no one holds (`sales_agent_service.resolve_or_create`), which is the
 only place the codes are ever known, and deleting one would orphan the orders that name
-it. What a human does here is annotate: say who the code belongs to, and say what its
-orders are for.
+it. What a human does here is annotate: say who the code belongs to, say what its orders
+are for, and retire a code nobody sells under any more (`is_active`, which is what the
+Agent pickers filter on - see `SalesAgentAnnotationUpdate` for why that one field is
+sales-agent-only).
 
 The list and detail reads are `MirrorReadService`, the same generic reader every other
 mirror entity uses. The annotation adds `person_label` and `demand_class` to the two
@@ -21,7 +23,7 @@ from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.sales_agent import SalesAgent
 from app.schemas.autocount_mirror import (
     BulkAnnotateResult,
-    MirrorAnnotationUpdate,
+    SalesAgentAnnotationUpdate,
     SalesAgentBulkAnnotate,
     SalesAgentResponse,
 )
@@ -107,7 +109,7 @@ async def get_sales_agent(
 @router.patch("/{sales_agent_id}/annotation", response_model=SalesAgentResponse)
 async def annotate_sales_agent(
     sales_agent_id: str,
-    payload: MirrorAnnotationUpdate,
+    payload: SalesAgentAnnotationUpdate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
 ):
@@ -126,6 +128,13 @@ async def annotate_sales_agent(
             location_group=payload.location_group,
             write_location_group="location_group" in fields,
         )
+        # Retiring a code. Written here rather than in `MirrorReadService.annotate`, which
+        # is shared with the entities whose `is_active` is synced - see
+        # `SalesAgentAnnotationUpdate` - and inside the same uncommitted transaction as the
+        # class above, so a refused class leaves the row active exactly as it was.
+        if "is_active" in fields:
+            agent.is_active = bool(payload.is_active)
+            db.flush()
         return service.annotate(
             SalesAgent, sales_agent_id, resource=_RESOURCE,
             internal_note=payload.internal_note, follow_up=payload.follow_up,

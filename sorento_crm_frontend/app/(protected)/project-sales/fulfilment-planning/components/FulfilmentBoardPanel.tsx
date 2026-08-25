@@ -38,6 +38,7 @@ import {
   boardAxis,
   bucketLabelText,
   commitPreviewFor,
+  orderByProductRows,
   rowMatchesSearch,
   confirmLinesFor,
   plannedLineCount,
@@ -458,6 +459,24 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * The same lines, in the GRID's product order.
+   *
+   * The two views are two readings of one payload and the reader toggles between them to find
+   * the same line; the grid's axis is `productRows` and the list was showing the demand query's
+   * own order, so the same product sat in two places and the toggle became a re-search. One
+   * ordering, the payload's, applied here rather than inside the list so `allContributions` -
+   * which Approve-all and the confirm dialog also read - keeps the order the server served in.
+   *
+   * On a PIVOTED axis the grid's rows are sales orders, customers or projects, so there is no
+   * product sequence to agree with; the list is the overview of the whole selection either way
+   * and keeps the product order, which is the axis it has a column for.
+   */
+  const listContributions = React.useMemo<BoardContribution[]>(
+    () => orderByProductRows(allContributions, board.data?.productRows ?? []),
+    [allContributions, board.data],
+  );
+
+  /**
    * Approve all (D3): every UNDECIDED, approvable proposal becomes `approved` in the draft.
    *
    * "Approvable" skips exactly what a single Approve press already refuses to touch: a line
@@ -822,10 +841,13 @@ export function FulfilmentBoardPanel({
             </Button>
           </div>
           {/* Last in the row and `ghost`: going back is secondary to the control that decides
-              what the board shows, and an outline button beside the select out-shouted it. */}
+              what the board shows, and an outline button beside the select out-shouted it.
+              It says SALES ORDERS because that is where it goes: a board is opened from the
+              sales-order list now, and a button naming the worklist promised the wrong screen
+              to everybody who had not come from it. */}
           <Button type="button" variant="ghost" size="sm" onClick={onBack}>
             <ArrowLeft className="size-4" aria-hidden />
-            Back to the worklist
+            Back to sales orders
           </Button>
         </div>
       </div>
@@ -982,7 +1004,7 @@ export function FulfilmentBoardPanel({
                the pivoted/windowed rows the grid shows - the point is an overview, so the row
                axis and product search that shape the grid do not narrow it. */
             <FulfilmentBoardListView
-              contributions={allContributions}
+              contributions={listContributions}
               draft={draft}
               onDecide={decide}
               isLoading={board.isFetching}

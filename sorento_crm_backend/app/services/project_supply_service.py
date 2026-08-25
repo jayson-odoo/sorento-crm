@@ -61,7 +61,12 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    ProductSupplier,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
@@ -83,7 +88,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.projects import Project
-from app.models.scm import ItemClassification, ReorderLevel
+from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority
@@ -103,6 +108,7 @@ from app.services.scm.front_planning_engine import (
     pool_reserve_capacity,
     propose_line,
     qty_text,
+    reserve_window_end,
 )
 
 logger = logging.getLogger(__name__)
@@ -593,6 +599,9 @@ class ProjectSupplyService:
         # of the same confirm cannot both take the whole of it (seeded net of what OTHER
         # confirmed decisions already hold from it, S1 - see `_group_borrow_held_qty`).
         self._donor_line_ledger: Dict[str, Decimal] = {}
+        # The ATP reserve window's lead time per product, read once each per request: a board
+        # of 300 lines asks about the same handful of products.
+        self._lead_time_memo: Dict[str, Optional[int]] = {}
         # S3: the group pile is the SAME ranked list for every line sharing a
         # (product, group) - see `_group_pile_members`. `priority.active_policy` and
         # `priority.payment_terms_by_customer` are read at most once each per request too
@@ -722,8 +731,70 @@ class ProjectSupplyService:
             "lines": payload_lines,
         }
 
+    def _outside_reserve_window(
+        self, fact: _LineFacts, *, as_of: Optional[date] = None
+    ) -> bool:
+        """Is this line due beyond the window inside which it may still take stock?
+
+        `as_of + the product's lead time + RESERVE_BUFFER_DAYS`, and a line due ON that day is
+        INSIDE it - the same boundary rule rung 0's coverage date follows. An UNDATED line is
+        never outside anything: there is no delivery date to be beyond, and deciding on a date
+        nobody stated is exactly the guess the rest of this engine refuses to make.
+        """
+        if fact.required_date is None:
+            return False
+        window_end = reserve_window_end(
+            as_of or date.today(), self._lead_time_days(fact.product_id)
+        )
+        return fact.required_date > window_end
+
+    def _lead_time_days(self, product_id: Optional[str]) -> Optional[int]:
+        """How long buying this product actually takes, in days, or `None` for "nobody says".
+
+        Two sources, in this order, and both are the FASTEST supplier rather than an average
+        across them: the question is whether purchasing could still get it here in time, and
+        that is answered by the supplier they would use.
+
+        1. `scm.supplier_performance.avg_lead_time_days` - what the last orders MEASURED. It
+           is the honest answer and it is also empty on this book today (0 rows), which is why
+           it cannot be the only one.
+        2. `product_suppliers.standard_lead_time_days` - what the supplier agreement STATES.
+           17,667 rows on the live book, so this is the source that actually answers.
+
+        `None` falls through to `DEFAULT_LEAD_TIME_DAYS`, and the caller never invents one.
+        Memoized per request: a board of 300 lines asks about the same handful of products.
+        """
+        if not product_id:
+            return None
+        if product_id in self._lead_time_memo:
+            return self._lead_time_memo[product_id]
+        measured = (
+            self.db.query(func.min(SupplierPerformance.avg_lead_time_days))
+            .filter(
+                SupplierPerformance.product_id == product_id,
+                SupplierPerformance.avg_lead_time_days.isnot(None),
+            )
+            .scalar()
+        )
+        stated = (
+            measured
+            if measured is not None
+            else (
+                self.db.query(func.min(ProductSupplier.standard_lead_time_days))
+                .filter(ProductSupplier.product_id == product_id)
+                .scalar()
+            )
+        )
+        days = None if stated is None else max(int(stated), 0)
+        self._lead_time_memo[product_id] = days
+        return days
+
     def compose_line(
-        self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
+        self,
+        fact: _LineFacts,
+        *,
+        pool_free_left: Optional[Decimal] = None,
+        as_of: Optional[date] = None,
     ) -> Tuple[Component, ...]:
         """The source ladder for ONE line, ladder v2's own order
         (`PLAN-demo-followups-19aug-ladder-v2.md` section E): coverage date, timely
@@ -747,12 +818,22 @@ class ProjectSupplyService:
         """
         pools = self._pool_chain(fact, own_pool_free_left=pool_free_left)
         group_take = self._group_take_candidates(fact)
-        group_borrow = self._group_borrow_auto_candidates(fact)
-        cross_group = self._cross_group_borrow_candidates(
-            fact,
-            residual=self._ladder_residual_before_cross_group(
-                fact, pools=pools, group_take=group_take, group_borrow=group_borrow
-            ),
+        # The ATP reserve window (`front_planning_engine`): a line due beyond
+        # `as_of + lead time + buffer` may take only what is surplus, so the two BORROW rungs
+        # are not walked for it - and their candidate lists, which cost queries, are not built
+        # either. The trail still lists what was there, so "considered and not taken" is
+        # visible rather than silent.
+        outside_window = self._outside_reserve_window(fact, as_of=as_of)
+        group_borrow = [] if outside_window else self._group_borrow_auto_candidates(fact)
+        cross_group = (
+            []
+            if outside_window
+            else self._cross_group_borrow_candidates(
+                fact,
+                residual=self._ladder_residual_before_cross_group(
+                    fact, pools=pools, group_take=group_take, group_borrow=group_borrow
+                ),
+            )
         )
         return propose_line(
             open_qty=fact.open_qty,
@@ -778,6 +859,7 @@ class ProjectSupplyService:
             group_take_candidates=group_take,
             group_borrow_candidates=group_borrow,
             cross_group_borrow_candidates=cross_group,
+            outside_reserve_window=outside_window,
         )
 
     # ---------------------------------------- ladder v2 rung candidates, for the trail

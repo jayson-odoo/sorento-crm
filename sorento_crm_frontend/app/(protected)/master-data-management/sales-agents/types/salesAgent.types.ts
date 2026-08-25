@@ -39,6 +39,10 @@ export interface MirrorAnnotationPayload {
   location_group?: string | null;
   internal_note?: string | null;
   follow_up?: boolean;
+  /** Whether the code is still sold under. Sales-agent only (the other mirror entities'
+   *  PATCH does not accept it): a retired code has to leave the Agent pickers, and until
+   *  the record page carried this switch there was no way to retire one at all. */
+  is_active?: boolean;
 }
 
 export type SalesAgentAnnotationPayload = MirrorAnnotationPayload;

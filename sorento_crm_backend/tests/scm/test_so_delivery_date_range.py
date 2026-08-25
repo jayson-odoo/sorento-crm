@@ -3,11 +3,13 @@
 The list used to print the header's `requested_delivery_date`, which is a different figure
 from the one the lines carry and is blank on most of this book. What a person scanning the
 list is asking is "when is this order due", and the answer lives on the LINES
-(`sales_order_lines.required_date`) - one order routinely ships across two dates.
+(`sales_order_lines.required_date`) - one order routinely ships across several dates.
 
-So the order carries the SPAN of its line dates: the earliest and the latest any line names.
-Both `None` when no line names one, because an order nobody dated is not due today. The
-header's own figure is untouched and stays on the detail page.
+So the order carries EVERY DISTINCT line date, sorted earliest first. Not a span: an order
+whose lines are due on the 12th and the 10th of March is not due "across two months", it is
+due on two days, and a range invents the stretch in between. Empty when no line names a
+date, because an order nobody dated is not due today. The header's own figure is untouched
+and stays on the detail page.
 
 Asserted through the ROUTE, not off the serializer: `response_model` silently drops an
 undeclared field however carefully the dict was built.
@@ -118,9 +120,9 @@ def _listed(world) -> dict:
 
 # --- the span of the line dates ---------------------------------------------
 
-def test_the_span_runs_from_the_earliest_line_date_to_the_latest(scm_app):
-    """Three lines, two distinct dates: the column has to say the order is due across
-    that whole stretch, not on whichever line happens to sort first."""
+def test_every_distinct_line_date_is_reported_earliest_first(scm_app):
+    """Three lines, two distinct dates: the column has to name both, once each, and in
+    the order they fall - not whichever line happens to sort first."""
     world = _seed(scm_app, lines=[
         {"required_date": date(2026, 3, 10)},
         {"required_date": date(2026, 1, 12)},
@@ -130,14 +132,12 @@ def test_the_span_runs_from_the_earliest_line_date_to_the_latest(scm_app):
     row = _listed(world)
 
     # It survives `response_model`, which silently drops anything undeclared.
-    assert "delivery_date_from" in row, row.keys()
-    assert row["delivery_date_from"] == "2026-01-12"
-    assert row["delivery_date_to"] == "2026-03-10"
+    assert "delivery_dates" in row, row.keys()
+    assert row["delivery_dates"] == ["2026-01-12", "2026-03-10"]
 
 
-def test_lines_that_agree_report_the_same_date_at_both_ends(scm_app):
-    """The common case, and what lets the cell print one date rather than a range of
-    one day."""
+def test_lines_that_agree_report_one_date(scm_app):
+    """The common case, and what lets the cell print a plain date with no expander."""
     world = _seed(scm_app, lines=[
         {"required_date": date(2026, 1, 12)},
         {"required_date": date(2026, 1, 12)},
@@ -145,15 +145,14 @@ def test_lines_that_agree_report_the_same_date_at_both_ends(scm_app):
 
     row = _listed(world)
 
-    assert row["delivery_date_from"] == "2026-01-12"
-    assert row["delivery_date_to"] == "2026-01-12"
+    assert row["delivery_dates"] == ["2026-01-12"]
 
 
-def test_an_order_no_line_dates_reports_neither_end(scm_app):
-    """None, not the order date and not today: an order nobody dated is not due now.
+def test_an_order_no_line_dates_reports_nothing(scm_app):
+    """Empty, not the order date and not today: an order nobody dated is not due now.
 
     The HEADER's own `requested_delivery_date` is set here and must not leak into the
-    span - it is a different figure, and conflating the two is what this change undoes.
+    list - it is a different figure, and conflating the two is what this change undoes.
     """
     world = _seed(
         scm_app,
@@ -163,14 +162,14 @@ def test_an_order_no_line_dates_reports_neither_end(scm_app):
 
     row = _listed(world)
 
-    assert row["delivery_date_from"] is None
-    assert row["delivery_date_to"] is None
+    assert row["delivery_dates"] == []
     # Unchanged, and still the thing the detail page reads.
     assert row["requested_delivery_date"] == "2026-09-01"
 
 
-def test_an_undated_line_never_pulls_the_span_earlier(scm_app):
-    """A mix of dated and undated lines answers with what is known, not with a null."""
+def test_an_undated_line_contributes_nothing(scm_app):
+    """A mix of dated and undated lines answers with what is known, and never with a
+    blank entry standing in for the line nobody dated."""
     world = _seed(scm_app, lines=[
         {"required_date": None},
         {"required_date": date(2026, 2, 4)},
@@ -178,11 +177,10 @@ def test_an_undated_line_never_pulls_the_span_earlier(scm_app):
 
     row = _listed(world)
 
-    assert row["delivery_date_from"] == "2026-02-04"
-    assert row["delivery_date_to"] == "2026-02-04"
+    assert row["delivery_dates"] == ["2026-02-04"]
 
 
-def test_the_detail_read_carries_the_same_span(scm_app):
+def test_the_detail_read_carries_the_same_dates(scm_app):
     """Off the same serializer, so the list and the order cannot disagree about when it
     is due."""
     world = _seed(scm_app, lines=[
@@ -192,16 +190,17 @@ def test_the_detail_read_carries_the_same_span(scm_app):
 
     body = _detail(world)
 
-    assert body["delivery_date_from"] == "2026-01-12"
-    assert body["delivery_date_to"] == "2026-03-10"
+    assert body["delivery_dates"] == ["2026-01-12", "2026-03-10"]
 
 
 # --- ordering by it ---------------------------------------------------------
 
-def test_the_list_can_be_ordered_by_the_start_of_the_span(scm_app):
+def test_the_list_can_be_ordered_by_the_earliest_of_them(scm_app):
     """"What is due first" is the question the column is scanned with, so the header has
     to be able to answer it - which means the sort happens in SQL, over the same
-    `min(required_date)` the cell prints."""
+    `min(required_date)` the cell prints first. The sort key keeps its old name
+    (`delivery_date_from`): it is the column's id, and renaming it would drop every saved
+    column layout that names it."""
     world = _seed(scm_app, lines=[{"required_date": date(2026, 5, 20)}])
     app, db = world.app, world.db
     # A second order of this test's own, due earlier, sharing the marker so one query

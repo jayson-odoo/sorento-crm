@@ -1,9 +1,13 @@
 /**
- * SalesAgentsList - loading / empty / error / data, and the edit path.
+ * SalesAgentsList - loading / empty / error / data, and the way in to a record.
  *
  * The four states are asserted because a master the captain cannot read is the same
  * failure as one he cannot write: an unclassified agent must SAY it is unclassified
  * ("Not set"), never render blank.
+ *
+ * Editing is no longer here. The row opens the record page, which edits in place, so the
+ * pencil that used to sit at the end of every row is gone - a second door to the same
+ * screen, on a row that is already a door.
  *
  * `useListingColumnPreferences` is mocked so DataGrid stops rendering skeletons and
  * mounts real rows under jsdom (see CLAUDE.md).
@@ -28,9 +32,10 @@ if (!window.matchMedia) {
   });
 }
 
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/master-data-management/sales-agents',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -65,7 +70,6 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 const hooks = vi.hoisted(() => ({
   useSalesAgents: vi.fn(),
-  useAnnotateSalesAgent: vi.fn(),
   useBulkAnnotateSalesAgents: vi.fn(),
 }));
 vi.mock('../hooks/useSalesAgents', () => hooks);
@@ -91,7 +95,6 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
   };
 }
 
-const mutateAsync = vi.fn().mockResolvedValue(undefined);
 const bulkMutateAsync = vi.fn().mockResolvedValue({ updated: 2 });
 
 function mockList(over: Record<string, unknown> = {}) {
@@ -112,11 +115,9 @@ function withRows(rows: SalesAgent[]) {
 
 beforeEach(() => {
   hooks.useSalesAgents.mockReset();
-  hooks.useAnnotateSalesAgent.mockReset();
   hooks.useBulkAnnotateSalesAgents.mockReset();
-  mutateAsync.mockClear();
+  push.mockReset();
   bulkMutateAsync.mockClear().mockResolvedValue({ updated: 2 });
-  hooks.useAnnotateSalesAgent.mockReturnValue({ mutateAsync, isPending: false });
   hooks.useBulkAnnotateSalesAgents.mockReturnValue({
     mutateAsync: bulkMutateAsync,
     isPending: false,
@@ -278,22 +279,50 @@ describe('SalesAgentsList bulk annotation', () => {
   });
 });
 
-describe('SalesAgentsList editing', () => {
-  it('the row edit button opens the modal on that agent and saves through the mutation', async () => {
+describe('SalesAgentsList - the row opens the record', () => {
+  it('navigates when a cell other than the code is clicked', () => {
     withRows([agent()]);
     render(<SalesAgentsList />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit SEAN III' }));
-    expect(await screen.findByText('Edit SEAN III')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Sean'));
 
-    fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'Sean Lim' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() =>
-      expect(mutateAsync).toHaveBeenCalledWith({
-        id: 'agent-1',
-        data: { person_label: 'Sean Lim', demand_class: 'project', location_group: 'BB' },
-      }),
+    expect(push).toHaveBeenCalledWith(
+      expect.stringContaining('/master-data-management/sales-agents/agent-1'),
     );
+  });
+
+  it('carries the list query, so the record pager walks the same page', () => {
+    withRows([agent()]);
+    render(<SalesAgentsList />);
+
+    fireEvent.click(screen.getByText('Sean'));
+
+    const href = push.mock.calls[0][0] as string;
+    const qs = new URLSearchParams(href.split('?')[1] ?? '');
+    expect(qs.get('page')).toBe('1');
+    expect(qs.get('limit')).toBe('50');
+    expect(qs.get('sort')).toBe('sales_agent');
+  });
+
+  it('the code itself is a link to the record, so copy-link and middle-click work', () => {
+    withRows([agent()]);
+    render(<SalesAgentsList />);
+
+    const link = screen.getByRole('link', { name: 'SEAN III' });
+    expect(link).toHaveAttribute(
+      'href',
+      expect.stringContaining('/master-data-management/sales-agents/agent-1'),
+    );
+
+    // The anchor navigates on its own; the row handler must not fire a second push.
+    fireEvent.click(link);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('carries no pencil: the row IS the way in, and editing happens on the record', () => {
+    withRows([agent()]);
+    render(<SalesAgentsList />);
+
+    expect(screen.queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument();
   });
 });
