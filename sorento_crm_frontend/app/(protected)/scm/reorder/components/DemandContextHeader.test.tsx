@@ -3,6 +3,9 @@
  * only - it stops at the end of last month, on purpose, to stay in agreement with the
  * plan's own trend verdict (`trajectory_service.trajectory_for_run`). The label must say
  * "full months" honestly rather than implying a live trailing window through today.
+ *
+ * P5 (captain, 25 Aug): ONE badge, the drilled row's own channel. A project row is told
+ * its project year and nothing else; a retail row its three months and nothing else.
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
@@ -12,7 +15,7 @@ import { DemandContextHeader } from './DemandContextHeader';
 describe('DemandContextHeader', () => {
   it('renders nothing when both quantities are absent (the response predates the field)', () => {
     const { container } = render(
-      <DemandContextHeader data={{ project_12m_qty: null, retail_3m_qty: null }} />,
+      <DemandContextHeader data={{ project_12m_qty: null, retail_3m_qty: null }} channel="project" />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -26,19 +29,66 @@ describe('DemandContextHeader', () => {
           project_window_months: 12,
           retail_window_months: 3,
         }}
+        channel="project"
       />,
     );
 
     expect(screen.getByText('Project, last 12 full months: 120')).toBeInTheDocument();
+  });
+
+  it('shows the project window ONLY on a project row (P5)', () => {
+    render(
+      <DemandContextHeader
+        data={{
+          project_12m_qty: 120,
+          retail_3m_qty: 30,
+          project_window_months: 12,
+          retail_window_months: 3,
+        }}
+        channel="project"
+      />,
+    );
+
+    expect(screen.getByText('Project, last 12 full months: 120')).toBeInTheDocument();
+    expect(screen.queryByText(/Retail, last/)).not.toBeInTheDocument();
+  });
+
+  it('shows the retail window ONLY on a retail row (P5)', () => {
+    render(
+      <DemandContextHeader
+        data={{
+          project_12m_qty: 120,
+          retail_3m_qty: 30,
+          project_window_months: 12,
+          retail_window_months: 3,
+        }}
+        channel="retail"
+      />,
+    );
+
     expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+    expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
+  });
+
+  it('reads the retail window for a row that is not project (unclassified, dealer, unset)', () => {
+    const data = { project_12m_qty: 120, retail_3m_qty: 30 };
+
+    const unclassified = render(<DemandContextHeader data={data} channel="unclassified" />);
+    expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+    expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
+    unclassified.unmount();
+
+    const dealer = render(<DemandContextHeader data={data} channel="dealer" />);
+    expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+    dealer.unmount();
+
+    render(<DemandContextHeader data={data} />);
+    expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+    expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
   });
 
   it('carries a title explaining the month in progress is not counted yet', () => {
-    render(
-      <DemandContextHeader
-        data={{ project_12m_qty: 120, retail_3m_qty: 30 }}
-      />,
-    );
+    render(<DemandContextHeader data={{ project_12m_qty: 120, retail_3m_qty: 30 }} channel="project" />);
 
     const badge = screen.getByText(/Project, last 12 full months/);
     expect(badge).toHaveAttribute(
@@ -48,16 +98,19 @@ describe('DemandContextHeader', () => {
   });
 
   it('renders a zero as a real figure, never hidden', () => {
-    render(<DemandContextHeader data={{ project_12m_qty: 0, retail_3m_qty: null }} />);
+    render(<DemandContextHeader data={{ project_12m_qty: 0, retail_3m_qty: null }} channel="project" />);
 
     expect(screen.getByText('Project, last 12 full months: 0')).toBeInTheDocument();
-    expect(screen.getByText('Retail, last 3 full months: 0')).toBeInTheDocument();
   });
 
   it('falls back to 12/3 months when the window fields are absent', () => {
-    render(<DemandContextHeader data={{ project_12m_qty: 5, retail_3m_qty: 2 }} />);
-
+    const project = render(
+      <DemandContextHeader data={{ project_12m_qty: 5, retail_3m_qty: 2 }} channel="project" />,
+    );
     expect(screen.getByText('Project, last 12 full months: 5')).toBeInTheDocument();
+    project.unmount();
+
+    render(<DemandContextHeader data={{ project_12m_qty: 5, retail_3m_qty: 2 }} channel="retail" />);
     expect(screen.getByText('Retail, last 3 full months: 2')).toBeInTheDocument();
   });
 });

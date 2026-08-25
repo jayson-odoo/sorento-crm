@@ -136,7 +136,7 @@ export function DemandDrillPopover({
 
             {data && (data.project_12m_qty != null || data.retail_3m_qty != null) ? (
               <div className="border-b px-3 py-2">
-                <DemandContextHeader data={data} />
+                <DemandContextHeader data={data} channel={kind} />
               </div>
             ) : null}
 

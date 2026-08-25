@@ -16,10 +16,23 @@ export interface DemandContextFields {
 }
 
 /**
- * Compact per-channel context header for the demand drills (captain, 20 Aug follow-up):
+ * The channel the row being drilled belongs to. Wide enough to take either caller's own
+ * vocabulary unconverted - `PlanChannel` on the plan grid, `OrderSummaryDemandKind` on the
+ * summary report - because only one distinction is made here: project, or not.
+ */
+export type DemandContextChannel = 'project' | 'retail' | 'unclassified' | 'dealer';
+
+/**
+ * Compact context header for the demand drills (captain, 20 Aug follow-up):
  *
  * > "for project here, you need to show the past year project order for this item; for
  * >  retail, the last 3 months, for user to judge whether to top up the quantity ordered"
+ *
+ * ONE badge, the drilled row's OWN channel (P5, captain 25 Aug). It used to render both,
+ * so a project row was told its retail history and a retail row its project year - two
+ * numbers where the question had one, and the reader had to work out which of them was
+ * theirs. A row that is not project reads the retail window, the same fallback the
+ * neighbouring "no orders in the last N full months" line already takes.
  *
  * This is the historical flow of orders PLACED over the window, whatever their status
  * today - distinct from the committed/open-demand figures the popover already renders
@@ -38,18 +51,30 @@ export interface DemandContextFields {
  * Aug 2026). Labelled "full months" here rather than quietly including today's partial
  * one, which would say more than the number actually counts.
  */
-export function DemandContextHeader({ data }: { data: DemandContextFields }) {
+export function DemandContextHeader({
+  data,
+  channel,
+}: {
+  data: DemandContextFields;
+  channel?: DemandContextChannel;
+}) {
   if (data.project_12m_qty == null && data.retail_3m_qty == null) return null;
-  const projectMonths = data.project_window_months ?? 12;
-  const retailMonths = data.retail_window_months ?? 3;
+  const isProject = channel === 'project';
+  const months = isProject
+    ? (data.project_window_months ?? 12)
+    : (data.retail_window_months ?? 3);
+  const qty = isProject ? data.project_12m_qty : data.retail_3m_qty;
   const title = 'Full calendar months only - the month in progress is not counted yet.';
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-      <Badge variant="info" appearance="light" size="sm" className="font-normal" title={title}>
-        {`Project, last ${projectMonths} full months: ${fmtInt(data.project_12m_qty ?? 0)}`}
-      </Badge>
-      <Badge variant="success" appearance="light" size="sm" className="font-normal" title={title}>
-        {`Retail, last ${retailMonths} full months: ${fmtInt(data.retail_3m_qty ?? 0)}`}
+      <Badge
+        variant={isProject ? 'info' : 'success'}
+        appearance="light"
+        size="sm"
+        className="font-normal"
+        title={title}
+      >
+        {`${isProject ? 'Project' : 'Retail'}, last ${months} full months: ${fmtInt(qty ?? 0)}`}
       </Badge>
     </div>
   );
