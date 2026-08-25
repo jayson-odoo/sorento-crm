@@ -599,7 +599,53 @@ def test_a_same_agent_donor_is_offered_even_when_ranked_above_but_never_auto_pro
         assert same_agent_rows[0].get("lower_ranked") is False
 
 
-# --------------------------------------------------------------------------- rung 5: cross-group
+def test_a_higher_ranked_donor_of_ANOTHER_agent_is_not_offered_at_all():
+    """AC-L6 (section 1c): "a donor sharing the line's sales agent is offered at ANY rank
+    ... another agent's order only when ranked below".
+
+    The offer list used to carry every donor in the group. A higher-ranked order belonging
+    to somebody else is not this planner's to take - offering it puts a row on the screen
+    whose only honest use is to phone another agent and ask, which is not what the dialog
+    says it is for.
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        mine = _agent(db, f"CYNDI{_uid()[:4]}", location_group=_group)
+        theirs = _agent(db, f"JEREMY{_uid()[:4]}", location_group=_group)
+        db.commit()
+
+        # Ranked ABOVE this line (due sooner), and somebody else's.
+        _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE - timedelta(days=30), line_no=2,
+            so_number="SO910001", sales_agent_id=theirs.id,
+        )
+        # Ranked BELOW this line, and also somebody else's: that one IS offered.
+        _seed_line(
+            db, company_id, project, product, own, qty_ordered="70",
+            required_date=REQUIRED_DATE + timedelta(days=30), line_no=3,
+            so_number="SO910002", sales_agent_id=theirs.id,
+        )
+        order, _line_obj, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="90",
+            required_date=REQUIRED_DATE, line_no=1, so_number="SO910003",
+            sales_agent_id=mine.id,
+        )
+        db.commit()
+
+        candidates = ProjectSupplyService(db).proposal_for(order)["lines"][0][
+            "borrow_candidates"
+        ]
+
+    offered = {
+        c["donor_so_number"] for c in candidates if c.get("rung") == "group_borrow"
+    }
+    assert offered == {"SO910002"}
+
+
+# --------------------------------------------------------------------------- rung 4: cross-group
 
 
 def test_cross_group_borrow_is_capped_by_the_small_quantity_limit():
