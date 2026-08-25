@@ -74,10 +74,11 @@ Section 4 item 4's first half, **K (SPO documents live in `spo_allocations`)**, 
 (79,968 lines) across, the purchase-history import writes the SPO family there instead of
 `purchase_orders`, and `on_order_v` plus the two incoming readers stop dropping a row that has
 no shipment. AC-K1/K2/K3/K4 pass on the scratch schema. See the BUILT block under section K
-for the six ways the build differs from the paragraphs above, the `order_link_claim` decision,
-and the open gap (no feed refreshes a live SPO balance). **The migration is NOT yet applied to
-the shared dev database**, so every `pg_session` test touching `spo_allocations` reads
-`UndefinedColumn` until it is.
+for the ways the build differs from the paragraphs above, the `order_link_claim` decision,
+the STALE SUPPLY ruling and the open gap (no feed refreshes a live SPO balance). Migration 420
+has been applied to the shared dev database once; the review added two guarded steps to it
+(`add_claim_spo_side`, `repoint_spo_claims`), so it must be re-applied, and until it is every
+`pg_session` test touching `scm.order_link_claim` reads `UndefinedColumn`.
 
 Lane: `.claude/worktrees/scm-uat` (FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
@@ -278,7 +279,36 @@ above:
   `outstanding_reader` already SKIPS every `SPO-` row of the purchase book ("this book does not
   carry them") and the history channel writes closed rows, so after this migration the 715 open
   lines are a snapshot that no upload updates. Whoever takes section I should decide which feed
-  owns them.
+  owns them. Until then the staleness rule below is what stops that snapshot being read as
+  supply: those 715 lines are ALL past-dated, so the honest answer today is that the module has
+  no unshipped incoming supply at all, and the fix for that is a feed, not a filter.
+- **RULING TO CONFIRM (captain), shipped in this PR because the alternative is a plan that
+  suppresses purchases: STALE SUPPLY.** An SPO allocation with NO booked shipment whose
+  `expected_date` is before today is STALE and is not supply. It is excluded from rung 1,
+  from the order inquiry's inbound pool, from the coverage screen's already-on-order figure
+  and from `scm.on_order_v`. A shipment-backed row is NEVER stale, because once a container
+  exists the arrival is tracked and a late container is late rather than imaginary. A row
+  with no date at all is not stale either (nothing says its date has passed), and it can
+  never be timely, so it covers nobody. The boundary is inclusive: a row dated today arrives
+  today, and today is supply. One copy of the rule in
+  `app/services/scm/spo_supply.py`, repeated in SQL by the view, so the popover's SPO qty
+  column and the engine's decision cannot differ. Why it had to ship: all 715 open SPO lines
+  (39,110 units) carry a past `expected_date`, the oldest 2024-06-28, and nothing refreshes
+  them, so counted as supply they suppress real purchases for ever on two-year-old promises.
+- **The claim gained an SPO side, `scm.order_link_claim.spo_allocation_id`.** Clearing
+  `po_line_id` was not enough: 12,393 claims naming 2,989 sales orders would have been
+  permanently unresolvable, `sales_order_service.with_links` would have shown every one of
+  those orders as "awaiting purchase order", and `po_history_service` would have gone on
+  writing more of them. `order_link_service._purchase_side` now resolves an `SPO-` number
+  against `spo_allocations` (lowest line number wins where a document states the item twice)
+  and a claim is resolved on either column. Migration 420 adds the column and re-points the
+  cleared claims; the downgrade drops it and re-resolves `po_line_id`.
+- **An imported row states its own receipt.** The SPO Allocations listing recomputes
+  `quantity_received` from approved GRN lines, which is right for a row this system raised
+  and wrong for 74,016 history lines that arrived stating theirs: recomputing returns 0, and
+  three years of delivered purchases would have read as outstanding. Recomputation is now
+  applied only to rows with no `source_system`. The same ownership rule scopes the external
+  GRN triple lookup and the external bulk create.
 - **Also unchanged: `coverage_service`'s dated in-transit timeline** still drives off
   `inbound_shipment_lines`, so an SPO with no shipment does not appear on it. AC-K3 is about
   `on_order_v`, which it does.

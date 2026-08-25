@@ -1490,7 +1490,26 @@ def test_a_same_agent_donor_ranked_BELOW_this_line_needs_no_authorisation_either
 # --------------------------------------------------------------------------- rung 1
 
 
-def _spo_line(db, product, warehouse, *, qty, arrives, spo_number=None, line_no=1):
+def _shipment(db, *, eta, arrived=None):
+    """A booked container. Once one exists the arrival is TRACKED, which is what takes the
+    row out of the staleness rule (`spo_supply`)."""
+    from app.models.procurement import InboundShipment
+
+    row = InboundShipment(
+        id=_uid(),
+        shipment_number=f"ZZT-SHIP-{_uid()[:8]}",
+        shipment_date=date.today(),
+        estimated_arrival_date=eta,
+        actual_arrival_date=arrived,
+        shipment_status="in_transit",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _spo_line(db, product, warehouse, *, qty, arrives, spo_number=None, line_no=1,
+              shipment=None):
     """One open SPO line: a shipping order with no container booked, which is what every
     SPO document is until somebody books one (section K, migration 420)."""
     from app.models.procurement import SPOAllocation
@@ -1501,6 +1520,7 @@ def _spo_line(db, product, warehouse, *, qty, arrives, spo_number=None, line_no=
         spo_line_number=line_no,
         product_id=product.id,
         warehouse_id=warehouse.id,
+        inbound_shipment_id=shipment.id if shipment is not None else None,
         allocated_quantity=qty,
         quantity_received=0,
         receipt_status="pending",
@@ -1554,3 +1574,66 @@ def test_an_spo_arriving_after_the_required_date_is_not_timely():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert [c["kind"] for c in components] == ["buy"]
+
+
+def test_a_past_dated_promise_with_no_container_is_not_supply():
+    """The staleness rule (`app/services/scm/spo_supply.py`), which the whole SCM module
+    shares. All 715 open SPO lines on the captain's book are past-dated, the oldest by two
+    years, and nothing refreshes them: counted as supply they suppress a real purchase for
+    ever on the strength of a date nobody has restated."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _spo_line(db, product, own, qty=40, arrives=date.today() - timedelta(days=1))
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["buy"]
+
+
+def test_the_same_past_dated_promise_IS_supply_once_a_container_is_booked():
+    """A shipment-backed row is never stale: the arrival is tracked from that point, so a
+    late container is late rather than imaginary, and the date the ladder reads is the
+    shipment's, not the line's."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        shipment = _shipment(db, eta=REQUIRED_DATE - timedelta(days=5))
+        _spo_line(db, product, own, qty=40, arrives=date.today() - timedelta(days=400),
+                  shipment=shipment)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert components[0]["qty"] == "40"
+
+
+def test_a_promise_dated_today_still_counts():
+    """The boundary is inclusive on BOTH rules: `expected_date == as_of` arrives today, and
+    an arrival on the required date itself is timely. Written down because an exclusive
+    comparison on either would drop a whole day of real supply and read as a rounding
+    detail."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _spo_line(db, product, own, qty=40, arrives=date.today())
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+            required_date=date.today(),
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["timely_spo"]

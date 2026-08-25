@@ -50,10 +50,29 @@ with its counts instead of being silently NULLed by `ON DELETE SET NULL`.
 
 `scm.order_link_claim` is the one exception, and it is not an orphan: the claim holds both
 document numbers as TEXT and `po_line_id` is only the resolver's cache of where that number
-landed (see the model docstring). 12,390 claims name an SPO, so their cache is cleared and
-their `resolved_at` with it - the claim still says exactly what it always said, and it now
-says it about a document that is no longer a purchase order. The downgrade re-resolves them
-by the resolver's own rule.
+landed (see the model docstring). 12,393 claims name an SPO, so that cache is cleared and
+their `resolved_at` with it, and the claim is then re-pointed at the ALLOCATION through a
+new column, `spo_allocation_id`. Without that column the claim could never resolve again -
+`sales_order_service.with_links` reads `resolved_at`, so 2,989 sales orders would have read
+"awaiting purchase order" for ever - and `po_history_service` would have gone on writing
+more claims that could not. The downgrade drops the column and re-resolves `po_line_id` by
+the resolver's own rule.
+
+**If the migration refuses**, the counts name the table and the column. There is no column
+on any of those tables that could point at an allocation, so the remediation is to deal with
+the rows before re-running, not to widen the migration:
+
+  * `scm.shipment_line_spo_link.purchase_order_id` / `.purchase_order_line_id` - a packing
+    list that was matched to an SPO filed as a purchase order. Delete the link rows for
+    those SPO documents (`consolidated_packing_list` rebuilds them from the shipment lines
+    on the next match run) and re-run.
+  * `picking_lines.po_line_id` - a GRN drawn against an SPO line. NULL the column on those
+    rows; the GRN keeps its `spo_number_raw` and `grn_spo_matching` re-places it against the
+    allocation, which is the link it should have had.
+  * `projects.order_inquiry_rows.po_line_id` / `scm.loading_plan_line.po_line_id` /
+    `scm.plan_exception.purchase_order_id` - all measured 0. If one is not, the row was
+    placed on a document that is not a purchase order and belongs on the SPO through
+    section I's Link SPO, so clear the column and re-place it there.
 
 Not restored by the downgrade: each SPO document's own row id (nothing references it -
 measured 0 on both `scm.shipment_line_spo_link.purchase_order_id` and
@@ -73,9 +92,11 @@ depends_on = None
 
 logger = logging.getLogger("alembic.runtime.migration")
 
-#: The stamps this migration is responsible for. A row carrying one of them came OUT of
-#: `purchase_orders` and the downgrade puts it back; a row with no stamp was raised by this
-#: system (`spo_conversion_service`) and has never lived anywhere else.
+#: The stamps the move carries across, for the record. The DOWNGRADE does not test for
+#: these three: it moves back every `SPO-` row whose `source_system` is set at all, because
+#: the mover routes on the NUMBER and would carry a document stamped something nobody has
+#: written yet. A row with NO stamp was raised inside this system
+#: (`spo_conversion_service`) and has never lived in `purchase_orders`, so it stays.
 MOVED_SOURCES = ("scm_spo_history", "scm_po_history", "scm_upload")
 
 #: Every foreign key that can point INTO an SPO document, with the schema its table lives in.
@@ -115,46 +136,51 @@ def _schema(bind, module: str) -> str:
     return module if current in (None, "public") else f"{current}_{module}"
 
 
-def _has_column(bind, table: str, column: str) -> bool:
+def _default_schema(bind) -> str:
+    """Where the unqualified tables live: `public` normally, the scratch schema in a test."""
+    return bind.exec_driver_sql("SELECT current_schema()").scalar()
+
+
+def _has_column(bind, table: str, column: str, schema: str | None = None) -> bool:
     return bool(
         bind.execute(
             sa.text(
                 """
                 SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema()
+                WHERE table_schema = :schema
                   AND table_name = :table AND column_name = :column
                 """
             ),
-            {"table": table, "column": column},
+            {"schema": schema or _default_schema(bind), "table": table, "column": column},
         ).first()
     )
 
 
-def _has_constraint(bind, name: str) -> bool:
+def _has_constraint(bind, name: str, schema: str | None = None) -> bool:
     return bool(
         bind.execute(
             sa.text(
                 """
                 SELECT 1 FROM pg_constraint c
                 JOIN pg_namespace n ON n.oid = c.connamespace
-                WHERE n.nspname = current_schema() AND c.conname = :name
+                WHERE n.nspname = :schema AND c.conname = :name
                 """
             ),
-            {"name": name},
+            {"schema": schema or _default_schema(bind), "name": name},
         ).first()
     )
 
 
-def _has_index(bind, name: str) -> bool:
+def _has_index(bind, name: str, schema: str | None = None) -> bool:
     return bool(
         bind.execute(
             sa.text(
                 """
                 SELECT 1 FROM pg_indexes
-                WHERE schemaname = current_schema() AND indexname = :name
+                WHERE schemaname = :schema AND indexname = :name
                 """
             ),
-            {"name": name},
+            {"schema": schema or _default_schema(bind), "name": name},
         ).first()
     )
 
@@ -231,6 +257,113 @@ def widen_allocations(bind) -> None:
         )
 
 
+def add_claim_spo_side(bind) -> None:
+    """`scm.order_link_claim.spo_allocation_id`: the purchase side of an SPO claim.
+
+    The claim resolves a document NUMBER to the row that number names, and an `SPO-` number
+    now names a row in `spo_allocations`. Without a column for that half the 12,393 claims
+    carrying one could never resolve again - `sales_order_service.with_links` reads
+    `resolved_at`, so 2,989 sales orders would have read "awaiting purchase order" for ever,
+    and `po_history_service` would have gone on writing more of them.
+
+    Guarded step by step: this migration is applied by hand on a shared dev database, and it
+    has already been applied there once, so it must add only what is missing.
+    """
+    scm = _schema(bind, "scm")
+    if not _has_column(bind, "order_link_claim", "spo_allocation_id", schema=scm):
+        op.add_column(
+            "order_link_claim",
+            sa.Column("spo_allocation_id", postgresql.UUID(as_uuid=False), nullable=True),
+            schema=scm,
+        )
+    if not _has_constraint(bind, "fk_scm_order_link_claim_spo_allocation", schema=scm):
+        op.create_foreign_key(
+            "fk_scm_order_link_claim_spo_allocation", "order_link_claim", "spo_allocations",
+            ["spo_allocation_id"], ["id"], ondelete="SET NULL",
+            source_schema=scm, referent_schema=_default_schema(bind),
+        )
+    if not _has_index(bind, "ix_scm_order_link_claim_spo_allocation", schema=scm):
+        op.create_index(
+            "ix_scm_order_link_claim_spo_allocation", "order_link_claim",
+            ["spo_allocation_id"], schema=scm,
+        )
+
+
+def repoint_spo_claims(bind) -> dict:
+    """Point every claim naming an `SPO-` document at the allocation it now means.
+
+    The same rule `order_link_service._purchase_side` applies, in SQL: a claim that names an
+    ITEM resolves to that item's line on the document, one that names none (a `**SO:174830**`
+    note in a PO export, which cannot say which line it describes) takes the document's first
+    line as its anchor. Lowest line number wins where a document states the same product
+    twice, so a re-run picks the same row rather than whichever Postgres returned first.
+
+    Idempotent: only claims with no SPO side yet are touched. `resolved_at` comes back only
+    where the sales side was already found, because resolved still has to mean both halves.
+    """
+    scm = _schema(bind, "scm")
+    if not _table_exists(bind, scm, "order_link_claim"):
+        return {"with_item": 0, "item_less": 0}
+    if not _has_column(bind, "order_link_claim", "spo_allocation_id", schema=scm):
+        return {"with_item": 0, "item_less": 0}
+
+    with_item = bind.execute(
+        sa.text(
+            f"""
+            WITH pick AS (
+                SELECT DISTINCT ON (sa.company_id, sa.spo_number, p.product_code)
+                       sa.company_id, sa.spo_number, p.product_code, sa.id
+                FROM spo_allocations sa
+                JOIN products p ON p.id = sa.product_id
+                WHERE sa.spo_number LIKE 'SPO-%'
+                ORDER BY sa.company_id, sa.spo_number, p.product_code,
+                         sa.spo_line_number NULLS LAST, sa.id
+            )
+            UPDATE "{scm}"."order_link_claim" c
+            SET spo_allocation_id = pick.id,
+                resolved_at = CASE WHEN c.so_line_id IS NOT NULL AND c.resolved_at IS NULL
+                                   THEN now() ELSE c.resolved_at END
+            FROM pick
+            WHERE c.spo_allocation_id IS NULL
+              AND c.item_code IS NOT NULL
+              AND c.po_number = pick.spo_number
+              AND c.item_code = pick.product_code
+              AND c.company_id = pick.company_id
+            """
+        )
+    ).rowcount or 0
+
+    item_less = bind.execute(
+        sa.text(
+            f"""
+            WITH pick AS (
+                SELECT DISTINCT ON (sa.company_id, sa.spo_number)
+                       sa.company_id, sa.spo_number, sa.id
+                FROM spo_allocations sa
+                WHERE sa.spo_number LIKE 'SPO-%'
+                ORDER BY sa.company_id, sa.spo_number,
+                         sa.spo_line_number NULLS LAST, sa.id
+            )
+            UPDATE "{scm}"."order_link_claim" c
+            SET spo_allocation_id = pick.id,
+                resolved_at = CASE WHEN c.so_line_id IS NOT NULL AND c.resolved_at IS NULL
+                                   THEN now() ELSE c.resolved_at END
+            FROM pick
+            WHERE c.spo_allocation_id IS NULL
+              AND c.item_code IS NULL
+              AND c.po_number = pick.spo_number
+              AND c.company_id = pick.company_id
+            """
+        )
+    ).rowcount or 0
+
+    logger.info(
+        "migration 420: re-pointed %s SPO claims by item and %s by document",
+        with_item, item_less,
+    )
+    return {"with_item": with_item, "item_less": item_less}
+
+
 def backfill_line_numbers(bind) -> int:
     """Give every allocation that names an SPO a line number within that SPO.
 
@@ -278,7 +411,7 @@ def reference_counts(bind) -> dict:
         WHERE po.po_number LIKE 'SPO-%'
     """
     spo_docs = "SELECT id FROM purchase_orders WHERE po_number LIKE 'SPO-%'"
-    default_schema = bind.exec_driver_sql("SELECT current_schema()").scalar()
+    default_schema = _default_schema(bind)
     for reference in _LINE_REFERENCES + _DOCUMENT_REFERENCES:
         schema, table, column = reference
         where = _schema(bind, schema) if schema else default_schema
@@ -448,10 +581,10 @@ def restore_spo_documents(bind) -> dict:
                    MIN(sa.currency), MIN(sa.source_system), sa.company_id
             FROM spo_allocations sa
             WHERE sa.spo_number IS NOT NULL
-              AND sa.source_system IN :sources
+              AND sa.source_system IS NOT NULL
             GROUP BY sa.company_id, sa.spo_number
             """
-        ).bindparams(sa.bindparam("sources", value=list(MOVED_SOURCES), expanding=True)),
+        )
     ).rowcount or 0
 
     lines = bind.execute(
@@ -470,9 +603,9 @@ def restore_spo_documents(bind) -> dict:
             JOIN purchase_orders po
               ON po.po_number = sa.spo_number AND po.company_id = sa.company_id
             WHERE sa.spo_number IS NOT NULL
-              AND sa.source_system IN :sources
+              AND sa.source_system IS NOT NULL
             """
-        ).bindparams(sa.bindparam("sources", value=list(MOVED_SOURCES), expanding=True)),
+        )
     ).rowcount or 0
 
     scm = _schema(bind, "scm")
@@ -487,6 +620,7 @@ def restore_spo_documents(bind) -> dict:
                 f"""
                 UPDATE "{scm}"."order_link_claim" c
                 SET po_line_id = pick.line_id,
+                    spo_allocation_id = NULL,
                     resolved_at = CASE WHEN c.so_line_id IS NOT NULL THEN now() ELSE NULL END
                 FROM (
                     SELECT DISTINCT ON (po.po_number, p.product_code)
@@ -498,8 +632,34 @@ def restore_spo_documents(bind) -> dict:
                     ORDER BY po.po_number, p.product_code, pl.source_ref, pl.id
                 ) pick
                 WHERE c.po_line_id IS NULL
+                  AND c.item_code IS NOT NULL
                   AND c.po_number = pick.po_number
                   AND c.item_code = pick.product_code
+                """
+            )
+        ).rowcount or 0
+        # The item-less half, which the upgrade also re-points: a `**SO:174830**` note in a
+        # PO export names no item, so it anchors on the document's first line. Nought of
+        # them name an SPO on the captain's book today, which is exactly why it has to be
+        # written rather than left for the day one does.
+        claims += bind.execute(
+            sa.text(
+                f"""
+                UPDATE "{scm}"."order_link_claim" c
+                SET po_line_id = pick.line_id,
+                    spo_allocation_id = NULL,
+                    resolved_at = CASE WHEN c.so_line_id IS NOT NULL THEN now() ELSE NULL END
+                FROM (
+                    SELECT DISTINCT ON (po.po_number)
+                           po.po_number, pl.id AS line_id
+                    FROM purchase_order_lines pl
+                    JOIN purchase_orders po ON po.id = pl.purchase_order_id
+                    WHERE po.po_number LIKE 'SPO-%'
+                    ORDER BY po.po_number, pl.source_ref, pl.id
+                ) pick
+                WHERE c.po_line_id IS NULL
+                  AND c.item_code IS NULL
+                  AND c.po_number = pick.po_number
                 """
             )
         ).rowcount or 0
@@ -507,8 +667,8 @@ def restore_spo_documents(bind) -> dict:
     removed = bind.execute(
         sa.text(
             "DELETE FROM spo_allocations WHERE spo_number IS NOT NULL "
-            "AND source_system IN :sources"
-        ).bindparams(sa.bindparam("sources", value=list(MOVED_SOURCES), expanding=True)),
+            "AND source_system IS NOT NULL"
+        )
     ).rowcount or 0
 
     logger.info(
@@ -549,8 +709,21 @@ JOIN products pr ON pr.id = sa.product_id
 WHERE sa.warehouse_id IS NOT NULL
   AND (s.id IS NULL OR s.shipment_status NOT IN {_RECEIVED_SHIPMENT_STATES})
   AND COALESCE(sa.line_status, 'open') = 'open'
-  AND COALESCE(sa.receipt_status, 'pending') <> 'received'
+  -- `fully_received` is the value the column's CHECK constraint allows. Migration 337
+  -- tested `<> 'received'`, which no row has ever carried, so the test could never be
+  -- false: a filter that looks like a guard and is not one. Both spellings are listed so
+  -- the honest test survives whichever a future writer picks.
+  AND COALESCE(sa.receipt_status, 'pending') NOT IN ('fully_received', 'received')
   AND sa.allocated_quantity > COALESCE(sa.quantity_received, 0)
+  -- STALENESS (`app/services/scm/spo_supply.py`, the one copy of this rule in Python).
+  -- A shipping order nobody has booked a container for, whose promised date has passed,
+  -- is not supply: all 715 open SPO lines on the captain's book are past-dated, the
+  -- oldest by two years, and no feed refreshes them. A shipment-backed row is never
+  -- stale, because its arrival is tracked; a row with no date at all is not stale
+  -- either, because nothing says its date has passed.
+  AND (sa.inbound_shipment_id IS NOT NULL
+       OR sa.expected_date IS NULL
+       OR sa.expected_date >= CURRENT_DATE)
 GROUP BY sa.product_id, sa.warehouse_id;
 """
 
@@ -578,7 +751,11 @@ GROUP BY sa.product_id, sa.warehouse_id;
 def upgrade() -> None:
     bind = op.get_bind()
     widen_allocations(bind)
+    # Before the move, so the claim half exists the moment the rows it points at do.
+    add_claim_spo_side(bind)
     move_spo_documents(bind)
+    # After it, because a claim can only be pointed at an allocation that has been written.
+    repoint_spo_claims(bind)
     op.execute(on_order_from_spo_documents(bind))
 
 
@@ -587,15 +764,51 @@ def downgrade() -> None:
     restore_spo_documents(bind)
     op.execute(on_order_from_shipped_allocations(bind))
 
+    scm = _schema(bind, "scm")
+    if _has_index(bind, "ix_scm_order_link_claim_spo_allocation", schema=scm):
+        op.drop_index("ix_scm_order_link_claim_spo_allocation",
+                      table_name="order_link_claim", schema=scm)
+    if _has_constraint(bind, "fk_scm_order_link_claim_spo_allocation", schema=scm):
+        op.drop_constraint("fk_scm_order_link_claim_spo_allocation", "order_link_claim",
+                           type_="foreignkey", schema=scm)
+    if _has_column(bind, "order_link_claim", "spo_allocation_id", schema=scm):
+        # `restore_spo_documents` has already put `po_line_id` back on these claims by the
+        # resolver's own rule, so the SPO side has nothing left to say.
+        op.drop_column("order_link_claim", "spo_allocation_id", schema=scm)
+
     if _has_constraint(bind, "uk_spo_allocations_company_spo_line"):
         op.drop_constraint("uk_spo_allocations_company_spo_line", "spo_allocations", type_="unique")
     if _has_index(bind, "ix_spo_allocations_spo_product_warehouse"):
         op.drop_index("ix_spo_allocations_spo_product_warehouse", table_name="spo_allocations")
     if not _has_constraint(bind, "uk_spo_allocations_spo_number_product_warehouse"):
-        op.create_unique_constraint(
-            "uk_spo_allocations_spo_number_product_warehouse", "spo_allocations",
-            ["spo_number", "product_id", "warehouse_id"],
-        )
+        # The old key is not a key any more: one SPO can state the same product at the same
+        # location twice, and after this migration has run once the table holds rows that
+        # prove it. Creating it would fail, so a collision is REPORTED and the constraint is
+        # left off rather than the whole downgrade dying on data it created itself.
+        collisions = bind.execute(
+            sa.text(
+                """
+                SELECT count(*) FROM (
+                    SELECT 1 FROM spo_allocations
+                    WHERE spo_number IS NOT NULL AND warehouse_id IS NOT NULL
+                    GROUP BY spo_number, product_id, warehouse_id
+                    HAVING count(*) > 1
+                ) dupes
+                """
+            )
+        ).scalar() or 0
+        if collisions:
+            logger.warning(
+                "migration 420 downgrade: %s (document, product, location) groups carry more "
+                "than one row, so uk_spo_allocations_spo_number_product_warehouse is NOT "
+                "restored. Those rows are two containers of one item and were never a "
+                "duplicate; the index would refuse them.", collisions,
+            )
+        else:
+            op.create_unique_constraint(
+                "uk_spo_allocations_spo_number_product_warehouse", "spo_allocations",
+                ["spo_number", "product_id", "warehouse_id"],
+            )
 
     # NOT NULL comes back only where the data allows it. A row that arrived after the
     # upgrade with no shipment or no warehouse is real data, and a downgrade is not

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -44,6 +44,13 @@ _MIGRATION_PATH = (
 )
 
 MARKER = "ZZT420"
+
+#: The promised arrival on the fixture's open lines. RELATIVE to today, because
+#: `on_order_v` and the ladder both drop an unshipped promise whose date has PASSED
+#: (`app/services/scm/spo_supply.py`), so a fixed date would quietly stop being supply a
+#: few days after it was written and take the assertions with it.
+SOON = date.today() + timedelta(days=30)
+LONG_PAST = date.today() - timedelta(days=400)
 
 
 def _migration():
@@ -103,7 +110,7 @@ def _document(db, number: str, *, supplier, source_system: str, status: str = "c
 
 
 def _line(db, order, product, warehouse, *, ordered, received, line_no, status="closed",
-          expected=date(2026, 9, 1)):
+          expected=SOON):
     row = PurchaseOrderLine(
         id=_uid(), purchase_order_id=order.id, product_id=product.id,
         warehouse_id=(warehouse.id if warehouse is not None else None),
@@ -161,6 +168,20 @@ def _book(db):
     }
 
 
+def _claim_columns(db) -> set:
+    schema = db.execute(text("select current_schema()")).scalar()
+    return {
+        c
+        for (c,) in db.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = :s AND table_name = 'order_link_claim'"
+            ),
+            {"s": f"{schema}_scm"},
+        ).all()
+    }
+
+
 def _allocations(db, number: str):
     return (
         db.query(SPOAllocation)
@@ -205,7 +226,7 @@ def test_every_spo_line_becomes_one_allocation_and_the_documents_go():
         assert {row.line_status for row in live} == {"open"}
         assert {row.source_system for row in live} == {"scm_upload"}
         assert {row.receipt_status for row in live} == {"pending", "partial_received"}
-        assert live[0].expected_date == date(2026, 9, 1)
+        assert live[0].expected_date == SOON
         assert live[0].issue_date == date(2026, 8, 12)
         assert live[0].supplier_id == world["supplier"].id
         assert live[0].inbound_shipment_id is None
@@ -435,6 +456,7 @@ def test_upgrade_and_downgrade_run_through_alembic_on_a_schema_already_shaped():
             assert db.query(PurchaseOrder).filter(
                 PurchaseOrder.po_number.like("SPO-%")).count() == 0
             assert _on_order(db, world["product"].id, world["brw_ib"].id) == 330.0
+            assert _claim_columns(db) >= {"po_line_id", "spo_allocation_id"}
 
             module.downgrade()
             db.expire_all()
@@ -443,6 +465,8 @@ def test_upgrade_and_downgrade_run_through_alembic_on_a_schema_already_shaped():
             assert db.query(PurchaseOrderLine).join(
                 PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id
             ).filter(PurchaseOrder.po_number.like("SPO-%")).count() == 6
+            # The SPO side of the claim goes with the SPO rows it pointed at.
+            assert "spo_allocation_id" not in _claim_columns(db)
 
 
 def test_a_line_that_would_collide_stops_the_move_before_anything_is_deleted():
@@ -466,3 +490,150 @@ def test_a_line_that_would_collide_stops_the_move_before_anything_is_deleted():
         assert "Nothing has been deleted" in str(raised.value)
         assert db.query(PurchaseOrder).filter(
             PurchaseOrder.po_number.like("SPO-%")).count() == 2
+
+
+def test_on_order_drops_a_past_dated_promise_and_keeps_a_shipped_one():
+    """The staleness rule in the view, the same sentence `spo_supply` states in Python.
+
+    Both rows below are open, unreceived and at a real warehouse. The difference is that one
+    has a container booked, so its arrival is tracked and being late is a fact rather than a
+    two-year-old promise nobody has restated.
+    """
+    from app.models.procurement import InboundShipment
+
+    with blank_session() as db:
+        world = _book(db)
+        migration = _migration()
+        migration.move_spo_documents(db.connection())
+        db.expire_all()
+
+        # The document's two BRW-IB lines for this product, 160 and 170. Selected by
+        # product and location rather than by position: a document whose export states no
+        # line numbers gets them assigned in creation order, and every line of one import
+        # shares a `created_at`, so position is not something to assert on.
+        rows = sorted(
+            (
+                row for row in _allocations(db, "SPO-2026/08-0061")
+                if row.product_id == world["product"].id
+                and row.warehouse_id == world["brw_ib"].id
+            ),
+            key=lambda row: row.allocated_quantity,
+        )
+        assert [row.allocated_quantity for row in rows] == [160, 170]
+        rows[0].expected_date = LONG_PAST          # stale: no container, date passed
+        rows[1].expected_date = LONG_PAST
+        shipment = InboundShipment(
+            id=_uid(), shipment_number=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+            shipment_date=date.today(), estimated_arrival_date=SOON,
+            shipment_status="in_transit",
+        )
+        db.add(shipment)
+        db.flush()
+        rows[1].inbound_shipment_id = shipment.id  # tracked, so never stale
+        db.flush()
+
+        db.execute(text(migration.on_order_from_spo_documents(db.connection())))
+        db.flush()
+
+        # 170 of the 330, which is the shipped line's half.
+        assert _on_order(db, world["product"].id, world["brw_ib"].id) == 170.0
+
+
+def test_a_promise_dated_today_is_still_on_order():
+    """Inclusive boundary: `expected_date == CURRENT_DATE` means it arrives today, and today
+    is supply. An exclusive test would drop a whole day of it and look like a rounding
+    detail."""
+    with blank_session() as db:
+        world = _book(db)
+        migration = _migration()
+        migration.move_spo_documents(db.connection())
+        db.expire_all()
+
+        for row in _allocations(db, "SPO-2026/08-0061"):
+            row.expected_date = date.today()
+        db.flush()
+
+        db.execute(text(migration.on_order_from_spo_documents(db.connection())))
+        db.flush()
+
+        assert _on_order(db, world["product"].id, world["brw_ib"].id) == 330.0
+
+
+# ------------------------------------------------------------- the claim's SPO side
+
+
+def test_a_cleared_claim_is_re_pointed_at_the_allocation_and_resolves():
+    """AC-K2 and the review's first blocker. The claim's purchase side moves from
+    `po_line_id` to `spo_allocation_id`; without the column those 12,393 claims would read
+    "awaiting purchase order" for ever, on 2,989 sales orders."""
+    with blank_session() as db:
+        world = _book(db)
+        migration = _migration()
+        line = (
+            db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.purchase_order_id == world["history"].id,
+                    PurchaseOrderLine.source_ref == "1")
+            .one()
+        )
+        claim = _claim(db, "SO381895", "SPO-2023/01-0001", world["product"].product_code, line)
+        # The sales side is already known, so re-pointing is what makes it RESOLVED.
+        claim.so_line_id = None
+        claim_id = claim.id
+        db.commit()
+
+        migration.move_spo_documents(db.connection())
+        migration.repoint_spo_claims(db.connection())
+        db.expire_all()
+
+        row = db.query(OrderLinkClaim).filter(OrderLinkClaim.id == claim_id).one()
+        assert row.po_line_id is None
+        assert row.spo_allocation_id == _allocations(db, "SPO-2023/01-0001")[0].id
+        # Still waiting, honestly: the sales side was never found.
+        assert row.resolved_at is None
+
+
+def test_re_pointing_runs_twice_without_moving_anything():
+    with blank_session() as db:
+        world = _book(db)
+        migration = _migration()
+        line = (
+            db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.purchase_order_id == world["history"].id,
+                    PurchaseOrderLine.source_ref == "1")
+            .one()
+        )
+        _claim(db, "SO381895", "SPO-2023/01-0001", world["product"].product_code, line)
+        db.commit()
+
+        migration.move_spo_documents(db.connection())
+        first = migration.repoint_spo_claims(db.connection())
+        again = migration.repoint_spo_claims(db.connection())
+
+        assert first["with_item"] == 1
+        assert again == {"with_item": 0, "item_less": 0}
+
+
+def test_an_item_less_claim_anchors_on_the_documents_first_line():
+    """A `**SO:174830**` note in a PO export names no item. None of the captain's SPO claims
+    are item-less today, which is exactly why the branch is written rather than left for the
+    day one is."""
+    with blank_session() as db:
+        world = _book(db)
+        migration = _migration()
+        line = (
+            db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.purchase_order_id == world["history"].id,
+                    PurchaseOrderLine.source_ref == "1")
+            .one()
+        )
+        claim = _claim(db, "SO381895", "SPO-2023/01-0001", None, line)
+        claim_id = claim.id
+        db.commit()
+
+        migration.move_spo_documents(db.connection())
+        result = migration.repoint_spo_claims(db.connection())
+        db.expire_all()
+
+        assert result["item_less"] == 1
+        row = db.query(OrderLinkClaim).filter(OrderLinkClaim.id == claim_id).one()
+        assert row.spo_allocation_id == _allocations(db, "SPO-2023/01-0001")[0].id

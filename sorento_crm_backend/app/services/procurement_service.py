@@ -1390,6 +1390,35 @@ class InboundShipmentService:
         return {"message": f"{deleted} packing list(s) deleted", "deleted_count": deleted}
 
 
+
+def next_spo_line_number(
+    db: Session, spo_number: str, *, taken: Optional[dict] = None
+) -> int:
+    """The next line number on a shipping order, 1 where it has none yet.
+
+    The LINE is the identity of a row in `spo_allocations` since migration 420
+    (`uk_spo_allocations_company_spo_line`), so every writer has to produce one; a row left
+    with NULL is a row no re-upload can ever match again, and Postgres treats NULLs as
+    distinct so the index would not even complain.
+
+    `taken` is a caller-owned counter for a BATCH that adds several rows to one document
+    before flushing any of them: without it every row of the batch reads the same maximum
+    off the database and they all claim the same number.
+    """
+    if taken is not None and spo_number in taken:
+        taken[spo_number] += 1
+        return taken[spo_number]
+    highest = (
+        db.query(func.max(SPOAllocation.spo_line_number))
+        .filter(SPOAllocation.spo_number == spo_number)
+        .scalar()
+    )
+    nxt = int(highest or 0) + 1
+    if taken is not None:
+        taken[spo_number] = nxt
+    return nxt
+
+
 class SPOAllocationService:
     """Service for SPO allocation operations."""
     
@@ -1482,10 +1511,14 @@ class SPOAllocationService:
         allocations = q.offset(offset).limit(limit).all()
         data = []
         try:
-            alloc_ids = [str(a.id) for a in allocations]
-            received_map = self.get_computed_received_map(alloc_ids)
+            computed = [a for a in allocations if self._receipt_is_computed(a)]
+            received_map = self.get_computed_received_map([str(a.id) for a in computed])
             for a in allocations:
                 resp = SPOAllocationResponse.model_validate(a)
+                if not self._receipt_is_computed(a):
+                    # An imported document states its own receipt. Left alone.
+                    data.append(resp)
+                    continue
                 rec = received_map.get(str(a.id), 0)
                 data.append(resp.model_copy(update={
                     "quantity_received": rec,
@@ -1773,7 +1806,12 @@ class SPOAllocationService:
                 key = (line.shipment_id, line.product_id)
                 shipped_by_ship_product[key] = shipped_by_ship_product.get(key, 0) + (line.quantity_shipped or 0)
 
-        page_alloc_ids = [str(a.id) for spo_num in spo_page for a in by_spo.get(spo_num, [])]
+        page_alloc_ids = [
+            str(a.id)
+            for spo_num in spo_page
+            for a in by_spo.get(spo_num, [])
+            if self._receipt_is_computed(a)
+        ]
         try:
             received_map = self.get_computed_received_map(page_alloc_ids)
         except Exception:
@@ -1786,9 +1824,12 @@ class SPOAllocationService:
             for a in allocs:
                 try:
                     data = SPOAllocationResponse.model_validate(a).model_dump()
-                    rec = received_map.get(str(a.id), 0)
-                    data["quantity_received"] = rec
-                    data["receipt_status"] = "received" if rec >= (a.allocated_quantity or 0) else "pending"
+                    if self._receipt_is_computed(a):
+                        rec = received_map.get(str(a.id), 0)
+                        data["quantity_received"] = rec
+                        data["receipt_status"] = (
+                            "received" if rec >= (a.allocated_quantity or 0) else "pending"
+                        )
                     qty_shipped = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
                     data["quantity_shipped"] = qty_shipped
                     alloc_responses.append(SPOAllocationWithShippedResponse(**data))
@@ -1884,13 +1925,7 @@ class SPOAllocationService:
         return allocation
 
     def _next_spo_line_number(self, spo_number: str) -> int:
-        """The next line number on a shipping order, 1 where it has none yet."""
-        highest = (
-            self.db.query(func.max(SPOAllocation.spo_line_number))
-            .filter(SPOAllocation.spo_number == spo_number)
-            .scalar()
-        )
-        return int(highest or 0) + 1
+        return next_spo_line_number(self.db, spo_number)
 
     def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
         """Stamp the packing-list cost, in its currency, on the inbound shipment line.
@@ -2129,6 +2164,17 @@ class SPOAllocationService:
             .scalar()
         )
         return int(total)
+
+    #: An allocation whose figures came from a FILE states its own receipt, and the GRN
+    #: view of the world must not overwrite it. Every imported SPO document carries a
+    #: `source_system` (migration 420) and 74,016 of them are 2020-2023 history that was
+    #: written fully received; recomputing their received quantity from the GRNs in this
+    #: system returns 0 for all of them, which would show three years of delivered
+    #: purchases as outstanding. A row this system raised itself carries no stamp, and for
+    #: those the GRN lines ARE the record.
+    @staticmethod
+    def _receipt_is_computed(allocation) -> bool:
+        return getattr(allocation, "source_system", None) is None
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
         """Bulk: for each allocation id, return computed quantity_received (the sum

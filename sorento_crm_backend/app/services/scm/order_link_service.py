@@ -15,6 +15,13 @@ nothing and loses nothing.
 Matching is on **(SO number, item code)** where the claim states an item, which is the
 identity the Order Inquiry sheet itself keys on. Claims from the PO notes state no item, so
 they resolve at document level: they link the ORDER, and pin the purchase-order side only.
+
+The purchase side is one of TWO tables, decided by the number the claim carries. A
+`######-S####` number names a `purchase_order_lines` row; an `SPO-####/##-####` number names
+a `spo_allocations` row, because since migration 420 that is where a shipping order lives.
+The claim records whichever it found in the matching column and is resolved either way - a
+claim that could only ever look in `purchase_order_lines` would have left 12,393 pairings
+permanently unresolvable the day the SPO documents moved.
 """
 from __future__ import annotations
 
@@ -22,15 +29,22 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import nullslast
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
+
+#: Which column a resolved purchase side lands in. The reader returns the pair so the two
+#: families share one lookup and one loop, rather than a second copy of both.
+_PO_SIDE = "po_line_id"
+_SPO_SIDE = "spo_allocation_id"
 
 
 def _now() -> datetime:
@@ -74,17 +88,18 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
                 claim.so_line_id = str(line.id)
                 so_side += 1
 
-        if claim.po_line_id is None:
-            line = (
+        if claim.po_line_id is None and claim.spo_allocation_id is None:
+            found = (
                 po_line_by_key.get((claim.po_number, claim.item_code))
                 if claim.item_code
                 else po_line_by_number.get(claim.po_number)
             )
-            if line is not None:
-                claim.po_line_id = str(line.id)
+            if found is not None:
+                column, row_id = found
+                setattr(claim, column, str(row_id))
                 po_side += 1
 
-        if claim.so_line_id and claim.po_line_id:
+        if claim.so_line_id and (claim.po_line_id or claim.spo_allocation_id):
             claim.resolved_at = now
             resolved += 1
 
@@ -96,6 +111,16 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
         "po_side": po_side,
         "still_open": sum(1 for c in claims if c.resolved_at is None),
     }
+
+
+def _purchase_side_of(claim: OrderLinkClaim) -> Optional[str]:
+    """Whichever of the two columns this claim's purchase side landed in, or None.
+
+    One reading, because "is this claim still waiting for its purchase document" is asked in
+    more than one place and an answer that only looks at `po_line_id` calls every resolved
+    SPO claim unresolved.
+    """
+    return claim.po_line_id or claim.spo_allocation_id
 
 
 def _sales_side(db: Session, so_numbers: set[str]):
@@ -116,19 +141,52 @@ def _sales_side(db: Session, so_numbers: set[str]):
 
 
 def _purchase_side(db: Session, po_numbers: set[str]):
+    """Where each document number resolves to, as `(column, id)`.
+
+    Two tables, one lookup. The family is read from the number's PREFIX - the same authority
+    the import channels route on, and the only one that cannot disagree with itself - so a
+    claim never has to be asked which table it meant.
+
+    Ordering is explicit on the SPO side: one shipping order can state the same product on
+    several lines (two containers), so the lowest line number wins rather than whichever row
+    the database happened to return first.
+    """
+    spo_numbers = {n for n in po_numbers if doc_family(n) == FAMILY_SPO}
+    po_only = po_numbers - spo_numbers
+
     rows = (
-        db.query(PurchaseOrder.po_number, Product.product_code, PurchaseOrderLine)
+        db.query(PurchaseOrder.po_number, Product.product_code, PurchaseOrderLine.id)
         .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
-        .filter(PurchaseOrder.po_number.in_(list(po_numbers)))
+        .filter(PurchaseOrder.po_number.in_(list(po_only)))
         .all()
-        if po_numbers
+        if po_only
         else []
     )
-    by_key = {(str(po), str(code)): line for po, code, line in rows}
-    by_number: dict[str, PurchaseOrderLine] = {}
-    for po, _code, line in rows:
-        by_number.setdefault(str(po), line)
+    by_key: dict[tuple[str, str], tuple[str, str]] = {
+        (str(po), str(code)): (_PO_SIDE, str(line_id)) for po, code, line_id in rows
+    }
+    by_number: dict[str, tuple[str, str]] = {}
+    for po, _code, line_id in rows:
+        by_number.setdefault(str(po), (_PO_SIDE, str(line_id)))
+
+    spo_rows = (
+        db.query(SPOAllocation.spo_number, Product.product_code, SPOAllocation.id)
+        .join(Product, Product.id == SPOAllocation.product_id)
+        .filter(SPOAllocation.spo_number.in_(list(spo_numbers)))
+        .order_by(
+            SPOAllocation.spo_number,
+            Product.product_code,
+            nullslast(SPOAllocation.spo_line_number.asc()),
+            SPOAllocation.id,
+        )
+        .all()
+        if spo_numbers
+        else []
+    )
+    for number, code, allocation_id in spo_rows:
+        by_key.setdefault((str(number), str(code)), (_SPO_SIDE, str(allocation_id)))
+        by_number.setdefault(str(number), (_SPO_SIDE, str(allocation_id)))
     return by_key, by_number
 
 
@@ -226,7 +284,9 @@ def open_claims(db: Session) -> dict:
     return {
         "open": len(rows),
         "waiting_for_sales_order": sum(1 for c in rows if c.so_line_id is None),
-        "waiting_for_purchase_order": sum(1 for c in rows if c.po_line_id is None),
+        "waiting_for_purchase_order": sum(1 for c in rows if _purchase_side_of(c) is None),
         "sales_orders": sorted({c.so_number for c in rows if c.so_line_id is None})[:200],
-        "purchase_orders": sorted({c.po_number for c in rows if c.po_line_id is None})[:200],
+        "purchase_orders": sorted(
+            {c.po_number for c in rows if _purchase_side_of(c) is None}
+        )[:200],
     }

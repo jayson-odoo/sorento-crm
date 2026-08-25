@@ -75,8 +75,14 @@ from app.services.scm.demand import (
     is_plan_demand_order,
     qty_of as demand_qty_of,
 )
+from app.services.scm import spo_supply
 from app.services.scm.reorder_engine import resolve_policy_for_sku
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
+
+
+def _today() -> date:
+    """The planner's today, in the wall clock the rest of this module reads dates in."""
+    return to_naive_datetime(datetime.now(MALAYSIA_TZ)).date()
 
 # PO statuses that represent real placed supply. Drafts are NOT supply: a draft PO is a
 # recommendation nobody has committed to, and counting it would suppress the buy that
@@ -550,6 +556,45 @@ class CoverageService:
             if qty <= 0:
                 continue
             po_ordered.setdefault(str(pid), []).append((line_when or po_when, qty))
+
+        # The SHIPPING orders, which since migration 420 are the other half of the same
+        # sentence. An SPO with no container booked is placed and not yet in transit, which
+        # is precisely what this figure means; one WITH a container is in transit and is
+        # counted below as such, so restricting this half to `inbound_shipment_id IS NULL`
+        # is what stops the same units being reported twice. `scm.on_order_v` already reads
+        # these rows, so leaving them out here is the two supply readers disagreeing about
+        # a document they can both see. Same staleness rule as everything else
+        # (`spo_supply`): an unshipped promise whose date has passed is not an order
+        # anybody is still waiting for.
+        for pid, allocated, received, when in (
+            self.db.query(
+                SPOAllocation.product_id,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
+                SPOAllocation.expected_date,
+            )
+            .filter(
+                SPOAllocation.product_id.in_(pids),
+                SPOAllocation.warehouse_id.in_(wh_ids),
+                SPOAllocation.inbound_shipment_id.is_(None),
+                or_(
+                    SPOAllocation.line_status.is_(None),
+                    SPOAllocation.line_status == "open",
+                ),
+                or_(
+                    SPOAllocation.receipt_status.is_(None),
+                    SPOAllocation.receipt_status.notin_(
+                        spo_supply.RECEIVED_RECEIPT_STATUSES
+                    ),
+                ),
+                spo_supply.not_stale_clause(_today()),
+            )
+            .all()
+        ):
+            qty = float(allocated or 0) - float(received or 0)
+            if qty <= 0:
+                continue
+            po_ordered.setdefault(str(pid), []).append((when, qty))
 
         # In-transit supply, scoped to THIS pool through the allocation that names its
         # destination. Neither `inbound_shipments` nor `inbound_shipment_lines` carries a

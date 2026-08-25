@@ -382,6 +382,13 @@ class SPOAllocationCreate(SPOAllocationBase):
     # to be compared against (AC-C3.2).
     # Optional: 860 pre-existing allocations have no PO, and stock can arrive against none.
     po_line_id: Optional[str] = None
+    # REQUIRED on the create path, where the base relaxed them. Only an IMPORTED shipping
+    # order legitimately has no shipment or no warehouse (migration 420, and the import
+    # writes those rows directly); somebody allocating a container through the API or the
+    # screen is naming both, and accepting a blank would write a row that is supply nowhere
+    # and belongs to no shipment, silently.
+    inbound_shipment_id: str
+    warehouse_id: str
 
 
 class SPOAllocationUpdate(BaseModel):
