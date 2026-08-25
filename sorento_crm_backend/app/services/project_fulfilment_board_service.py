@@ -74,6 +74,8 @@ from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
     RESERVE,
+    RUNG_BUY,
+    RUNG_INCOMING,
     TIMELY_SPO,
     pool_reserve_capacity,
     qty_text,
@@ -306,6 +308,7 @@ class _Row:
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "trail", "contested", "qty_ordered", "qty_delivered", "proposed",
+        "proposed_components",
         "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "outside_reserve_window",
@@ -328,6 +331,11 @@ class _Row:
         # Filled by `_allocate`: what the engine proposes for this line, by kind, and what was
         # still unclaimed at its location when this line was reached.
         self.proposed = {}
+        # What the ENGINE suggested for this line, in `sources` shape (AC-D2): the live
+        # ladder on an undecided line, the composition frozen at confirm on a covered one.
+        # `None` - never `[]` - on a covered line whose revision predates the frozen
+        # proposal: "not recorded" and "suggested nothing" are different answers.
+        self.proposed_components = None
         self.free_before = None
         self.raw_facts = {}
         # Who had already drawn this line's pile down when it was reached, and how much - the
@@ -993,8 +1001,9 @@ class FulfilmentBoardService:
         # Resolved before the line numbers, which prefer the mirror's own numbering.
         self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
-        # What an active revision already froze, per CORE line. One read for the whole board.
-        frozen = self._frozen_decisions()
+        # What an active revision already froze, per CORE line: the decision, and beside it
+        # the proposal the engine had made at that moment (AC-D1). One read for both.
+        frozen, frozen_proposals = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
         inquiries = self._order_inquiries([str(line.id) for line, *_r in records])
         # What another order borrowed OFF each of these lines. One read for the whole board.
@@ -1042,6 +1051,11 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
+            # What the engine had suggested for it when that decision was taken. `None` on a
+            # revision written before the proposal was frozen, which the screen reads as
+            # "not recorded"; `_allocate` replaces it with the LIVE ladder on every line no
+            # decision covers.
+            row.proposed_components = frozen_proposals.get(str(line.id))
             # What was already asked for, and how far purchasing got with it. The decision
             # beside it is what was PROMISED; these are the two halves of one answer, and a
             # board that carried only the first sent the planner to another screen for the
@@ -1141,8 +1155,14 @@ class FulfilmentBoardService:
             for core_id, inquiry_no, state in rows
         }
 
-    def _frozen_decisions(self) -> Dict[str, Dict[str, Any]]:
+    def _frozen_decisions(
+        self,
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Optional[List[Dict[str, Any]]]]]:
         """What each ACTIVE revision froze, keyed by the CORE line it covers.
+
+        Two maps off one read: the DECISION, and the PROPOSAL the engine had made when that
+        decision was taken (AC-D1). The second is `None` for a revision written before the
+        proposal was frozen - which is "not recorded", not "the engine suggested nothing".
 
         The core line id is the key because that is what a snapshot names a covered line by,
         and it is the same key `_decided_elsewhere` reads to keep such a line out of the pile's
@@ -1158,7 +1178,7 @@ class FulfilmentBoardService:
             if entry.get("project_sales_order_id")
         }
         if not pso_ids:
-            return {}
+            return {}, {}
         decisions = (
             self.db.query(SOSupplyDecision)
             .filter(
@@ -1168,6 +1188,7 @@ class FulfilmentBoardService:
             .all()
         )
         out: Dict[str, Dict[str, Any]] = {}
+        proposals: Dict[str, Optional[List[Dict[str, Any]]]] = {}
         for decision in decisions:
             frozen = self.supply.frozen_lines_of(decision)
             for snapshot in decision.line_snapshots or []:
@@ -1176,7 +1197,41 @@ class FulfilmentBoardService:
                 if not core_line_id or line_id not in frozen:
                     continue
                 out[str(core_line_id)] = self._line_decision(decision, frozen[line_id])
-        return out
+                proposed = frozen[line_id].get("proposed_components")
+                proposals[str(core_line_id)] = (
+                    None
+                    if proposed is None
+                    else [self._frozen_source(component) for component in proposed]
+                )
+        return out, proposals
+
+    @staticmethod
+    def _frozen_source(component: Dict[str, Any]) -> Dict[str, Any]:
+        """One frozen PROPOSAL component in the same shape a live one arrives in.
+
+        The snapshot spells the warehouse `source_location` / `source_warehouse_id` and the
+        wire spells it `location` / `warehouse_id`; one shape reaches the screen, so both
+        halves of "suggested vs decided" are read by one reader. The engine's reason is a
+        fragment meant to follow "Reserve 10:", stated here as a sentence the way `_source`
+        states a live one.
+        """
+        reason = str(component.get("reason") or "")
+        return {
+            "kind": component.get("kind"),
+            "qty": qty_text(_dec(component.get("qty"))),
+            "location": component.get("source_location"),
+            "warehouse_id": component.get("source_warehouse_id"),
+            "reason": (reason[:1].upper() + reason[1:] + ".") if reason else "",
+            "spo_number": None,
+            "arrival_date": None,
+            "rung": component.get("rung"),
+            "donor_so_number": component.get("donor_so_number"),
+            "donor_line_no": component.get("donor_line_no"),
+            "donor_agent_code": component.get("donor_agent_code"),
+            "same_agent": bool(component.get("same_agent", False)),
+            "donor_core_line_id": component.get("donor_core_line_id"),
+            "donor_required_date": _parse_iso_date(component.get("donor_required_date")),
+        }
 
     def _line_decision(
         self, decision: SOSupplyDecision, frozen: Dict[str, Any]
@@ -1205,6 +1260,11 @@ class FulfilmentBoardService:
                     "warehouse_id": c.get("source_warehouse_id"),
                     "location": c.get("source_location"),
                     "qty": qty_text(_dec(c.get("qty"))),
+                    # The rung the confirmation froze, carried rather than dropped. It was
+                    # dropped, and every reserve row of a covered line reached the screen as
+                    # `rung: null` - so the vocabulary had to be guessed back from the
+                    # warehouse code, which is the one reading PLAN section 2 forbids.
+                    "rung": c.get("rung"),
                 }
                 for c in components
                 if c.get("kind") == RESERVE
@@ -1640,6 +1700,10 @@ class FulfilmentBoardService:
             )
 
             row.sources = [self._source(component, row) for component in components]
+            # An undecided line's suggestion IS its live proposal, said under the key the
+            # decision strip reads for every line (AC-D2), so the strip never has to ask
+            # which of two fields a given row keeps its suggestion in.
+            row.proposed_components = row.sources
             # Said, not implied: the ladder consulted these and never printed them, and the
             # captain read the trail as if it had consulted nothing.
             row.item_flags = {
@@ -1723,6 +1787,11 @@ class FulfilmentBoardService:
         row.proposed = {
             RESERVE: reserve, TIMELY_SPO: incoming, BORROW: borrow, BUY: bought,
         }
+        # EVERY kind carries its rung, not only the borrows. Rebuilt without it, a covered
+        # line's whole composition reached the screen as `rung: null` and the vocabulary had
+        # to be inferred back from the warehouse code - which is exactly the reading PLAN
+        # section 2 replaced ("BRW-BB" and the pool "BRW" share a prefix and are not the
+        # same kind of supply). Incoming and Buy carry their own rung by definition.
         row.sources = [
             *(
                 {
@@ -1733,6 +1802,7 @@ class FulfilmentBoardService:
                     "reason": self._frozen_reason(row, f"Reserved at {component.get('location')}"),
                     "spo_number": None,
                     "arrival_date": None,
+                    "rung": component.get("rung"),
                 }
                 for component in decision.get("reserve") or []
             ),
@@ -1746,6 +1816,7 @@ class FulfilmentBoardService:
                         "reason": self._frozen_reason(row, "Incoming supply, as confirmed"),
                         "spo_number": None,
                         "arrival_date": None,
+                        "rung": RUNG_INCOMING,
                     }
                 ]
                 if incoming > _ZERO
@@ -1764,6 +1835,13 @@ class FulfilmentBoardService:
                     ),
                     "spo_number": None,
                     "arrival_date": None,
+                    "rung": component.get("rung"),
+                    "donor_so_number": component.get("donor_so_number"),
+                    "donor_line_no": component.get("donor_line_no"),
+                    "donor_agent_code": component.get("donor_agent_code"),
+                    "same_agent": bool(component.get("same_agent", False)),
+                    "donor_core_line_id": component.get("donor_core_line_id"),
+                    "donor_required_date": component.get("donor_required_date"),
                 }
                 for component in decision.get("borrow") or []
             ),
@@ -1777,6 +1855,7 @@ class FulfilmentBoardService:
                         "reason": self._frozen_reason(row, "Bought, as confirmed"),
                         "spo_number": None,
                         "arrival_date": None,
+                        "rung": RUNG_BUY,
                     }
                 ]
                 if bought > _ZERO
@@ -3092,6 +3171,16 @@ class FulfilmentBoardService:
             #: an empty object, because that would claim an instruction saying nothing.
             "order_inquiry": row.order_inquiry,
             "sources": row.sources,
+            #: What the ENGINE suggested, beside what was decided (AC-D2). The live ladder
+            #: on an undecided line - the same list as `sources` there - and the composition
+            #: frozen at confirm on a covered one, where `sources` is the DECISION and would
+            #: otherwise be the only thing on screen. Null on a revision written before the
+            #: proposal was frozen: "not recorded" is not "suggested nothing".
+            "proposed": (
+                None
+                if row.proposed_components is None
+                else {"components": row.proposed_components}
+            ),
             # The ladder, rung by rung, in the order it was walked - including the rungs that
             # gave nothing, because "the pool was checked and had none" is the answer to "how
             # did you arrive at the Buy" and an omitted step reads as a step never taken.

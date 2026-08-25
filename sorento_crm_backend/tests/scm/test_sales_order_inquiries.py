@@ -403,3 +403,125 @@ def test_the_list_does_not_pay_for_what_only_the_detail_page_prints(scm_app):
     listed = _row_for(res.json(), core.so_number)["lines"][0]
     assert listed["order_inquiry"] is None
     assert listed["decision_revision"] is None
+
+
+# --------------------------------------------------------------------------- #
+# AC-D4: the Lines tab says what was suggested and what was decided
+#
+# The SO detail is the SECONDARY surface for PLAN section 2's vocabulary (the board is the
+# primary one), so it carries the same two compositions per line and the screen words them
+# with the same `describe()`. Text is deliberately NOT built here: one vocabulary, one
+# implementation, and a sentence composed on this side would be a second one.
+# --------------------------------------------------------------------------- #
+
+
+def _decision_with_components(db, pso, *, core_line_id, components, proposed=...):
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    snapshot = {"core_line_id": str(core_line_id), "components": components}
+    if proposed is not ...:
+        snapshot["proposed_components"] = proposed
+    decision = SOSupplyDecision(
+        id=_uid(),
+        company_id=pso.company_id,
+        project_sales_order_id=pso.id,
+        revision_no=1,
+        state=DECISION_ACTIVE,
+        confirmed_at=datetime(2026, 6, 1, 9, 0),
+        line_snapshots=[snapshot],
+    )
+    db.add(decision)
+    db.flush()
+    return decision
+
+
+def test_a_decided_line_carries_both_compositions_in_the_boards_own_words(scm_app):
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    _decision_with_components(
+        db,
+        pso,
+        core_line_id=line.id,
+        components=[{"kind": "buy", "qty": "20", "reason": "remaining uncovered need"}],
+        proposed=[
+            {
+                "kind": "reserve",
+                "qty": "20",
+                "source_location": "BRW",
+                "rung": "pool",
+                "reason": "free stock at BRW covers the need",
+            }
+        ],
+    )
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    # Both survive `response_model`, which silently drops anything undeclared.
+    assert "supply_proposed" in body, body.keys()
+    assert "supply_decided" in body, body.keys()
+    assert body["supply_decided"] == [
+        {
+            "kind": "buy",
+            "qty": "20",
+            "source_location": None,
+            "rung": None,
+            "donor_so_number": None,
+        }
+    ]
+    assert body["supply_proposed"] == [
+        {
+            "kind": "reserve",
+            "qty": "20",
+            "source_location": "BRW",
+            "rung": "pool",
+            "donor_so_number": None,
+        }
+    ]
+
+
+def test_a_line_decided_before_the_proposal_was_frozen_says_not_recorded(scm_app):
+    """Null, never an empty list: an old revision recorded no suggestion, which is not the
+    same claim as "the engine suggested nothing"."""
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    _decision_with_components(
+        db,
+        pso,
+        core_line_id=line.id,
+        components=[{"kind": "buy", "qty": "5", "reason": "remaining uncovered need"}],
+    )
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_decided"] == [
+        {
+            "kind": "buy",
+            "qty": "5",
+            "source_location": None,
+            "rung": None,
+            "donor_so_number": None,
+        }
+    ]
+    assert body["supply_proposed"] is None
+
+
+def test_an_undecided_line_carries_neither_composition(scm_app):
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    line = _core_line(db, core)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_decided"] is None
+    assert body["supply_proposed"] is None

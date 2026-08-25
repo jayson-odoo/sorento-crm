@@ -2153,3 +2153,131 @@ def test_a_line_wholly_from_stock_and_a_line_wholly_bought_both_confirm(api):
     )
 
     assert response.status_code == 200, response.text
+
+
+# ------------------------------------------------- AC-D1: what the engine had said
+
+
+def _active_snapshots(db, order_id) -> list:
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order_id,
+            SOSupplyDecision.state == "active",
+        )
+        .first()
+    )
+    return list(decision.line_snapshots or [])
+
+
+def _shape(components) -> list:
+    """A composition reduced to what the two sides are compared on: what, how much,
+    from where, off which rung. The sentences beside them are written by two different
+    rules (the engine's fragment, the confirmation's own) and are not the comparison."""
+    return [
+        (c.get("kind"), c.get("qty"), c.get("source_location"), c.get("rung"))
+        for c in components or []
+    ]
+
+
+def test_confirming_an_untouched_line_freezes_a_proposal_equal_to_what_was_decided(api):
+    """AC-D1: the snapshot carries the engine's own composition beside the decided one.
+
+    Taken as it stood, the two say the same thing - which is exactly what the board's
+    decision strip has to be able to show as "Suggested 20, Decided 20" rather than
+    inferring agreement from the absence of an amendment.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "20"}]
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+    assert _shape(snapshot["proposed_components"]) == _shape(snapshot["components"])
+
+
+def test_confirming_an_amended_line_freezes_both_sides_and_they_differ(api):
+    """AC-D1: the whole point of the key. The engine offered the line's own stock and the
+    planner bought it instead; without the proposal frozen beside the decision, the board
+    can only ever show what was decided and "Suggested" is unanswerable a day later."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "20",
+                    "amend_reason": "Site wants new stock, not the units held here.",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [("buy", "20", None, None)]
+    assert _shape(snapshot["proposed_components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+
+
+def test_a_line_the_engine_cannot_plan_freezes_an_empty_proposal_not_a_missing_one(api):
+    """A line beyond its reserve window with nothing incoming is a whole-line Buy, and a
+    line the ladder never walks proposes an empty list - never an absent key, which is the
+    one thing the board reads as "this decision predates the field"."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db,
+        core_so,
+        world.product,
+        world.own_wh,
+        qty_ordered="9",
+        required_date=date.today() + timedelta(days=900),
+    )
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="9")]},
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert "proposed_components" in snapshot
+    assert _shape(snapshot["proposed_components"]) == [("buy", "9", None, "buy")]

@@ -28,6 +28,31 @@ class SalesOrderLineInquiry(BaseModel):
     state: str
 
 
+class SalesOrderLineSupplyComponent(BaseModel):
+    """One piece of a line's supply, in the vocabulary the planning board reads
+    (`PLAN-scm-cs-planning-uat.md` section 2).
+
+    The COMPONENTS, never a sentence: the words ("Use shared stock 71 from BRW") are written
+    in one place, `project-sales/_shared/lib/supplyVocabulary.ts`, and a sentence composed
+    here would be a second implementation of the same vocabulary drifting against the board.
+
+    `rung` is what decides the words - never the warehouse code, which reads `BRW-BB` and
+    `BRW` as the same site when they are the agent's own location and the shared pool.
+    """
+
+    kind: str
+    qty: str
+    #: The warehouse this piece is drawn from, by CODE. `None` for a Buy, which is held
+    #: nowhere yet.
+    source_location: Optional[str] = None
+    #: `pool` / `group_take` / `group_borrow` / `cross_group_borrow` / `incoming` / `buy`.
+    #: `None` on a component frozen before the rung was recorded.
+    rung: Optional[str] = None
+    #: The sales order a borrow was taken FROM, when one was named. What tells a borrow from
+    #: another order apart from a borrow of free stock elsewhere.
+    donor_so_number: Optional[str] = None
+
+
 class SalesOrderLine(BaseModel):
     id: str
     sku: str
@@ -71,6 +96,20 @@ class SalesOrderLine(BaseModel):
     #: active revision can still hold lines nobody has decided, and a header-level answer
     #: would report those as settled.
     decision_revision: Optional[int] = None
+    #: What was DECIDED for this line and what the engine had SUGGESTED, as components
+    #: (AC-D4). Both read off the active revision's snapshot for this line.
+    #:
+    #: `supply_decided` is `None` on a line no active revision covers - the same answer
+    #: `decision_revision` gives, for the same reason. `supply_proposed` is `None` for that
+    #: AND for a revision written before the proposal was frozen: "not recorded" and "the
+    #: engine suggested nothing" are different answers, and an empty list would claim the
+    #: second.
+    #:
+    #: An undecided line carries no suggestion here on purpose: the live ladder is the
+    #: planning board's read, and running it per line on a detail page of 300 lines would be
+    #: 300 engine walks for a column the board already answers.
+    supply_decided: Optional[List[SalesOrderLineSupplyComponent]] = None
+    supply_proposed: Optional[List[SalesOrderLineSupplyComponent]] = None
 
 
 class SalesOrder(BaseModel):
