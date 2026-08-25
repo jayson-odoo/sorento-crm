@@ -340,7 +340,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
   { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
   { key: 'handler_name', label: 'Handler name', description: 'Staff member who claimed / took over / unclaimed the form handling lock' },
-  { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) - same as clicking the task' },
+  { key: 'form_url', label: 'Form link', description: 'Opens the form record, or the ticket in the CRM (/?ticket=...) for a conversation ticket - same as clicking the task' },
   { key: 'customer', label: 'Customer name', description: 'Customer name on the record (complaint / purchase request)' },
   { key: 'project', label: 'Project name', description: 'Project name/title on the record (complaint / purchase request)' },
   { key: 'delivery_order', label: 'DO number', description: 'Delivery order number on the complaint' },
