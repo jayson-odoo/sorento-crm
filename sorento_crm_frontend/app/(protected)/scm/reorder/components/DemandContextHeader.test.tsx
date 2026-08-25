@@ -20,6 +20,21 @@ describe('DemandContextHeader', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders nothing when THIS channel has no figure, even though the other does', () => {
+    // The header speaks for one channel now, so the other channel's number is not a
+    // stand-in for the missing one - it belongs to a different question.
+    const project = render(
+      <DemandContextHeader data={{ project_12m_qty: null, retail_3m_qty: 30 }} channel="project" />,
+    );
+    expect(project.container).toBeEmptyDOMElement();
+    project.unmount();
+
+    const retail = render(
+      <DemandContextHeader data={{ project_12m_qty: 120, retail_3m_qty: null }} channel="retail" />,
+    );
+    expect(retail.container).toBeEmptyDOMElement();
+  });
+
   it('labels the window as full months, not a live trailing count', () => {
     render(
       <DemandContextHeader
@@ -70,7 +85,8 @@ describe('DemandContextHeader', () => {
     expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
   });
 
-  it('reads the retail window for a row that is not project (unclassified, dealer, unset)', () => {
+  it('reads the retail window for a row that is not project (unclassified, dealer)', () => {
+    // `channel` is REQUIRED - there is no channel-blind reading left to test.
     const data = { project_12m_qty: 120, retail_3m_qty: 30 };
 
     const unclassified = render(<DemandContextHeader data={data} channel="unclassified" />);
@@ -78,11 +94,7 @@ describe('DemandContextHeader', () => {
     expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
     unclassified.unmount();
 
-    const dealer = render(<DemandContextHeader data={data} channel="dealer" />);
-    expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
-    dealer.unmount();
-
-    render(<DemandContextHeader data={data} />);
+    render(<DemandContextHeader data={data} channel="dealer" />);
     expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
     expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
   });

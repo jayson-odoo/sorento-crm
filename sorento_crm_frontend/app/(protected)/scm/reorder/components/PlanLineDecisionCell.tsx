@@ -201,6 +201,7 @@ export function PlanLineDecisionCell({
   // one of them. A percentage off a tiny base shouts a number nobody would act on, next to the
   // button that IS the decision. The trend still has its say, in the trajectory popover on the
   // SO column, where the demand it judges lives and the whole series is there to read it with.
+  //
   // A cover offer on a project line is purchasing superseding CS: the inquiry said buy it
   // all, and the engine found stock CS did not use. Said out loud, because a quiet
   // disagreement with CS reads as the engine miscounting.

@@ -1,7 +1,7 @@
 # PLAN - Purchasing side: the journey from order inquiry to confirmed PO, and the UAT fixes on the reorder plan
 
-Status: READY r3, 2026-08-25, everything ruled. Awaiting go on P1-P8. Part 2 of `PLAN-scm-cs-planning-uat.md` (part 1 = CS). Captain: "I need the user journey crafted out and aligned before we execute anything." Nothing here is built until the journey below is agreed.
-Lane: same as part 1 (`scm-so-feedback`, :3060 / :8070).
+Status: IN PROGRESS r4, 2026-08-26. P1, P5 and P6 are BUILT on branch `feat/scm-uat-plan-page-p1-p5-p6` (stacked on `feat/scm-uat-popover-locations`, PR #310) and verified in the browser on :3080. P2, P3, P4, P7 and P8 still await go. Part 2 of `PLAN-scm-cs-planning-uat.md` (part 1 = CS). Captain: "I need the user journey crafted out and aligned before we execute anything." Nothing here is built until the journey below is agreed.
+Lane: `.claude/worktrees/scm-uat`, FE :3080, BE :8080.
 
 ## 1. The journey (target state, one line per hand-off)
 
@@ -38,7 +38,7 @@ The rule that makes the loop close: **a project requirement lives in exactly one
 - **P3** Project demand = OI only: `committed_v` migration (sheet leg removed for project class, unclassified folded into retail), `reorder_run_service` simplification, `set_aside_project_demand` reports sheet-origin orders awaiting CS, plan Project column tooltip "what CS asked for, less what is already on a PO or SPO" (BE, two days). Golden set changes; the M3 parity tests are re-baselined with the captain's sign-off.
 - **P4** Unclassified column removed + import warning (FE + BE, half a day).
 - **P5** History popover channel wording (FE, one hour).
-- **P6** Trajectory advice line removed (FE, half an hour).
+- **P6** Trajectory advice line removed (FE, half an hour). DONE. Observed while verifying: the SO column that carries the trend popover renders only when the grid is NOT grouped by channel (`PlanLinesGrid`, `!groupByChannel`), and every front-planning run groups by channel - so after P6 the demand trend has no surface on the grid at all. Needs a captain call: either bring the popover onto a channel column, or accept that the trend is read elsewhere.
 - **P7** Confirm-PO links to the rows that sized it (BE, one day; depends on part 1 I links table).
 - **P8** Cover sources: "Use PO" retail only (BE + FE, half a day).
 

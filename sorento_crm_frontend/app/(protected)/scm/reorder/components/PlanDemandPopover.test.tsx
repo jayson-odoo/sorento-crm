@@ -396,6 +396,32 @@ describe('PlanDemandPopover', () => {
       ).toBeInTheDocument();
     });
 
+    it('a project history popover states the project window and NOT the retail one (P5)', async () => {
+      // The response carries both figures, as the backend always sends them - the caller's
+      // channel is what decides which one is this row's answer.
+      stub(history({ retail_window_months: 3, retail_3m_qty: 30 }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Project order history' }));
+
+      expect(await screen.findByText('Project, last 12 full months: 40')).toBeInTheDocument();
+      expect(screen.queryByText(/Retail, last/)).not.toBeInTheDocument();
+    });
+
+    it('a retail history popover states the retail window and NOT the project one (P5)', async () => {
+      stub(
+        history({
+          channel: 'retail',
+          retail_window_months: 3,
+          retail_3m_qty: 30,
+        }),
+      );
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="retail" scope="product" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Retail order history' }));
+
+      expect(await screen.findByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+      expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
+    });
+
     it('fetches with scope="product", keyed for its own cache entry', async () => {
       stub(history());
       render(<PlanDemandPopover runId="run-1" recId="rec-1" channel="project" scope="product" />);

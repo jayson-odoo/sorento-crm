@@ -22,6 +22,23 @@ export interface DemandContextFields {
  */
 export type DemandContextChannel = 'project' | 'retail' | 'unclassified' | 'dealer';
 
+/** The channel whose window this header reports: project rows read the project year,
+ *  every other row the retail quarter (P5). One place, so the badge, the caller's frame
+ *  and the empty test can never disagree about which figure is "the row's own". */
+export function isProjectContext(channel: DemandContextChannel): boolean {
+  return channel === 'project';
+}
+
+/** Does this response carry the figure THIS channel needs? False on a cached/legacy
+ *  payload predating the field, which is when the header renders nothing at all. */
+export function hasDemandContext(
+  data: DemandContextFields,
+  channel: DemandContextChannel,
+): boolean {
+  const qty = isProjectContext(channel) ? data.project_12m_qty : data.retail_3m_qty;
+  return qty != null;
+}
+
 /**
  * Compact context header for the demand drills (captain, 20 Aug follow-up):
  *
@@ -40,9 +57,11 @@ export type DemandContextChannel = 'project' | 'retail' | 'unclassified' | 'deal
  * window numbers can never drift between the two drills that answer the same question.
  *
  * Zero is a real answer ("nothing ordered in the window") and renders as `0`, never
- * hidden. The whole header is omitted only when the response predates the field (both
- * quantities absent) - the same cached/legacy convention `describeDemandTotals` already
- * uses for the committed-total split.
+ * hidden. The header is omitted only when THIS channel's own quantity is absent, which a
+ * cached/legacy response predating the field is - the same convention
+ * `describeDemandTotals` already uses for the committed-total split. `hasDemandContext`
+ * is that test, exported so a caller drawing the frame around this header asks the same
+ * question rather than its own approximation of it.
  *
  * Both windows are FULL calendar months, and stop at the end of last month - the same
  * boundary `trajectory_service.demand_context_for_product` shares with the plan's own
@@ -56,10 +75,12 @@ export function DemandContextHeader({
   channel,
 }: {
   data: DemandContextFields;
-  channel?: DemandContextChannel;
+  /** REQUIRED: there is no channel-blind reading of this header any more. A caller that
+   *  cannot name the channel has no window to report, and must render nothing. */
+  channel: DemandContextChannel;
 }) {
-  if (data.project_12m_qty == null && data.retail_3m_qty == null) return null;
-  const isProject = channel === 'project';
+  if (!hasDemandContext(data, channel)) return null;
+  const isProject = isProjectContext(channel);
   const months = isProject
     ? (data.project_window_months ?? 12)
     : (data.retail_window_months ?? 3);
