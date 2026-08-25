@@ -1027,14 +1027,14 @@ _QS_ROW = {"order_number": "202603-0412", "debtor_name": "ECO WORLD SDN BHD",
            "matched_products": [{"product_code": "SRTWC8605", "quantity": 10}]}
 
 
-def test_qs_c8_summary_and_pagination_pass_through_untouched():
+def test_qs_c8_summary_passes_through_untouched_pagination_does_not():
     out = env("crm_order_management_orders_by_product_list", {
         "data": [_QS_ROW],
         "pagination": {"total": 35, "page": 1, "limit": 20},
         "summary": _QS_SUMMARY,
     })
     assert out["summary"] == _QS_SUMMARY
-    assert out["pagination"] == {"total": 35, "page": 1, "limit": 20}
+    assert "pagination" not in out  # no reader on the n8n side; row_count lives in summary
     # the rows themselves render exactly as before
     assert out["items"][0]["title"] == "202603-0412"
 
