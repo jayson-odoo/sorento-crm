@@ -28,6 +28,7 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -52,6 +53,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_portal_link_get",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_INTRO = {
     "crm_order_management_orders_list": "Here are the orders I found.",
@@ -376,7 +379,9 @@ def _sl_num(v: Any):
         d = Decimal(str(v))
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if not d.is_finite():
+    if not d.is_finite() or abs(d) >= Decimal("1e15"):
+        # A quantity is a count of pieces; anything at or past 1e15 is not one
+        # (JS would print it in exponent form, Python would print 5,000 digits).
         return None
     return int(d) if d == d.to_integral_value() else float(d)
 
@@ -391,11 +396,13 @@ def _sl_date(v: Any) -> Optional[str]:
             d = datetime.strptime(s, "%Y-%m-%d")
         else:
             d = datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
-        return s
-    out = d.strftime("%d/%m/%Y")
+            if d.tzinfo is not None:
+                d = d.astimezone()  # the JS renders in local time; so do we
+    except (ValueError, TypeError, OverflowError):
+        return None  # the JS `fmtTs` returns null on an unparseable value; never echo garbage
+    out = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
     if d.hour or d.minute or d.second:
-        out += d.strftime(" %H:%M:%S")
+        out += f" {d.hour:02d}:{d.minute:02d}:{d.second:02d}"
     return out
 
 
@@ -1132,7 +1139,14 @@ def present_response(tool_name: str, raw: str) -> str:
     # QS-7: the lines the consumer prints verbatim. Only over a real answer
     # (has_result AND rows on the page); absent otherwise, never [].
     if has_result and b.items and isinstance(data.get("summary"), dict):
-        _lines = summary_lines(data["summary"], len(b.items))
+        # Exception boundary: the headline is an augmentation. A hostile leaf inside
+        # `summary` must cost the headline, never the envelope the rows already
+        # rendered into (cross-model review, 2026-08-25).
+        try:
+            _lines = summary_lines(data["summary"], len(b.items))
+        except Exception as _exc:  # pragma: no cover - by contract
+            logger.warning("summary_lines skipped: %s", _exc)
+            _lines = []
         if _lines:
             envelope["summary_lines"] = _lines
     _annotate_field_access(envelope, tool_name)

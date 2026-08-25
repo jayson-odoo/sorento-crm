@@ -1208,3 +1208,36 @@ def test_qs_m0_summary_lines_absent_unless_a_real_answer():
     assert "summary_lines" not in env("crm_order_management_orders_list", base)                       # no summary
     assert "summary_lines" not in env("crm_order_management_orders_list", {"data": [], "summary": S})  # no rows
     assert "summary_lines" not in env("crm_order_management_orders_list", {**base, "summary": {"scope": "filter"}})  # degrades to nothing
+
+
+def test_qs_m8b_hostile_numeric_and_date_leaves_never_raise_or_leak(monkeypatch):
+    """Codex pass D: containers were covered, leaves were not."""
+    hostile = {
+        "scope": "filter", "row_count": "1e5000", "order_count": float("nan"), "delivered_count": "inf",
+        "customers": ["X"], "customer_count": True,          # bool is an int in Python - must not read as 1
+        "delivered_from": "not-a-date", "delivered_to": "2026-13-45",
+        "products": [{"product_code": "P", "delivered_quantity": "1e5000", "pending_quantity": "nan"}],
+    }
+    lines = summary_lines(hostile, 1)
+    joined = "\n".join(lines)
+    assert "e+" not in joined and "nan" not in joined.lower() and "inf" not in joined.lower()
+    assert "not-a-date" not in joined and "2026-13-45" not in joined and "None" not in joined
+    # through the envelope path the render must survive whatever summary_lines does
+    base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
+    out = env("crm_order_management_orders_list", {**base, "summary": hostile})
+    assert out["items"] and out["has_result"] is True
+
+    # and if summary_lines itself blows up, the envelope still renders without the key
+    import sorento_crm_mcp.presenters as _p
+    monkeypatch.setattr(_p, "summary_lines", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
+    out2 = env("crm_order_management_orders_list", {**base, "summary": hostile})
+    assert out2["items"] and "summary_lines" not in out2
+
+
+def test_qs_m8c_date_forms_match_the_js_fmtts():
+    from sorento_crm_mcp.presenters import _sl_date
+    assert _sl_date("2026-03-02") == "02/03/2026"
+    assert _sl_date("2026-03-02T00:00:00") == "02/03/2026"           # midnight -> date only
+    assert _sl_date("2026-03-02T09:05:07") == "02/03/2026 09:05:07"  # non-midnight keeps the time
+    assert _sl_date("garbage") is None and _sl_date("") is None and _sl_date(None) is None
+    assert _sl_date("0999-01-01") == "01/01/0999"
