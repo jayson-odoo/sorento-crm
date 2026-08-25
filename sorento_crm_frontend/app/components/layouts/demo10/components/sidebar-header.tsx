@@ -33,9 +33,9 @@ export function SidebarHeader() {
       <div className="flex items-center justify-between gap-2.5 px-3.5 h-[70px]">
         <Link href="/">
           <img
-            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
+            src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
             className="h-[34px]"
-            alt="Logo"
+            alt="Sorento"
           />
         </Link>
 
