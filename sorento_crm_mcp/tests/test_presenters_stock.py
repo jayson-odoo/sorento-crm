@@ -89,6 +89,14 @@ def test_catalog_requested_qty():
     assert "how many" in spec().description.lower()
 
 
+def test_catalog_pairs_the_contact_with_its_space():
+    """The backend fails closed on `contact_id` alone - company scope needs both
+    params, so one without the other would answer a contact with every company's
+    stock. The planner has to be told, or it sends the id it has and reads the
+    empty result as "there is none"."""
+    assert "Pass BOTH or NEITHER" in spec().description
+
+
 @pytest.mark.asyncio
 async def test_catalog_requested_qty_reaches_the_backend():
     """D1. A number, not a UUID: the compiler validates any `*_id` / `*_ids`
@@ -174,8 +182,11 @@ def test_render_detailed_with_policy_block_unchanged():
 def _compact_payload():
     return {
         "data": [],
-        "pagination": {"total": 0, "page": 1, "limit": 50},
-        "empty": True,
+        # `total` counts the PRODUCTS answered for and `empty` is False: the
+        # summary modes clear `data` while still carrying an answer (B15 / the
+        # escalation-hint fix).
+        "pagination": {"total": 2, "page": 1, "limit": 50},
+        "empty": False,
         "stock_visibility": _visibility("compact", ["BRW", "BRW-BB"]),
         "stock_summary": [
             {
@@ -493,3 +504,73 @@ def test_sanitized_availability_renders_end_to_end():
 
     assert out["intro"] == "Sorry, we do not have enough stock for that quantity."
     assert out["items"][0]["flags"] == {"needs_quantity": False, "available": False}
+
+
+# ------------------------------------- the escalation hint, before the render
+
+
+_ROUTING_HINT = {
+    "team": "warehouse",
+    "team_name": "warehouse",
+    "message": (
+        "We don't have that information available. Would you like me to route "
+        "you to our warehouse team?"
+    ),
+    "alternatives": [],
+}
+
+
+async def _attach(payload, monkeypatch):
+    from sorento_crm_mcp import escalation_hint
+
+    async def _routing(tool_name, *, api_url, api_key, timeout=5.0):
+        return dict(_ROUTING_HINT)
+
+    monkeypatch.setattr(escalation_hint, "_fetch_routing", _routing)
+    return json.loads(
+        await escalation_hint.attach_suggested_escalation(
+            TOOL, json.dumps(payload), api_url="http://crm.local", api_key="k"
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_summary_answer_is_not_treated_as_nothing_found(monkeypatch):
+    """The hint runs on the raw response, BEFORE the render, and reads `data`.
+
+    `compact` and `availability` clear `data` by design, so a reply carrying 700
+    units in BRW - or a plain "yes, we have stock" - came back with "We don't
+    have that information available. Would you like me to route you to our
+    warehouse team?" stapled to it. The two summary blocks ARE the answer, so a
+    payload holding one is not empty.
+    """
+    compact = await _attach(_compact_payload(), monkeypatch)
+    availability = await _attach(
+        _availability_payload([_entry("SRTBF11201-NEW", available=True)]), monkeypatch
+    )
+
+    assert "suggested_escalation" not in compact
+    assert "suggested_escalation" not in availability
+
+
+@pytest.mark.asyncio
+async def test_a_summary_with_no_entries_still_escalates(monkeypatch):
+    """The other side: nothing was found, and the routing offer is the useful
+    reply. Suppressing it there would make the dealer modes unescalatable."""
+    payload = _compact_payload()
+    payload["stock_summary"] = []
+    payload["empty"] = True
+
+    out = await _attach(payload, monkeypatch)
+
+    assert out["suggested_escalation"]["team"] == "warehouse"
+
+
+@pytest.mark.asyncio
+async def test_a_detailed_miss_still_escalates(monkeypatch):
+    """And the mode every contact is on today is untouched."""
+    out = await _attach(
+        {"data": [], "stock_visibility": _visibility("detailed")}, monkeypatch
+    )
+
+    assert out["suggested_escalation"]["team"] == "warehouse"

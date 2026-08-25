@@ -24,6 +24,7 @@ Postgres only, blank schema, every row seeded here (CI's database has none).
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import uuid
 
@@ -437,7 +438,9 @@ def test_compact_groups_and_sums_on_hand(db):
     result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
 
     assert result["data"] == []
-    assert result["pagination"]["total"] == 0
+    # `total` counts the PRODUCTS answered for, not the rows withheld - the
+    # summary modes page over products (B15).
+    assert result["pagination"]["total"] == 1
     assert result["stock_visibility"]["mode"] == "compact"
     assert len(result["stock_summary"]) == 1
     block = result["stock_summary"][0]
@@ -788,19 +791,35 @@ def client(db, monkeypatch):
         app.dependency_overrides.clear()
 
 
-def test_requested_qty_validation(client, db):
-    """B9. A demand of 0 or less is not a question anyone asked; 422 rather than
-    an accidental "yes, we have stock"."""
-    contact = _contact(db)
+def test_requested_qty_below_one_is_read_as_no_quantity(client, db):
+    """B9. `requested_qty` arrives from an LLM reading a sentence, so 0 is a
+    parse artefact, not a demand. Refusing the whole call with a 422 loses the
+    question as well as the number - the contact gets an error instead of "how
+    many units do you need?" - so a value below 1 is treated as absent, in every
+    mode, and the turn carries on."""
+    workspace = _workspace(db, "364817")
+    contact = _contact(db, respond_io_id="90807060", workspace=workspace)
+    brw, _, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=500)
     _policy_row(db, mode="availability", contact=contact)
     db.flush()
 
     for bad in (0, -5):
         response = client.get(
             "/api/v1/inventory/stock/balance",
-            params={"contact_id": contact.id, "requested_qty": bad},
+            params={
+                "product_ids": p.id,
+                "contact_id": contact.id,
+                "space_id": "364817",
+                "requested_qty": bad,
+            },
         )
-        assert response.status_code == 422, bad
+        assert response.status_code == 200, bad
+        entry = response.json()["stock_availability"][0]
+        assert entry["needs_quantity"] is True, bad
+        assert entry["requested_qty"] is None, bad
+        assert entry["available"] is None, bad
 
 
 def test_response_model_declares_blocks(client, db):
@@ -825,7 +844,7 @@ def test_response_model_declares_blocks(client, db):
 
     body = client.get(
         "/api/v1/inventory/stock/balance",
-        params={"product_ids": p.id, "contact_id": contact.id},
+        params={"product_ids": p.id, "contact_id": contact.id, "space_id": "364817"},
     ).json()
 
     assert body["data"] == []
@@ -1106,3 +1125,539 @@ def test_warehouses_segment_filter(client, db):
 
     codes = {row["warehouse_code"] for row in body["data"]}
     assert codes == {"ZZTBRW", "ZZTMWH"}
+
+
+# ============================================ B14. the neighbour probe under a policy
+
+
+def _neighbour_probe(monkeypatch, *, returns=None, capture=None):
+    """Stand in for the trigram/variant probe.
+
+    Stubbed rather than seeded: `blank_session` pins `search_path` off `public`,
+    so pg_trgm's `similarity()` cannot resolve there and the real probe would
+    swallow its own exception and answer `[]` - which is what a test asserting
+    "no alternatives" would then be reading. A stub that ALWAYS suggests is the
+    only way to prove the suppression is the policy's doing.
+    """
+    from app.services import entity_resolver
+
+    def _fake(db, code, *, has_data, limit=3, suggest_floor=0.4):
+        if capture is not None:
+            capture["code"] = code
+            capture["has_data"] = has_data
+        return list(returns or [])
+
+    monkeypatch.setattr(entity_resolver, "find_entity_neighbours_with_data", _fake)
+
+
+_NEIGHBOUR = [
+    {"value": "ZZT-SKU-NEIGHBOUR", "display": "ZZT-SKU-NEIGHBOUR", "id": "n1", "sim": 0.9, "is_variant": True}
+]
+
+
+def test_summary_modes_never_offer_alternatives(db, monkeypatch):
+    """B14. A `compact` or `availability` contact must never be handed a list of
+    OTHER products that do have stock.
+
+    The data-miss probe fires on `total == 0`, which is exactly the state a
+    dealer asking about an out-of-stock product produces, and its answer rides
+    the envelope as `alternatives` / `relaxed_axis`. The neighbour it names is
+    found by a has-stock test over EVERY active warehouse, so the block leaks
+    both the product list and the fact that stock exists somewhere the policy
+    hides - to the one mode whose entire purpose is to disclose neither.
+    """
+    capture: dict = {}
+    _neighbour_probe(monkeypatch, returns=_NEIGHBOUR, capture=capture)
+    brw, _, dc1 = _three_warehouses(db)
+    asked = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ASKED")
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=asked.id, warehouse_id=dc1.id, on_hand=999
+    )
+    contact = _contact(db)
+    db.flush()
+
+    for mode in ("compact", "availability"):
+        db.query(StockVisibilityPolicy).filter(
+            StockVisibilityPolicy.contact_id == contact.id
+        ).delete()
+        _policy_row(db, mode=mode, warehouse_ids=[brw.id], contact=contact)
+        db.flush()
+        capture.clear()
+
+        result = StockService(db).list_stock(product_ids=[asked.id], contact_id=contact.id)
+
+        assert "alternatives" not in result, mode
+        assert "relaxed_axis" not in result, mode
+        # Not even asked: the probe's own queries name products this contact is
+        # not being told about.
+        assert capture == {}, mode
+
+
+def test_detailed_still_offers_alternatives(db, monkeypatch):
+    """B14, the other half. Suppression is scoped to the two summary modes - a
+    `detailed` contact still gets the data-miss suggestions every caller has had
+    since §3.3, or the fix would quietly delete a working feature."""
+    _neighbour_probe(monkeypatch, returns=_NEIGHBOUR)
+    brw, _, _ = _three_warehouses(db)
+    asked = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ASKED")
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(product_ids=[asked.id], contact_id=contact.id)
+
+    assert result["alternatives"] == _NEIGHBOUR
+    assert result["relaxed_axis"] == "entity"
+
+
+def test_detailed_alternatives_only_count_stock_the_policy_allows(db, monkeypatch):
+    """B14. The has-data gate is what decides which neighbour is worth naming,
+    and it counted stock in EVERY active warehouse. For a contact restricted to
+    BRW that means suggesting a product whose only stock sits in a location they
+    may not be told about - the suggestion is a promise the next question cannot
+    keep, and it discloses the hidden location's contents by implication."""
+    capture: dict = {}
+    _neighbour_probe(monkeypatch, returns=[], capture=capture)
+    brw, _, dc1 = _three_warehouses(db)
+    asked = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ASKED")
+    allowed = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-ALLOWED")
+    hidden = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-HIDDEN")
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=allowed.id, warehouse_id=brw.id, on_hand=5
+    )
+    stock(
+        db, company_id=DEFAULT_COMPANY_ID, product_id=hidden.id, warehouse_id=dc1.id, on_hand=500
+    )
+    contact = _contact(db)
+    _policy_row(db, mode="detailed", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    StockService(db).list_stock(product_ids=[asked.id], contact_id=contact.id)
+
+    assert capture["code"] == asked.product_code
+    assert capture["has_data"]([allowed.id, hidden.id]) == {allowed.id}
+
+
+# ============================================ the empty flag on a summary answer
+
+
+def test_summary_modes_are_not_empty_when_they_carry_an_answer(db):
+    """`empty` is what the MCP's escalation hint reads to decide a tool found
+    nothing. `compact` and `availability` clear `data` by design, so a real
+    answer - 500 units in BRW, or a yes - was being labelled empty and shipped
+    with "We don't have that information available. Would you like me to route
+    you to our warehouse team?" stapled to it."""
+    brw, _, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=500)
+    contact = _contact(db)
+    db.flush()
+
+    for mode in ("compact", "availability"):
+        db.query(StockVisibilityPolicy).filter(
+            StockVisibilityPolicy.contact_id == contact.id
+        ).delete()
+        _policy_row(db, mode=mode, contact=contact)
+        db.flush()
+
+        result = StockService(db).list_stock(product_ids=[p.id], contact_id=contact.id)
+
+        assert result["empty"] is False, mode
+        assert result["data"] == [], mode
+
+
+def test_a_summary_with_no_block_at_all_is_still_empty(db):
+    """The other side of the flag: nothing asked for, nothing answered. Here
+    "we don't have that information" is the right thing to offer."""
+    contact = _contact(db)
+    _policy_row(db, mode="compact", contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[str(uuid.uuid4())], contact_id=contact.id
+    )
+
+    assert result["stock_summary"] == []
+    assert result["empty"] is True
+
+
+# ============================================ a location never reaches a dealer
+
+
+def test_availability_block_never_names_a_location(db):
+    """`stock_visibility.warehouse_codes` is the policy echoed back, and on the
+    dealer mode it is a list of the exact locations the dealer may not be told
+    about. The mode exists so no location and no number leaves the building, so
+    the echo sits it out."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5)
+    contact = _contact(db)
+    _policy_row(
+        db, mode="availability", warehouse_ids=[brw.id, brw_bb.id], contact=contact
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=contact.id, requested_qty=1
+    )
+
+    assert result["stock_visibility"] == {"mode": "availability", "source": "contact"}
+    assert "ZZTBRW" not in json.dumps(result, default=str)
+
+
+def test_warehouse_codes_name_only_active_locations(db):
+    """A policy row keeps the id of a warehouse that is later deactivated. The
+    listing already ignores inactive locations, so echoing the dead code back
+    would name a location no row can ever come from."""
+    brw, brw_bb, _ = _three_warehouses(db)
+    brw_bb.is_active = False
+    contact = _contact(db)
+    _policy_row(db, mode="compact", warehouse_ids=[brw.id, brw_bb.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(contact_id=contact.id)
+
+    assert result["stock_visibility"]["warehouse_codes"] == ["ZZTBRW"]
+
+
+# ============================================ contact identity cannot diverge
+
+
+def test_contact_without_a_space_id_fails_closed(client, db):
+    """A5. `contact_id` alone applies the POLICY while company scope stays off
+    entirely (`_resolve_api_key_scope` needs both params), so a contact would be
+    answered a policy-shaped slice of EVERY company's stock. The two resolutions
+    have to agree or nobody is answered at all."""
+    workspace = _workspace(db, "364817")
+    contact = _contact(db, respond_io_id="11223344", workspace=workspace)
+    brw, _, _ = _three_warehouses(db)
+    p = product(db, company_id=DEFAULT_COMPANY_ID)
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=42)
+    _policy_row(db, mode="detailed", contact=contact)
+    db.flush()
+
+    body = client.get(
+        "/api/v1/inventory/stock/balance",
+        params={"product_ids": p.id, "contact_id": contact.id},
+    ).json()
+
+    assert body["data"] == []
+    assert body["pagination"]["total"] == 0
+    assert body["stock_visibility"] is None
+
+    with_space = client.get(
+        "/api/v1/inventory/stock/balance",
+        params={"product_ids": p.id, "contact_id": contact.id, "space_id": "364817"},
+    ).json()
+
+    assert len(with_space["data"]) == 1
+    assert with_space["stock_visibility"]["mode"] == "detailed"
+
+
+def test_company_scope_resolves_the_contact_the_policy_resolved(db):
+    """A6. Both id forms name one contact, so both resolvers have to land on the
+    same one. Company scope read `respond_io_id` ONLY, so an internal
+    `respond_contacts.id` - the form the CRM's own callers hold - resolved a
+    policy over ZERO rows: the answer looked like "we have none" and was in fact
+    "I could not tell which company you are"."""
+    from app.models.company import RespondContactCompany
+    from app.services.contact_access_type_service import ContactAccessTypeService
+    from app.services.field_access import resolve_contact_id
+
+    workspace = _workspace(db, "364817")
+    contact = _contact(db, respond_io_id="66778899", workspace=workspace)
+    db.add(
+        RespondContactCompany(
+            id=str(uuid.uuid4()),
+            respond_contact_id=contact.id,
+            company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+    db.flush()
+
+    service = ContactAccessTypeService(db)
+    by_respond = service.resolve_contact_company_ids("66778899", "364817")
+    by_internal = service.resolve_contact_company_ids(contact.id, "364817")
+
+    assert by_respond == by_internal == [DEFAULT_COMPANY_ID]
+    assert (
+        resolve_contact_id(db, contact.id, "364817")
+        == resolve_contact_id(db, "66778899", "364817")
+        == contact.id
+    )
+
+
+def test_company_scope_still_fails_closed_on_a_stranger(db):
+    """The widening above must not become a hole: an id that names nobody, and a
+    contact with no company rows, both still resolve to no companies at all."""
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    workspace = _workspace(db, "364817")
+    contact = _contact(db, respond_io_id="44556677", workspace=workspace)
+    db.flush()
+
+    service = ContactAccessTypeService(db)
+    assert service.resolve_contact_company_ids("ZZT-NO-SUCH-CONTACT", "364817") == []
+    assert service.resolve_contact_company_ids(contact.id, "364817") == []
+    assert service.resolve_contact_company_ids(contact.id, "") == []
+
+
+# ============================================ the admin routes, sharp edges
+
+
+def test_contact_tier_routes_disambiguate_with_a_space_id(client, db):
+    """The card opens on a contact whose Respond.io id also exists in another
+    workspace. `/effective` takes a `space_id` and answers; the three tier routes
+    did not, so the same contact 404'd on the screen that edits it - the admin
+    reads "no such contact" about a contact they are looking at."""
+    first = _workspace(db, "364817")
+    second = _workspace(db, "999999")
+    mine = _contact(db, respond_io_id="12341234", workspace=first)
+    _contact(db, respond_io_id="12341234", workspace=second)
+    _policy_row(db, mode="compact", contact=mine)
+    db.flush()
+
+    assert client.get(f"{BASE}/contacts/12341234").status_code == 404
+
+    body = client.get(f"{BASE}/contacts/12341234", params={"space_id": "364817"}).json()
+    assert body["override"]["mode"] == "compact"
+
+    saved = client.put(
+        f"{BASE}/contacts/12341234",
+        params={"space_id": "364817"},
+        json={"mode": "availability", "warehouse_ids": None},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["override"]["mode"] == "availability"
+
+    dropped = client.delete(f"{BASE}/contacts/12341234", params={"space_id": "364817"})
+    assert dropped.status_code == 200
+    assert dropped.json()["override"] is None
+    assert (
+        db.query(StockVisibilityPolicy)
+        .filter(StockVisibilityPolicy.contact_id == mine.id)
+        .count()
+        == 0
+    )
+
+
+def test_a_malformed_warehouse_id_is_rejected_not_a_500(client, db):
+    """C3. `warehouse_ids` is a list of strings on the wire, so a value that is
+    not a UUID reaches Postgres as one and comes back as a 500 the admin can do
+    nothing with. It is the same mistake as naming a warehouse that does not
+    exist, and it gets the same 422 and the same sentence."""
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "compact", "warehouse_ids": ["not-a-uuid"]},
+    )
+
+    assert response.status_code == 422
+    assert "not-a-uuid" in json.dumps(response.json())
+
+
+def test_the_upsert_body_must_state_its_warehouses(client, db):
+    """A PUT is a whole-row replace. With `warehouse_ids` defaulted, a caller
+    that sent only `{mode}` silently widened the policy to every location - the
+    one edit an admin can make without meaning to."""
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(f"{BASE}/contacts/{contact.id}", json={"mode": "compact"})
+
+    assert response.status_code == 422
+
+
+def test_policy_writes_and_deletes_are_audited(client, db):
+    """Who told the chatbot to stop naming locations for this contact, and when.
+
+    A policy row is master data with a blast radius - it decides what every
+    future answer to that contact contains - so it needs the same history every
+    other audited table has. The delete half is the one that breaks silently: a
+    bulk `query.delete()` never loads the row, so no ORM event fires and the
+    removal leaves no trace at all.
+    """
+    from app.models.audit import AuditLog
+    from app.services.audit_service import _audit_entity_type, register_audit_listeners
+
+    register_audit_listeners()
+    contact = _contact(db)
+    db.flush()
+
+    client.put(
+        f"{BASE}/contacts/{contact.id}", json={"mode": "compact", "warehouse_ids": None}
+    )
+    row_id = str(
+        db.query(StockVisibilityPolicy.id)
+        .filter(StockVisibilityPolicy.contact_id == contact.id)
+        .scalar()
+    )
+    client.delete(f"{BASE}/contacts/{contact.id}")
+
+    entries = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_id == row_id)
+        .order_by(AuditLog.changed_at)
+        .all()
+    )
+    assert _audit_entity_type(StockVisibilityPolicy) == "stock_visibility_policies"
+    actions = [entry.action for entry in entries]
+    assert "CREATE" in actions
+    assert "DELETE" in actions
+
+
+# ============================================ C7. the policy is not company data
+
+
+def test_a_policy_spanning_two_companies_reads_back_whole(client, db):
+    """C7. `warehouses` is company-scoped; `stock_visibility_policies` is not.
+
+    So a policy naming BRW (Sorento) and MWH (Mocha) resolved to BRW alone for a
+    Sorento admin - and because the card Saves what it was shown, the next Save
+    silently dropped Mocha from the list. An override naming ONLY Mocha rendered
+    as "no locations" and saved as NULL, which is every location: the widest
+    possible policy, written by an admin who touched nothing.
+    """
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    sorento_wh = _wh(db, "ZZTBRW")
+    mocha_wh = _wh(db, "ZZTMCH", company_id=MOCHA_ID)
+    contact = _contact(db)
+    _policy_row(
+        db, mode="compact", warehouse_ids=[sorento_wh.id, mocha_wh.id], contact=contact
+    )
+    db.flush()
+
+    body = client.get(f"{BASE}/contacts/{contact.id}").json()
+
+    assert [w["code"] for w in body["override"]["warehouses"]] == ["ZZTBRW", "ZZTMCH"]
+
+
+def test_a_warehouse_from_another_company_can_be_saved(client, db):
+    """C7, the write half. The validation runs the same scoped lookup, so a
+    perfectly real Mocha warehouse came back as "Unknown warehouse" - a 422
+    naming a UUID, on a screen that never shows one."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    mocha_wh = _wh(db, "ZZTMCH", company_id=MOCHA_ID)
+    contact = _contact(db)
+    db.flush()
+
+    response = client.put(
+        f"{BASE}/contacts/{contact.id}",
+        json={"mode": "compact", "warehouse_ids": [mocha_wh.id]},
+    )
+
+    assert response.status_code == 200, response.json()
+    assert [w["code"] for w in response.json()["override"]["warehouses"]] == ["ZZTMCH"]
+
+
+def test_stock_enforcement_stays_company_scoped(db):
+    """The bypass above is for the POLICY row's own warehouse list, and nowhere
+    else. The listing still answers from the caller's companies only."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    sorento_wh = _wh(db, "ZZTBRW")
+    mocha_wh = _wh(db, "ZZTMCH", company_id=MOCHA_ID)
+    sorento_p = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SKU-SRT")
+    mocha_p = product(db, company_id=MOCHA_ID, code="ZZT-SKU-MCH")
+    stock(
+        db,
+        company_id=DEFAULT_COMPANY_ID,
+        product_id=sorento_p.id,
+        warehouse_id=sorento_wh.id,
+        on_hand=10,
+    )
+    stock(
+        db,
+        company_id=MOCHA_ID,
+        product_id=mocha_p.id,
+        warehouse_id=mocha_wh.id,
+        on_hand=777,
+    )
+    contact = _contact(db)
+    _policy_row(
+        db, mode="compact", warehouse_ids=[sorento_wh.id, mocha_wh.id], contact=contact
+    )
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[sorento_p.id, mocha_p.id], contact_id=contact.id
+    )
+
+    assert [b["product_code"] for b in result["stock_summary"]] == ["ZZT-SKU-SRT"]
+    assert [b["total_on_hand"] for b in result["stock_summary"]] == [10]
+
+
+# ============================================ B15. a summary answer is paged
+
+
+def test_compact_pages_over_products(db):
+    """B15. "What stock do you have?" with no product named aggregated over every
+    row the contact may see and returned one block per product - about 5,500 of
+    them - while `pagination.total` read 0. The page/limit the caller sent has to
+    mean the same thing in this mode as in the detailed one: products, in code
+    order, with the real count beside them."""
+    brw, _, _ = _three_warehouses(db)
+    codes = ["ZZT-SKU-P1", "ZZT-SKU-P2", "ZZT-SKU-P3"]
+    for code in codes:
+        p = product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+        stock(
+            db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5
+        )
+    contact = _contact(db)
+    _policy_row(db, mode="compact", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    first = StockService(db).list_stock(contact_id=contact.id, limit=2)
+    second = StockService(db).list_stock(contact_id=contact.id, limit=2, page=2)
+
+    assert [b["product_code"] for b in first["stock_summary"]] == codes[:2]
+    assert first["pagination"] == {"total": 3, "page": 1, "limit": 2}
+    assert [b["product_code"] for b in second["stock_summary"]] == codes[2:]
+    assert second["pagination"] == {"total": 3, "page": 2, "limit": 2}
+
+
+def test_availability_pages_over_products(db):
+    """B15, the dealer side: the same cap, or one question returns thousands of
+    yes/no lines for products nobody asked about."""
+    brw, _, _ = _three_warehouses(db)
+    for code in ("ZZT-SKU-P1", "ZZT-SKU-P2", "ZZT-SKU-P3"):
+        p = product(db, company_id=DEFAULT_COMPANY_ID, code=code)
+        stock(
+            db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=5
+        )
+    contact = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(contact_id=contact.id, limit=2, requested_qty=1)
+
+    assert [e["product_code"] for e in result["stock_availability"]] == [
+        "ZZT-SKU-P1",
+        "ZZT-SKU-P2",
+    ]
+    assert result["pagination"]["total"] == 3
+
+
+# ============================================ the access-type lookup is a service
+
+
+def test_unknown_access_type_is_rejected_by_the_service(db):
+    """The router used to run this query itself, which PRINCIPLES.md hard-fails.
+    It lives with the rest of the policy logic now, and answers the same 404 -
+    a dangling `access_type_code` would be refused by the FK anyway, and a 500
+    tells the admin nothing about which code was wrong."""
+    from app.services.error_handler import AppException
+    from app.services.stock_visibility import require_access_type
+
+    dealer = _access_type(db, unique_code("dealer")[:50], "Dealer")
+    db.flush()
+
+    assert require_access_type(db, dealer.code) == dealer.code
+    with pytest.raises(AppException) as raised:
+        require_access_type(db, "ZZT-NO-SUCH-CODE")
+    assert raised.value.status_code == 404

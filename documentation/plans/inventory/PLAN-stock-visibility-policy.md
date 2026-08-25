@@ -1,6 +1,6 @@
 # PLAN: Stock visibility policy (per contact, per access type)
 
-**Status:** S4 done, browser verification + S5 n8n + S6 review pending. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 done (mock swapped for the real API, vitest 25 passed).
+**Status:** Review fixes done; browser verification + S5 n8n pending. Tickets #291 (S1) #292 (S2) #293 (S3) #294 (S4) #295 (S5) #296 (S6). S1 code complete (Phase 1), S2 done (backend + pytest, migration `416_stock_visibility_policy`), S3 done, S4 done (mock swapped for the real API), S6 review fixes landed test-first (16 findings: the `alternatives` leak, contact-identity divergence, the false "no information" hint, `requested_qty` 0, `space_id` on the contact tier, audit, malformed ids, the FE `[]`-vs-null reading, an empty dealer pool, the availability location echo, a required `warehouse_ids`, two vacuous vitest assertions, company-scoped policy warehouses, unpaged summary aggregation, a DB query in a router).
 **UAC:** `stock-visibility-policy-acceptance-criteria.md` (alongside)
 **Domain:** inventory / chatbot (n8n `sub-get-results` `Fss5aAaXthJSWpZCgKiKR`, MCP `crm_inventory_stock_balance_list`)
 
@@ -107,8 +107,33 @@ Apply the policy **after** company scope, **before** serialisation, inside `Stoc
 | mode | Rows returned | Extra block on the `ListResponse` |
 |---|---|---|
 | `detailed` | as today, `AND Stock.warehouse_id IN policy.warehouse_ids` when not NULL | `stock_visibility: {mode, warehouse_codes, source}` |
-| `compact` | **no `data` rows** (`data: []`, `total: 0`) | `stock_visibility` + `stock_summary: [{product_id, product_code, product_name, total_on_hand, locations: [{warehouse_code, quantity_on_hand}], flags: {discontinued}}]` grouped per product over allowed warehouses, locations ordered by warehouse_code |
-| `availability` | **no `data` rows** | `stock_visibility` + `stock_availability: [{product_id, product_code, product_name, needs_quantity: bool, requested_qty, available: bool|null}]`. `needs_quantity=true, available=null` when `requested_qty` is absent; else `available = sum(on_hand over allowed) >= requested_qty`. **No quantity field of any kind on this block.** |
+| `compact` | **no `data` rows** (`data: []`) | `stock_visibility` + `stock_summary: [{product_id, product_code, product_name, total_on_hand, locations: [{warehouse_code, quantity_on_hand}], flags: {discontinued}}]` grouped per product over allowed warehouses, locations ordered by warehouse_code |
+| `availability` | **no `data` rows** | `stock_visibility` (WITHOUT `warehouse_codes`) + `stock_availability: [{product_id, product_code, product_name, needs_quantity: bool, requested_qty, available: bool|null}]`. `needs_quantity=true, available=null` when `requested_qty` is absent or below 1; else `available = sum(on_hand over allowed) >= requested_qty`. **No quantity field of any kind on this block.** |
+
+Four rules the two summary modes share, each one a review finding (AC-B14 / B15 / B16):
+
+- **`warehouse_codes` names only ACTIVE warehouses, and is omitted entirely under
+  `availability`.** The echo is the policy read back, and under the dealer mode it is a list
+  of the exact locations that mode exists to keep out of the reply. A location must never
+  reach a dealer envelope, not as data and not as an echo.
+- **Paged over products.** "What stock do you have?" names no product, so the candidate set is
+  the whole catalogue. The blocks page over DISTINCT products in `product_code` order using the
+  request's `page`/`limit`, and `pagination.total` is the distinct product count. It is NOT
+  forced to 0: a caller cannot page through an answer whose size it is lied to about.
+- **`empty` is False whenever a block carries an entry.** The MCP's escalation hint reads it
+  (`escalation_hint._is_empty_response`, which also learned the two block keys), and these modes
+  clear `data` by design - so a reply carrying 700 units arrived with "We don't have that
+  information available" stapled to it.
+- **No `alternatives` / `relaxed_axis`.** The data-miss neighbour probe fires on an empty result,
+  which is exactly the dealer's out-of-stock question, and its answer names other products that
+  DO have stock. `detailed` keeps the probe, with its has-stock gate narrowed to the policy's
+  warehouses.
+
+`contact_id` MUST arrive with `space_id`, enforced at the route: request-entry company scope
+(`_resolve_api_key_scope`) reads both or stays off entirely, so `contact_id` alone would apply a
+policy over every company's stock. The two identities are resolved by ONE function
+(`field_access.resolve_contact_id`, which `ContactAccessTypeService.resolve_contact_company_ids`
+now delegates to), so the policy and the company scope cannot name different contacts.
 
 **Every product NAMED in the request gets an entry**, including one with no stock row in any
 allowed warehouse (`total_on_hand: 0` / `available: false`, or `needs_quantity` when no quantity
@@ -195,9 +220,13 @@ badge (`Contact override` / `Access type: <name>` / `Default`), a mode `Searchab
 - System settings: a new `Stock Visibility` tab (`user-management/settings/stock-visibility`)
   holding the default row.
 - No explanations in-UI (Outline guide instead). No UUIDs shown; warehouses render as `code - name`.
-- **Empty Locations = all locations** (stored `warehouse_ids` NULL). The `[]` reading ("no stock
-  at all") is not reachable from the S1 UI, which is deliberate: it only becomes an operator
-  action in the later pass that retires the Respond `is_allowed_stock` field (roll-out step 5).
+- **Locations keeps its three readings apart.** A list; `null` = every active warehouse
+  (placeholder "All locations"); `[]` = no stock at all (placeholder "No locations"). The picker
+  can only hand back a list, so removing the last chip means `[]`, and an "All locations" button
+  beside "Dealer pool" is the way back to `null`. Drawing the two empty readings the same way
+  showed the strictest policy as the loosest one, and Save writes what the card drew.
+- A "Dealer pool" preset that resolves to NO warehouses toasts an error and leaves the selection
+  untouched - `[]` from a button pressed expecting three locations is the widest possible change.
 
 ### API
 
@@ -230,6 +259,16 @@ Permission: reuse `inventory.stock.edit` for writes, `inventory.stock.view` for 
 gating map entry added per `project_permission_gating_all_routes`). `response_model` declares every
 block (`stock_visibility`, `stock_summary`, `stock_availability`) or they are silently dropped.
 
+The contact-tier routes take an optional `space_id`, the same disambiguator `/effective` takes:
+without it an ambiguous Respond.io id resolves to nothing, so the card that EDITS a contact 404'd
+on a contact the admin was looking at. `warehouse_ids` is REQUIRED in the body (nullable, not
+defaulted): a PUT replaces the row, so an omitted key silently widened the policy to every
+location. Both the read (`policy_warehouses`) and the validation (`validated_warehouse_ids`)
+resolve warehouses across ALL companies - the policy row is not company data, while `warehouses`
+is scoped, so a scoped lookup showed a two-company policy as half a policy and one Save deleted
+the other half. `StockVisibilityPolicy` is `__audit_track__`, and DELETE goes through the ORM
+(`db.delete(row)`, never `query.delete()`) or no audit row is ever written.
+
 ## Roll-out (A/B -> phase-out)
 
 1. Deploy. Default row = `detailed`, no overrides. Zero visible change.
@@ -251,7 +290,7 @@ block (`stock_visibility`, `stock_summary`, `stock_availability`) or they are si
 | S3 | MCP: catalog param + presenter branches; pytest on envelope shapes | Phase 2 | done - `sorento_crm_mcp/tests/test_presenters_stock.py` (25) + backend B13 (zero-stock products still answered). Restart the MCP session to pick it up |
 | S4 | FE wiring: service + hooks + section on contact page, access-type page, settings; vitest | Phase 2 | done - mock deleted, `apiFetch` + `extractApiError` + `buildDataGridParams`; `StockVisibilitySection.test.tsx` (15) + `stockVisibilityService.test.ts` (10) |
 | S5 | n8n: transformer + structurer + pending-quantity turn; live-envelope harness capture | separate n8n plan-build-test-promote; promote = user's call | |
-| S6 | Browser verification via agent-browser from `/` by sidebar; `/code-review`; DoD gate; PR | Phase 3 | |
+| S6 | Browser verification via agent-browser from `/` by sidebar; `/code-review`; DoD gate; PR | Phase 3 | review fixes done (16 findings, test-first); browser run pending |
 
 ## Risks / non-goals
 

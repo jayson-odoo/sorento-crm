@@ -36,8 +36,18 @@ vi.mock('sonner', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
+/**
+ * Two assertions here are about the SHARED controls, not about the card: that the
+ * mode select offers no way to clear itself, and that no UUID reaches the DOM. A
+ * stub can only answer those about itself, so it renders the real component for
+ * those tests and the deterministic stub for the rest.
+ */
+const pickers = vi.hoisted(() => ({ real: false }));
+
+vi.mock('@/components/common/SearchableSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/common/SearchableSelect')>();
+  const Real = actual.SearchableSelect;
+  const Stub = ({
     id,
     value,
     onChange,
@@ -45,19 +55,13 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     placeholder,
     disabled,
     clearable,
-  }: {
-    id?: string;
-    value: string;
-    onChange: (v: string) => void;
-    options?: { value: string; label: string }[];
-    placeholder?: string;
-    disabled?: boolean;
-    clearable?: boolean;
-  }) => (
+  }: Parameters<typeof Real>[0]) => (
     <select
       id={id}
       aria-label={placeholder ?? 'select'}
-      data-clearable={String(!!clearable)}
+      // 'unset' vs 'false': the card passes NO clearable prop, and asserting
+      // `String(!!undefined)` would have read 'false' whatever it passed.
+      data-clearable={clearable === undefined ? 'unset' : String(clearable)}
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
@@ -68,14 +72,21 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         </option>
       ))}
     </select>
-  ),
-}));
-
-vi.mock('@/components/common/SearchableMultiSelect', async () => {
-  const ReactModule = await import('react');
-  type Option = { value: string; label: string };
+  );
   return {
-    SearchableMultiSelect: ({
+    ...actual,
+    SearchableSelect: (props: Parameters<typeof Real>[0]) =>
+      pickers.real ? <Real {...props} /> : <Stub {...props} />,
+  };
+});
+
+vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
+  const ReactModule = await import('react');
+  const actual =
+    await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
+  const Real = actual.SearchableMultiSelect;
+  type Option = { value: string; label: string };
+  const Stub = ({
       value,
       onChange,
       options,
@@ -83,15 +94,7 @@ vi.mock('@/components/common/SearchableMultiSelect', async () => {
       selectedOptions,
       placeholder,
       disabled,
-    }: {
-      value: string[];
-      onChange: (v: string[]) => void;
-      options?: Option[];
-      fetchOptions?: (query: string) => Promise<Option[]>;
-      selectedOptions?: Option[];
-      placeholder?: string;
-      disabled?: boolean;
-    }) => {
+    }: Parameters<typeof Real>[0]) => {
       const [found, setFound] = ReactModule.useState<Option[]>([]);
       return (
         <div
@@ -135,7 +138,11 @@ vi.mock('@/components/common/SearchableMultiSelect', async () => {
           ))}
         </div>
       );
-    },
+    };
+  return {
+    ...actual,
+    SearchableMultiSelect: (props: Parameters<typeof Real>[0]) =>
+      pickers.real ? <Real {...props} /> : <Stub {...props} />,
   };
 });
 
@@ -231,6 +238,7 @@ function chipLabels(): string[] {
 }
 
 beforeEach(() => {
+  pickers.real = false;
   vi.clearAllMocks();
   service.searchStockVisibilityWarehouses.mockResolvedValue([BRW, BRW_BB]);
   service.getDealerPoolWarehouses.mockResolvedValue([BRW, MWH, DC1]);
@@ -245,14 +253,29 @@ describe('E1 - the policy in force, and where it comes from', () => {
     const own = policy('compact', [BRW, BRW_BB], 'contact');
     respondWith(() => ({ effective: own, override: own }));
 
-    const { container } = renderSection(CONTACT_SCOPE);
+    renderSection(CONTACT_SCOPE);
     await waitForCard();
 
     expect(screen.getByText('Stock visibility')).toBeInTheDocument();
     expect(modeSelect().value).toBe('compact');
     expect(chipLabels()).toEqual(['BRW - Rawang Main Warehouse', 'BRW-BB - Rawang Bulk Bay']);
     expect(screen.getByText('Contact override')).toBeInTheDocument();
-    // No UUID on screen - the whole reason the backend resolves the warehouses.
+  });
+
+  it('puts no UUID in the DOM, with the real Locations picker rendering the chips', async () => {
+    // The stub renders `selectedOptions` and nothing else, so it could never have
+    // shown an id whatever the card did. The claim is about the shared control,
+    // so the shared control is what renders here.
+    pickers.real = true;
+    const own = policy('compact', [BRW, BRW_BB], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+
+    const { container } = renderSection(CONTACT_SCOPE);
+    await waitFor(() =>
+      expect(screen.getByText('BRW - Rawang Main Warehouse')).toBeInTheDocument(),
+    );
+
+    expect(screen.getByText('BRW-BB - Rawang Bulk Bay')).toBeInTheDocument();
     expect(container.innerHTML).not.toContain(BRW.id);
     expect(container.innerHTML).not.toContain(BRW_BB.id);
   });
@@ -294,8 +317,20 @@ describe('E2 - the two controls', () => {
       'compact',
       'availability',
     ]);
-    // A policy row always has a mode, so there is nothing to clear back to.
-    expect(modeSelect().getAttribute('data-clearable')).toBe('false');
+    // A policy row always has a mode, so there is nothing to clear back to: the
+    // card passes no `clearable` prop at all.
+    expect(modeSelect().getAttribute('data-clearable')).toBe('unset');
+  });
+
+  it('renders no clear control on the real mode select', async () => {
+    // What `clearable` actually decides, asserted where it is decided. Passing
+    // the prop is only a proxy for this.
+    pickers.real = true;
+    renderSection(CONTACT_SCOPE);
+    await waitFor(() => expect(screen.getByText('Detailed')).toBeInTheDocument());
+
+    expect(screen.queryByLabelText('Clear selection')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /clear/i })).not.toBeInTheDocument();
   });
 
   it('server-searches the locations rather than filtering a list it was handed', async () => {
@@ -353,6 +388,27 @@ describe('E3 - the Dealer pool preset', () => {
   });
 });
 
+describe('E3 - the Dealer pool preset, when it comes back empty', () => {
+  it('says so and leaves the selection alone', async () => {
+    // An empty list is not a policy. Writing it would store `[]`, which means
+    // "no stock at all" - the widest change on this card, made by a button the
+    // admin pressed expecting three locations.
+    const own = policy('detailed', [BRW_BB], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    service.getDealerPoolWarehouses.mockResolvedValue([]);
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dealer pool' }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('No dealer pool locations are configured'),
+    );
+    expect(chipLabels()).toEqual(['BRW-BB - Rawang Bulk Bay']);
+  });
+});
+
 describe('E4 / E8 - Save', () => {
   it('sends the drafted mode and locations, then invalidates and toasts', async () => {
     const inherited = policy('detailed', [BRW, BRW_BB], 'default');
@@ -377,7 +433,7 @@ describe('E4 / E8 - Save', () => {
     await waitFor(() => expect(service.getStockVisibility.mock.calls.length).toBeGreaterThan(1));
   });
 
-  it('reads "All locations" when nothing is picked, and saves warehouse_ids: null (E8)', async () => {
+  it('reads "All locations" for a null list and saves warehouse_ids: null (E8)', async () => {
     const inherited = policy('detailed', null, 'default');
     respondWith(() => ({ effective: inherited, override: null }));
     const saved = policy('availability', null, 'contact');
@@ -397,6 +453,73 @@ describe('E4 / E8 - Save', () => {
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
         mode: 'availability',
+        warehouse_ids: null,
+      }),
+    );
+  });
+
+  it('reads "No locations" for a stored empty list, and keeps it empty on Save (E8)', async () => {
+    // `[]` and null are two different policies - "told about no stock at all" and
+    // "told about every location". Both draw an empty picker, so a card that
+    // cannot tell them apart shows the strictest policy as the loosest one, and
+    // one Save turns it into that.
+    const own = policy('compact', [], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    service.saveStockVisibility.mockResolvedValue({ effective: own, override: own });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
+      'No locations',
+    );
+
+    fireEvent.change(modeSelect(), { target: { value: 'availability' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'availability',
+        warehouse_ids: [],
+      }),
+    );
+  });
+
+  it('saves [] when the last chip is removed, and null when the field is cleared (E8)', async () => {
+    const own = policy('compact', [BRW], 'contact');
+    respondWith(() => ({ effective: own, override: own }));
+    service.saveStockVisibility.mockResolvedValue({ effective: own, override: own });
+
+    renderSection(CONTACT_SCOPE);
+    await waitForCard();
+
+    fireEvent.click(screen.getByLabelText('Remove BRW - Rawang Main Warehouse'));
+    await waitFor(() => expect(chipLabels()).toEqual([]));
+    expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
+      'No locations',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
+        mode: 'compact',
+        warehouse_ids: [],
+      }),
+    );
+
+    // The way back to "every location" - the picker itself can only ever hand
+    // back a list, so removing the last chip cannot mean this.
+    fireEvent.click(screen.getByRole('button', { name: 'All locations' }));
+    await waitFor(() =>
+      expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
+        'All locations',
+      ),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(service.saveStockVisibility).toHaveBeenLastCalledWith(CONTACT_SCOPE, {
+        mode: 'compact',
         warehouse_ids: null,
       }),
     );

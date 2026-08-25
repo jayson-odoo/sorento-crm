@@ -42,6 +42,9 @@ class StockVisibilityInput(BaseModel):
     would make removing a location impossible from the card."""
 
     mode: Literal["detailed", "compact", "availability"]
+    #: REQUIRED, and nullable rather than defaulted: a PUT replaces the whole row,
+    #: so a body that simply omitted the key used to widen the policy to every
+    #: location - the one edit an admin can make without meaning to.
     warehouse_ids: Optional[List[str]] = Field(
-        default=None, description="null = every active warehouse; [] = none."
+        ..., description="null = every active warehouse; [] = none."
     )

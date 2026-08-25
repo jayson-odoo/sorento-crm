@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { toast } from 'sonner';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -43,10 +45,12 @@ import {
  * values. On a tier that inherits, pressing Save turns those values into a row of its
  * own; Remove deletes that row and the card falls back to what it inherits.
  *
- * S1 note - empty Locations means every active warehouse (the stored `warehouse_ids` is
- * NULL). The data model also allows an empty list, meaning no stock at all, which the
- * PLAN defers to the pass that retires the `is_allowed_stock` Respond field. Until then
- * the UI has one control and no way to sit between the two readings.
+ * Locations has THREE readings, and they are not interchangeable: a list of locations,
+ * `null` = every active warehouse, and `[]` = no stock at all. The picker itself can
+ * only ever hand back a list, so removing the last chip means `[]` and the "All
+ * locations" button is the way back to `null`. The placeholder names which of the two
+ * empty readings is in force, because a card that draws them the same way shows the
+ * strictest policy as the loosest one - and Save writes what it drew.
  */
 
 export interface StockVisibilitySectionProps {
@@ -56,7 +60,7 @@ export interface StockVisibilitySectionProps {
   className?: string;
 }
 
-type Draft = { mode: StockVisibilityMode; warehouseIds: string[] };
+type Draft = { mode: StockVisibilityMode; warehouseIds: string[] | null };
 
 const MODE_OPTIONS: SearchableSelectOption[] = STOCK_VISIBILITY_MODE_ORDER.map((mode) => ({
   value: mode,
@@ -80,7 +84,9 @@ export function sourceBadgeText(policy: StockVisibilityPolicy): string {
   return 'Default';
 }
 
-function sameIds(a: string[], b: string[]): boolean {
+/** null (every location) is a different value from [] (none), never just "empty". */
+function sameIds(a: string[] | null, b: string[] | null): boolean {
+  if (a === null || b === null) return a === b;
   if (a.length !== b.length) return false;
   const left = [...a].sort();
   const right = [...b].sort();
@@ -97,7 +103,7 @@ export function StockVisibilitySection({
   const dealerPool = useDealerPoolWarehouses();
   const searchWarehouses = useStockVisibilityWarehouseSearch();
 
-  const [draft, setDraft] = useState<Draft>({ mode: 'detailed', warehouseIds: [] });
+  const [draft, setDraft] = useState<Draft>({ mode: 'detailed', warehouseIds: null });
   const [warehouseCache, setWarehouseCache] = useState<
     Record<string, StockVisibilityWarehouse>
   >({});
@@ -123,8 +129,11 @@ export function StockVisibilitySection({
   useEffect(() => {
     if (!data) return;
     const effective = data.effective;
-    const warehouseIds = (effective.warehouses ?? []).map((w) => w.id);
-    const signature = JSON.stringify([effective.mode, [...warehouseIds].sort()]);
+    const warehouseIds = effective.warehouses ? effective.warehouses.map((w) => w.id) : null;
+    const signature = JSON.stringify([
+      effective.mode,
+      warehouseIds === null ? null : [...warehouseIds].sort(),
+    ]);
     if (syncedRef.current === signature) return;
     syncedRef.current = signature;
     cacheWarehouses(effective.warehouses ?? []);
@@ -142,7 +151,7 @@ export function StockVisibilitySection({
 
   const selectedOptions = useMemo(
     () =>
-      draft.warehouseIds.map((id) => {
+      (draft.warehouseIds ?? []).map((id) => {
         const warehouse = warehouseCache[id];
         return warehouse ? toOption(warehouse) : { value: id, label: 'Unknown location' };
       }),
@@ -153,7 +162,10 @@ export function StockVisibilitySection({
   const isDirty =
     !!baseline &&
     (baseline.mode !== draft.mode ||
-      !sameIds((baseline.warehouses ?? []).map((w) => w.id), draft.warehouseIds));
+      !sameIds(
+        baseline.warehouses ? baseline.warehouses.map((w) => w.id) : null,
+        draft.warehouseIds,
+      ));
 
   const hasOwnRow = !!data?.override;
   const canRemove = hasOwnRow && scope.kind !== 'default';
@@ -185,6 +197,12 @@ export function StockVisibilitySection({
   function applyDealerPool() {
     dealerPool.mutate(undefined, {
       onSuccess: (rows) => {
+        // An empty pool is not a policy. Writing it would store `[]` - "no stock
+        // at all" - from a button the admin pressed expecting three locations.
+        if (rows.length === 0) {
+          toast.error('No dealer pool locations are configured');
+          return;
+        }
         cacheWarehouses(rows);
         setDraft((prev) => ({ ...prev, warehouseIds: rows.map((row) => row.id) }));
       },
@@ -222,15 +240,15 @@ export function StockVisibilitySection({
           <Label htmlFor="stock-visibility-warehouses">Locations</Label>
           <SearchableMultiSelect
             id="stock-visibility-warehouses"
-            value={draft.warehouseIds}
+            value={draft.warehouseIds ?? []}
             onChange={(value) => setDraft((prev) => ({ ...prev, warehouseIds: value }))}
             fetchOptions={fetchOptions}
             selectedOptions={selectedOptions}
-            placeholder="All locations"
+            placeholder={draft.warehouseIds === null ? 'All locations' : 'No locations'}
             emptyMessage="No locations found"
             disabled={isBusy}
           />
-          <div>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
@@ -239,6 +257,15 @@ export function StockVisibilitySection({
               disabled={isBusy}
             >
               Dealer pool
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDraft((prev) => ({ ...prev, warehouseIds: null }))}
+              disabled={isBusy || draft.warehouseIds === null}
+            >
+              All locations
             </Button>
           </div>
         </div>
@@ -249,9 +276,11 @@ export function StockVisibilitySection({
           type="button"
           onClick={() =>
             save.mutate({
+              // Sent as drafted: null stays null (every active warehouse), [] stays
+              // [] (none at all). Collapsing one into the other here is what made
+              // the two policies unreachable from this card.
               mode: draft.mode,
-              // Empty means every active warehouse, which the API stores as NULL.
-              warehouse_ids: draft.warehouseIds.length > 0 ? draft.warehouseIds : null,
+              warehouse_ids: draft.warehouseIds,
             })
           }
           disabled={!canSave}

@@ -443,7 +443,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies; omit both for all-company results. "
+            "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
         ),
         "/api/v1/inventory/stock/balance",
         (),

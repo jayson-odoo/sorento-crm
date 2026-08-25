@@ -44,10 +44,16 @@
  *   GET    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *   PUT    /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *            body: { "mode": "compact", "warehouse_ids": ["<uuid>", ...] | null }
- *            Upsert. `warehouse_ids` is replaced wholesale, never merged.
+ *            Upsert. `warehouse_ids` is REQUIRED (nullable, not defaulted) and is
+ *            replaced wholesale, never merged: a PUT replaces the whole row, so an
+ *            omitted key would silently widen the policy to every location.
  *   DELETE /api/v1/inventory/stock-visibility/contacts/{contact_id}    -> PolicyResponse
  *            Hard delete of the override row. The body carries the tier the contact
  *            falls back to, so the UI re-renders the inherited policy without a refetch.
+ *
+ *            All three take an OPTIONAL `?space_id=` - only needed when `contact_id`
+ *            is a Respond.io id that exists in more than one workspace. This app holds
+ *            the internal `respond_contacts.id`, so it does not send one.
  *
  *   GET|PUT|DELETE /api/v1/inventory/stock-visibility/access-types/{code}
  *            Same three shapes, keyed by `contact_access_types.code`.

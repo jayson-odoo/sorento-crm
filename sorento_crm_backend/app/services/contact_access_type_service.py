@@ -340,11 +340,19 @@ class ContactAccessTypeService:
         return self.get_contact_access_codes(str(contact.id))
 
     def resolve_contact_company_ids(self, respond_io_id: str, space_id: str) -> List[str]:
-        """Resolve a Respond.io (contact_id, space_id) pair to the contact's company ids.
+        """Resolve a (contact_id, space_id) pair to the contact's company ids.
 
         Sibling of ``resolve_contact_access_codes`` for multi-company isolation
-        (PLAN §3.13). Reuses the same RespondContact→RespondWorkspace ``space_id``
-        join, then reads the admin-managed ``respond_contact_companies`` M2M.
+        (PLAN §3.13). Reads the admin-managed ``respond_contact_companies`` M2M.
+
+        The contact itself is resolved by ``field_access.resolve_contact_id``, the
+        SAME function the stock-visibility policy and the agent field grants use,
+        and deliberately so: both accept either id space (internal
+        ``respond_contacts.id`` or the Respond.io id, disambiguated by
+        ``space_id``). While this resolver read ``respond_io_id`` alone, a caller
+        holding the internal id got a POLICY applied over an EMPTY company scope -
+        the reply read "we have none of that" when it meant "I could not tell
+        which company you are". Two resolutions of one identity must not disagree.
 
         Non-raising by design (this feeds the request-entry scope resolver, which
         must never 500): returns ``[]`` when the params are blank, when NO contact
@@ -355,19 +363,16 @@ class ContactAccessTypeService:
         sid = (space_id or "").strip()
         if not rid or not sid:
             return []
-        contact = (
-            self.db.query(RespondContact)
-            .join(RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id)
-            .filter(RespondContact.respond_io_id == rid, RespondWorkspace.space_id == sid)
-            .first()
-        )
-        if contact is None:
+        from app.services.field_access import resolve_contact_id
+
+        contact_id = resolve_contact_id(self.db, rid, sid)
+        if not contact_id:
             return []
         from app.models.company import RespondContactCompany
 
         rows = (
             self.db.query(RespondContactCompany.company_id)
-            .filter(RespondContactCompany.respond_contact_id == str(contact.id))
+            .filter(RespondContactCompany.respond_contact_id == contact_id)
             .all()
         )
         return [r[0] for r in rows]

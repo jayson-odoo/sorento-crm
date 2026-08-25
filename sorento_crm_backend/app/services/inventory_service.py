@@ -654,9 +654,16 @@ class StockService:
                 it is a Respond.io id.
             requested_qty: How many units the contact asked for. Only read in
                 `availability` mode, where it turns "needs_quantity" into a yes/no.
+                A value below 1 is read as NOT PROVIDED: the number is parsed out
+                of a sentence by an LLM, so a 0 is a parse artefact rather than a
+                demand, and refusing the call would lose the question ("how many
+                units do you need?") along with the number.
         """
         from sqlalchemy import false as sa_false, or_, func
         from app.services.stock_visibility import resolve_policy
+
+        if requested_qty is not None and requested_qty < 1:
+            requested_qty = None
 
         # --- stock visibility policy (chatbot path only) ----------------------
         # Resolved FIRST so an unresolvable contact costs nothing: same fail-closed
@@ -948,12 +955,22 @@ class StockService:
         # so every query AFTER it raises InFailedSqlTransaction. With the blocks
         # built first, a probe that trips can lose only its own suggestions instead
         # of taking the contact's whole stock answer down with it.
-        if total == 0:
+        #
+        # A contact on `compact` or `availability` gets NO probe at all (AC-B14).
+        # Its answer names OTHER products that do have stock, which is the one
+        # thing those two modes exist to withhold: a dealer told "we have none,
+        # but try these three" has been handed the product list and the fact
+        # that stock exists in a location the policy hides.
+        suppress_alternatives = policy is not None and policy.mode != "detailed"
+        if total == 0 and not suppress_alternatives:
             # Best-effort: a suggestion probe must never turn a legitimately-empty
             # listing into a 500 (AC-R1). The pre-lookup + neighbour query run after
             # the result is already computed.
             try:
-                alternatives = self._stock_entity_alternatives(resolved_input_product_ids)
+                alternatives = self._stock_entity_alternatives(
+                    resolved_input_product_ids,
+                    allowed_warehouse_ids=(policy.warehouse_ids if policy else None),
+                )
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning(
@@ -986,25 +1003,32 @@ class StockService:
         and how many there were, and the raw (non-render) response is readable by any
         direct MCP caller, so empty is the only shape that cannot leak.
         """
-        from sqlalchemy import func
+        from sqlalchemy import func, or_ as sa_or
 
-        # NULL stays null on the wire: "every location" is a different answer from
-        # "these named ones", and collapsing it to a list would make the admin card
-        # show a snapshot that silently stops tracking new warehouses.
-        warehouse_codes = None
-        if policy.warehouse_ids is not None:
-            warehouse_codes = sorted(
-                code
-                for (code,) in self.db.query(Warehouse.warehouse_code)
-                .filter(Warehouse.id.in_(list(policy.warehouse_ids)))
-                .all()
-            ) if policy.warehouse_ids else []
+        payload["stock_visibility"] = {"mode": policy.mode, "source": policy.source}
+        if policy.mode != "availability":
+            # NULL stays null on the wire: "every location" is a different answer
+            # from "these named ones", and collapsing it to a list would make the
+            # admin card show a snapshot that silently stops tracking new
+            # warehouses. Inactive locations are dropped: the listing never
+            # answers from one, so naming it promises a place no row can come from.
+            #
+            # The dealer mode omits the key entirely. It is a list of the exact
+            # locations that mode exists to keep out of the reply, and an echo is
+            # still a disclosure.
+            warehouse_codes = None
+            if policy.warehouse_ids is not None:
+                warehouse_codes = sorted(
+                    code
+                    for (code,) in self.db.query(Warehouse.warehouse_code)
+                    .filter(
+                        Warehouse.id.in_(list(policy.warehouse_ids)),
+                        Warehouse.is_active.is_(True),
+                    )
+                    .all()
+                ) if policy.warehouse_ids else []
+            payload["stock_visibility"]["warehouse_codes"] = warehouse_codes
 
-        payload["stock_visibility"] = {
-            "mode": policy.mode,
-            "warehouse_codes": warehouse_codes,
-            "source": policy.source,
-        }
         # n8n's "_Data last updated_" footer reads the MCP envelope's
         # `last_updated_at`, which is walked out of the body. The summary modes
         # carry no rows to walk, so the payload states it directly.
@@ -1013,6 +1037,37 @@ class StockService:
         if policy.mode == "detailed":
             return
 
+        # The products to answer for = the ones with stock the policy allows, PLUS
+        # every product the contact actually named. A named product with no row in
+        # any allowed location would otherwise vanish, and its absence is
+        # unreadable: "we have none left" and "I never found what you asked for"
+        # arrive as the same silence, which is precisely the question a dealer
+        # asks. A named id that resolves to no product at all still gets nothing -
+        # inventing a block would answer about a product that does not exist.
+        #
+        # PAGED, over products, before anything is aggregated. "What stock do you
+        # have?" names no product, so the candidate set is the whole catalogue -
+        # thousands of blocks in one reply, and a `pagination.total` of 0 beside
+        # them. The caller's page/limit has to mean the same thing here as it does
+        # for rows.
+        named_ids = {str(pid) for pid in (requested_product_ids or set()) if pid}
+        with_stock = policy_q.with_entities(Stock.product_id).distinct().subquery()
+        candidate_filter = Product.id.in_(self.db.query(with_stock.c.product_id))
+        if named_ids:
+            candidate_filter = sa_or(candidate_filter, Product.id.in_(named_ids))
+        candidates = self.db.query(Product.id).filter(candidate_filter)
+
+        total_products = candidates.count()
+        page_ids = [
+            str(row[0])
+            for row in candidates.order_by(
+                Product.product_code.asc(), Product.id.asc()
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        ]
+
         rows = (
             policy_q.with_entities(
                 Stock.product_id.label("product_id"),
@@ -1020,44 +1075,33 @@ class StockService:
                 func.sum(Stock.quantity_on_hand).label("on_hand"),
             )
             .join(Warehouse, Warehouse.id == Stock.warehouse_id)
+            .filter(Stock.product_id.in_(page_ids))
             .group_by(Stock.product_id, Warehouse.warehouse_code)
             .all()
+            if page_ids
+            else []
         )
-        # The products to answer for = the ones with stock, PLUS every product the
-        # contact actually named. A product with no row in any allowed location
-        # would otherwise vanish, and its absence is unreadable: "we have none
-        # left" and "I never found what you asked for" arrive as the same silence,
-        # which is precisely the question a dealer asks. A named id that resolves
-        # to no product at all still gets nothing - it is dropped by the lookup
-        # below, because inventing a block would answer about a product that does
-        # not exist.
-        product_ids = {str(row.product_id) for row in rows} | {
-            str(pid) for pid in (requested_product_ids or set()) if pid
-        }
         products = (
-            self.db.query(Product)
-            .filter(Product.id.in_(product_ids))
-            .all()
-            if product_ids
+            self.db.query(Product).filter(Product.id.in_(page_ids)).all()
+            if page_ids
             else []
         )
         products_by_id = {str(p.id): p for p in products}
 
-        per_product: dict[str, list] = {pid: [] for pid in products_by_id}
+        per_product: dict[str, list] = {pid: [] for pid in page_ids}
         for row in rows:
             per_product.setdefault(str(row.product_id), []).append(row)
 
-        ordered_ids = sorted(
-            per_product,
-            key=lambda pid: (
-                getattr(products_by_id.get(pid), "product_code", None) or "",
-                pid,
-            ),
-        )
+        # `page_ids` is already in product_code order - the same order the query
+        # paged on, so page 2 continues where page 1 stopped.
+        ordered_ids = [pid for pid in page_ids if pid in products_by_id]
 
         payload["data"] = []
-        payload["pagination"] = {"total": 0, "page": page, "limit": limit}
-        payload["empty"] = True
+        payload["pagination"] = {"total": total_products, "page": page, "limit": limit}
+        # `empty` is what the MCP escalation hint reads. These modes clear `data`
+        # by design, so a real answer - 500 units in BRW, or a yes - was being
+        # labelled empty and shipped with "We don't have that information".
+        payload["empty"] = total_products == 0
 
         if policy.mode == "compact":
             payload["stock_summary"] = [
@@ -1105,7 +1149,12 @@ class StockService:
             for pid in ordered_ids
         ]
 
-    def _stock_entity_alternatives(self, product_ids: set[str]) -> list[dict]:
+    def _stock_entity_alternatives(
+        self,
+        product_ids: set[str],
+        *,
+        allowed_warehouse_ids: Optional[frozenset[str]] = None,
+    ) -> list[dict]:
         """Data-bearing variant/neighbour alternatives for an empty stock result.
 
         Only fires when exactly ONE input product resolved (otherwise "which product's
@@ -1113,6 +1162,11 @@ class StockService:
         stock row with quantity_on_hand > 0, which inherently respects the same
         SYSTEM_ADJUSTMENT-zero exclusion the listing uses (a system-adjusted-to-0 row is
         qoh == 0, so excluded).
+
+        ``allowed_warehouse_ids`` narrows that gate to the locations the caller's
+        visibility policy allows (None = all of them, the staff/legacy case). A
+        suggestion judged on hidden stock is a promise the next question cannot
+        keep: the contact asks about the neighbour and is told there is none.
         """
         if len(product_ids) != 1:
             return []
@@ -1128,16 +1182,16 @@ class StockService:
         def _has_stock(candidate_ids: list[str]) -> set[str]:
             if not candidate_ids:
                 return set()
-            rows = (
-                self.db.query(Stock.product_id)
-                .filter(
-                    Stock.product_id.in_(candidate_ids),
-                    Stock.quantity_on_hand > 0,
-                    Stock.warehouse.has(Warehouse.is_active.is_(True)),
-                )
-                .distinct()
-                .all()
+            q = self.db.query(Stock.product_id).filter(
+                Stock.product_id.in_(candidate_ids),
+                Stock.quantity_on_hand > 0,
+                Stock.warehouse.has(Warehouse.is_active.is_(True)),
             )
+            if allowed_warehouse_ids is not None:
+                if not allowed_warehouse_ids:
+                    return set()
+                q = q.filter(Stock.warehouse_id.in_(list(allowed_warehouse_ids)))
+            rows = q.distinct().all()
             return {str(row.product_id) for row in rows}
 
         from app.services.entity_resolver import find_entity_neighbours_with_data

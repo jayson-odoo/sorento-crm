@@ -697,9 +697,14 @@ class StockVisibilityPolicy(Base):
     types, ``app.services.stock_visibility`` merges them MOST RESTRICTIVE first -
     a contact tagged both `dealer` and `end_user` must not be widened by the
     looser tag.
+
+    Audited (``__audit_track__``) like the other master data an admin edits: one
+    row decides what every future answer to a contact contains, so "who changed
+    this, and from what" has to be answerable.
     """
 
     __tablename__ = "stock_visibility_policies"
+    __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     #: NULL unless this is the per-contact override tier.

@@ -64,6 +64,22 @@ class Policy:
     source_label: Optional[str] = None
 
 
+def _all_companies(db: Session):
+    """Read `warehouses` across every company, for the POLICY's own id list only.
+
+    `stock_visibility_policies` is not company-scoped and its `warehouse_ids` can
+    legitimately name locations in two companies. `Warehouse` IS scoped, so the
+    admin card - which resolves those ids to `CODE - name` - showed a Sorento
+    admin only the Sorento half, and Save writes the list wholesale: one Save on
+    an untouched card silently deleted the rest. The stock-balance enforcement
+    path stays scoped; this bypass covers the read and the validation of the
+    stored list, nothing else.
+    """
+    from app.models.base import company_scope
+
+    return company_scope(db, None)
+
+
 def _row_warehouse_ids(row) -> Optional[frozenset[str]]:
     if row.warehouse_ids is None:
         return None
@@ -196,6 +212,26 @@ def resolve_policy(
     return default_policy(db)
 
 
+def require_access_type(db: Session, access_type_code: str) -> str:
+    """The code, or 404. Lives here rather than in the router, which must not
+    query the database at all.
+
+    404 rather than a dangling row: the FK would refuse it anyway, and a 500
+    tells the admin nothing about which code was wrong.
+    """
+    from app.models.access import ContactAccessType
+    from app.services.error_handler import handle_not_found
+
+    exists = (
+        db.query(ContactAccessType.code)
+        .filter(ContactAccessType.code == access_type_code)
+        .first()
+    )
+    if not exists:
+        raise handle_not_found("Contact access type", access_type_code)
+    return access_type_code
+
+
 def effective_policy_for_access_type(db: Session, access_type_code: str) -> Policy:
     """What a contact holding ONLY this access type would get."""
     from app.models.access import ContactAccessType
@@ -219,7 +255,14 @@ def validated_warehouse_ids(db: Session, warehouse_ids) -> Optional[list[str]]:
 
     A dangling id would silently narrow the policy to fewer locations than the
     admin picked, and nothing on the card could show them why.
+
+    Malformed and unknown get the SAME answer. `warehouse_ids` is a list of
+    strings on the wire, so a value that is not a UUID reaches Postgres as one
+    and comes back as a 500 the admin can do nothing with; from where they sit
+    it is simply not a warehouse.
     """
+    import uuid as _uuid
+
     from app.models.inventory import Warehouse
     from app.services.error_handler import handle_unprocessable
 
@@ -228,11 +271,32 @@ def validated_warehouse_ids(db: Session, warehouse_ids) -> Optional[list[str]]:
     wanted = [str(w) for w in warehouse_ids]
     if not wanted:
         return []
-    found = {
-        str(row_id)
-        for (row_id,) in db.query(Warehouse.id).filter(Warehouse.id.in_(wanted)).all()
-    }
-    missing = [w for w in wanted if w not in found]
+
+    malformed: list[str] = []
+    parseable: list[str] = []
+    for value in wanted:
+        try:
+            _uuid.UUID(value)
+        except (ValueError, AttributeError, TypeError):
+            malformed.append(value)
+        else:
+            parseable.append(value)
+
+    found = set()
+    if parseable:
+        # Unscoped on purpose: the policy row is NOT company data, but
+        # `warehouses` is company-scoped, so a scoped lookup would report a
+        # perfectly real warehouse from another company as unknown - and the
+        # matching read (`policy_warehouses`) would drop it from the card, so
+        # the next Save would quietly delete it from the policy.
+        with _all_companies(db):
+            found = {
+                str(row_id)
+                for (row_id,) in db.query(Warehouse.id)
+                .filter(Warehouse.id.in_(parseable))
+                .all()
+            }
+    missing = malformed + [w for w in parseable if w not in found]
     if missing:
         raise handle_unprocessable(
             f"Unknown warehouse: {', '.join(missing)}"
@@ -293,18 +357,21 @@ def delete_policy(
 ) -> bool:
     """Hard delete of one tier's row. Missing is not an error - the tier already
     inherits, which is the state the caller asked for."""
-    from app.models.access import StockVisibilityPolicy
-
-    q = db.query(StockVisibilityPolicy)
     if contact_id:
-        q = q.filter(StockVisibilityPolicy.contact_id == contact_id)
+        row = contact_override(db, contact_id)
     elif access_type_code:
-        q = q.filter(StockVisibilityPolicy.access_type_code == access_type_code)
+        row = access_type_override(db, access_type_code)
     else:  # pragma: no cover - the default tier has no DELETE route
         raise ValueError("The default policy row cannot be deleted.")
-    deleted = q.delete(synchronize_session=False)
+    if row is None:
+        return False
+    # Loaded and deleted through the ORM, not `query.delete()`: a bulk delete
+    # never loads the row, so no ORM event fires and the audit listener writes
+    # nothing. Removing a policy would then be the one change to this table with
+    # no history at all.
+    db.delete(row)
     db.commit()
-    return bool(deleted)
+    return True
 
 
 def policy_warehouses(db: Session, warehouse_ids: Optional[frozenset[str]]):
@@ -319,12 +386,15 @@ def policy_warehouses(db: Session, warehouse_ids: Optional[frozenset[str]]):
         return None
     if not warehouse_ids:
         return []
-    rows = (
-        db.query(Warehouse)
-        .filter(Warehouse.id.in_(list(warehouse_ids)))
-        .order_by(Warehouse.warehouse_code.asc())
-        .all()
-    )
+    # Across every company - see `_all_companies`. The policy row is not company
+    # data, and a half-resolved list is one Save away from becoming a real one.
+    with _all_companies(db):
+        rows = (
+            db.query(Warehouse)
+            .filter(Warehouse.id.in_(list(warehouse_ids)))
+            .order_by(Warehouse.warehouse_code.asc())
+            .all()
+        )
     return [
         {"id": str(row.id), "code": row.warehouse_code, "name": row.warehouse_name}
         for row in rows

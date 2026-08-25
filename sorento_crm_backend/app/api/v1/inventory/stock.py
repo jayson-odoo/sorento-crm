@@ -131,11 +131,12 @@ def get_stock_balance(
     ),
     requested_qty: Optional[int] = Query(
         None,
-        ge=1,
         description=(
             "How many units the contact asked for. Read only under an "
             "`availability` policy, where it turns 'how many do you need?' into a "
-            "yes/no. Zero or negative is not a question anyone asked -> 422."
+            "yes/no. A value below 1 is read as not provided (the number is parsed "
+            "out of a sentence, so a 0 is a parse artefact) and the reply asks for "
+            "the quantity again."
         ),
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -147,7 +148,19 @@ def get_stock_balance(
     `contact_id` is present. Staff callers pass none, so the web grid keeps getting
     full rows for every warehouse their RBAC allows even if the DEFAULT policy row
     is later flipped to `compact` for the chatbot.
+
+    A `contact_id` MUST arrive with its `space_id`. Two independent resolvers read
+    this pair - the request-entry company scope (`_resolve_api_key_scope`) and the
+    visibility policy - and company scope needs BOTH params or it stays off
+    entirely. With only `contact_id` the contact would therefore be answered a
+    policy-shaped slice of every company's stock. They agree or nobody is answered.
     """
+    if contact_id and not space_id:
+        return {
+            "data": [],
+            "pagination": {"total": 0, "page": page, "limit": limit},
+            "empty": True,
+        }
     try:
         service = StockService(db)
         result = service.list_stock(
