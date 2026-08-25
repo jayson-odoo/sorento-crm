@@ -21,6 +21,12 @@
  * The rung strings are `app/services/scm/front_planning_engine.py`'s own constants
  * (`RUNG_POOL`, `RUNG_GROUP_TAKE`, ...), spelled here exactly as the engine spells them.
  *
+ * A COMPONENT THAT CARRIES NO RUNG IS READ ON THE OWNERSHIP GROUP, never on the site and never
+ * on the exact code. Verified against the live board on 25 Aug: every source and every decision
+ * row of a COVERED line arrives with `rung: null` (the board rebuilds a frozen composition
+ * without it), so this fallback is what SO324132 rev 1 is actually rendered by. See
+ * `fallbackRung`.
+ *
  * INCOMING IS ITS OWN KIND and is never folded into Buy: it is already bought and on its way,
  * so adding it to Buy would propose buying it twice.
  */
@@ -115,6 +121,46 @@ function locationOf(part: SupplyPart): string | null {
 }
 
 /**
+ * The ownership-group suffix a warehouse code carries: `BRW-BB` -> `BB`.
+ *
+ * THE SUFFIX AFTER THE FIRST HYPHEN, upper-cased, which is the backend's own rule
+ * (`app/services/scm/sales_agent_service.group_of_warehouse_code`) spelled the same way here so
+ * the two cannot drift. A plain site code (`BRW`, `MWH`, `DC1`, `WH3`, `RSW`) has no hyphen and
+ * therefore no group: it is a POOL, not anyone's ownership group.
+ */
+function groupOf(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const text = String(code).trim();
+  const cut = text.indexOf('-');
+  if (cut < 0) return null;
+  return text.slice(cut + 1).trim().toUpperCase() || null;
+}
+
+/**
+ * The rung a component with none of its own would have been produced by.
+ *
+ * A COVERED line's sources and every decision reserve row arrive with `rung: null` - verified
+ * against the live board on 25 Aug: SO324132 rev 1's CWCY605 sends three reserve sources at
+ * DC1-BB / MWH-BB / WH3-BB, all `rung: null`, because `_apply_frozen` rebuilds a frozen
+ * composition without carrying the rung the engine froze. An uncovered line on the same board
+ * carries `pool` / `buy` / `cross_group_borrow` correctly.
+ *
+ * So the fallback has to reproduce the ladder's own reading, and it is the OWNERSHIP GROUP that
+ * does it, never the site. For a `BRW-BB` line, `DC1-BB` is the agent's OWN group at another
+ * site - rung 2, "Use own location" - while `BRW` is the shared pool at this line's own site.
+ * Comparing the exact code called DC1-BB somebody else's stock; comparing the site prefix called
+ * BRW the line's own. The group suffix is the only comparison that reads both correctly.
+ */
+function fallbackRung(location: string | null, ownLocation: string | null | undefined): string {
+  const group = groupOf(location);
+  // No hyphen at all: a site pool (BRW / MWH / DC1 / WH3 / RSW), shared by every group there.
+  if (!group) return 'pool';
+  if (group === groupOf(ownLocation)) return 'group_take';
+  // A warehouse in somebody ELSE's ownership group. Not the agent's to take, so it is a borrow.
+  return 'cross_group_borrow';
+}
+
+/**
  * Which kind this piece of supply is. The rung decides; the code never does.
  *
  * `kind` is consulted only where there is no rung to consult: Buy and incoming carry their own
@@ -123,11 +169,16 @@ function locationOf(part: SupplyPart): string | null {
  * borrow as borrow-other - the widest reading of each, so nothing claims the agent's own group
  * holds stock the record does not say it holds.
  */
-export function rowOf(part: SupplyPart): SupplyKind | null {
+export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind | null {
   // A line whose sales order names no location was never walked down the ladder at all, so it
   // proposes nothing rather than proposing a buy nobody decided.
   if (part.kind === 'unplannable') return null;
-  switch (part.rung) {
+  const rung =
+    part.rung ??
+    (part.kind === 'reserve' || part.kind === 'borrow'
+      ? fallbackRung(locationOf(part), ownLocation)
+      : null);
+  switch (rung) {
     case 'buy':
       return 'buy';
     case 'incoming':
@@ -145,8 +196,6 @@ export function rowOf(part: SupplyPart): SupplyKind | null {
   }
   if (part.kind === 'buy') return 'buy';
   if (part.kind === 'timely_spo') return 'incoming';
-  if (part.kind === 'borrow') return 'borrow_other';
-  if (part.kind === 'reserve') return 'shared';
   return null;
 }
 
@@ -169,10 +218,13 @@ export interface SupplyPlace {
  * a real cell three of six kinds read 0, so the one line that said what to do sat inside five
  * lines of nothing and had to be found each time.
  */
-export function segmentsOf(parts: SupplyPart[]): SupplySegment[] {
+export function segmentsOf(
+  parts: SupplyPart[],
+  ownLocation?: string | null,
+): SupplySegment[] {
   const minor = new Map<SupplyKind, number>();
   for (const part of parts) {
-    const kind = rowOf(part);
+    const kind = rowOf(part, ownLocation);
     if (!kind) continue;
     minor.set(kind, (minor.get(kind) ?? 0) + toMinor(part.qty));
   }
@@ -209,9 +261,9 @@ export function dominantText(segments: SupplySegment[]): string {
  * locations it drew on so "Shared 71" cannot be read as "shared from nowhere in particular".
  * Empty composition returns an empty string; the caller says what nothing means on its screen.
  */
-export function describe(parts: SupplyPart[]): string {
-  const places = placesOf(parts);
-  return segmentsOf(parts)
+export function describe(parts: SupplyPart[], ownLocation?: string | null): string {
+  const places = placesOf(parts, ownLocation);
+  return segmentsOf(parts, ownLocation)
     .map((segment) => {
       const where = (places.get(segment.kind) ?? [])
         .map((place) => place.location)
@@ -224,10 +276,13 @@ export function describe(parts: SupplyPart[]): string {
 }
 
 /** Per kind, how much came from each named location, in the order the ladder took them. */
-function placesOf(parts: SupplyPart[]): Map<SupplyKind, SupplyPlace[]> {
+function placesOf(
+  parts: SupplyPart[],
+  ownLocation?: string | null,
+): Map<SupplyKind, SupplyPlace[]> {
   const byKind = new Map<SupplyKind, Map<string, number>>();
   for (const part of parts) {
-    const kind = rowOf(part);
+    const kind = rowOf(part, ownLocation);
     if (!kind) continue;
     const at = locationOf(part);
     if (!at) continue;
@@ -282,13 +337,23 @@ export function rowText(row: SuggestionRow): string {
 }
 
 export function suggestionBreakdown(cell: Pick<BoardCell, 'contributions'>): SuggestionRow[] {
+  // Resolved PER CONTRIBUTION, because a cell spans lines whose own locations need not agree:
+  // `DC1-BB` is the agent's own group on a `BRW-BB` line and somebody else's on a `BRW-IB` one.
+  // Each part is re-stamped with the rung its own line resolved it at, so everything below can
+  // aggregate the flat list without needing to know which line each part came from.
   const parts: SupplyPart[] = [];
   const why = new Map<SupplyKind, Set<string>>();
   for (const contribution of cell.contributions) {
     for (const source of contribution.sources) {
-      parts.push(source);
-      const kind = rowOf(source);
-      if (!kind || !source.reason) continue;
+      const kind = rowOf(source, contribution.fulfilment_location);
+      if (!kind) continue;
+      parts.push({
+        kind: source.kind,
+        rung: rungFor(kind),
+        qty: source.qty,
+        location: source.location ?? null,
+      });
+      if (!source.reason) continue;
       const seen = why.get(kind) ?? new Set<string>();
       seen.add(source.reason);
       why.set(kind, seen);
@@ -343,8 +408,6 @@ export function decisionParts(
     if (source.location) rungByLocation.set(source.location, source.rung);
     if (source.warehouse_id) rungByWarehouse.set(source.warehouse_id, source.rung);
   }
-  const own = contribution.fulfilment_location;
-
   const parts: SupplyPart[] = [];
 
   const incoming = decision.timely_spo_qty;
@@ -353,15 +416,20 @@ export function decisionParts(
   }
 
   for (const row of (decision.reserve ?? []) as ReserveRow[]) {
+    // A rung the line's own sources already state beats any reading of the code. When there is
+    // none - which is EVERY covered line, since the board rebuilds a frozen composition without
+    // it - the row is left unrunged and `rowOf` resolves it on the ownership group.
     const rung =
       (row.warehouse_id ? rungByWarehouse.get(row.warehouse_id) : undefined) ??
       (row.location ? rungByLocation.get(row.location) : undefined) ??
-      (own && row.location === own ? 'group_take' : 'pool');
+      null;
     parts.push({ kind: 'reserve', rung, qty: row.qty, location: row.location ?? null });
   }
 
   for (const row of (decision.borrow ?? []) as BorrowRow[]) {
-    const rung = row.rung ?? (row.donor_so_number ? 'group_borrow' : 'cross_group_borrow');
+    // A borrow that names a donor sales order IS the borrow-from-another-order kind, whatever
+    // warehouse it sits in. Without one, `rowOf` resolves it on the group like a reserve.
+    const rung = row.rung ?? (row.donor_so_number ? 'group_borrow' : null);
     parts.push({
       kind: 'borrow',
       rung,
@@ -398,15 +466,24 @@ export function contributionSupply(
     const parts = composed
       ? decisionParts(contribution, drafted)
       : contribution.sources;
-    return { segments: segmentsOf(parts), decided: true };
-  }
-  if (!drafted && contribution.covered && contribution.decision) {
     return {
-      segments: segmentsOf(decisionParts(contribution, contribution.decision)),
+      segments: segmentsOf(parts, contribution.fulfilment_location),
       decided: true,
     };
   }
-  return { segments: segmentsOf(contribution.sources), decided: false };
+  if (!drafted && contribution.covered && contribution.decision) {
+    return {
+      segments: segmentsOf(
+        decisionParts(contribution, contribution.decision),
+        contribution.fulfilment_location,
+      ),
+      decided: true,
+    };
+  }
+  return {
+    segments: segmentsOf(contribution.sources, contribution.fulfilment_location),
+    decided: false,
+  };
 }
 
 /**

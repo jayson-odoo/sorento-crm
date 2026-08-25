@@ -451,9 +451,11 @@ function applyFrozen(contribution: BoardContribution): void {
   for (const row of decision.reserve ?? []) {
     sources.push({
       kind: 'reserve',
-      // A frozen composition carries no rung of its own, so the fixture states the one the
-      // engine would have: the line's own warehouse is a group take, anything else is a pool.
-      rung: row.location === contribution.fulfilment_location ? 'group_take' : 'pool',
+      // NO RUNG, because the real board sends none on a covered line: `_apply_frozen`
+      // (`project_fulfilment_board_service.py`) rebuilds a frozen composition without the rung
+      // the engine froze, verified live off SO324132 rev 1 on 25 Aug. The FE reads it back off
+      // the ownership group (`supplyVocabulary.fallbackRung`), and a fixture that invented a
+      // rung here would hide exactly the path that AC-A2 failed on.
       qty: row.qty,
       location: row.location ?? null,
       warehouse_id: row.warehouse_id,
@@ -463,7 +465,6 @@ function applyFrozen(contribution: BoardContribution): void {
   if (toMinor(decision.timely_spo_qty) > 0) {
     sources.push({
       kind: 'timely_spo',
-      rung: 'incoming',
       qty: decision.timely_spo_qty,
       location: contribution.fulfilment_location ?? null,
       warehouse_id: contribution.fulfilment_warehouse_id,
@@ -473,7 +474,9 @@ function applyFrozen(contribution: BoardContribution): void {
   for (const row of decision.borrow ?? []) {
     sources.push({
       kind: 'borrow',
-      rung: row.rung ?? (row.donor_so_number ? 'group_borrow' : 'cross_group_borrow'),
+      // The frozen BORROW row is the ONE the board does pass a rung through on (see
+      // `_frozen_decision`), so the fixture passes through whatever the decision states.
+      rung: row.rung ?? null,
       qty: row.qty,
       location: row.location ?? null,
       warehouse_id: row.warehouse_id,
@@ -483,7 +486,6 @@ function applyFrozen(contribution: BoardContribution): void {
   if (toMinor(decision.buy_qty) > 0) {
     sources.push({
       kind: 'buy',
-      rung: 'buy',
       qty: decision.buy_qty,
       location: null,
       reason: `Bought, as confirmed in revision ${decision.revision_no}.`,

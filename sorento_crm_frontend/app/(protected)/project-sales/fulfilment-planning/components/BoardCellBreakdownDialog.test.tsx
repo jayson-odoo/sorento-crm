@@ -2020,7 +2020,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
 
-    expect(screen.getByText('Cross-group borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
+    expect(screen.getByText('Borrow 10 from MWH-IB · Buy 33')).toBeInTheDocument();
   });
 
   it('says nothing about a queue it is not in', async () => {

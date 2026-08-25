@@ -129,13 +129,57 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     expect(rowOf({ kind: 'unplannable', qty: '13' })).toBeNull();
   });
 
-  it('falls back on the kind for a component frozen before the rungs existed', () => {
-    // `SupplyComponent.rung` is optional for exactly this reason. The widest reading of each,
-    // so nothing claims the agent's own group holds stock the record does not say it holds.
-    expect(rowOf({ kind: 'reserve', qty: '5' })).toBe('shared');
-    expect(rowOf({ kind: 'borrow', qty: '5' })).toBe('borrow_other');
-    expect(rowOf({ kind: 'buy', qty: '5' })).toBe('buy');
-    expect(rowOf({ kind: 'timely_spo', qty: '5' })).toBe('incoming');
+  /**
+   * A component with NO rung, which is every source and every decision row of a COVERED line:
+   * the board rebuilds a frozen composition without carrying the rung the engine froze. Read
+   * live off SO324132 rev 1 on 25 Aug - three reserve sources at DC1-BB / MWH-BB / WH3-BB, all
+   * `rung: null`, on a BRW-BB line - which is what made AC-A2 read "Use shared stock".
+   *
+   * The reading is on the OWNERSHIP GROUP: the suffix after the first hyphen, the backend's own
+   * rule (`sales_agent_service.group_of_warehouse_code`). Not the site (which called the shared
+   * pool BRW the line's own stock) and not the exact code (which called the agent's own DC1-BB
+   * somebody else's).
+   */
+  describe('a component with no rung of its own', () => {
+    it('reads a sibling of the line own group as its own location (AC-A2)', () => {
+      expect(rowOf({ kind: 'reserve', qty: '454', location: 'DC1-BB' }, 'BRW-BB')).toBe('own');
+      expect(rowOf({ kind: 'reserve', qty: '267', location: 'MWH-BB' }, 'BRW-BB')).toBe('own');
+      expect(rowOf({ kind: 'reserve', qty: '211', location: 'WH3-BB' }, 'BRW-BB')).toBe('own');
+      // The line's own warehouse itself, which is the same group by definition.
+      expect(rowOf({ kind: 'reserve', qty: '10', location: 'BRW-BB' }, 'BRW-BB')).toBe('own');
+    });
+
+    it('reads a bare site code as the shared pool (AC-A1)', () => {
+      for (const pool of ['BRW', 'MWH', 'DC1', 'WH3', 'RSW']) {
+        expect(rowOf({ kind: 'reserve', qty: '71', location: pool }, 'BRW-BB')).toBe('shared');
+      }
+    });
+
+    it('reads another group warehouse as borrowing from another location', () => {
+      expect(rowOf({ kind: 'reserve', qty: '9', location: 'BRW-HP' }, 'BRW-BB')).toBe(
+        'borrow_other',
+      );
+      expect(rowOf({ kind: 'borrow', qty: '9', location: 'DC1-IB' }, 'BRW-BB')).toBe(
+        'borrow_other',
+      );
+    });
+
+    it('reads a borrow that names a donor order as a borrow from another order', () => {
+      expect(
+        rowOf({ kind: 'borrow', rung: 'group_borrow', qty: '3', location: 'BRW-BB' }, 'BRW-BB'),
+      ).toBe('borrow_order');
+    });
+
+    it('reads a pool when the line own location is unknown, never as its own stock', () => {
+      // Nothing to compare against is not a licence to claim the agent's group holds it.
+      expect(rowOf({ kind: 'reserve', qty: '5', location: 'DC1-BB' })).toBe('borrow_other');
+      expect(rowOf({ kind: 'reserve', qty: '5', location: 'BRW' })).toBe('shared');
+    });
+
+    it('still reads Buy and incoming off their kind, which never needed a location', () => {
+      expect(rowOf({ kind: 'buy', qty: '5' })).toBe('buy');
+      expect(rowOf({ kind: 'timely_spo', qty: '5' })).toBe('incoming');
+    });
   });
 });
 
@@ -361,6 +405,92 @@ describe('suggestionBreakdown', () => {
     );
 
     expect(rows).toEqual([]);
+  });
+});
+
+/**
+ * SO324132 rev 1, EXACTLY as the board sends it (read live off :8080 on 25 Aug).
+ *
+ * CWCY605 is a COVERED line, and `_apply_frozen` rebuilds its composition without the rung the
+ * engine froze: three reserve sources at DC1-BB / MWH-BB / WH3-BB, `rung: null` on every one,
+ * and a decision whose three reserve rows are the same. Both surfaces therefore read the
+ * fallback, and both read "Use shared stock" until the fallback learned about ownership groups.
+ */
+describe('AC-A2: a covered line whose composition arrives with no rungs', () => {
+  const unrunged = [
+    { kind: 'reserve' as const, qty: '454', location: 'DC1-BB', reason: 'Reserved at DC1-BB.' },
+    { kind: 'reserve' as const, qty: '267', location: 'MWH-BB', reason: 'Reserved at MWH-BB.' },
+    { kind: 'reserve' as const, qty: '211', location: 'WH3-BB', reason: 'Reserved at WH3-BB.' },
+  ];
+
+  const covered = line({
+    item_code: 'CWCY605',
+    qty: '932',
+    qty_outstanding: '932',
+    fulfilment_location: 'BRW-BB',
+    covered: true,
+    sources: unrunged,
+    decision: {
+      revision_no: 1,
+      timely_spo_qty: '0',
+      reserve: [
+        { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454' },
+        { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267' },
+        { warehouse_id: 'wh-wh3', location: 'WH3-BB', qty: '211' },
+      ],
+      borrow: [],
+      buy_qty: '0',
+    },
+  });
+
+  it('the Suggestion card reads Use own location, named per location', () => {
+    const rows = suggestionBreakdown(cell([covered]));
+
+    expect(rows.map((entry) => entry.label)).toEqual(['Use own location']);
+    expect(rowText(rows[0])).toBe('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+  });
+
+  it('the decided bar reads own, solid, off the same composition', () => {
+    const supply = contributionSupply(covered, null);
+
+    expect(supply.segments).toEqual([{ kind: 'own', qty: '932' }]);
+    expect(supply.decided).toBe(true);
+  });
+
+  it('a BRW pool draw on the same line still reads shared (AC-A1 is not undone)', () => {
+    const pooled = line({
+      fulfilment_location: 'BRW-BB',
+      covered: true,
+      sources: [{ kind: 'reserve', qty: '71', location: 'BRW', reason: 'Reserved at BRW.' }],
+      decision: {
+        revision_no: 1,
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '71' }],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+
+    expect(suggestionBreakdown(cell([pooled]))[0].label).toBe('Use shared stock');
+    expect(contributionSupply(pooled, null).segments).toEqual([{ kind: 'shared', qty: '71' }]);
+  });
+
+  it('resolves per contributing line, because a cell spans lines at different groups', () => {
+    // DC1-BB is the agent's own group on a BRW-BB line and somebody else's on a BRW-IB one.
+    const ib = line({
+      key: 'ib',
+      fulfilment_location: 'BRW-IB',
+      sources: [{ kind: 'reserve', qty: '100', location: 'DC1-BB', reason: 'r' }],
+    });
+
+    const rows = suggestionBreakdown(cell([covered, ib]));
+
+    expect(rows.map((entry) => entry.label)).toEqual([
+      'Use own location',
+      'Borrow other location',
+    ]);
+    expect(rows[0].qty).toBe('932');
+    expect(rows[1].qty).toBe('100');
   });
 });
 
