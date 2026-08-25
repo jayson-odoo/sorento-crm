@@ -21,11 +21,12 @@
  * The rung strings are `app/services/scm/front_planning_engine.py`'s own constants
  * (`RUNG_POOL`, `RUNG_GROUP_TAKE`, ...), spelled here exactly as the engine spells them.
  *
- * A COMPONENT THAT CARRIES NO RUNG IS READ ON THE OWNERSHIP GROUP, never on the site and never
+ * A RESERVE THAT CARRIES NO RUNG IS READ ON THE OWNERSHIP GROUP, never on the site and never
  * on the exact code. Verified against the live board on 25 Aug: every source and every decision
  * row of a COVERED line arrives with `rung: null` (the board rebuilds a frozen composition
  * without it), so this fallback is what SO324132 rev 1 is actually rendered by. See
- * `fallbackRung`.
+ * `fallbackRung`. A BORROW that carries no rung is read as a borrow instead - the group
+ * reading would call a same-group donor "Use own location", and a borrow is never that.
  *
  * INCOMING IS ITS OWN KIND and is never folded into Buy: it is already bought and on its way,
  * so adding it to Buy would propose buying it twice.
@@ -114,6 +115,8 @@ export interface SupplyPart {
   location?: string | null;
   /** `SupplyComponent`'s own spelling of `location`. */
   source_location?: string | null;
+  /** The sales order a borrow takes FROM, when one is named. Tells the two borrows apart. */
+  donor_so_number?: string | null;
 }
 
 function locationOf(part: SupplyPart): string | null {
@@ -164,20 +167,30 @@ function fallbackRung(location: string | null, ownLocation: string | null | unde
  * Which kind this piece of supply is. The rung decides; the code never does.
  *
  * `kind` is consulted only where there is no rung to consult: Buy and incoming carry their own
- * kind, and a component frozen before ladder v2 carries no rung at all (`SupplyComponent.rung`
- * is optional for exactly that reason). An unrunged reserve reads as shared and an unrunged
- * borrow as borrow-other - the widest reading of each, so nothing claims the agent's own group
- * holds stock the record does not say it holds.
+ * kind, and a component frozen before ladder v2 - or drafted in the Amend dialog, which sends
+ * no rung at all - carries none (`SupplyComponent.rung` is optional for exactly that reason).
+ * Two different fallbacks, because a reserve and a borrow are not the same question:
+ *
+ * * an unrunged RESERVE is read on the OWNERSHIP GROUP (`fallbackRung`): the agent's own group
+ *   at any site is "Use own location", a plain site code is the shared pool, and anybody
+ *   else's group is stock this line has to borrow;
+ * * an unrunged BORROW is a BORROW, whatever the location says. Reading it on the group would
+ *   call a borrow from a donor at the line's own `-BB` location "Use own location", which is
+ *   the one thing a borrow is not: the quantity belongs to another order and it raises an
+ *   order-back. It reads `borrow_order` when the donor sales order is named and
+ *   `borrow_other` when it is not, which is exactly what those two words distinguish.
  */
 export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind | null {
   // A line whose sales order names no location was never walked down the ladder at all, so it
   // proposes nothing rather than proposing a buy nobody decided.
   if (part.kind === 'unplannable') return null;
+  // A borrow with no rung - every draft the Amend dialog's BorrowAddDialog produces - never
+  // falls through to the group reading below. See the note above.
+  if (!part.rung && part.kind === 'borrow') {
+    return part.donor_so_number ? 'borrow_order' : 'borrow_other';
+  }
   const rung =
-    part.rung ??
-    (part.kind === 'reserve' || part.kind === 'borrow'
-      ? fallbackRung(locationOf(part), ownLocation)
-      : null);
+    part.rung ?? (part.kind === 'reserve' ? fallbackRung(locationOf(part), ownLocation) : null);
   switch (rung) {
     case 'buy':
       return 'buy';

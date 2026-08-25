@@ -21,7 +21,12 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
-import { rowText, suggestionBreakdown } from '../../_shared/lib/supplyVocabulary';
+import {
+  SHORT_LABELS,
+  rowOf,
+  rowText,
+  suggestionBreakdown,
+} from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -324,7 +329,9 @@ export function BoardCellBreakdownDialog({
           const strip = row.original.sources
             .map(
               (source) =>
-                `${sourceLabel(source.kind, source.rung)} ${source.qty}${sourceAt(source)}`,
+                `${sourceLabel(source, row.original.fulfilment_location)} ${source.qty}${sourceAt(
+                  source,
+                )}`,
             )
             .join(' · ');
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
@@ -705,7 +712,7 @@ function DecisionCell({
           )}`}
           title={contribution.decision.amend_reason ?? ''}
         >
-          {confirmedSummary(contribution.decision)}
+          {confirmedSummary(contribution.decision, contribution.fulfilment_location)}
         </span>
         <Button type="button" size="sm" variant="outline" onClick={onAmend}>
           <Pencil className="size-4" aria-hidden />
@@ -729,7 +736,7 @@ function DecisionCell({
           {decision.verdict === 'approved'
             ? 'Approved'
             : decision.verdict === 'amended'
-              ? amendSummary(decision)
+              ? amendSummary(decision, contribution.fulfilment_location)
               : 'Rejected'}
         </span>
         {/* Amend stays offered on a decided row. Undo-then-Amend is two presses that throw
@@ -818,44 +825,52 @@ function shareNote(contribution: BoardContribution): string | null {
  * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
  * second sentence-builder that drifts from this one.
  */
-export function confirmedSummary(decision: NonNullable<BoardContribution['decision']>): string {
-  return `Confirmed rev ${decision.revision_no} · ${amendSummary({
-    verdict: 'amended',
-    timely_spo_qty: decision.timely_spo_qty,
-    reserve: decision.reserve,
-    borrow: decision.borrow.map((row) => ({
-      source: row.source,
-      warehouse_id: row.warehouse_id ?? '',
-      warehouse_code: row.location ?? null,
-      donor_project_id: row.donor_project_id ?? null,
-      qty: row.qty,
-      reason: row.reason,
-    })),
-    buy_qty: decision.buy_qty,
-  })}`;
+export function confirmedSummary(
+  decision: NonNullable<BoardContribution['decision']>,
+  ownLocation?: string | null,
+): string {
+  return `Confirmed rev ${decision.revision_no} · ${amendSummary(
+    {
+      verdict: 'amended',
+      timely_spo_qty: decision.timely_spo_qty,
+      reserve: decision.reserve,
+      borrow: decision.borrow.map((row) => ({
+        source: row.source,
+        warehouse_id: row.warehouse_id ?? '',
+        warehouse_code: row.location ?? null,
+        donor_project_id: row.donor_project_id ?? null,
+        qty: row.qty,
+        reason: row.reason,
+        // Carried, not dropped: it is what tells "Borrow (order)" from "Borrow (other)"
+        // on a frozen composition, which arrives with no rung at all.
+        donor_so_number: row.donor_so_number ?? null,
+      })),
+      buy_qty: decision.buy_qty,
+    },
+    ownLocation,
+  )}`;
 }
 
 /**
  * Exported for the same reason `confirmedSummary` is - see its comment.
  *
- * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): a rung, when the source
- * carries one, reads by its own name (Pool / Group take / Group borrow / Cross-group
- * borrow) rather than the bare `kind` the balance invariant uses - group borrow and
- * cross-group borrow are now AUTO-PROPOSED, not only a person's decision on a covered row.
+ * SECTION 2'S WORDS, off `SHORT_LABELS`. This strip used to print ladder v2's rung names
+ * (Pool / Group take / Group borrow / Cross-group borrow) inside a popover whose Suggestion
+ * card, colour bar and legend all said Shared / Own / Borrow for the same quantities. One
+ * composition may not be described twice: the plan's table is the only vocabulary.
+ *
+ * `ownLocation` is the line's own warehouse code, which is what tells the agent's own group
+ * from the shared pool for a source that carries no rung.
  */
 export function sourceLabel(
-  kind: BoardContribution['sources'][number]['kind'],
-  rung?: string | null,
+  source: BoardContribution['sources'][number],
+  ownLocation?: string | null,
 ): string {
-  if (rung === 'pool') return 'Pool';
-  if (rung === 'group_take') return 'Group take';
-  if (rung === 'group_borrow') return 'Group borrow';
-  if (rung === 'cross_group_borrow') return 'Cross-group borrow';
-  if (kind === 'reserve') return 'Reserve';
-  if (kind === 'timely_spo') return 'Incoming';
-  if (kind === 'buy') return 'Buy';
-  if (kind === 'borrow') return 'Borrow';
-  return 'Cannot be sourced';
+  // The WHOLE source, never a kind and a rung pulled out of it: the location is what tells
+  // the agent's own group from the shared pool when the source carries no rung, and passing
+  // the pieces by hand is how it came to be left out.
+  const row = rowOf(source, ownLocation);
+  return row ? SHORT_LABELS[row] : 'Cannot be sourced';
 }
 
 /**

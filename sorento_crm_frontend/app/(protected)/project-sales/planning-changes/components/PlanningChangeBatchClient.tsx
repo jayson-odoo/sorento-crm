@@ -730,7 +730,12 @@ function SuggestedCell({ row }: { row: PlanningChangeRow }) {
             title={proposal.sources.map((source) => source.reason).join(' ')}
           >
             {proposal.sources
-              .map((source) => `${sourceLabel(source.kind)} ${source.qty}${sourceAt(source)}`)
+              .map(
+                (source) =>
+                  `${sourceLabel(source, proposal.fulfilment_location)} ${source.qty}${sourceAt(
+                    source,
+                  )}`,
+              )
               .join(' · ')}
           </span>
           <BoardTrailPopover contribution={proposal} />

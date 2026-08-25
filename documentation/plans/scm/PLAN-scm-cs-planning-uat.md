@@ -5,7 +5,7 @@ Status: IN PROGRESS. Section 4 item 1 is BUILT on `feat/scm-uat-cs-board`: A + C
 wording, stock-documents header removed) and now H (subtitle removed; Raised by / Raised at on the
 worklist and the SO detail header; search by CS name or email prefix; Raised by filter off the
 summary facet; reconfirm re-stamps the header). Everything from item 2 down is still to do.
-Lane: `.claude/worktrees/scm-so-feedback` (branch `feat/scm-so-upload-and-detail-feedback`, FE :3060, BE :8070), the same lane the scm-feedback session works in. One coder per worktree; queue behind that session or cut a sibling lane from its head.
+Lane: `.claude/worktrees/scm-uat` (branch `feat/scm-uat-cs-board`, FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
 
 ## 0. What the captain reported (25 Aug, walking SO415472 / SO404352 / SO324132 / PO-2026/07-0029)

@@ -170,6 +170,38 @@ describe('rowOf reads the rung, never the warehouse code', () => {
       ).toBe('borrow_order');
     });
 
+    /**
+     * The Amend dialog's BorrowAddDialog drafts a borrow with NO rung: the engine never ran
+     * for it, CS picked the donor line by hand. Read on the ownership group it would come back
+     * "Use own location" for a donor sitting at the line's OWN `-BB` warehouse - which is the
+     * one thing a borrow can never be. The quantity belongs to another order and it raises an
+     * order-back; nothing about it is this line's own stock.
+     */
+    it('never reads an unrunged borrow as the line own location, however close the donor is', () => {
+      expect(
+        rowOf(
+          { kind: 'borrow', qty: '71', location: 'BRW-BB', donor_so_number: 'SO415472' },
+          'BRW-BB',
+        ),
+      ).toBe('borrow_order');
+      // A sibling of the same group at another site - the group reading called this "own" too.
+      expect(
+        rowOf(
+          { kind: 'borrow', qty: '30', location: 'DC1-BB', donor_so_number: 'SO404352' },
+          'BRW-BB',
+        ),
+      ).toBe('borrow_order');
+    });
+
+    it('reads an unrunged borrow that names no donor order as borrowing another location', () => {
+      expect(rowOf({ kind: 'borrow', qty: '9', location: 'BRW-BB' }, 'BRW-BB')).toBe(
+        'borrow_other',
+      );
+      expect(rowOf({ kind: 'borrow', qty: '9', location: 'BRW' }, 'BRW-BB')).toBe(
+        'borrow_other',
+      );
+    });
+
     it('reads a pool when the line own location is unknown, never as its own stock', () => {
       // Nothing to compare against is not a licence to claim the agent's group holds it.
       expect(rowOf({ kind: 'reserve', qty: '5', location: 'DC1-BB' })).toBe('borrow_other');

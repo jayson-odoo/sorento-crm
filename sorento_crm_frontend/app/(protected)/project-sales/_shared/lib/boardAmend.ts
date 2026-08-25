@@ -28,6 +28,7 @@ import {
   type DraftLine,
   type DraftReserve,
 } from './supplyComposition';
+import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary';
 
 /**
  * The engine's proposal for one row, as the editor's opening draft.
@@ -299,33 +300,65 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
 }
 
 /**
- * What an amended row reads on the board, in the words the composition was made in.
+ * What an amended row reads on the board, IN SECTION 2'S WORDS.
  *
  * "Amended to reserve 20" was true and no longer sufficient: the same amendment can now borrow
  * and buy, and a pill naming one of the three describes a decision the planner did not take.
+ *
+ * The words come from `SHORT_LABELS` (`supplyVocabulary`), the same table the bar under this
+ * pill, the legend and the popover's cards read - PLAN section 2 is ONE vocabulary, and this
+ * sentence used to speak a second one ("Reserve 454 DC1-BB" beside an emerald "Own" segment
+ * describing the identical quantity). A reserve is split per kind rather than lumped: the
+ * agent's own group and the shared pool are two different answers and the bar already draws
+ * them as two segments.
+ *
+ * `ownLocation` is the line's own warehouse code, which is what tells own-group stock from the
+ * pool for a component carrying no rung. Without it a reserve is read the widest way `rowOf`
+ * allows, never as the agent's own.
  */
-export function amendSummary(decision: BoardDecision): string {
+export function amendSummary(decision: BoardDecision, ownLocation?: string | null): string {
   if (!decision.reserve && !decision.borrow && decision.buy_qty === undefined) {
     return `Amended to reserve ${decision.reserve_qty ?? '0'}`;
   }
-  const parts: string[] = [];
-  const incoming = toMinor(decision.timely_spo_qty ?? '0');
-  if (incoming > 0) parts.push(`Incoming ${fromMinor(incoming)}`);
-  const reserve = (decision.reserve ?? []).filter((row) => toMinor(row.qty) > 0);
-  if (reserve.length > 0) {
-    parts.push(
-      `Reserve ${reserve
-        .map((row) => `${row.qty}${row.location ? ` ${row.location}` : ''}`)
-        .join(' + ')}`,
+  // Per kind, in the vocabulary's own reading order, so two rows are comparable.
+  const places = new Map<SupplyKind, string[]>();
+  const push = (kind: SupplyKind | null, text: string) => {
+    if (!kind) return;
+    const existing = places.get(kind);
+    if (existing) existing.push(text);
+    else places.set(kind, [text]);
+  };
+
+  for (const row of (decision.reserve ?? []).filter((entry) => toMinor(entry.qty) > 0)) {
+    push(
+      rowOf({ kind: 'reserve', qty: row.qty, location: row.location }, ownLocation),
+      `${row.qty}${row.location ? ` ${row.location}` : ''}`,
     );
   }
-  const borrowed = (decision.borrow ?? []).reduce(
-    (total, row) => total + toMinor(row.qty),
-    0,
-  );
-  if (borrowed > 0) parts.push(`Borrow ${fromMinor(borrowed)}`);
+  for (const row of (decision.borrow ?? []).filter((entry) => toMinor(entry.qty) > 0)) {
+    push(
+      rowOf(
+        {
+          kind: 'borrow',
+          // No rung on this shape by design: an amendment's borrow is a person's pick, not a
+          // rung the engine fired. The donor sales order is what tells the two borrows apart.
+          qty: row.qty,
+          location: row.warehouse_code ?? null,
+          donor_so_number: row.donor_so_number,
+        },
+        ownLocation,
+      ),
+      `${row.qty}${row.warehouse_code ? ` ${row.warehouse_code}` : ''}`,
+    );
+  }
+  const incoming = toMinor(decision.timely_spo_qty ?? '0');
+  if (incoming > 0) push('incoming', fromMinor(incoming));
   const buy = toMinor(decision.buy_qty ?? '0');
-  if (buy > 0) parts.push(`Buy ${fromMinor(buy)}`);
+  if (buy > 0) push('buy', fromMinor(buy));
+
+  const parts = ORDER.filter((kind) => places.has(kind)).map(
+    (kind) => `${SHORT_LABELS[kind]} ${(places.get(kind) ?? []).join(' + ')}`,
+  );
   return parts.length > 0 ? parts.join(' · ') : 'Amended to nothing';
 }
 
