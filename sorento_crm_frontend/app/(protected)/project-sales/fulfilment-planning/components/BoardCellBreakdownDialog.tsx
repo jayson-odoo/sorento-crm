@@ -20,6 +20,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
 import { suggestionBreakdown } from '../../_shared/lib/boardSuggestion';
 import { amendSummary } from '../../_shared/lib/boardAmend';
@@ -413,6 +414,34 @@ export function BoardCellBreakdownDialog({
         size: 110,
         minSize: 90,
         meta: { headerTitle: 'Rank', cellClassName: 'text-end' },
+      },
+      {
+        id: 'order_inquiry',
+        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        // Beside the Decision, because it is the OTHER half of the same answer: the decision
+        // is what was promised, the inquiry is what purchasing was actually told to do about
+        // it and how far they have got. A dash means nobody has been told anything yet.
+        cell: ({ row }) => {
+          const inquiry = row.original.order_inquiry;
+          if (!inquiry) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="min-w-0 truncate tabular-nums"
+                title={inquiry.inquiry_no ?? ''}
+              >
+                {inquiry.inquiry_no ?? '-'}
+              </span>
+              <OrderInquiryStatePill state={inquiry.state} />
+            </div>
+          );
+        },
+        size: 200,
+        minSize: 150,
+        meta: { headerTitle: 'Order inquiry' },
       },
       {
         id: 'decision',

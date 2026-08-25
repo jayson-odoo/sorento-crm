@@ -53,6 +53,8 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.project_so import (
     DECISION_ACTIVE,
+    OrderInquiry,
+    OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOSupplyDecision,
@@ -275,7 +277,7 @@ class _Row:
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "item_flags",
+        "decision", "item_flags", "order_inquiry",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -315,6 +317,9 @@ class _Row:
         # walked - unplannable or covered - because `false` there would claim a judgement that
         # was never made.
         self.item_flags: Optional[Dict[str, Any]] = None
+        # What purchasing has already been TOLD about this line, and how far they got:
+        # `{inquiry_no, state}` off the inquiry row covering it, None when there is none.
+        self.order_inquiry: Optional[Dict[str, Any]] = None
 
     @property
     def covered(self) -> bool:
@@ -945,6 +950,8 @@ class FulfilmentBoardService:
         line_numbers = self._line_numbers(records)
         # What an active revision already froze, per CORE line. One read for the whole board.
         frozen = self._frozen_decisions()
+        # What purchasing was already TOLD, per CORE line. One read for the whole board too.
+        inquiries = self._order_inquiries([str(line.id) for line, *_r in records])
 
         rows: List[_Row] = []
         for line, order, product, warehouse, agent in records:
@@ -988,8 +995,51 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
+            # What was already asked for, and how far purchasing got with it. The decision
+            # beside it is what was PROMISED; these are the two halves of one answer, and a
+            # board that carried only the first sent the planner to another screen for the
+            # second.
+            row.order_inquiry = inquiries.get(str(line.id))
             rows.append(row)
         return rows
+
+    def _order_inquiries(self, core_line_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """The instruction covering each core line, keyed by that line.
+
+        Through the mirror, the same link `_mirror_addressing` traverses:
+        `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
+        `core_sales_order_line_id`. A partial unique index makes that at most one project
+        line per core line, so the join cannot multiply a board row.
+
+        ONE query for the whole board. Ordered oldest first with the LAST writer winning,
+        because a line routinely carries several rows - the G2 cascade splits a placed
+        allocation from its raised remainder, and an amendment raises a second inquiry
+        entirely - and what the column answers is "what is the current instruction". The
+        ordering ends on the row id so a same-timestamp tie resolves the same way on every
+        read: inside one transaction `now()` is a constant, so `created_at` is no tiebreaker.
+        """
+        if not core_line_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id,
+                OrderInquiry.inquiry_no,
+                OrderInquiryRow.state,
+            )
+            .select_from(OrderInquiryRow)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(list(core_line_ids)))
+            .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+            .all()
+        )
+        return {
+            str(core_id): {"inquiry_no": inquiry_no, "state": state}
+            for core_id, inquiry_no, state in rows
+        }
 
     def _frozen_decisions(self) -> Dict[str, Dict[str, Any]]:
         """What each ACTIVE revision froze, keyed by the CORE line it covers.
@@ -2768,6 +2818,11 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: What purchasing was already TOLD about this line, and how far they got with
+            #: it. The other half of the decision beside it: the decision is the promise,
+            #: this is the instruction it produced. Null when nobody has raised one - never
+            #: an empty object, because that would claim an instruction saying nothing.
+            "order_inquiry": row.order_inquiry,
             "sources": row.sources,
             # The ladder, rung by rung, in the order it was walked - including the rungs that
             # gave nothing, because "the pool was checked and had none" is the answer to "how

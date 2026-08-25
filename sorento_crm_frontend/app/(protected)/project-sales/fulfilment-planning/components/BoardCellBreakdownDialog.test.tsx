@@ -2075,3 +2075,39 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(footerCells()).toContain('64');
   });
 });
+
+describe('BoardCellBreakdownDialog: what purchasing has already been told', () => {
+  /**
+   * The Decision column says what was PROMISED. It cannot say whether anybody acted on it,
+   * and that is the question a planner opens this dialog with a second time: an approved
+   * revision with nothing placed against it and one fully placed look identical without the
+   * inquiry beside it.
+   *
+   * Absent is the ordinary case, so the column has to state it rather than leave a blank
+   * cell that reads as a rendering fault.
+   */
+  it('names the inquiry and its state beside the Decision column', () => {
+    renderDialog([
+      demand({ order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' } }),
+    ]);
+
+    const table = contributionTable();
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    expect(headers.some((header) => header.includes('Order inquiry'))).toBe(true);
+
+    const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
+    expect(within(row).getByText('OI-000123')).toBeInTheDocument();
+    // The worklist's own wording, so "Placed" cannot mean two things on two screens.
+    expect(within(row).getByText('Placed')).toBeInTheDocument();
+  });
+
+  it('prints a dash for a line nobody has been told anything about', () => {
+    renderDialog([demand({ order_inquiry: null })]);
+
+    const row = contributionTable().querySelectorAll('tbody tr')[0] as HTMLElement;
+    expect(within(row).queryByText(/^OI-/)).not.toBeInTheDocument();
+    expect(within(row).getAllByText('-').length).toBeGreaterThan(0);
+  });
+});

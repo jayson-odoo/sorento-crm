@@ -333,6 +333,19 @@ class BoardLineDecision(BaseModel):
     amend_reason: Optional[str] = None
 
 
+class BoardLineOrderInquiry(BaseModel):
+    """The order inquiry covering one board line, in the two words a person reads it by.
+
+    The ROW's state, not the header's: "purchasing placed this line" is what the column
+    answers, and a header still at `raised` while its row has been placed on a purchase
+    order would say the opposite.
+    """
+
+    #: `OI-000123`. Null only on a row raised before inquiries were numbered.
+    inquiry_no: Optional[str] = None
+    state: str
+
+
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
@@ -446,6 +459,15 @@ class BoardContribution(BaseModel):
     #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
     #: "nobody decided this" and "decided, to nothing" are different answers.
     decision: Optional[BoardLineDecision] = None
+    #: What purchasing was already TOLD about this line, reached through the planning
+    #: record's mirror (`projects.sales_order_lines.core_sales_order_line_id`), and how far
+    #: they got with it.
+    #:
+    #: The other half of `decision`: that is the promise, this is the instruction the
+    #: promise produced. Null when nobody has raised one - which is most of the board, since
+    #: an inquiry exists only once somebody has confirmed supply - and never an empty
+    #: object, by the same rule `decision` follows.
+    order_inquiry: Optional[BoardLineOrderInquiry] = None
 
 
 class BorrowDonorImpact(BaseModel):

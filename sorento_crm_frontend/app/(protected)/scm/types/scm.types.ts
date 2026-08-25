@@ -286,6 +286,31 @@ export interface SalesOrderLine {
   line_status?: string;
   /** When this line's quantity is due. Per line, for the same reason as the location. */
   required_date?: string | null;
+  /**
+   * The order inquiry covering this line, reached through the planning record's mirror
+   * line, and the state purchasing left that instruction in. `null` when nobody has
+   * raised one for the line - which is the honest answer, not an empty object.
+   *
+   * Sent on the single order read only: the list has no column for it and would pay two
+   * more queries a page for a fact nothing there prints.
+   */
+  order_inquiry?: SalesOrderLineInquiry | null;
+  /**
+   * Which confirmed revision decided supply for this line: the ACTIVE decision's
+   * `revision_no` when its frozen snapshots cover the line, `null` otherwise. A line
+   * inside an order that has an active decision but was left out of it is not decided,
+   * and reads `null` exactly like a line on an order nobody has planned.
+   */
+  decision_revision?: number | null;
+}
+
+/** The inquiry an order line belongs to, in the two words a person reads it by. */
+export interface SalesOrderLineInquiry {
+  /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
+  inquiry_no?: string | null;
+  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`), not the
+   *  header's: "purchasing placed this line" is the question the column answers. */
+  state: string;
 }
 
 export interface SalesOrder {

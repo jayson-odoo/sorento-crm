@@ -189,3 +189,217 @@ def test_the_sales_order_inquiry_comes_before_its_amendments(scm_app):
     assert [i["inquiry_no"] for i in rows[0]["order_inquiries"]] == [
         f"{MARKER}-OI-A", f"{MARKER}-OI-B",
     ]
+
+
+# ------------------------------------------------------- what each LINE already carries
+#
+# The header answers "has anything been planned about this order". The Lines tab has to
+# answer it per LINE, because a confirmation since 13.4 may cover a SUBSET of the order:
+# an order carrying an inquiry and an active decision can still hold lines that neither
+# touches, and a header-level answer would report those as handled.
+
+
+def _product(db):
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:6]}", uom_name="Unit")
+    category = ProductCategory(
+        id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
+    )
+    db.add_all([uom, category])
+    db.flush()
+    product = Product(
+        id=_uid(),
+        product_code=f"ZZT-{_uid()[:8]}",
+        product_name=f"{MARKER} product",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=0,
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def _core_line(db, core: SalesOrder, *, qty=10):
+    from app.models.order import SalesOrderLine
+
+    line = SalesOrderLine(
+        id=_uid(),
+        sales_order_id=core.id,
+        product_id=_product(db).id,
+        qty_ordered=qty,
+        qty_delivered=0,
+        line_status="open",
+        required_date=date(2026, 6, 30),
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _mirror(db, pso: ProjectSalesOrder, core_line, *, line_no=1):
+    """The planning record's copy of a core line: `core_sales_order_line_id` is the whole
+    link, and it is what every read here traverses."""
+    from app.models.project_so import ProjectSalesOrderLine
+
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=pso.company_id,
+        project_sales_order_id=pso.id,
+        core_sales_order_line_id=core_line.id,
+        line_no=line_no,
+        qty=core_line.qty_ordered,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _inquiry_row(db, inquiry: OrderInquiry, mirror_line, *, state=INQUIRY_RAISED):
+    row = OrderInquiryRow(
+        id=_uid(),
+        company_id=inquiry.company_id,
+        order_inquiry_id=inquiry.id,
+        so_line_id=mirror_line.id,
+        item_code=f"{MARKER}-ITEM",
+        qty=1,
+        verb=IV_ORDER,
+        state=state,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _active_decision(db, pso: ProjectSalesOrder, *, revision_no, core_line_ids):
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    decision = SOSupplyDecision(
+        id=_uid(),
+        company_id=pso.company_id,
+        project_sales_order_id=pso.id,
+        revision_no=revision_no,
+        state=DECISION_ACTIVE,
+        # NOT NULL on the live table, whatever the model says - a decision nobody
+        # confirmed is not a decision.
+        confirmed_at=datetime(2026, 6, 1, 9, 0),
+        line_snapshots=[{"core_line_id": str(cid)} for cid in core_line_ids],
+    )
+    db.add(decision)
+    db.flush()
+    return decision
+
+
+def test_a_line_names_the_inquiry_covering_it_and_the_revision_that_decided_it(scm_app):
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    decided = _core_line(db, core)
+    pso = _planned(db, core)
+    mirror = _mirror(db, pso, decided)
+    inquiry = _inquiry(db, pso, number=f"{MARKER}-OI-L", rows=())
+    _inquiry_row(db, inquiry, mirror, state=INQUIRY_PLACED)
+    _active_decision(db, pso, revision_no=2, core_line_ids=[decided.id])
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    line = next(l for l in res.json()["lines"] if l["id"] == decided.id)
+    # Both survive `response_model`, which silently drops anything undeclared.
+    assert "order_inquiry" in line, line.keys()
+    assert "decision_revision" in line, line.keys()
+    assert line["order_inquiry"] == {
+        "inquiry_no": f"{MARKER}-OI-L",
+        "state": INQUIRY_PLACED,
+    }
+    assert line["decision_revision"] == 2
+
+
+def test_a_line_nothing_has_been_raised_or_decided_on_says_so_with_nulls(scm_app):
+    """Null, never an empty object and never a 0 revision: "nobody has been told about
+    this line" is a different answer from "told, about nothing"."""
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    untouched = _core_line(db, core)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    line = next(l for l in res.json()["lines"] if l["id"] == untouched.id)
+    assert line["order_inquiry"] is None
+    assert line["decision_revision"] is None
+
+
+def test_a_line_the_active_revision_left_out_is_not_reported_as_decided(scm_app):
+    """A confirmation covers the SUBSET the planner chose (13.4). The order has an active
+    decision and an inquiry; this line is in neither, and reads exactly like a line on an
+    order nobody has planned."""
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    decided = _core_line(db, core)
+    left_out = _core_line(db, core)
+    pso = _planned(db, core)
+    mirror = _mirror(db, pso, decided)
+    _mirror(db, pso, left_out, line_no=2)
+    inquiry = _inquiry(db, pso, number=f"{MARKER}-OI-S", rows=())
+    _inquiry_row(db, inquiry, mirror)
+    _active_decision(db, pso, revision_no=1, core_line_ids=[decided.id])
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    by_id = {l["id"]: l for l in res.json()["lines"]}
+    assert by_id[decided.id]["decision_revision"] == 1
+    assert by_id[left_out.id]["decision_revision"] is None
+    assert by_id[left_out.id]["order_inquiry"] is None
+
+
+def test_a_superseded_revision_does_not_decide_a_line(scm_app):
+    """Only the ACTIVE revision is a promise anybody holds. A superseded one is history,
+    and printing its number would say the line is settled when it is back in the queue."""
+    app, db, _uid_ = _as(scm_app)
+    from app.models.project_so import DECISION_SUPERSEDED, SOSupplyDecision
+
+    core = _core_order(db)
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    _mirror(db, pso, line)
+    db.add(SOSupplyDecision(
+        id=_uid(),
+        company_id=pso.company_id,
+        project_sales_order_id=pso.id,
+        revision_no=1,
+        state=DECISION_SUPERSEDED,
+        confirmed_at=datetime(2026, 6, 1, 9, 0),
+        line_snapshots=[{"core_line_id": str(line.id)}],
+    ))
+    db.flush()
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    assert res.json()["lines"][0]["decision_revision"] is None
+
+
+def test_the_list_does_not_pay_for_what_only_the_detail_page_prints(scm_app):
+    """The list has no column for either, so it never runs the two reads. The keys are
+    still declared, so the client reads one shape whichever route answered."""
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    mirror = _mirror(db, pso, line)
+    inquiry = _inquiry(db, pso, number=f"{MARKER}-OI-N", rows=())
+    _inquiry_row(db, inquiry, mirror)
+
+    with TestClient(app) as c:
+        res = c.get("/api/v1/scm/sales-orders", params={"query": core.so_number})
+
+    assert res.status_code == 200, res.text
+    listed = _row_for(res.json(), core.so_number)["lines"][0]
+    assert listed["order_inquiry"] is None
+    assert listed["decision_revision"] is None

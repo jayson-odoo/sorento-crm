@@ -46,6 +46,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/sales-agents/lib/demandClass';
+// The SAME pill the order-inquiry worklist reads, not a second one worded differently:
+// "Placed" has to mean the same thing on both screens or the two disagree in a glance.
+import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
 import {
   formatMyrExact,
   multiplyMoney,
@@ -804,6 +807,49 @@ export function SalesOrderDetail({ id }: { id: string }) {
         ),
         size: 130,
         meta: { headerTitle: 'Status' },
+      },
+      {
+        id: 'order_inquiry',
+        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        // What purchasing has already been told about this line, by the number they quote.
+        // A dash is the honest answer for a line nobody has raised an inquiry on: the
+        // planning record only mirrors an order somebody adopted, and most of the book is
+        // not adopted.
+        cell: ({ row }) => {
+          const inquiry = row.original.order_inquiry;
+          if (!inquiry) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="min-w-0 truncate tabular-nums"
+                title={inquiry.inquiry_no ?? ''}
+              >
+                {inquiry.inquiry_no ?? '-'}
+              </span>
+              <OrderInquiryStatePill state={inquiry.state} />
+            </div>
+          );
+        },
+        size: 200,
+        meta: { headerTitle: 'Order inquiry' },
+      },
+      {
+        id: 'decision_revision',
+        accessorFn: (row) => row.decision_revision ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
+        // Which confirmed revision covers this line. A line the active decision left out is
+        // as undecided as a line on an order nobody planned, and both read "-".
+        cell: ({ row }) =>
+          row.original.decision_revision == null ? (
+            <span className="text-muted-foreground">-</span>
+          ) : (
+            <span className="tabular-nums">{`Rev ${row.original.decision_revision}`}</span>
+          ),
+        size: 110,
+        meta: { headerTitle: 'Decision' },
       },
     ],
     [

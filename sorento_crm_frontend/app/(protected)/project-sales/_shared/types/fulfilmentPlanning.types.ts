@@ -990,6 +990,23 @@ export interface BoardContribution {
   covered?: boolean;
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
+  /**
+   * The order inquiry purchasing was given for this line, reached through the planning
+   * record's mirror line, and the state that instruction is in.
+   *
+   * `null` when there is none - which is most of the board: an inquiry exists only once
+   * somebody has confirmed supply on the order. Never an empty object, because "nobody has
+   * been told about this line" and "told, about nothing" are different answers.
+   */
+  order_inquiry?: BoardLineOrderInquiry | null;
+}
+
+/** The order inquiry a board row belongs to, in the two words a person reads it by. */
+export interface BoardLineOrderInquiry {
+  /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
+  inquiry_no?: string | null;
+  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
+  state: string;
 }
 
 /**

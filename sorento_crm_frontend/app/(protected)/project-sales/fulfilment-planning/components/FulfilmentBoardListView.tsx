@@ -12,6 +12,7 @@ import { proposalSummaryFor } from '../../_shared/lib/fulfilmentBoard';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { confirmedSummary } from './BoardCellBreakdownDialog';
 import { BoardAmendDialog } from './BoardAmendDialog';
+import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
 
 const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
@@ -54,8 +55,13 @@ export function FulfilmentBoardListView({
           const contribution = row.original;
           const body = (
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium tabular-nums">
-                {contribution.so_number}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-medium tabular-nums">
+                  {contribution.so_number}
+                </span>
+                {/* The same tick the grid puts on a fully-decided cell, here per row: one
+                    row IS one contribution, so it is decided or it is not. */}
+                <BoardDecidedMarker revisions={decidedRevisions([contribution])} />
               </div>
               <div className="truncate text-xs text-muted-foreground">
                 {`Line ${contribution.line_no}`}

@@ -79,6 +79,25 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         },
       },
       {
+        accessorKey: 'inquiry_no',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        size: 130,
+        meta: { headerTitle: 'Order inquiry', skeleton: <Skeleton className="h-4 w-20" /> },
+        // Which instruction this row belongs to, by the number purchasing quotes. An
+        // amendment raises a SECOND inquiry on the same sales order, so the S/O no beside
+        // it cannot answer "which one was I told about".
+        cell: ({ row }) =>
+          row.original.inquiry_no ? (
+            <span className="block truncate tabular-nums" title={row.original.inquiry_no}>
+              {row.original.inquiry_no}
+            </span>
+          ) : (
+            <Muted>Not numbered</Muted>
+          ),
+      },
+      {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
         size: 180,

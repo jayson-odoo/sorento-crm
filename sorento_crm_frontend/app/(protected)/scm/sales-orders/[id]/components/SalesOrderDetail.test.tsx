@@ -1210,3 +1210,83 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(screen.queryByText('Planning changes raised on 2 lines')).not.toBeInTheDocument();
   });
 });
+
+describe('SalesOrderDetail - what has already been planned about a line', () => {
+  /**
+   * The header names the inquiries raised on the ORDER. That cannot answer the question a
+   * planner asks at the line: a confirmation covers the SUBSET of lines somebody chose
+   * (PLAN-fulfilment-planning-from-autocount-so.md 13.4), so an order carrying an inquiry
+   * and an active revision still holds lines neither touches.
+   *
+   * Both columns therefore state their own absence rather than inheriting the header's
+   * answer, and "-" is what that absence looks like on this grid.
+   */
+  function planned(over: Partial<SalesOrderLine> = {}): SalesOrder {
+    return so({
+      lines: [
+        {
+          id: 'l-planned',
+          sku: 'SKU-PLANNED',
+          product_name: 'Planned line',
+          qty_ordered: 10,
+          qty_delivered: 0,
+          uom: 'PCS',
+          warehouse_code: 'BRW-BB',
+          line_status: 'open',
+          required_date: '2026-08-30',
+          order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' },
+          decision_revision: 2,
+          ...over,
+        } as SalesOrderLine,
+      ],
+      line_count: 1,
+    });
+  }
+
+  it('names the inquiry, its state and the revision that decided the line', () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('OI-000123')).toBeInTheDocument();
+    // The same pill wording the order-inquiry worklist uses, so "Placed" cannot mean two
+    // things on two screens.
+    expect(within(row).getByText('Placed')).toBeInTheDocument();
+    expect(within(row).getByText('Rev 2')).toBeInTheDocument();
+  });
+
+  it('prints a dash on a line nothing has been raised or decided on', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({ order_inquiry: null, decision_revision: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('OI-000123')).not.toBeInTheDocument();
+    expect(within(row).queryByText(/^Rev /)).not.toBeInTheDocument();
+    // One dash for each of the two columns, beside whatever other empty cells the row has.
+    expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('offers both columns to the Columns menu, so a planner who never plans can drop them', async () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    // Radix opens its menu on POINTER-down; a plain click leaves the trigger closed, which
+    // reads in a failure message as a menu that has no items rather than one never opened.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Columns' }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: 'mouse',
+    });
+    expect(
+      await screen.findByRole('menuitemcheckbox', { name: 'Order inquiry' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Decision' })).toBeInTheDocument();
+  });
+});

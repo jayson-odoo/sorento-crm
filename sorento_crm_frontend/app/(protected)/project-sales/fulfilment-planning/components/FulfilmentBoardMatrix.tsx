@@ -4,6 +4,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
+import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -236,6 +237,9 @@ function BoardCellButton({
     .map((entry) => `${entry.location ?? 'No location'} ${entry.qty}`)
     .join(' · ');
   const orders = new Set(cell.contributions.map((entry) => entry.so_number)).size;
+  // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
+  // counts the draft, and a cell whose supply is settled is a different statement.
+  const confirmedRevisions = decidedRevisions(cell.contributions);
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
     orders === 1 ? '' : 's'
   }`;
@@ -247,11 +251,12 @@ function BoardCellButton({
       aria-label={label}
       className="flex w-full flex-col gap-0.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <span className="flex items-baseline gap-1.5">
+      <span className="flex items-center gap-1.5">
         <span className="font-medium tabular-nums">{cell.total_qty}</span>
         <span className="text-[11px] text-muted-foreground">
           {orders === 1 ? '1 order' : `${orders} orders`}
         </span>
+        <BoardDecidedMarker revisions={confirmedRevisions} />
       </span>
 
       {/* The source strip. One entry per distinct location, because one cell legitimately

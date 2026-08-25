@@ -15,6 +15,19 @@ from pydantic import BaseModel, Field
 
 # --- sales orders -----------------------------------------------------------
 
+class SalesOrderLineInquiry(BaseModel):
+    """The order inquiry covering one sales-order line, in the two words a person reads.
+
+    The ROW's state, not the header's: "purchasing placed this line" is what the column
+    answers, and a header sitting at `raised` while its row has been placed on a PO would
+    say the opposite.
+    """
+
+    #: `OI-000123`. Null only on a row raised before inquiries were numbered.
+    inquiry_no: Optional[str] = None
+    state: str
+
+
 class SalesOrderLine(BaseModel):
     id: str
     sku: str
@@ -41,6 +54,23 @@ class SalesOrderLine(BaseModel):
     line_status: str = "open"
     #: When this line's quantity is due. Per line, for the same reason as the location.
     required_date: Optional[str] = None
+    #: What has already been PLANNED about this line, and how far purchasing has got with
+    #: it: the inquiry row covering the line through the planning record's mirror
+    #: (`projects.sales_order_lines.core_sales_order_line_id`). `None` when nobody has
+    #: raised one - never an empty object, because "nobody was told about this line" and
+    #: "told, about nothing" are different answers.
+    #:
+    #: Sent on the SINGLE order read only. The list has no column for it and would pay two
+    #: more queries a page for a fact nothing there prints.
+    order_inquiry: Optional[SalesOrderLineInquiry] = None
+    #: Which confirmed revision decided supply for this line: the ACTIVE decision's
+    #: `revision_no` when its `line_snapshots` name this core line, `None` otherwise.
+    #:
+    #: Per LINE and not per order, because since `PLAN-fulfilment-planning-from-autocount
+    #: -so.md` 13.4 a confirmation covers the SUBSET the planner chose - an order with an
+    #: active revision can still hold lines nobody has decided, and a header-level answer
+    #: would report those as settled.
+    decision_revision: Optional[int] = None
 
 
 class SalesOrder(BaseModel):

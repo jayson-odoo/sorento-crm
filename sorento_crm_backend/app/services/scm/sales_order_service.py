@@ -340,8 +340,23 @@ class SalesOrderService:
         agents = self.db.query(SalesAgent).filter(SalesAgent.id.in_(ids)).all()
         return {a.id: a for a in agents}
 
-    def serialize(self, so: SalesOrder, agent_map: Optional[dict] = None) -> dict:
+    def serialize(
+        self,
+        so: SalesOrder,
+        agent_map: Optional[dict] = None,
+        *,
+        line_planning: bool = False,
+    ) -> dict:
+        """One order as the API states it.
+
+        ``line_planning`` attaches, per LINE, what has already been planned about it: the
+        order inquiry covering it and the revision that decided it. Two queries for the
+        WHOLE order, and off by default - the list renders neither, and paying for them
+        across a page of 50 orders would be 100 reads for a fact nothing there prints.
+        """
         customer = so.customer
+        inquiries = self._line_inquiries(so) if line_planning else {}
+        decided = self._decided_lines(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -403,6 +418,11 @@ class SalesOrderService:
                 "required_date": (
                     ln.required_date.isoformat() if ln.required_date else None
                 ),
+                # What has already been planned about THIS line. Both null unless the
+                # caller asked for them (`line_planning`), and null on a line nobody has
+                # raised or decided anything on - which is most of the book.
+                "order_inquiry": inquiries.get(str(ln.id)),
+                "decision_revision": decided.get(str(ln.id)),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -463,6 +483,83 @@ class SalesOrderService:
             # actually asked for on this screen.
             "demand_class": so.demand_class,
             "created_at": so.created_at.isoformat() if so.created_at else "",
+        }
+
+    def _line_inquiries(self, so: SalesOrder) -> dict[str, dict]:
+        """The inquiry covering each of this order's lines, keyed by CORE line id.
+
+        The chain is the mirror: `projects.order_inquiry_rows.so_line_id` ->
+        `projects.sales_order_lines` -> `core_sales_order_line_id`. That column is the only
+        link between a planning instruction and the AutoCount line it was raised for, and a
+        partial unique index makes it at most one project line per core line - so this
+        cannot multiply a row.
+
+        ONE query for the whole order, ordered oldest first, and the LAST writer wins: a
+        line routinely carries several rows (the G2 cascade splits a placed allocation from
+        its raised remainder, and an amendment raises a second inquiry entirely), and what
+        the column has to answer is "what is the current instruction", not "what was the
+        first one". The ordering ends on the row id so a same-second tie resolves the same
+        way on every read - `created_at` alone is no tiebreaker inside one transaction.
+        """
+        from app.models.project_so import OrderInquiry, OrderInquiryRow
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id,
+                OrderInquiry.inquiry_no,
+                OrderInquiryRow.state,
+            )
+            .select_from(OrderInquiryRow)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+            .all()
+        )
+        return {
+            str(core_id): {"inquiry_no": inquiry_no, "state": state}
+            for core_id, inquiry_no, state in rows
+        }
+
+    def _decided_lines(self, so: SalesOrder) -> dict[str, int]:
+        """Which of this order's lines the ACTIVE revision covers, and at what revision.
+
+        A line is covered iff `line_snapshots` holds an object naming it - the same rule
+        `scm.committed_v` and the planning board's `_frozen_decisions` read, and the reason
+        that JSONB is load-bearing rather than display evidence. A line INSIDE an order
+        that has an active decision but absent from its snapshots is not decided (13.4),
+        and reads exactly like a line on an order nobody has planned.
+
+        At most one row can answer: `uq_projects_so_core_order` makes one planning record
+        per core order and `uq_so_supply_decisions_active` one active revision per record.
+        """
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+        decision = (
+            self.db.query(SOSupplyDecision.revision_no, SOSupplyDecision.line_snapshots)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .filter(
+                ProjectSalesOrder.so_id == so.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if decision is None:
+            return {}
+        revision_no, snapshots = decision
+        return {
+            str((snapshot or {}).get("core_line_id")): int(revision_no)
+            for snapshot in (snapshots or [])
+            if (snapshot or {}).get("core_line_id")
         }
 
     def with_links(self, rows: list[dict]) -> list[dict]:
@@ -591,7 +688,11 @@ class SalesOrderService:
     def get(self, so_id: str) -> dict:
         # The detail page shows the same inquiries the list column does, off the same
         # helper: a second query for the same fact is how two screens start disagreeing.
-        return self.with_order_inquiries([self.serialize(self._get_or_404(so_id))])[0]
+        # `line_planning` is the per-LINE half of the same question, and only this read
+        # pays for it - the list renders neither column.
+        return self.with_order_inquiries(
+            [self.serialize(self._get_or_404(so_id), line_planning=True)]
+        )[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], priority: Optional[str],

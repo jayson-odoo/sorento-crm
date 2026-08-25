@@ -137,6 +137,15 @@ export interface OrderInquiryListEnvelope {
 
 export interface OrderInquiryWorklistRow {
   id: string;
+  /**
+   * `OI-000123` - the number of the inquiry this row belongs to, off its own header.
+   * What a person calls the instruction: "the inquiry on SO414033" stops being an answer
+   * the moment an amendment raises the second one on that order.
+   *
+   * Optional only because a row written before the column existed carries none; every
+   * inquiry raised since is stamped with one.
+   */
+  inquiry_no?: string | null;
   /** The core sales order's order date. The date on the document, not the raise date. */
   so_date?: string | null;
   so_number?: string | null;

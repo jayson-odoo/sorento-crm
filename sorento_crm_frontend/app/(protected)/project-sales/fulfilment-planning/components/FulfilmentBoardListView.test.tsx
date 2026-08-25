@@ -167,3 +167,36 @@ describe('FulfilmentBoardListView', () => {
     expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument();
   });
 });
+
+describe('FulfilmentBoardListView marks a row whose supply is already decided', () => {
+  /**
+   * The same tick the grid puts on a fully-decided cell, here per row - one row IS one
+   * contribution, so it is decided or it is not. The Verdict column already states the
+   * revision in words; this is what makes it scannable down a list of two hundred.
+   */
+  const decided = (revisionNo: number) =>
+    contribution({
+      covered: true,
+      decision: {
+        revision_no: revisionNo,
+        timely_spo_qty: '0',
+        reserve: [],
+        borrow: [],
+        buy_qty: '43',
+      },
+    });
+
+  it('ticks the row and names the revision', async () => {
+    renderView({ contributions: [decided(3)] });
+
+    const marker = await screen.findByTestId('board-decided-marker');
+    expect(marker).toHaveAttribute('title', 'Decided rev 3');
+  });
+
+  it('leaves an undecided row unticked', async () => {
+    renderView();
+
+    expect(await screen.findByText('SO397450')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-decided-marker')).not.toBeInTheDocument();
+  });
+});
