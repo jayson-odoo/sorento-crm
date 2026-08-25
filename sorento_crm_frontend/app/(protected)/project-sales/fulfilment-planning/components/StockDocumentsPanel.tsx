@@ -267,8 +267,6 @@ export function StockDocumentsPanel({
     [rows, policyName],
   );
 
-  const data = detail.data;
-
   return (
     <div
       data-testid="stock-documents-panel"
@@ -281,18 +279,9 @@ export function StockDocumentsPanel({
         {`${itemCode} · ${locationCode}`}
       </div>
 
-      {data && (
-        // The arithmetic IS the header, so the total below can be checked against it by eye.
-        // `available_qty` is signed and is printed as it arrives: a negative available is the
-        // shortfall, and clamping it would turn the one number that says "this cannot be met"
-        // into one that says it can.
-        <div
-          data-testid="stock-detail-arithmetic"
-          className="min-w-0 break-words text-sm font-medium tabular-nums"
-        >
-          {`On hand ${data.qty_on_hand} - SO ${data.so_qty} + SPO ${data.spo_qty} = Available ${data.available_qty}`}
-        </div>
-      )}
+      {/* NO ARITHMETIC HEADER. "On hand 241 - SO 3334 + SPO 0 = Available -3093" restated the
+          location row this panel expands from, which already carries all four figures, and the
+          captain's verdict on it was "redundant. Remove." (PLAN section 0 item 7, AC-A4). */}
 
       {detail.isError ? (
         <p className="py-6 text-center text-sm text-destructive">

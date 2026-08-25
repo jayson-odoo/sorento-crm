@@ -13,6 +13,8 @@ import { amendSummary } from '../../_shared/lib/boardAmend';
 import { confirmedSummary } from './BoardCellBreakdownDialog';
 import { BoardAmendDialog } from './BoardAmendDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { SupplyBar } from './SupplyBar';
+import { contributionSupply } from '../../_shared/lib/supplyVocabulary';
 import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
 
 const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
@@ -161,14 +163,21 @@ export function FulfilmentBoardListView({
         header: 'Proposal',
         cell: ({ row }) => {
           const contribution = row.original;
+          const decision = draft[contribution.key] ?? null;
           const text =
             contribution.covered && contribution.decision
               ? confirmedSummary(contribution.decision)
               : proposalSummaryFor(contribution);
+          // The SAME bar the grid draws, off the same draft, so the two views cannot
+          // disagree about what this line is going to be supplied from.
+          const supply = contributionSupply(contribution, decision);
           return (
-            <span className="block truncate" title={text}>
-              {text}
-            </span>
+            <div className="min-w-0 space-y-1">
+              <span className="block truncate" title={text}>
+                {text}
+              </span>
+              <SupplyBar segments={supply.segments} decided={supply.decided} />
+            </div>
           );
         },
         size: 260,
