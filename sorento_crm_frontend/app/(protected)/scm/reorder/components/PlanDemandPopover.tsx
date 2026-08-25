@@ -297,7 +297,7 @@ function HistoryBody({ data, channel }: { data: PlanDemand; channel?: PlanChanne
         <div className="text-xs font-semibold">
           {channel ? `${PLAN_CHANNEL_LABEL[channel]} order history` : 'Order history'}
         </div>
-        <DemandContextHeader data={data} />
+        <DemandContextHeader data={data} channel={channel} />
       </div>
       {!lines.length ? (
         <p className="p-3 text-2xs text-muted-foreground">
