@@ -1631,6 +1631,83 @@ def test_a_board_borrow_candidate_carries_what_it_takes_to_confirm_it():
         }
 
 
+def _lead_time(db, product, days: int) -> None:
+    """State a supplier agreement, which is where the ATP window reads its lead time from."""
+    from app.models.procurement import ProductSupplier, Supplier
+
+    supplier = Supplier(
+        id=_uid(),
+        supplier_code=f"ZZT-SUP-{_uid()[:8]}".upper(),
+        supplier_name=f"{MARKER} lead-time supplier",
+    )
+    db.add(supplier)
+    db.flush()
+    db.add(
+        ProductSupplier(
+            id=_uid(),
+            product_id=product.id,
+            supplier_id=supplier.id,
+            standard_lead_time_days=days,
+        )
+    )
+    db.flush()
+
+
+def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
+    """The captain, on SO414341: two lines due 15 February and 15 March 2027, roughly 174
+    days out on a product whose lead time is well inside that, read "Nothing free at BRW-BB
+    by the delivery date, so the quantity is bought. Borrowing is possible from BRW-IB,
+    BRW-SMC, BRW-AM" - and the Suggestion card offered exactly the borrow the ATP reserve
+    window exists to refuse.
+
+    Both halves are pinned here, because both were wrong for the same reason:
+
+      * the SENTENCE is the engine's own, naming the window. The board wrote its own contest
+        sentence over the top of it, and "nothing free at L" is not why this line is bought -
+        it is bought because purchasing can still get it here in time and the stock at L is
+        kept for nearer orders;
+      * the DONORS are not offered at all. Rungs 4 and 5 are not walked for this line, so a
+        donor list beside it is an offer of the one thing the rule forbids.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTOW{_uid()[:5]}-BB"[:20])
+        elsewhere = _warehouse(db, f"ZZTEW{_uid()[:5]}-IR"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=650)
+        _lead_time(db, product, 90)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        # 174 days out, against 90 days of lead time plus the 14-day buffer: well beyond.
+        far = TODAY + timedelta(days=174)
+        _line(db, order, product, qty="441", required_date=far, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
+        assert contribution["qty_proposed_buy"] == "441"
+        buy = contribution["sources"][-1]
+        assert buy["kind"] == "buy"
+        # The engine's own wording, verbatim: `boardSuggestion.ts` reads this exact string to
+        # tell a "beyond the window" Buy from a "nothing free anywhere" one on the card.
+        assert buy["reason"] == (
+            "Delivery date beyond the lead time window; stock kept for nearer orders"
+        )
+        assert "Borrowing is possible" not in buy["reason"]
+
+        # Nothing to borrow is OFFERED either - not on the row, not in its total.
+        assert contribution["borrow_candidates"] == []
+        assert contribution["qty_borrow_available"] == "0"
+
+        # And the trail says the two rungs were not walked, rather than pretending they were
+        # checked and found empty.
+        for kind in ("group_borrow", "cross_group_borrow"):
+            step = _step(contribution, kind)
+            assert step["outcome"] == "not_eligible", kind
+            assert step["offered"] == "0", kind
+            assert "lead time window" in step["why"], kind
+        assert _step(contribution, "buy")["taken"] == "441"
+
+
 # --------------------------------------------------------------------------- #
 # the two nonsense sentences
 # --------------------------------------------------------------------------- #
@@ -2058,6 +2135,73 @@ def test_the_pressure_is_stated_for_every_location_of_a_multi_location_cell():
         }
         assert pressure[here.warehouse_code] == "4"
         assert pressure[there.warehouse_code] == "506", "per location, never pooled together"
+
+
+def _agent(db, code: str, *, location_group: str):
+    from app.models.sales_agent import SalesAgent
+
+    row = SalesAgent(
+        id=_uid(), sales_agent=code, source="manual", is_active=True,
+        location_group=location_group,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_the_locations_include_the_site_pool_the_suggestion_cites():
+    """The captain, on SO415472: the card read "Use own location 71 from BRW - Pool BRW has
+    1716 available" while the table listed BRW-BB / DC1-BB / MWH-BB / RSW-BB / WH3-BB, every
+    one of them "Not stated" on hand. So the 1716 the decision rests on was nowhere on screen.
+
+    The pool is a WAREHOUSE of its own (`warehouses.pool_warehouse_id` points at it; on the
+    live book BRW-BB's pool is the warehouse coded BRW, which held 1728), not a roll-up of the
+    BRW-* codes - so the figure reconciles to exactly one row, once that row is listed. The
+    table lists every location the ladder actually consulted for this cell: the lines' own,
+    the agent's ownership group, and the pool a proposal cites - each tagged with where it
+    stands, so the reader can tell the group from the pool.
+    """
+    with blank_session() as db:
+        group = f"Z{_uid()[:3]}".upper()
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        pool = _warehouse(db, f"ZZTPOOL{_uid()[:5]}"[:20])
+        own = _warehouse(db, f"ZZTA{_uid()[:4]}-{group}"[:20])
+        sibling = _warehouse(db, f"ZZTB{_uid()[:4]}-{group}"[:20])
+        own.pool_warehouse_id = pool.id
+        sibling.pool_warehouse_id = pool.id
+        db.flush()
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=1728)
+        agent = _agent(db, f"ZZT-CINDY-{_uid()[:4]}", location_group=group)
+
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        order.sales_agent_id = agent.id
+        db.flush()
+        _line(db, order, product, qty="71", required_date=date(2026, 9, 3), warehouse=own)
+        # Somebody else's open demand AT THE POOL, so the pool's Available is 1728 - 12 and
+        # not simply its on-hand: the figure the card cites has to be the netted one.
+        crowd = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, crowd, product, qty="12", required_date=date(2026, 10, 1), warehouse=pool)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        where = {entry["location"]: entry["where"] for entry in cell["locations"]}
+        assert where[own.warehouse_code] == "own"
+        assert where[sibling.warehouse_code] == "group"
+        assert where[pool.warehouse_code] == "site_pool", "the pool row was missing entirely"
+
+        pool_row = next(
+            entry for entry in cell["locations"]
+            if entry["location"] == pool.warehouse_code
+        )
+        assert pool_row["qty_on_hand"] == "1728"
+        assert pool_row["so_qty"] == "12"
+        # The number the card quotes, on a row of the table: 1728 - 12.
+        assert pool_row["available_qty"] == "1716"
+        source = cell["contributions"][0]["sources"][0]
+        assert source["location"] == pool.warehouse_code
+        assert source["reason"] == f"Pool {pool.warehouse_code} has 1716 available."
 
 
 def test_a_line_with_no_location_states_no_pressure_either():

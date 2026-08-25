@@ -122,7 +122,7 @@ def list_sales_orders(
         outstanding=outstanding, sales_agent_id=sales_agent_id,
         demand_class=demand_class,
     )
-    out["data"] = svc.with_links(out["data"])
+    out["data"] = svc.with_order_inquiries(svc.with_links(out["data"]))
     return out
 
 

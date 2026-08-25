@@ -3,12 +3,13 @@
  *
  * A TABLE, on the shared DataGrid, not a stack of cards. The captain: "this needs to be more
  * table based instead of card based, so it is easier to see, and you need to show me the SO
- * order quantity, owed / outstanding quantity also in the table ... then need to show summary
+ * order quantity, outstanding quantity also in the table ... then need to show summary
  * row whenever relevant". So the columns are asserted by name, the quantity columns are
  * asserted to total in the table's own footer row, and the verbs are a row action.
  *
- * The balance for the whole cell is stated ONCE, at the TOP ("7 owed = 7 reserve + 0 incoming
- * + 0 buy" - the captain: "you should show at the top"), rather than repeated under every row.
+ * ONE VOCABULARY: what is still to go out is **outstanding**, and the summary of it is the
+ * table's own footer. The balance equation that used to sit at the top said the same figures
+ * again, in the word this screen no longer uses.
  *
  * The verbs write into the DRAFT and nothing else. Nothing in this dialog claims a cell
  * committed anything: the commit is the per-order confirmation on the rail behind it (13.4).
@@ -141,18 +142,19 @@ beforeEach(() => {
 });
 
 describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
-  it('states the whole cell balance once, above the table', () => {
+  /**
+   * The balance equation is GONE. It restated the heading's own figure and then split it into
+   * four terms the table below already carries under Outstanding and Sourced from - a second
+   * arithmetic of the same facts, in a vocabulary ("owed") this screen no longer uses.
+   */
+  it('states no balance equation above the table', () => {
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
 
-    const summary = screen.getByTestId('cell-balance');
-    expect(summary.textContent).toBe('100 owed = 40 reserve + 0 incoming + 60 buy');
-    // Above the table, which is what the captain asked for: the summary before the detail.
-    expect(summary.compareDocumentPosition(contributionTable())).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(screen.queryByTestId('cell-balance')).not.toBeInTheDocument();
+    expect(screen.queryByText(/owed =/)).not.toBeInTheDocument();
   });
 
-  it('sums the balance across every contributing line, not just the first', () => {
+  it('sums the outstanding quantity in the table footer instead', () => {
     renderDialog(
       [
         demand({ line_no: 1, qty: '60' }),
@@ -161,15 +163,91 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
       { 'WESERP10B|BRW-BB': '70' },
     );
 
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '100 owed = 70 reserve + 0 incoming + 30 buy',
-    );
+    expect(footerCells()).toContain('100');
   });
 
-  it('names the cell and how much of it is decided', () => {
+  it('names the cell, and leads with what is needed and how much is decided', () => {
+    // "across 1 line" is gone: the Contributing lines table below IS the lines, and the
+    // quantity is what the planner opened this for.
     renderDialog([demand()]);
+
     expect(screen.getByText('WESERP10B · 31 Aug 2026')).toBeInTheDocument();
-    expect(screen.getByText('100 across 1 line, 0 decided')).toBeInTheDocument();
+    const needed = screen.getByTestId('cell-quantity-needed');
+    expect(needed).toHaveTextContent('Quantity needed');
+    expect(needed).toHaveTextContent('100');
+    expect(needed).toHaveTextContent('0 decided');
+    expect(screen.queryByText('100 across 1 line, 0 decided')).not.toBeInTheDocument();
+  });
+});
+
+describe('BoardCellBreakdownDialog: the Suggestion card', () => {
+  /**
+   * The dialog opens on a DECISION, so the decision leads: what is needed, and what the ladder
+   * proposes to do about it, broken down by kind of source. It used to open on a sentence and a
+   * table of lines, and working out what the whole cell was being asked to do meant reading a
+   * source strip per row.
+   */
+  const row = (key: string) => screen.getByTestId(`suggestion-${key}`);
+
+  it('states only the kinds it proposes something for, in one order', () => {
+    // 100 outstanding, 40 free at the line's own location: Buy and Use own location, and
+    // nothing else. The card used to list all four always and mute the empty ones, and on a
+    // real cell that was three lines of nothing around the line that said what to do.
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+
+    const labels = [...screen.getByTestId('cell-suggestion').querySelectorAll('[data-testid^="suggestion-"]')]
+      .map((node) => node.textContent ?? '');
+    expect(labels).toHaveLength(2);
+    expect(labels[0]).toContain('Buy');
+    expect(labels[1]).toContain('Use own location');
+  });
+
+  it('splits the cell between what is taken and what is bought, and says from where', () => {
+    // 100 outstanding, 40 free at the line's own location: the ladder reserves 40 there and
+    // buys the rest, and the card says exactly that without anybody opening a row.
+    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+
+    expect(row('own')).toHaveTextContent('Use own location');
+    expect(row('own')).toHaveTextContent('40 from BRW-BB');
+    expect(row('buy')).toHaveTextContent('60');
+  });
+
+  it('names no location on a Buy, because it is not held anywhere yet', () => {
+    renderDialog([demand({ qty: '100' })]);
+
+    expect(row('buy')).toHaveTextContent('100');
+    expect(row('buy')).not.toHaveTextContent('from');
+  });
+
+  it('sums across every line of the cell', () => {
+    renderDialog(
+      [
+        demand({ line_no: 1, qty: '60' }),
+        demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
+      ],
+      { 'WESERP10B|BRW-BB': '70' },
+    );
+
+    // 70 free serves the first line whole and 10 of the second; the rest is bought.
+    expect(row('own')).toHaveTextContent('70 from BRW-BB');
+    expect(row('buy')).toHaveTextContent('30');
+  });
+
+  it('leaves out the kinds with no quantity, rather than reading 0 at them', () => {
+    renderDialog([demand({ qty: '100' })]);
+
+    expect(screen.queryByTestId('suggestion-shared')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('suggestion-borrow_other')).not.toBeInTheDocument();
+    expect(row('buy')).toHaveTextContent('100');
+  });
+});
+
+describe('BoardCellBreakdownDialog: the Product column', () => {
+  it('is not shown when the cell holds one product - the title already names it', () => {
+    renderDialog([demand({ line_no: 1 }), demand({ line_no: 2 })]);
+
+    const table = contributionTable();
+    expect(within(table).queryByRole('columnheader', { name: 'Product' })).not.toBeInTheDocument();
   });
 });
 
@@ -186,7 +264,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
       'Customer',
       'Project',
       'Ordered',
-      'Owed',
+      'Outstanding',
       'Delivery date',
       'Location',
       'Sourced from',
@@ -336,13 +414,13 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, Owed here, On hand, Reserved, Free, SO qty, SPO qty, Available - after the
-    // chevron cell, which carries no text.
+    // Location, On hand, Reserved, SO qty, SPO qty, Available - after the chevron cell,
+    // which carries no text. No demand column: the table below says that per line. No Free
+    // column either: it is `On hand - Reserved`, and both of those are right here.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
-      '100',
+      'Own location',
       '478',
-      'Not stated',
       'Not stated',
       '47009',
       '0',
@@ -353,10 +431,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
   });
 
   /**
-   * Reserved and Free were in the pill's tooltip, where a touch screen could not reach them and
-   * nobody who did not hover ever saw them. They are columns now.
+   * Reserved was in the pill's tooltip, where a touch screen could not reach it and nobody who
+   * did not hover ever saw it. It is a column now. Free was too, and it has since gone: it is
+   * `On hand - Reserved`, both of which are on the row.
    */
-  it('states the engine’s own reserved and free split in the table itself', () => {
+  it('states the engine’s own reserved split in the table itself', () => {
     renderCell(
       stockedCell({
         location: 'BRW-BB',
@@ -369,7 +448,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     const row = stockRow('BRW-BB');
     expect(row[3]).toBe('500');
     expect(row[4]).toBe('380');
-    expect(row[5]).toBe('120');
+    expect(row).not.toContain('120');
   });
 
   /**
@@ -388,11 +467,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     );
 
     const row = stockRow('BRW-IB');
-    expect(row[6]).toBe('10805');
-    expect(row[7]).toBe('0');
+    expect(row[5]).toBe('10805');
+    expect(row[6]).toBe('0');
     // Absent is absent: neither invented as 0 nor allowed to hide the ones that are stated.
     expect(row[3]).toBe('Not stated');
-    expect(row[8]).toBe('Not stated');
+    expect(row[7]).toBe('Not stated');
   });
 
   it('says NOT STATED, never 0, when the sales order named no location', () => {
@@ -418,12 +497,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       'Not stated',
       'Not stated',
       'Not stated',
-      'Not stated',
     ]);
     expect(row).not.toContain('0');
   });
 
-  it('carries delivered beside ordered and owed', () => {
+  it('carries delivered beside ordered and outstanding', () => {
     renderDialog([demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' })]);
 
     const table = contributionTable();
@@ -552,14 +630,20 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
    * order's lines in one week share their date, document date and terms - which is not a policy
    * failure, and reading it as one sent people hunting a broken weighting.
    */
-  it('says a single line is simply the only one here', () => {
+  it('says nothing at all about a cell holding one line', () => {
+    // "Only line in this cell" restated the single row underneath it. Removed 25 August 2026:
+    // the Rank column still reads "Not ranked", because a flat 0.00 there would claim a
+    // ranking nobody ran, but no sentence is printed for it.
     const cell = cellOf([demand()]);
     renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
 
-    expect(screen.getByText('Only line in this cell')).toBeInTheDocument();
+    expect(screen.queryByText('Only line in this cell')).not.toBeInTheDocument();
     expect(
       screen.queryByText(/The active policy separates none of these rows/),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent,
+    ).toBe('Not ranked');
   });
 
   it('names line order when one sales order is competing with itself', () => {
@@ -787,7 +871,7 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
       demand({ line_no: 2, qty: '10' }),
     ]);
 
-    expect(screen.getByText('34 across 2 lines, 0 decided')).toBeInTheDocument();
+    expect(screen.getByTestId('cell-quantity-needed')).toHaveTextContent('34');
   });
 });
 
@@ -913,15 +997,14 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   });
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
-  it('counts a timely SPO into the cell balance as incoming, not as reserve', () => {
+  it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
     renderServerCell([
       { kind: 'timely_spo', qty: '10', location: 'BRW-BB', reason: 'Incoming covers 10.' },
       { kind: 'buy', qty: '5', location: null, reason: 'The residual is bought.' },
     ]);
 
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '15 owed = 0 reserve + 10 incoming + 5 buy',
-    );
+    expect(screen.getByText('Incoming 10 at BRW-BB · Buy 5')).toBeInTheDocument();
+    expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
   });
 });
 
@@ -1357,7 +1440,18 @@ describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
   });
 
   it('still shows the calculation on a cell the policy could not rank', () => {
-    const cell = { ...rankedCell(FACTORS, 0), rank_separates: false, distinct_order_count: 2 };
+    const base = rankedCell(FACTORS, 0);
+    const cell = {
+      ...base,
+      rank_separates: false,
+      distinct_order_count: 2,
+      // TWO lines, because that is the case the sentence is about: a cell holding one line
+      // says nothing at all about its ranking any more, and this test is about the sentence.
+      contributions: [
+        base.contributions[0],
+        { ...base.contributions[0], key: 'so-b|1|WESERP10B|2026-08-31', sales_order_id: 'so-b' },
+      ],
+    };
     renderCell(cell);
     openRank(cell);
 
@@ -1368,7 +1462,7 @@ describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
     );
     expect(
       within(screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`)).getByText(
-        'Only line in this cell',
+        'The active policy separates none of these rows',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('rank-factor-need_by_date')).toBeInTheDocument();
@@ -1549,7 +1643,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).toContain(
       'stock at BRW-BB is committed to whichever sales order is queued for it',
@@ -1569,7 +1663,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 owed to 4 lines ranked ahead of this line.',
+      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
     );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
@@ -1987,18 +2081,54 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('counts as decided in the header, because it is - in the database', () => {
     renderDialog([covered(), demand({ line_no: 2, qty: '21' })]);
 
-    expect(screen.getByText('64 across 2 lines, 1 decided')).toBeInTheDocument();
+    const needed = screen.getByTestId('cell-quantity-needed');
+    expect(needed).toHaveTextContent('64');
+    expect(needed).toHaveTextContent('1 decided');
   });
 
-  it('counts the frozen numbers into the cell balance', () => {
+  it('counts the frozen line into the outstanding total, decided or not', () => {
     renderDialog([covered(), demand({ line_no: 2, qty: '21', sales_order_id: 'so-a' })], {
       'WESERP10B|BRW-BB': '5',
     });
 
-    // 43 owed on the covered line (borrow 10 + buy 33) and 21 on the undecided one (reserve 5
-    // + buy 16), so the whole cell reads 64 owed against 5 + 10 + 49.
-    expect(screen.getByTestId('cell-balance').textContent).toBe(
-      '64 owed = 5 reserve + 0 incoming + 10 borrow + 49 buy',
-    );
+    // 43 outstanding on the covered line and 21 on the undecided one. A decision is a claim on
+    // stock, not a delivery, so it does not take the line out of what is still outstanding.
+    expect(footerCells()).toContain('64');
+  });
+});
+
+describe('BoardCellBreakdownDialog: what purchasing has already been told', () => {
+  /**
+   * The Decision column says what was PROMISED. It cannot say whether anybody acted on it,
+   * and that is the question a planner opens this dialog with a second time: an approved
+   * revision with nothing placed against it and one fully placed look identical without the
+   * inquiry beside it.
+   *
+   * Absent is the ordinary case, so the column has to state it rather than leave a blank
+   * cell that reads as a rendering fault.
+   */
+  it('names the inquiry and its state beside the Decision column', () => {
+    renderDialog([
+      demand({ order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' } }),
+    ]);
+
+    const table = contributionTable();
+    const headers = within(table)
+      .getAllByRole('columnheader')
+      .map((node) => node.textContent ?? '');
+    expect(headers.some((header) => header.includes('Order inquiry'))).toBe(true);
+
+    const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
+    expect(within(row).getByText('OI-000123')).toBeInTheDocument();
+    // The worklist's own wording, so "Placed" cannot mean two things on two screens.
+    expect(within(row).getByText('Placed')).toBeInTheDocument();
+  });
+
+  it('prints a dash for a line nobody has been told anything about', () => {
+    renderDialog([demand({ order_inquiry: null })]);
+
+    const row = contributionTable().querySelectorAll('tbody tr')[0] as HTMLElement;
+    expect(within(row).queryByText(/^OI-/)).not.toBeInTheDocument();
+    expect(within(row).getAllByText('-').length).toBeGreaterThan(0);
   });
 });

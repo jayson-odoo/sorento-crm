@@ -571,6 +571,14 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
     qty_received = Column(Numeric(15, 4), default=0, nullable=False)
     unit_cost = Column(Numeric(12, 2), nullable=True)
+    # The rest of the money line the AutoCount PO detail listing states, and the unit the
+    # quantity was ordered IN. All three nullable, and an absent figure stays absent: a 0
+    # discount claims a discount of nothing was given and a 0 total claims free goods.
+    # `uom` is the per-line OVERRIDE - the serializer falls back to the product's base unit -
+    # because a purchase order written in cartons must not read in pieces.
+    discount = Column(Numeric(15, 2), nullable=True)
+    line_total = Column(Numeric(15, 2), nullable=True)
+    uom = Column(String(100), nullable=True)
     currency = Column(String(3), nullable=True)
     expected_date = Column(Date, nullable=True)
     moq_snapshot = Column(Integer, nullable=True)

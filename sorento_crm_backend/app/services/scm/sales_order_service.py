@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -72,6 +73,50 @@ def _source_label(source_system: Optional[str]) -> str:
     if source_system == "scm_so_history":
         return "history"
     return "manual"
+
+
+#: The precision every money column on this book stores. The sum is quantized to it so a
+#: `unit_price * qty_ordered` over a 4-decimal quantity cannot print a third decimal the
+#: columns it was built from could never hold.
+_MONEY_PLACES = Decimal("0.01")
+
+
+def _money(value) -> Optional[Decimal]:
+    """`value` as a money figure, or None when it is not a number at all."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _line_amount(ln: SalesOrderLine) -> Optional[Decimal]:
+    """What this line is worth, or None when nobody priced it.
+
+    The file's own `Total (Inc)` wins when it states one - it is what the customer was
+    actually charged, tax and rounding included, and recomputing it from the parts would
+    quietly disagree with the invoice. Failing that, the arithmetic the parts support.
+    `None` rather than 0, for the reason `unit_price` is nullable: a zero is a price OF
+    zero, and this book has 15,000 rows nobody has ever priced.
+    """
+    stated = _money(ln.line_total)
+    if stated is not None:
+        return stated
+    price = _money(ln.unit_price)
+    if price is None:
+        return None
+    qty = _money(ln.qty_ordered) or Decimal(0)
+    discount = _money(ln.discount) or Decimal(0)
+    return price * qty - discount
+
+
+def _order_amount(lines: list[SalesOrderLine]) -> Optional[Decimal]:
+    """The order's own total, or None when not one of its lines carries money."""
+    amounts = [a for a in (_line_amount(ln) for ln in lines) if a is not None]
+    if not amounts:
+        return None
+    return sum(amounts, Decimal(0)).quantize(_MONEY_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _line_sort_key(ln: SalesOrderLine):
@@ -229,6 +274,27 @@ class SalesOrderService:
             return opt.label
         return order_type.replace("_", " ").title()
 
+    @staticmethod
+    def _demand_class(value: str) -> str:
+        """The stated class, or a 400 naming the words the fulfilment policy can weigh.
+
+        Refused rather than coerced, and for the same reason `sales_agent_service
+        .assert_demand_class` refuses one: a third word does not rank lower, it drops out of
+        the ranking entirely (`rank_score` divides by the weight of the factors present), so
+        an order stamped `dealer` is un-ranked and reads on screen exactly like one nobody
+        classified. `sales_orders.demand_class` carries no check constraint of its own - the
+        one built from this vocabulary is on `sales_agents` - so this IS the guard.
+        """
+        stated = value.strip().lower()
+        if stated not in DEMAND_CLASSES:
+            raise AppException(
+                400,
+                f"{value!r} is not a demand class the fulfilment policy can weigh. "
+                f"Use one of: {', '.join(DEMAND_CLASSES)}.",
+                code="INVALID_DEMAND_CLASS",
+            )
+        return stated
+
     def _uom_for(self, product: Product) -> str:
         if product.base_uom_id:
             uom = self.db.query(UnitOfMeasure).get(product.base_uom_id)
@@ -274,29 +340,74 @@ class SalesOrderService:
         agents = self.db.query(SalesAgent).filter(SalesAgent.id.in_(ids)).all()
         return {a.id: a for a in agents}
 
-    def serialize(self, so: SalesOrder, agent_map: Optional[dict] = None) -> dict:
+    def serialize(
+        self,
+        so: SalesOrder,
+        agent_map: Optional[dict] = None,
+        *,
+        line_planning: bool = False,
+    ) -> dict:
+        """One order as the API states it.
+
+        ``line_planning`` attaches, per LINE, what has already been planned about it: the
+        order inquiry covering it and the revision that decided it. Two queries for the
+        WHOLE order, and off by default - the list renders neither, and paying for them
+        across a page of 50 orders would be 100 reads for a fact nothing there prints.
+        """
         customer = so.customer
+        inquiries = self._line_inquiries(so) if line_planning else {}
+        decided = self._decided_lines(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
         open_lines = 0
+        # Every date its lines name, so the header can report the span they cover. Read off
+        # the lines already loaded here rather than aggregated in a second query: both the
+        # list and the single read join the lines in (they have to - the quantities and the
+        # money are summed from them), so a `min`/`max` over them costs nothing and cannot
+        # disagree with the figures beside it.
+        required_dates = []
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
-            outstanding = max(qo - qd, 0.0)
+            # A CLOSED line is outstanding NOTHING, whatever its two quantities say. When a
+            # re-uploaded book closes a line by absence, what actually shipped is unknown, so
+            # `qty_delivered` stays 0 and `ordered - delivered` reads as the whole order still
+            # being owed - SO397450 showed 306 Completed lines summing 39,008 outstanding.
+            # `qty_delivered` is deliberately NOT back-filled to make the subtraction come
+            # out: that would be inventing a delivery. The figure is stated in its own right.
+            #
+            # It is the same rule `is_open_demand()` has always applied, so this is the detail
+            # page catching up with `scm.committed_v`, the netting engine and the planning
+            # board rather than a new one.
+            outstanding = 0.0 if (ln.line_status or "open") != "open" else max(qo - qd, 0.0)
             total_qty += qo
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
+            if ln.required_date:
+                required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
                 "sku": ln.product.product_code if ln.product else "",
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": qo,
                 "qty_delivered": qd,
+                # What is still to go out on THIS line, stated rather than left to be
+                # recomputed. The grid, its footer and the header total all read this one
+                # figure, so a closed line cannot read Completed beside a full outstanding
+                # quantity on one screen and 0 on another.
+                "outstanding_qty": outstanding,
                 # The line's own override when one was set; otherwise the product's base
                 # UOM, same as before this column was mapped.
                 "uom": ln.uom or (self._uom_for(ln.product) if ln.product else ""),
+                # The money, as stored. Not folded into one figure here: the detail page
+                # shows all three columns, and a screen that could only print a total would
+                # not answer "at what price" - which is the question the buyer opens the
+                # demand popover with.
+                "unit_price": ln.unit_price,
+                "discount": ln.discount,
+                "line_total": ln.line_total,
                 # The three the detail page needs and the list does not. Per line, not per
                 # header: one order routinely ships from two locations on two dates, and
                 # folding either onto the header states something the order never said.
@@ -307,6 +418,11 @@ class SalesOrderService:
                 "required_date": (
                     ln.required_date.isoformat() if ln.required_date else None
                 ),
+                # What has already been planned about THIS line. Both null unless the
+                # caller asked for them (`line_planning`), and null on a line nobody has
+                # raised or decided anything on - which is most of the book.
+                "order_inquiry": inquiries.get(str(ln.id)),
+                "decision_revision": decided.get(str(ln.id)),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -324,6 +440,13 @@ class SalesOrderService:
             "requested_delivery_date": (
                 so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
             ),
+            # Every DISTINCT date this order's lines are due on, earliest first. Not a
+            # span: an order due on 12 January and 10 March is due on two days, and a
+            # range invents the eight weeks in between. Empty when no line names a date -
+            # an order nobody dated is not due today, and the header's own
+            # `requested_delivery_date` above is a DIFFERENT figure that must not be
+            # substituted for it.
+            "delivery_dates": [d.isoformat() for d in sorted(set(required_dates))],
             # Who sold it. `sales_agent_id` rides along only so the edit screen's select can
             # pre-select the current agent; a person reads the code + label, never the id.
             "sales_agent_id": so.sales_agent_id,
@@ -331,6 +454,9 @@ class SalesOrderService:
             "sales_agent_label": agent_label,
             "total_qty": total_qty,
             "committed_qty": committed,
+            # What the order is worth, summed from the SAME line figures the Lines tab
+            # prints, so the header total and the column under it cannot disagree.
+            "total_amount": _order_amount(list(so.lines)),
             # What the order SAYS versus what is still owed. Both, because a "Total qty"
             # reading 0 on a fully delivered order is the label lying - the same rule the
             # purchase-order detail already follows with `open_qty` / `total_qty`.
@@ -357,6 +483,83 @@ class SalesOrderService:
             # actually asked for on this screen.
             "demand_class": so.demand_class,
             "created_at": so.created_at.isoformat() if so.created_at else "",
+        }
+
+    def _line_inquiries(self, so: SalesOrder) -> dict[str, dict]:
+        """The inquiry covering each of this order's lines, keyed by CORE line id.
+
+        The chain is the mirror: `projects.order_inquiry_rows.so_line_id` ->
+        `projects.sales_order_lines` -> `core_sales_order_line_id`. That column is the only
+        link between a planning instruction and the AutoCount line it was raised for, and a
+        partial unique index makes it at most one project line per core line - so this
+        cannot multiply a row.
+
+        ONE query for the whole order, ordered oldest first, and the LAST writer wins: a
+        line routinely carries several rows (the G2 cascade splits a placed allocation from
+        its raised remainder, and an amendment raises a second inquiry entirely), and what
+        the column has to answer is "what is the current instruction", not "what was the
+        first one". The ordering ends on the row id so a same-second tie resolves the same
+        way on every read - `created_at` alone is no tiebreaker inside one transaction.
+        """
+        from app.models.project_so import OrderInquiry, OrderInquiryRow
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id,
+                OrderInquiry.inquiry_no,
+                OrderInquiryRow.state,
+            )
+            .select_from(OrderInquiryRow)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+            .all()
+        )
+        return {
+            str(core_id): {"inquiry_no": inquiry_no, "state": state}
+            for core_id, inquiry_no, state in rows
+        }
+
+    def _decided_lines(self, so: SalesOrder) -> dict[str, int]:
+        """Which of this order's lines the ACTIVE revision covers, and at what revision.
+
+        A line is covered iff `line_snapshots` holds an object naming it - the same rule
+        `scm.committed_v` and the planning board's `_frozen_decisions` read, and the reason
+        that JSONB is load-bearing rather than display evidence. A line INSIDE an order
+        that has an active decision but absent from its snapshots is not decided (13.4),
+        and reads exactly like a line on an order nobody has planned.
+
+        At most one row can answer: `uq_projects_so_core_order` makes one planning record
+        per core order and `uq_so_supply_decisions_active` one active revision per record.
+        """
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+        decision = (
+            self.db.query(SOSupplyDecision.revision_no, SOSupplyDecision.line_snapshots)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .filter(
+                ProjectSalesOrder.so_id == so.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if decision is None:
+            return {}
+        revision_no, snapshots = decision
+        return {
+            str((snapshot or {}).get("core_line_id")): int(revision_no)
+            for snapshot in (snapshots or [])
+            if (snapshot or {}).get("core_line_id")
         }
 
     def with_links(self, rows: list[dict]) -> list[dict]:
@@ -390,6 +593,84 @@ class SalesOrderService:
             row["awaiting_purchase_orders"] = sum(1 for l in linked if not l["resolved"])
         return rows
 
+    def with_order_inquiries(self, rows: list[dict]) -> list[dict]:
+        """Attach the order inquiries raised against each order, in ONE query for the page.
+
+        The business sees sales orders and order inquiries, and nothing between them: there
+        is no plan entity to show and no "Planning" column. So an order has to say for
+        itself which inquiries it has produced and how far purchasing has got with them,
+        or the answer lives only on a screen the buyer has to go and find.
+
+        The chain is `sales_orders.id` -> `projects.sales_orders.so_id` ->
+        `projects.order_inquiries`. An order nobody has planned reaches no planning record
+        and gets an empty list - never null and never absent, so the column renders its own
+        empty state rather than the screen having to tell an unplanned order from a broken
+        payload.
+
+        The order's OWN inquiry first, then the ones its amendments raised, oldest first:
+        that is the sequence purchasing was told things in, and any other order reads as
+        arbitrary. One query for the headers and one for the row counts, per PAGE - the
+        same rule `with_links` follows, because per-row would be an N+1 across a
+        15,000-order list.
+        """
+        by_id = {r["id"]: r for r in rows}
+        for row in rows:
+            row["order_inquiries"] = []
+        if not by_id:
+            return rows
+
+        from app.models.project_so import INQUIRY_PLACED, OrderInquiry, OrderInquiryRow
+        from app.models.user import User
+
+        headers = (
+            self.db.query(OrderInquiry, ProjectSalesOrder.so_id, User.name)
+            .join(ProjectSalesOrder,
+                  ProjectSalesOrder.id == OrderInquiry.project_sales_order_id)
+            .outerjoin(User, User.id == OrderInquiry.raised_by)
+            .filter(ProjectSalesOrder.so_id.in_(list(by_id)))
+            .all()
+        )
+        if not headers:
+            return rows
+
+        counts: dict[str, tuple[int, int]] = {}
+        for inquiry_id, total, placed in (
+            self.db.query(
+                OrderInquiryRow.order_inquiry_id,
+                func.count(OrderInquiryRow.id),
+                func.count(OrderInquiryRow.id).filter(
+                    OrderInquiryRow.state == INQUIRY_PLACED),
+            )
+            .filter(OrderInquiryRow.order_inquiry_id.in_(
+                [str(h[0].id) for h in headers]))
+            .group_by(OrderInquiryRow.order_inquiry_id)
+            .all()
+        ):
+            counts[str(inquiry_id)] = (int(total or 0), int(placed or 0))
+
+        for inquiry, so_id, raised_by_name in headers:
+            row = by_id.get(str(so_id))
+            if row is None:
+                continue
+            total, placed = counts.get(str(inquiry.id), (0, 0))
+            row["order_inquiries"].append({
+                "inquiry_no": inquiry.inquiry_no,
+                "state": inquiry.state,
+                "raised_at": inquiry.raised_at.isoformat() if inquiry.raised_at else None,
+                "raised_by_name": raised_by_name,
+                "rows_total": total,
+                "rows_placed": placed,
+                # Ordering only: an amendment's inquiry follows the order's own one.
+                "_is_amendment": inquiry.amendment_id is not None,
+            })
+        for row in rows:
+            row["order_inquiries"].sort(
+                key=lambda i: (i["_is_amendment"], i["raised_at"] or "", i["inquiry_no"] or "")
+            )
+            for inquiry in row["order_inquiries"]:
+                inquiry.pop("_is_amendment", None)
+        return rows
+
     def _get_or_404(self, so_id: str) -> SalesOrder:
         so = (
             self.db.query(SalesOrder)
@@ -405,7 +686,13 @@ class SalesOrderService:
     # -- reads ---------------------------------------------------------------
 
     def get(self, so_id: str) -> dict:
-        return self.serialize(self._get_or_404(so_id))
+        # The detail page shows the same inquiries the list column does, off the same
+        # helper: a second query for the same fact is how two screens start disagreeing.
+        # `line_planning` is the per-LINE half of the same question, and only this read
+        # pays for it - the list renders neither column.
+        return self.with_order_inquiries(
+            [self.serialize(self._get_or_404(so_id), line_planning=True)]
+        )[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], priority: Optional[str],
@@ -484,10 +771,47 @@ class SalesOrderService:
                 .exists()
             )
         if query:
-            like = f"%{query}%"
+            like = f"%{query.strip()}%"
+            # The four things a person holds when they come looking for an order: the
+            # document number, who it is for, WHAT IS ON IT, and WHO SOLD IT. The last two
+            # were not matched, so "which orders have that sink on them" and "show me
+            # Eric's orders" both answered nothing and sent the reader to the filter panel
+            # for a question the search box looks like it takes.
+            #
+            # EXISTS subqueries, never joins: an order with three matching lines must come
+            # back as ONE row, and a join would also break `total` (which counts the same
+            # query) and the page boundaries computed from it.
+            on_a_line = (
+                self.db.query(SalesOrderLine.id)
+                .join(Product, Product.id == SalesOrderLine.product_id)
+                .filter(
+                    SalesOrderLine.sales_order_id == SalesOrder.id,
+                    or_(
+                        Product.product_code.ilike(like),
+                        Product.product_name.ilike(like),
+                    ),
+                )
+                .exists()
+            )
+            # Code AND person: the codes are `SEAN I` / `SEAN III`, and the person behind
+            # them is what anybody actually types. Same pair `list_agents` searches, so the
+            # Agent picker and this box understand the same words.
+            sold_by = (
+                self.db.query(SalesAgent.id)
+                .filter(
+                    SalesAgent.id == SalesOrder.sales_agent_id,
+                    or_(
+                        SalesAgent.sales_agent.ilike(like),
+                        SalesAgent.person_label.ilike(like),
+                    ),
+                )
+                .exists()
+            )
             q = q.filter(
                 (SalesOrder.so_number.ilike(like))
                 | (SalesOrder.customer.has(Customer.customer_name.ilike(like)))
+                | on_a_line
+                | sold_by
             )
         sort_cols = {
             "so_number": SalesOrder.so_number,
@@ -495,6 +819,17 @@ class SalesOrderService:
             "status": SalesOrder.status,
             "priority": SalesOrder.priority,
             "created_at": SalesOrder.created_at,
+            # The START of the delivery span the list prints - "what is due first", which is
+            # the question that column is scanned with. In SQL over the SAME
+            # `min(required_date)` the serializer prints, so the header's order and the cell
+            # cannot come apart. Null placement is Postgres's default, the same as the
+            # `order_date` sort beside it: an order no line has dated sorts last ascending.
+            "delivery_date_from": (
+                select(func.min(SalesOrderLine.required_date))
+                .where(SalesOrderLine.sales_order_id == SalesOrder.id)
+                .correlate(SalesOrder)
+                .scalar_subquery()
+            ),
         }
         q = q.order_by(*_order_by(sort_cols, sort, direction))
         total = q.count()
@@ -559,8 +894,23 @@ class SalesOrderService:
             demand = class_of(data.order_type)
             if demand:
                 so.demand_class = demand
+        # The planning class under its own name - what the detail screen RENDERS, and now
+        # what it writes. `order_type` above still derives a class when it says something,
+        # so an explicit `demand_class` is applied after it and wins: a caller that sent
+        # both meant the one it named.
+        #
+        # Blank leaves the stored class alone rather than clearing it. 96% of this book is
+        # unclassified, so the edit form opens blank on almost every order, and a save that
+        # took blank literally would un-rank an order as a side effect of correcting its
+        # delivery date. Clearing a class is not something this screen offers; setting one is.
+        if getattr(data, "demand_class", None):
+            so.demand_class = self._demand_class(data.demand_class)
         if data.priority is not None:
             so.priority = data.priority
+        if data.order_date is not None:
+            so.order_date = (
+                self._parse_date(data.order_date, "order_date") if data.order_date else None
+            )
         # `model_fields_set`, not `is not None`: an omitted field and an explicit `null`
         # both arrive as `None` on the Pydantic model, and only the latter means "clear the
         # agent" - a plain None-check could never tell "nobody touched this" from "unassign
@@ -707,11 +1057,13 @@ class SalesOrderService:
         SO<->PO `OrderLinkClaim`, in which case the whole update is refused with a 409 rather
         than silently orphaning that link.
 
-        `warehouse_code` / `required_date` / `uom` are applied via `model_fields_set`, not a
-        plain `is not None` check: a key the caller never sent must leave the stored value
-        alone (this is how a same-order qty-only edit, which does not carry these keys,
-        cannot wipe out a location/date/UoM another edit set), while a key sent as an
-        explicit `null`/`""` clears it.
+        `warehouse_code` / `required_date` / `uom` / `unit_price` / `discount` are applied via
+        `model_fields_set`, not a plain `is not None` check: a key the caller never sent must
+        leave the stored value alone (this is how a same-order qty-only edit, which does not
+        carry these keys, cannot wipe out a location/date/UoM/price another edit or the book
+        upload set), while a key sent as an explicit `null`/`""` clears it. `line_total` is
+        not in that list on purpose - it is what the source document charged, and rewriting
+        it from an edited price would replace the invoice with our own arithmetic.
 
         Returns one `(line, old_qty_ordered, old_required_date)` per MATCHED existing line -
         its state as it was before this method touched it - for `_propagate_planning_change`
@@ -747,6 +1099,17 @@ class SalesOrderService:
                 self._parse_date(ln.required_date, "required_date") if ln.required_date else None
             ) if "required_date" in fields_set else None
             uom = (ln.uom or None) if "uom" in fields_set else None
+            # Money follows the identical rule, which is why it is read the same way: a
+            # qty-only edit never sends these keys and must not blank a price the book
+            # imported, while an explicit `null` clears the figure. `line_total` is NOT
+            # editable here and is deliberately left alone - it is what the source document
+            # charged, and recomputing it from an edited price would overwrite the invoice
+            # with our arithmetic.
+            money = {
+                col: getattr(ln, col)
+                for col in ("unit_price", "discount")
+                if col in fields_set
+            }
             if target is not None:
                 matched_ids.add(target.id)
                 # Snapshotted BEFORE any of the mutations below - the only place this
@@ -762,6 +1125,8 @@ class SalesOrderService:
                     target.required_date = required_date
                 if "uom" in fields_set:
                     target.uom = uom
+                for col, value in money.items():
+                    setattr(target, col, value)
             else:
                 self.db.add(SalesOrderLine(
                     sales_order_id=so.id,
@@ -774,6 +1139,7 @@ class SalesOrderService:
                     warehouse_id=warehouse_id,
                     required_date=required_date,
                     uom=uom,
+                    **money,
                 ))
 
         removed = [l for l in existing_lines if l.id not in matched_ids]

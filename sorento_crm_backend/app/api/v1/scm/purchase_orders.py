@@ -1,9 +1,10 @@
-"""SCM purchase-order endpoints - list/read + the M4 Slice B draft→confirm→GR flow.
+"""SCM purchase-order endpoints - list/read, in-place correction, and the M4 Slice B
+draft→confirm→GR flow.
 
-Reads are gated on ``scm.dashboard.view``; the confirm + create-GR writes mutate
-supply state so they are gated on ``scm.reorder.run`` (the planning permission that
-already governs accepting recommendations into drafts). No UUIDs surfaced - PO by
-po_number, GR by its reference.
+Reads are gated on ``scm.dashboard.view``; every write mutates supply state, so all of them
+(confirm, create-GR, bulk delete, and the PUT) are gated on ``scm.reorder.run`` - the planning
+permission that already governs accepting recommendations into drafts. No UUIDs surfaced - PO
+by po_number, supplier/product/location by code, GR by its reference.
 """
 from __future__ import annotations
 
@@ -20,7 +21,12 @@ from app.schemas.scm_decisions import (
     BulkConfirmResult,
     CreateGrResult,
 )
-from app.schemas.scm_orders import PurchaseOrder, PurchaseOrderListResponse
+from app.schemas.scm_orders import (
+    PurchaseOrder,
+    PurchaseOrderListResponse,
+    PurchaseOrderUpdate,
+    SupplierOption,
+)
 from app.services.error_handler import AppException
 from app.services.scm.purchase_order_service import PurchaseOrderService
 
@@ -117,6 +123,28 @@ def create_gr_from_purchase_order(
     return PurchaseOrderService(db).create_gr(po_id, (_user or {}).get("id"))
 
 
+@router.get("/purchase-orders/suppliers", response_model=List[SupplierOption])
+def list_purchase_order_suppliers(
+    query: Optional[str] = Query(
+        None, description="Substring match on the supplier code or name."
+    ),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_READ),
+):
+    """Active suppliers, for the detail page's Supplier select. Declared before
+    `/{po_id}` so `suppliers` never parses as a PO id.
+
+    Gated on `scm.dashboard.view` (this router's read permission) rather than reusing
+    `GET /procurement/suppliers/select`, for two reasons: that route sits behind the
+    procurement module guard and its own permission, which a purchasing/SCM-only role does
+    not necessarily hold, and it takes no `limit`/`offset` at all, so a paged picker cannot
+    page it. Same reasoning, and same shape, as `/sales-orders/agents`.
+    """
+    return PurchaseOrderService(db).list_supplier_options(query, limit, offset)
+
+
 @router.get("/purchase-orders/{po_id}", response_model=PurchaseOrder)
 def get_purchase_order(
     po_id: str,
@@ -127,3 +155,23 @@ def get_purchase_order(
     if po is None:
         raise AppException(status_code=404, message="Purchase order not found.")
     return po
+
+
+@router.put("/purchase-orders/{po_id}", response_model=PurchaseOrder)
+def update_purchase_order(
+    po_id: str,
+    data: PurchaseOrderUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_WRITE),
+):
+    """Correct a purchase order in place - header and lines, in one write.
+
+    The supply-side twin of `PUT /sales-orders/{so_id}`. Until now this router had no write
+    route beyond confirm / delete / create-GR, so a wrong supplier, a wrong date or a
+    mistyped quantity could only be fixed by deleting the order and re-uploading the book.
+
+    An omitted key leaves the stored value alone; one sent as `null` clears it. `lines`, when
+    sent, upserts the whole array - see `PurchaseOrderService._upsert_lines`, including the
+    409s that stop a received or claimed line being dropped.
+    """
+    return PurchaseOrderService(db).update(po_id, data)

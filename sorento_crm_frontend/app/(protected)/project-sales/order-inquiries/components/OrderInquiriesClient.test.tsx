@@ -162,6 +162,18 @@ describe('OrderInquiriesClient', () => {
     expect(screen.getByText('202601-S0015')).toBeInTheDocument();
   });
 
+  it('names the inquiry each row belongs to, and says so when it has no number', async () => {
+    // An amendment raises a SECOND inquiry on the same sales order, so the S/O no beside it
+    // cannot answer "which instruction was I given".
+    renderClient();
+
+    const numbered = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    expect(within(numbered).getByText('OI-000101')).toBeInTheDocument();
+
+    const unnumbered = screen.getByText('PSO-000412').closest('tr') as HTMLElement;
+    expect(within(unnumbered).getByText('Not numbered')).toBeInTheDocument();
+  });
+
   it('renders the columns in the order their own spreadsheet has them', async () => {
     renderClient();
     await screen.findByText('SO385126');
@@ -172,6 +184,7 @@ describe('OrderInquiriesClient', () => {
     const order = [
       'SO date',
       'S/O no',
+      'Order inquiry',
       'Item code',
       'Qty',
       'Delivery date',

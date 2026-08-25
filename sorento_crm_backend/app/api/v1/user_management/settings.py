@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
+from app.models.product import UnitOfMeasure
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
 
@@ -58,6 +59,10 @@ class SystemSettingUpdate(BaseModel):
     smtp_from: Optional[str] = None
     default_product_supplier_id: Optional[str] = None
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
+    #: The unit a product gets when the source states none. `null` clears it back to the
+    #: built-in `EA` fallback; an unknown id is a 400 rather than a silent fallback the
+    #: operator would only discover through an import that quietly did something else.
+    default_uom_id: Optional[str] = None
     # Takeover cooldown window in seconds (0 = instant). Cap at 1 hour.
     takeover_cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
     # Project registration clash bars (AC-C5). Bounded to (0, 1] because a trigram
@@ -182,6 +187,15 @@ async def get_settings(
         sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
         user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
         user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
+        # The default unit's CODE as well as its id: the settings screen may not render a
+        # bare UUID, and the id alone would leave it with nothing to show until the units
+        # master happens to be loaded beside it.
+        default_uom_id = getattr(settings, "default_uom_id", None) if settings else None
+        default_uom = (
+            db.query(UnitOfMeasure).filter(UnitOfMeasure.id == default_uom_id).first()
+            if default_uom_id
+            else None
+        )
         return {
             "settings": {
                 "id": settings.id if settings else None,
@@ -200,6 +214,10 @@ async def get_settings(
                 "default_product_standard_lead_time_days": (
                     settings.default_product_standard_lead_time_days if settings else None
                 ),
+                # A new settings column reaches the FE only if it is on this manual dict
+                # AND on `SystemSettingUpdate` above.
+                "default_uom_id": default_uom_id,
+                "default_uom_code": default_uom.uom_code if default_uom else None,
                 "form_sla_grace_seconds": (
                     getattr(settings, "form_sla_grace_seconds", 0) if settings else 0
                 ),
@@ -366,6 +384,19 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             update_data["default_product_supplier_id"] = sid_clean
         else:
             update_data["default_product_supplier_id"] = None
+
+    # The default unit a UOM-less product takes. Validated where it is WRITTEN, the same as
+    # the default supplier above: an id that resolves to nothing would otherwise be
+    # discovered by an import quietly falling back to `EA` on nine thousand rows.
+    if "default_uom_id" in update_data:
+        uid = update_data["default_uom_id"]
+        if uid is not None and str(uid).strip():
+            uid_clean = str(uid).strip()
+            if db.query(UnitOfMeasure.id).filter(UnitOfMeasure.id == uid_clean).first() is None:
+                raise HTTPException(status_code=400, detail="Default unit of measure not found")
+            update_data["default_uom_id"] = uid_clean
+        else:
+            update_data["default_uom_id"] = None
 
     for col in (
         "purchase_request_default_approver_user_id",

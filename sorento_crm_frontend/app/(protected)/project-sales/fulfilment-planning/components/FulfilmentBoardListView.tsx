@@ -12,6 +12,7 @@ import { proposalSummaryFor } from '../../_shared/lib/fulfilmentBoard';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { confirmedSummary } from './BoardCellBreakdownDialog';
 import { BoardAmendDialog } from './BoardAmendDialog';
+import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
 
 const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
@@ -54,8 +55,13 @@ export function FulfilmentBoardListView({
           const contribution = row.original;
           const body = (
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium tabular-nums">
-                {contribution.so_number}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-medium tabular-nums">
+                  {contribution.so_number}
+                </span>
+                {/* The same tick the grid puts on a fully-decided cell, here per row: one
+                    row IS one contribution, so it is decided or it is not. */}
+                <BoardDecidedMarker revisions={decidedRevisions([contribution])} />
               </div>
               <div className="truncate text-xs text-muted-foreground">
                 {`Line ${contribution.line_no}`}
@@ -140,7 +146,7 @@ export function FulfilmentBoardListView({
       {
         id: 'owed_qty',
         accessorFn: (row) => row.qty_outstanding ?? row.qty,
-        header: 'Owed qty',
+        header: 'Outstanding qty',
         cell: ({ row }) => (
           <span className="block truncate tabular-nums">
             {row.original.qty_outstanding ?? row.original.qty}
@@ -299,7 +305,7 @@ export function FulfilmentBoardListView({
         getRowId={(row) => row.key}
         listingKey="projects.projects.view::project-fulfilment-board-list-v1"
         isLoading={isLoading}
-        emptyTitle="Nothing is owed on this board"
+        emptyTitle="Nothing is outstanding on this board"
         searchPlaceholder="Search sales order, customer, agent or product"
         searchOf={(row) =>
           [row.so_number, row.customer_name, row.agent_code, row.item_code]

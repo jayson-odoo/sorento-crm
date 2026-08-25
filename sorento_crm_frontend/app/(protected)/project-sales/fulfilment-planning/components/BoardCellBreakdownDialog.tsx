@@ -19,7 +19,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
+import { suggestionBreakdown } from '../../_shared/lib/boardSuggestion';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -38,16 +40,19 @@ import type {
  *
  * A TABLE on the shared DataGrid, and the captain's reason for it is the whole design: "this
  * needs to be more table based instead of card based, so it is easier to see, and you need to
- * show me the SO order quantity, owed / outstanding quantity also in the table ... then need to
+ * show me the SO order quantity, outstanding quantity also in the table ... then need to
  * show summary row whenever relevant". Ten lines as ten cards is a scroll; ten lines as ten rows
  * is a comparison, which is what a planner is actually doing here.
  *
  * The earlier version of this file argued for cards on the grounds that a row carries a
- * two-line explanation and a balance line. That argument does not survive the ask: the balance
- * is now stated ONCE for the whole cell at the TOP (the captain: "7 owed = 7 reserve + 0
- * incoming + 0 buy, you should show at the top"), and the per-row reasoning lives in the
- * `title` of the cell that shows the composition, which is the same `truncate` + `title`
- * contract every other grid in this repo uses for long text.
+ * two-line explanation and a balance line. That argument does not survive the ask: the
+ * per-row reasoning lives in the `title` of the cell that shows the composition, which is the
+ * same `truncate` + `title` contract every other grid in this repo uses for long text.
+ *
+ * ONE VOCABULARY: what is still to go out is **outstanding**, everywhere on this screen. It
+ * used to be "owed" in a column header, in a balance equation at the top and in a column of
+ * the stock table, while the sales-order screens next door said "outstanding" for the same
+ * figure - and a reader cannot tell a deliberate distinction from an accidental one.
  *
  * Approve / amend / reject are a ROW ACTION, and they write into the board's DRAFT, not into
  * the database (13.4): the decision that is persisted is still the whole sales order's, and the
@@ -84,6 +89,16 @@ export function BoardCellBreakdownDialog({
   const decided = cell.contributions.filter(
     (entry) => Boolean(draft[entry.key]) || entry.covered,
   ).length;
+  /**
+   * Does this cell hold more than one product? On the product axis it never does - the cell IS
+   * a product - and on a pivoted axis it routinely does.
+   */
+  const multiProduct = React.useMemo(
+    () => new Set(cell.contributions.map((entry) => entry.item_code)).size > 1,
+    [cell.contributions],
+  );
+  /** What the ladder proposes for the whole cell, by kind of source. */
+  const suggestion = React.useMemo(() => suggestionBreakdown(cell), [cell]);
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -101,7 +116,7 @@ export function BoardCellBreakdownDialog({
    * nothing posts here and Confirm remains the only write.
    *
    * AMEND is deliberately not offered in bulk: an amendment is a quantity and a reason for ONE
-   * line, and a single quantity applied to eleven different owed quantities is not a decision
+   * line, and a single quantity applied to eleven different outstanding quantities is not a decision
    * anybody meant to make.
    */
   const decideSelected = React.useCallback(
@@ -139,29 +154,34 @@ export function BoardCellBreakdownDialog({
           </div>
         ),
         // Labels the totals row under the first column, the way a spreadsheet labels its sum,
-        // so the numbers below Ordered and Owed need no caption of their own.
+        // so the numbers below Ordered and Outstanding need no caption of their own.
         footer: () => <span className="text-muted-foreground">Total</span>,
         size: 150,
         minSize: 120,
         meta: { headerTitle: 'Sales order' },
       },
-      {
-        // The product per line. Redundant on the product axis, where the title already names
-        // it, and load-bearing on the pivoted ones: a sales-order row's cell holds several
-        // products, and a list of lines that does not say which product each one is cannot be
-        // read at all.
-        id: 'item_code',
-        accessorFn: (row) => row.item_code,
-        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.item_code}>
-            {row.original.item_code}
-          </span>
-        ),
-        size: 150,
-        minSize: 120,
-        meta: { headerTitle: 'Product' },
-      },
+      // The product per line, ONLY when the cell holds more than one. On the product axis the
+      // dialog's own title names it and every row repeats it, which is a column of one
+      // repeated word on a table that is already wide; on a pivoted axis a sales-order row's
+      // cell genuinely holds several products, and a list of lines that does not say which
+      // product each one is cannot be read at all.
+      ...(multiProduct
+        ? [
+            {
+              id: 'item_code',
+              accessorFn: (row: BoardContribution) => row.item_code,
+              header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+              cell: ({ row }) => (
+                <span className="block truncate text-sm" title={row.original.item_code}>
+                  {row.original.item_code}
+                </span>
+              ),
+              size: 150,
+              minSize: 120,
+              meta: { headerTitle: 'Product' },
+            } as ColumnDef<BoardContribution>,
+          ]
+        : []),
       {
         id: 'customer_name',
         accessorFn: (row) => row.customer_name ?? '',
@@ -219,7 +239,7 @@ export function BoardCellBreakdownDialog({
               {row.original.qty_ordered}
             </span>
           ) : (
-            // Never derived from owed plus delivered on this side. A number the client
+            // Never derived from outstanding plus delivered on this side. A number the client
             // invented is a number nobody can be held to.
             <span className="text-sm text-muted-foreground">Not stated</span>
           ),
@@ -251,17 +271,19 @@ export function BoardCellBreakdownDialog({
       },
       {
         id: 'qty',
-        accessorFn: (row) => owedOf(row),
-        header: ({ column }) => <DataGridColumnHeader title="Owed" column={column} />,
+        accessorFn: (row) => outstandingOf(row),
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-sm font-medium tabular-nums">
-            {owedOf(row.original)}
+            {outstandingOf(row.original)}
           </span>
         ),
-        footer: () => <span className="tabular-nums">{sumOf(cell.contributions, owedOf)}</span>,
-        size: 110,
-        minSize: 90,
-        meta: { headerTitle: 'Owed' },
+        footer: () => (
+          <span className="tabular-nums">{sumOf(cell.contributions, outstandingOf)}</span>
+        ),
+        size: 120,
+        minSize: 100,
+        meta: { headerTitle: 'Outstanding' },
       },
       {
         id: 'required_date',
@@ -393,6 +415,34 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Rank', cellClassName: 'text-end' },
       },
       {
+        id: 'order_inquiry',
+        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        // Beside the Decision, because it is the OTHER half of the same answer: the decision
+        // is what was promised, the inquiry is what purchasing was actually told to do about
+        // it and how far they have got. A dash means nobody has been told anything yet.
+        cell: ({ row }) => {
+          const inquiry = row.original.order_inquiry;
+          if (!inquiry) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="min-w-0 truncate tabular-nums"
+                title={inquiry.inquiry_no ?? ''}
+              >
+                {inquiry.inquiry_no ?? '-'}
+              </span>
+              <OrderInquiryStatePill state={inquiry.state} />
+            </div>
+          );
+        },
+        size: 200,
+        minSize: 150,
+        meta: { headerTitle: 'Order inquiry' },
+      },
+      {
         id: 'decision',
         header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
         cell: ({ row }) => (
@@ -416,7 +466,7 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, draft, onDecide, ranking],
+    [cell.contributions, draft, multiProduct, onDecide, ranking],
   );
 
   return (
@@ -429,29 +479,72 @@ export function BoardCellBreakdownDialog({
           <DialogTitle className="min-w-0 break-words">
             {`${cell.item_code} · ${bucketLabel}`}
           </DialogTitle>
-          <DialogDescription className="min-w-0 break-words">
-            {`${cell.total_qty} across ${cell.contributions.length} line${
-              cell.contributions.length === 1 ? '' : 's'
-            }, ${decided} decided`}
+          {/* The decision, first and in two small cards: what is being asked for, and what
+              the ladder proposes to do about it. The dialog used to open on a sentence and a
+              table of lines, and the planner had to read a source strip per row to work out
+              what the whole cell was being asked to decide - which is the one thing they came
+              for. "across 1 line" is gone with it: the table below is the lines. */}
+          <DialogDescription className="sr-only">
+            {`${cell.total_qty} outstanding, ${decided} decided`}
           </DialogDescription>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div
+              data-testid="cell-quantity-needed"
+              className="rounded-lg border border-border p-3"
+            >
+              <p className="text-xs text-muted-foreground">Quantity needed</p>
+              <p className="text-2xl font-semibold tabular-nums">{cell.total_qty}</p>
+              <p className="text-xs text-muted-foreground">
+                {`${decided} decided`}
+              </p>
+            </div>
 
-          {/* THE SUMMARY, AT THE TOP (the captain). One balance for the whole cell, stated
-              before the detail rather than repeated under every row. */}
-          <div
-            data-testid="cell-balance"
-            className="text-sm font-medium tabular-nums break-words"
-          >
-            {cellBalanceLine(cell)}
+            <div data-testid="cell-suggestion" className="rounded-lg border border-border p-3">
+              <p className="mb-1.5 text-xs text-muted-foreground">Suggestion</p>
+              {/* Only the kinds the ladder actually proposes something for, in one fixed order
+                  (`suggestionBreakdown`), so Buy still sits above the stock rows wherever it
+                  appears. The empty ones used to be listed and muted, and on a real cell that
+                  was three lines of nothing around the one line that said what to do. */}
+              <div className="space-y-1">
+                {suggestion.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing proposed for this cell
+                  </p>
+                ) : null}
+                {suggestion.map((row) => (
+                  <div
+                    key={row.key}
+                    data-testid={`suggestion-${row.key}`}
+                    className="flex flex-wrap items-center gap-1.5 text-sm"
+                  >
+                    <Badge variant="primary" appearance="light" size="sm">
+                      {row.label}
+                    </Badge>
+                    <span className="min-w-0 break-words tabular-nums">
+                      {row.qty}
+                      {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
+                    </span>
+                    {/* The engine's own sentence, and only when every source on the row
+                        gives the same one: a Buy for "nothing free anywhere" and a Buy for
+                        "beyond the lead time window" are the same number for opposite
+                        reasons, and this card is where that is decided. */}
+                    {row.note ? (
+                      <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
               repeated under every rank, eleven identical grey sentences saying nothing
               row-specific. */}
-          {ranking && (
+          {ranking?.note ? (
             <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
-          )}
+          ) : null}
 
-          {/* What is actually AT each location, not only what is owed from it - the captain's
+          {/* What is actually AT each location, not only what is outstanding from it - the captain's
               "where will I need to source to fulfil", answered with facts, and the dialog has to
               carry it because a reader who opened it from a cell they can no longer see still
               needs to know one cell can draw on several locations.
@@ -463,6 +556,7 @@ export function BoardCellBreakdownDialog({
             key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
             locations={cell.locations}
             itemCode={cell.item_code}
+            groupNote={cell.location_group_note}
           />
         </DialogHeader>
 
@@ -528,7 +622,7 @@ export function BoardCellBreakdownDialog({
               ) : undefined
             }
             emptyTitle="No line contributes to this cell"
-            emptyBody="Nothing in the selection owes this product by this date."
+            emptyBody="Nothing in the selection is outstanding for this product by this date."
             pageSize={25}
           />
 
@@ -785,8 +879,8 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
   return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
 }
 
-/** The owed quantity: the server's own name for it when it sends one. */
-function owedOf(contribution: BoardContribution): string {
+/** The outstanding quantity: the server's own name for it when it sends one. */
+function outstandingOf(contribution: BoardContribution): string {
   return contribution.qty_outstanding ?? contribution.qty;
 }
 
@@ -801,45 +895,6 @@ function sumOf(
   return fromMinor(
     contributions.reduce((total, contribution) => total + toMinor(pick(contribution)), 0),
   );
-}
-
-/**
- * "100 owed = 40 reserve + 0 incoming + 60 buy", for the WHOLE cell, at the top.
- *
- * The captain asked for it there because it is the answer to the question the cell was opened
- * to ask. Under each row it was the same arithmetic said N times and summed by nobody.
- *
- * A BORROW term appears only when there is one, and there only ever is on a covered row: the
- * engine proposes no Borrow, but a confirmed line states the composition a person made, and a
- * balance that dropped it would not add up to what is owed.
- *
- * When the terms do NOT sum to what is owed, the gap is stated as "uncovered" rather than
- * printing an equation that fails its own arithmetic (captain, 20 Aug: an SO line edited
- * 12 -> 14 against a frozen revision-2 decision read "14 owed = 0 reserve + 0 incoming +
- * 12 buy", which is "sus" - the decision's coverage is a snapshot, the owed is live, and
- * the 2 the decision does not cover is the fact the reader needs; confirming a new
- * revision trues it up).
- */
-function cellBalanceLine(cell: BoardCell): string {
-  const of = (kind: string) =>
-    cell.contributions
-      .flatMap((contribution) => contribution.sources)
-      .filter((source) => source.kind === kind)
-      .reduce((total, source) => total + toMinor(source.qty), 0);
-  const owed = cell.contributions.reduce(
-    (total, contribution) => total + toMinor(owedOf(contribution)),
-    0,
-  );
-  const borrowed = of('borrow');
-  const covered = of('reserve') + of('timely_spo') + borrowed + of('buy');
-  const uncovered = owed - covered;
-  return [
-    `${fromMinor(owed)} owed = ${fromMinor(of('reserve'))} reserve`,
-    `${fromMinor(of('timely_spo'))} incoming`,
-    ...(borrowed > 0 ? [`${fromMinor(borrowed)} borrow`] : []),
-    `${fromMinor(of('buy'))} buy`,
-    ...(uncovered > 0 ? [`${fromMinor(uncovered)} uncovered - confirm a new revision`] : []),
-  ].join(' + ');
 }
 
 // The evidence behind the score used to be a `title` sentence built here. It is a table now

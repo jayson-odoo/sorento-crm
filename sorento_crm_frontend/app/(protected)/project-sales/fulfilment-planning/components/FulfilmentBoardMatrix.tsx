@@ -3,6 +3,8 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
+import { toMinor } from '../../_shared/lib/supplyComposition';
+import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -226,10 +228,18 @@ function BoardCellButton({
   onOpen: () => void;
 }) {
   const decided = cell.contributions.filter((entry) => decidedKeys.has(entry.key)).length;
+  // Only the locations this cell's own lines name. `cell.locations` also carries the rest of
+  // the sales agent's ownership group, which holds none of this cell's demand - listing those
+  // here would read "BRW-BB 42 · MWH-BB 0 · DC1-BB 0" on a grid whose whole job is to be
+  // scanned. Their stock position is the drill-down's answer, not this strip's.
   const strip = cell.locations
+    .filter((entry) => toMinor(entry.qty) > 0)
     .map((entry) => `${entry.location ?? 'No location'} ${entry.qty}`)
     .join(' · ');
   const orders = new Set(cell.contributions.map((entry) => entry.so_number)).size;
+  // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
+  // counts the draft, and a cell whose supply is settled is a different statement.
+  const confirmedRevisions = decidedRevisions(cell.contributions);
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
     orders === 1 ? '' : 's'
   }`;
@@ -241,11 +251,12 @@ function BoardCellButton({
       aria-label={label}
       className="flex w-full flex-col gap-0.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <span className="flex items-baseline gap-1.5">
+      <span className="flex items-center gap-1.5">
         <span className="font-medium tabular-nums">{cell.total_qty}</span>
         <span className="text-[11px] text-muted-foreground">
           {orders === 1 ? '1 order' : `${orders} orders`}
         </span>
+        <BoardDecidedMarker revisions={confirmedRevisions} />
       </span>
 
       {/* The source strip. One entry per distinct location, because one cell legitimately

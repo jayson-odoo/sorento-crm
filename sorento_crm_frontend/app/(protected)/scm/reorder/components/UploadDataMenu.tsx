@@ -32,9 +32,16 @@ import type { HistoryImportKind } from '../services/purchaseHistoryService';
 
 type Channel = OutstandingImportKind | HistoryImportKind | 'reorder-levels';
 
+// Neither entry says "outstanding" any more, on either book. Each file carries the WHOLE
+// book - orders still owed and orders already completed alike - so naming the action after
+// half of it described a scope the export never had, and it is what made the captain ask
+// which half he was meant to export. Same wording as the dialog these open
+// (`OutstandingUploadDialog`'s titles) and as the two list toolbars, so one action is not
+// called three things across three screens. The hints still say what each book is FOR,
+// because that is the part a person cannot read off the title.
 const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string, string]> = [
-  ['sales-orders', 'Outstanding sales orders', 'What customers are waiting for'],
-  ['purchase-orders', 'Outstanding purchase orders', 'What suppliers still owe us'],
+  ['sales-orders', 'Upload sales orders', 'What customers are waiting for'],
+  ['purchase-orders', 'Upload purchase orders', 'What suppliers still owe us'],
 ] as const;
 
 const CURATION: ReadonlyArray<readonly [HistoryImportKind, string, string]> = [

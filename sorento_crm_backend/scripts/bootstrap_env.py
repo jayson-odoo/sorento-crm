@@ -385,6 +385,17 @@ def seed_scm_module_data() -> None:
     module_kailu = importlib.util.module_from_spec(spec_kailu)
     spec_kailu.loader.exec_module(module_kailu)
 
+    # 415 adds the rest of the purchase book's money line (`DISCOUNT` / `TOTAL (INC)` on the
+    # `outstanding_po` doc type). Same create_all gap as 311/338/347/357/358: migration 414's
+    # `discount` / `line_total` columns ARE ORM columns, so create_all produces them, but
+    # nothing resolves a header to either without the alias row - so on a bootstrapped
+    # database the columns exist and every upload leaves them empty for ever.
+    spec_415 = importlib.util.spec_from_file_location(
+        "_scm_seed_415", versions / "415_po_money_aliases.py"
+    )
+    module_415 = importlib.util.module_from_spec(spec_415)
+    spec_415.loader.exec_module(module_415)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -393,6 +404,7 @@ def seed_scm_module_data() -> None:
         aliases += module_358.seed(conn)
         aliases += module_proforma.seed(conn)
         aliases += module_kailu.seed(conn)
+        aliases += module_415.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

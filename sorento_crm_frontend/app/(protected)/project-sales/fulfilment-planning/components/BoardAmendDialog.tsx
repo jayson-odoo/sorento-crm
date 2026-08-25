@@ -101,7 +101,7 @@ export function BoardAmendDialog({
         {/* The only scrolling region, so Save can never be painted over - the same layout
             fault the breakdown dialog was measured with at a 560px window. */}
         <DialogBody className="min-h-0 flex-1 divide-y divide-border overflow-y-auto p-0">
-          <Section label="Owed">
+          <Section label="Outstanding">
             <span data-testid="amend-owed" className="text-sm tabular-nums">
               {draft.open_qty}
             </span>
@@ -278,7 +278,7 @@ export function BoardAmendDialog({
           {/* The balance the planner is editing against, and everything that stops the Save. */}
           <div className="space-y-1.5 px-4 py-3 sm:px-6">
             <div data-testid="amend-balance" className="text-sm tabular-nums break-words">
-              {`${draft.open_qty} owed = ${fromMinor(balance.timelyMinor)} incoming + ${fromMinor(
+              {`${draft.open_qty} outstanding = ${fromMinor(balance.timelyMinor)} incoming + ${fromMinor(
                 balance.reserveMinor,
               )} reserve + ${fromMinor(balance.borrowMinor)} borrow + ${fromMinor(
                 balance.buyMinor,
