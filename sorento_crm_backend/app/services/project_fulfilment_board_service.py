@@ -2093,7 +2093,6 @@ class FulfilmentBoardService:
         #    source nobody drew on says WHY. Silence here reads as "there was nothing
         #    there", which is a different and usually false statement - the donors are on
         #    the contribution's own `borrow_candidates`, waiting for a person.
-        group_borrow_candidates: List[Dict[str, Any]] = []
         group_borrow_taken = sum(
             (c.qty for c in components if c.rung == "group_borrow"), _ZERO
         )

@@ -2,11 +2,39 @@
 
 Status: IN PROGRESS. Section 4 item 1 is BUILT on `feat/scm-uat-cs-board`: A + C + item 7
 (FE only: `supplyVocabulary.ts`, `SupplyBar`, `SupplyLegend`, cell colour, per-location suggestion
-wording, stock-documents header removed) and now H (subtitle removed; Raised by / Raised at on the
+wording, stock-documents header removed) and H (subtitle removed; Raised by / Raised at on the
 worklist and the SO detail header; search by CS name or email prefix; Raised by filter off the
-summary facet; reconfirm re-stamps the header). Everything from item 2 down is still to do.
-Lane: `.claude/worktrees/scm-uat` (branch `feat/scm-uat-cs-board`, FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
+summary facet; reconfirm re-stamps the header).
+
+Section 4 item 2, **ladder v3 (section 1b + 1c)**, is BUILT on `feat/scm-uat-ladder-v3`
+(stacked on the above): rung 0 short-circuits on the lead-time window as well as the coverage
+date; the ownership group (own location included) is drawn before the pool; group borrow left
+the engine and is a manual pick; the whole-line rule reaches Amend; the Amend Buy is a
+whole-line switch; a same-agent borrow asks who authorised it; the donor cell says what was
+lent. AC-L1/L2/L3/L5/L6 pass. **AC-A1 does NOT hold and the cause is not the ladder**:
+SRT382-6-DIY is classified DEALER HOT-SELLING at BRW, so PLAN 3.3a keeps the pool for retail
+and offers rung 3 nothing - see the trail reading below. Everything from item 3 down is still
+to do.
+
+Lane: `.claude/worktrees/scm-uat` (FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
+
+**AC-A1, measured on :3080 on 25 Aug** (SO415472 line 1, SRT382-6-DIY, 71 due 15 Sep 2026,
+inside the reserve window). The cell reads `Buy 71`, and the trail says why:
+
+| Rung | Offered | Taken | Why |
+| --- | --- | --- | --- |
+| 1 reserve_own (read-only) | 0 | 0 | 0 left at BRW-BB after 698 outstanding to 8 lines ranked ahead |
+| 2 incoming | 0 | 0 | no supplier PO arrives by 15 Sep 2026 |
+| 3 group_take | 0 | 0 | no BB sibling has positive available stock |
+| 4 pool | 0 | 0 | **dealer hot-selling at BRW: BRW is kept for retail, so the pool is not offered** |
+| 5 group_borrow | 0 | 0 | a person's pick, never proposed (section 1c) |
+| 6 cross_group_borrow | 0 | 0 | nothing outside the group within the cap |
+| 7 buy | 71 | 71 | took |
+
+So "Use shared stock 71 from BRW" needs a ruling on 3.3a's dealer hot-selling gate, not on the
+rung order. The vocabulary itself is right: SRTWT165-QT line 4 on the same order reads
+"Shared 22 at BRW · Borrow (other) 35 from BRW-IB" - rung 4 then rung 6, whole line from stock.
 
 ## 0. What the captain reported (25 Aug, walking SO415472 / SO404352 / SO324132 / PO-2026/07-0029)
 
