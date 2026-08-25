@@ -210,7 +210,7 @@ and asserted by a test.
 
 1. `sub-get-results` / `entity-ids-transformer`: `out.requested_qty = semantic_input?.demand_qty ?? null`.
 2. `sub-get-results` / `output-structurer`: branch on `e.result_type`:
-   - `stock_compact`: per item `\`${title}\nTotal: ${total}\n${loc}: ${qty}...\`` (plain, no bold,
+   - `stock_compact`: per item the `fields` in order - `Product Code: ${code}\nTotal: ${total}\n${loc}: ${qty}...` (plain, no bold,
      per the user's sample), blank line between products, existing footer.
    - `stock_availability`: emit `e.intro` only (+ product code when several), no field lines.
 3. Main workflow (`txiPzSxy3Pclsz6v`): when the reply carries `stock_visibility.mode ==

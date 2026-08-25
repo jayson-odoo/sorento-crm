@@ -871,7 +871,7 @@ def _stock_int(v: Any) -> Any:
 
 
 def _stock_compact(payload: dict, b: _Builder) -> None:
-    """`compact`: one item per product, Total then the allowed locations.
+    """`compact`: one item per product, Product Code, Total, then the allowed locations.
 
     Location order is the backend's (already sorted by code). Re-sorting here
     would let the two answers disagree about the same stock.
@@ -879,9 +879,15 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
     for entry in payload.get("stock_summary") or []:
         if not isinstance(entry, dict):
             continue
-        fields: list[dict[str, Any]] = [
-            {"label": "Total", "value": _stock_int(entry.get("total_on_hand"))}
-        ]
+        # Product Code leads the fields, keyed like the detailed row's. n8n's
+        # output-structurer walks `fields` and does not print `title`, so a
+        # code that lives only in the title never reaches the reader and two
+        # products' blocks become indistinguishable stacks of numbers.
+        code_field = entry.get("product_code")
+        fields: list[dict[str, Any]] = []
+        if _filled(code_field):
+            fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
+        fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
