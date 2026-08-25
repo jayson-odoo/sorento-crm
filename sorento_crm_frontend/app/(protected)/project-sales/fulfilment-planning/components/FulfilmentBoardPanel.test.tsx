@@ -2006,3 +2006,107 @@ describe('FulfilmentBoardPanel: the supply legend', () => {
     );
   });
 });
+
+/**
+ * AC-D2: the decision strip.
+ *
+ * The captain asked for "one page that shows, per line, what was SUGGESTED and what was
+ * DECIDED, in the same words", and ruled that the page is this board, with cards.
+ */
+describe('FulfilmentBoardPanel: the decision strip', () => {
+  /** The engine offered the pool; the planner bought the line whole. */
+  const amendedBoard = () =>
+    withContribution(
+      boardOf([demand({ item_code: 'SRT382-6-DIY', qty: '71' })], {}),
+      () => true,
+      (entry) => ({
+        ...entry,
+        covered: true,
+        proposed: {
+          components: [
+            {
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '71',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'Free stock at BRW covers the need.',
+            },
+          ],
+        },
+        sources: [
+          { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+        ],
+        decision: {
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '71',
+        },
+      }),
+    );
+
+  it('states both figures per kind and marks the pair that moved', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const shared = screen.getByTestId('decision-strip-shared');
+    expect(within(shared).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-shared')).toBeInTheDocument();
+
+    const buy = screen.getByTestId('decision-strip-buy');
+    expect(within(buy).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-buy')).toBeInTheDocument();
+  });
+
+  it('sits under the legend, above whichever view is on screen', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const legend = screen.getByTestId('supply-legend');
+    const strip = screen.getByTestId('decision-strip');
+    const matrix = screen.getByTestId('fulfilment-board-matrix');
+    expect(legend.compareDocumentPosition(strip)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(strip.compareDocumentPosition(matrix)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('filters the grid to the cells carrying that kind, and clears on a second press', async () => {
+    // Two products: one bought, one covered from the pool. Pressing Shared has to leave the
+    // pooled one and take the bought one away.
+    const board = withContribution(
+      boardOf(
+        [
+          demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+          demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+        ],
+        { 'WESERP10B|BRW-BB': '999' },
+      ),
+      () => true,
+      (entry) => entry,
+    );
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    // WESERP10B has free stock at its own location, so the ladder takes it on the group rung
+    // and SRT382-6-DIY is bought. Own keeps the first and drops the second.
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+});

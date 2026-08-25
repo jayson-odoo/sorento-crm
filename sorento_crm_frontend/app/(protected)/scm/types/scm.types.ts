@@ -302,6 +302,35 @@ export interface SalesOrderLine {
    * and reads `null` exactly like a line on an order nobody has planned.
    */
   decision_revision?: number | null;
+  /**
+   * What was DECIDED for this line and what the engine had SUGGESTED, as components, in the
+   * planning board's vocabulary (`PLAN-scm-cs-planning-uat.md` section 2).
+   *
+   * COMPONENTS, never a sentence: the words are written once, by
+   * `project-sales/_shared/lib/supplyVocabulary.describe`, and a sentence composed on the
+   * backend would be a second implementation of the same vocabulary free to drift.
+   *
+   * `supply_decided` is null on a line no active revision covers. `supply_proposed` is null
+   * for that AND for a revision frozen before the proposal was recorded, which the column
+   * reads as "Not recorded" rather than as "the engine suggested nothing".
+   */
+  supply_decided?: SalesOrderLineSupplyComponent[] | null;
+  supply_proposed?: SalesOrderLineSupplyComponent[] | null;
+}
+
+/**
+ * One piece of a line's supply. The same three facts the board reads a source by: what kind,
+ * how much, and from where - plus the RUNG, which is what decides the words. Never the
+ * warehouse code, which reads `BRW-BB` (the agent's own location) and `BRW` (the shared pool)
+ * as the same site when they are not the same kind of supply at all.
+ */
+export interface SalesOrderLineSupplyComponent {
+  kind: string;
+  qty: string;
+  source_location?: string | null;
+  rung?: string | null;
+  /** The sales order a borrow was taken FROM, when one was named. */
+  donor_so_number?: string | null;
 }
 
 /** The inquiry an order line belongs to, in the two words a person reads it by. */

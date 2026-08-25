@@ -65,6 +65,14 @@ export interface BoardDemandLine {
   /** The core line's own warehouse code. Empty or null means the source record is silent. */
   fulfilment_location?: string | null;
   priority?: 'high' | 'medium' | 'low' | null;
+  /**
+   * What the ENGINE proposed for this line at the moment it was decided (AC-D1), frozen in
+   * the decision's snapshot. Only meaningful beside `decision`; an undecided line's
+   * suggestion is its live proposal and is built below.
+   *
+   * Absent on a covered line means the revision predates the field: "not recorded".
+   */
+  proposed_components?: BoardSource[];
   /** `sales_orders.order_date`, the document this row IS. Feeds `document_age` (13.5). */
   order_date?: string | null;
   /** `customers.payment_terms_days`. The only credit signal with real coverage (13.5). */
@@ -403,6 +411,10 @@ function allocate(
       });
     }
     contribution.sources = sources;
+    // An undecided line's suggestion IS its live proposal, sent under the key the decision
+    // strip reads for every line (AC-D2). The server sends the same list twice for exactly
+    // this reason: one key, both states.
+    contribution.proposed = { components: sources };
     // The item facts the ladder judged the line on, said rather than implied. This fixture models
     // an ordinary item: classified, not dealer hot-selling, not discontinued. A test that wants a
     // flagged item overrides these on the contribution, as it does the trail's steps.
@@ -451,11 +463,11 @@ function applyFrozen(contribution: BoardContribution): void {
   for (const row of decision.reserve ?? []) {
     sources.push({
       kind: 'reserve',
-      // NO RUNG, because the real board sends none on a covered line: `_apply_frozen`
-      // (`project_fulfilment_board_service.py`) rebuilds a frozen composition without the rung
-      // the engine froze, verified live off SO324132 rev 1 on 25 Aug. The FE reads it back off
-      // the ownership group (`supplyVocabulary.fallbackRung`), and a fixture that invented a
-      // rung here would hide exactly the path that AC-A2 failed on.
+      // Whatever the decision states, and nothing invented. A revision frozen since AC-D1
+      // carries the rung on every component; one frozen before it carries none, and the FE
+      // still reads that back off the ownership group (`supplyVocabulary.fallbackRung`) -
+      // which is the path AC-A2 failed on, so both cases have to stay reachable here.
+      rung: row.rung ?? null,
       qty: row.qty,
       location: row.location ?? null,
       warehouse_id: row.warehouse_id,
@@ -492,6 +504,10 @@ function applyFrozen(contribution: BoardContribution): void {
     });
   }
   contribution.sources = sources;
+  // What the ENGINE had said, frozen beside the decision (AC-D1). Absent on a revision
+  // written before that field existed, which the screen reads as "not recorded" - the
+  // fixture leaves it undefined for exactly that case rather than inventing one.
+  contribution.proposed = contribution.proposed ?? null;
   contribution.trail = [];
   contribution.item_flags = null;
   contribution.contested = false;
@@ -739,6 +755,11 @@ export function buildBoard(
       rank_factors: [],
       covered: Boolean(line.decision),
       decision: line.decision ?? null,
+      // What the engine suggested when this line was decided (AC-D1). A test states it only
+      // when the difference between suggested and decided is what it is about.
+      proposed: line.proposed_components
+        ? { components: line.proposed_components }
+        : undefined,
       order_inquiry: line.order_inquiry ?? null,
     };
     const bucket = contributionsByCell.get(cellKey);

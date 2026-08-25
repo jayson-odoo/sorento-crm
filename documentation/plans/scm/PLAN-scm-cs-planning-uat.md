@@ -11,7 +11,24 @@ Section 4 item 2, **ladder v3 (section 1b + 1c)**, is BUILT on `feat/scm-uat-lad
 date; the ownership group (own location included) is drawn before the pool; group borrow left
 the engine and is a manual pick; the whole-line rule reaches Amend; the Amend Buy is a
 whole-line switch; a same-agent borrow asks who authorised it; the donor cell says what was
-lent. AC-L1/L2/L3/L5/L6 pass. **AC-A1 does NOT hold and the cause is not the ladder**:
+lent. AC-L1/L2/L3/L5/L6 pass.
+
+Section 4 item 3, **D (suggested vs decided)**, is BUILT on `feat/scm-uat-decision-strip`
+(stacked on ladder v3): confirm freezes `line_snapshots[].proposed_components` beside the
+decided `components`; the board contribution carries `proposed` (the frozen composition on a
+covered line, the live ladder on an undecided one, `null` on a revision written before the
+field); a covered line's rebuilt sources and its decision's reserve rows now carry their
+`rung`, so the FE no longer falls back to the ownership-group reading for them; the board page
+gains the decision strip (six cards, Suggested vs Decided, amber dot on a differing pair, card
+click filters the grid); the cell popover gains a Decision card beside the Suggestion card;
+the board list view and the SCM SO detail Lines tab gain Suggested / Decided columns.
+AC-D1/D2/D3/D4 pass. Verified on :3080 against SO324132 rev 1, whose four lines predate
+`proposed_components` and therefore read "Not recorded" on the suggested side - which is the
+"old snapshots fall back" case the plan names, seen live. **The SO detail's Suggested column
+is blank on an UNDECIDED line**: the plan wanted a live `proposal_for` call there, and 300
+engine walks on a detail page is not worth the column, so the board stays the live surface.
+
+**AC-A1 does NOT hold and the cause is not the ladder**:
 SRT382-6-DIY is classified DEALER HOT-SELLING at BRW, so PLAN 3.3a keeps the pool for retail
 and offers rung 3 nothing - see the trail reading below. Everything from item 3 down is still
 to do.

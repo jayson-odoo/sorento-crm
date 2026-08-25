@@ -19,6 +19,7 @@ import {
   rowOf,
   rowText,
   segmentsOf,
+  decisionBreakdown,
   suggestionBreakdown,
 } from './supplyVocabulary';
 import type {
@@ -475,11 +476,18 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
     },
   });
 
-  it('the Suggestion card reads Use own location, named per location', () => {
-    const rows = suggestionBreakdown(cell([covered]));
+  it('the Decision card reads Use own location, named per location', () => {
+    const rows = decisionBreakdown(cell([covered]), {});
 
     expect(rows.map((entry) => entry.label)).toEqual(['Use own location']);
     expect(rowText(rows[0])).toBe('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+  });
+
+  it('and the Suggestion card is silent, because this revision recorded none', () => {
+    // AC-D1: a decision frozen before `proposed_components` existed. The suggestion is NOT
+    // the decision rebuilt - reading it that way printed every amended line as having
+    // suggested exactly what somebody changed it to.
+    expect(suggestionBreakdown(cell([covered]))).toEqual([]);
   });
 
   it('the decided bar reads own, solid, off the same composition', () => {
@@ -503,7 +511,7 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
       },
     });
 
-    expect(suggestionBreakdown(cell([pooled]))[0].label).toBe('Use shared stock');
+    expect(decisionBreakdown(cell([pooled]), {})[0].label).toBe('Use shared stock');
     expect(contributionSupply(pooled, null).segments).toEqual([{ kind: 'shared', qty: '71' }]);
   });
 
@@ -515,14 +523,15 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
       sources: [{ kind: 'reserve', qty: '100', location: 'DC1-BB', reason: 'r' }],
     });
 
-    const rows = suggestionBreakdown(cell([covered, ib]));
+    // The covered line answers on the DECISION side, the undecided one on the suggestion
+    // side, and both are resolved against their OWN line's location.
+    const decided = decisionBreakdown(cell([covered, ib]), {});
+    const suggested = suggestionBreakdown(cell([covered, ib]));
 
-    expect(rows.map((entry) => entry.label)).toEqual([
-      'Use own location',
-      'Borrow other location',
-    ]);
-    expect(rows[0].qty).toBe('932');
-    expect(rows[1].qty).toBe('100');
+    expect(decided.map((entry) => entry.label)).toEqual(['Use own location']);
+    expect(decided[0].qty).toBe('932');
+    expect(suggested.map((entry) => entry.label)).toEqual(['Borrow other location']);
+    expect(suggested[0].qty).toBe('100');
   });
 });
 
