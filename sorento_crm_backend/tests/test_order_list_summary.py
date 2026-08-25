@@ -111,6 +111,12 @@ def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
     ]
     # integral quantities are ints, not "48.0000"
     assert isinstance(s["products"][0]["delivered_quantity"], int)
+    # customer x product - the unit the question is about (captain 2026-08-25)
+    assert s["groups"] == [
+        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
+         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17}
+    ]
+    assert "groups_truncated" not in s
 
 
 def test_qs_c2_summary_ignores_the_page(db, scenario):
@@ -160,6 +166,13 @@ def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
     assert set(s["customers"]) == {"ECO WORLD SDN BHD", "HANLIM TRADING SDN BHD"}
     assert s["products"][0]["delivered_quantity"] == 55
     assert s["delivered_to"] == "2026-08-01"
+    # per customer x product, sorted by customer - each customer sees only its own share
+    assert s["groups"] == [
+        {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
+         "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17},
+        {"customer": "HANLIM TRADING SDN BHD", "product_code": "SRTWC8605",
+         "order_count": 1, "delivered_quantity": 7, "pending_quantity": 0},
+    ]
 
 
 def test_qs_c4b_customer_count_is_not_capped_by_the_named_list(db, scenario):
@@ -301,8 +314,10 @@ def test_qs_c9_company_scope_applies_inside_the_aggregate(db, scenario):
     s = r["summary"]
     assert s["row_count"] == 5 and s["customer_count"] == 1
     assert s["products"][0]["delivered_quantity"] == 48  # not 48 + 99
+    assert [g["customer"] for g in s["groups"]] == ["ECO WORLD SDN BHD"]  # no Mocha group
 
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     s2 = OrderService(db).list_orders(include_summary=True, product_ids=[prod.id])["summary"]
     assert s2["row_count"] == 6 and s2["customer_count"] == 2
     assert s2["products"][0]["delivered_quantity"] == 48 + 99  # the same aggregate, scope widened
+    assert [g["customer"] for g in s2["groups"]] == ["ECO WORLD SDN BHD", "MOCHA BUYER SDN BHD"]

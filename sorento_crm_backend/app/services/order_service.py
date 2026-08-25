@@ -123,6 +123,9 @@ def _plain_number(v):
     return float(d)
 
 
+GROUPS_CEILING = 500
+
+
 def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> None:
     """Stamp ``payload["summary"]`` - measures over the WHOLE filter, never the page.
 
@@ -139,7 +142,17 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
          "customers": ["ECO WORLD SDN BHD"], "customer_count": 1,
          "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
          "products": [{"product_code": "SRTWC8605",
-                       "delivered_quantity": 48, "pending_quantity": 12}]}
+                       "delivered_quantity": 48, "pending_quantity": 12}],
+         "groups": [{"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
+                     "order_count": 3, "delivered_quantity": 48, "pending_quantity": 12}]}
+
+    ``groups`` is the unit the question is really about - WHICH customer took HOW
+    MUCH of WHICH product (captain, 2026-08-25). One row per (customer, product)
+    over the same filter, sorted customer then product, every row (no top-N; a
+    safety ceiling of GROUPS_CEILING rows with ``groups_truncated`` = how many
+    were cut, so a runaway filter cannot blow the payload). ``products`` stays
+    as the per-product totals - the header line above the groups; the consumer
+    never sums rows itself.
 
     Computed ONLY when the caller asked for it (``include_summary=true`` on the
     endpoint - n8n sends it when the parser saw a quantity question: "how many",
@@ -265,6 +278,46 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 }
                 for code, dq, pq in prod_rows
             ]
+
+            # customer x product: the row the question is about. Same joins, same
+            # scope predicates, same delivered/pending clauses; grouped one level
+            # finer. Customer name resolved the same way as `customers` above.
+            grp_q = (
+                db.query(
+                    name_col,
+                    Product.product_code,
+                    func.count(func.distinct(Order.id)),
+                    func.sum(OrderLine.quantity).filter(delivered),
+                    func.sum(OrderLine.quantity).filter(pending),
+                )
+                .select_from(OrderLine)
+                .join(Order, Order.id == OrderLine.order_id)
+                .join(Product, Product.id == OrderLine.product_id)
+                .outerjoin(Customer, _cust_on)
+                .filter(in_ids)
+                .filter(OrderLine.product_id.in_(pids))
+            )
+            grp_q = _scoped(_scoped(grp_q, _p_order), _p_line)
+            grp_rows = (
+                grp_q.group_by(name_col, Product.product_code)
+                .order_by(name_col.asc().nulls_last(), Product.product_code.asc())
+                .limit(GROUPS_CEILING + 1)
+                .all()
+            )
+            summary["groups"] = [
+                {
+                    "customer": (cname or "").strip() or None,
+                    "product_code": code,
+                    "order_count": int(oc or 0),
+                    "delivered_quantity": _plain_number(dq) or 0,
+                    "pending_quantity": _plain_number(pq) or 0,
+                }
+                for cname, code, oc, dq, pq in grp_rows[:GROUPS_CEILING]
+            ]
+            if len(grp_rows) > GROUPS_CEILING:
+                # Only the ceiling tells us "more" - the exact remainder would be
+                # another COUNT over the groups; say that some were cut, honestly.
+                summary["groups_truncated"] = True
         payload["summary"] = summary
     except Exception as exc:  # pragma: no cover - best-effort by contract
         logger.warning("stamp_order_summary skipped: %s", exc)
