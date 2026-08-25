@@ -21,7 +21,11 @@ from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
-from app.services.company_scope import stamp_lookup_companies
+from app.services.company_scope import (
+    build_company_predicate,
+    get_company_scope,
+    stamp_lookup_companies,
+)
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
@@ -73,6 +77,21 @@ def _delivered_clause(delivered_status_ids: list):
     )
 
 
+def _outstanding_clause(delivered_status_ids: list):
+    """Null-safe negation of ``_delivered_clause``: NULL status, non-delivered
+    status, or no date. ``~_delivered_clause`` is NOT this - for a NULL
+    ``order_status_id`` it evaluates to SQL NULL and drops the row from a
+    FILTER (WHERE ...) aggregate while ``total - delivered`` still counts it
+    (cross-model review, 2026-08-25)."""
+    if not delivered_status_ids:
+        return None  # everything is outstanding; no filter
+    return or_(
+        Order.order_status_id.is_(None),
+        Order.order_status_id.not_in(delivered_status_ids),
+        Order.actual_delivery_date.is_(None),
+    )
+
+
 def _order_status_bucket_filter(db, order_status: Optional[str]):
     """Translate the ``order_status`` bucket ('outstanding' | 'delivered') into a
     filter clause, or None when the bucket is absent / unrecognised / a no-op.
@@ -88,14 +107,7 @@ def _order_status_bucket_filter(db, order_status: Optional[str]):
     delivered_status_ids = _delivered_status_ids(db)
     if bucket == "delivered":
         return _delivered_clause(delivered_status_ids)
-    if not delivered_status_ids:
-        # outstanding = everything qualifies; add no filter.
-        return None
-    return or_(
-        Order.order_status_id.is_(None),
-        Order.order_status_id.not_in(delivered_status_ids),
-        Order.actual_delivery_date.is_(None),
-    )
+    return _outstanding_clause(delivered_status_ids)
 
 
 def _plain_number(v):
@@ -149,33 +161,64 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
     """
     pids = [str(p) for p in (product_ids or []) if p]
     try:
+        # COMPANY SCOPE, EXPLICITLY. The session's do_orm_execute listener scopes ORM
+        # ENTITIES via with_loader_criteria; every query below is column-only
+        # (aggregates over `select_from(Order)` / `select_from(OrderLine)`), and a
+        # `.subquery()` of an entity query loses the criteria too. Measured
+        # 2026-08-25 (test_qs_c9): under a Sorento-only scope the ids subquery held a
+        # Mocha order and the customer list named its debtor. So the same predicate
+        # the listener would inject is ANDed in here by hand, per entity. Harmless
+        # where the listener also fires (duplicate AND); load-bearing where it does not.
+        _scope = get_company_scope(db)
+        _p_order = build_company_predicate(Order, _scope)
+        _p_line = build_company_predicate(OrderLine, _scope)
+        _p_cust = build_company_predicate(Customer, _scope)
+        _scoped = lambda q, pred: q.filter(pred) if pred is not None else q  # noqa: E731
+
         ids_sq = (
-            filtered_q.order_by(None)
+            _scoped(filtered_q.order_by(None), _p_order)
             .with_entities(Order.id)
             .distinct()
             .subquery()
         )
         in_ids = Order.id.in_(db.query(ids_sq.c.id))
-        delivered = _delivered_clause(_delivered_status_ids(db))
+        _dsids = _delivered_status_ids(db)
+        delivered = _delivered_clause(_dsids)
+        pending = _outstanding_clause(_dsids)
+        if pending is None:
+            from sqlalchemy import true as _true
+            pending = _true()
 
-        total, n_delivered, d_from, d_to = db.query(
-            func.count(Order.id),
-            func.count(Order.id).filter(delivered),
-            func.min(Order.actual_delivery_date).filter(delivered),
-            func.max(Order.actual_delivery_date).filter(delivered),
-        ).filter(in_ids).one()
+        total, n_delivered, d_from, d_to = _scoped(
+            db.query(
+                func.count(Order.id),
+                func.count(Order.id).filter(delivered),
+                func.min(Order.actual_delivery_date).filter(delivered),
+                func.max(Order.actual_delivery_date).filter(delivered),
+            ).select_from(Order).filter(in_ids),
+            _p_order,
+        ).one()
         total = int(total or 0)
         if total == 0:
             return
         n_delivered = int(n_delivered or 0)
 
-        name_col = func.btrim(func.coalesce(Order.debtor_name, Customer.customer_name))
-        names_q = (
+        # NULLIF: a blank/whitespace debtor_name must fall back to the customer name,
+        # not win the coalesce and then be filtered out (cross-model review, 2026-08-25).
+        name_col = func.coalesce(
+            func.nullif(func.btrim(Order.debtor_name), ""),
+            func.btrim(Customer.customer_name),
+        )
+        _cust_on = Customer.id == Order.customer_id
+        if _p_cust is not None:
+            _cust_on = and_(_cust_on, _p_cust)  # scope the joined customer in the ON clause
+        names_q = _scoped(
             db.query(name_col)
             .select_from(Order)
-            .outerjoin(Customer, Customer.id == Order.customer_id)
+            .outerjoin(Customer, _cust_on)
             .filter(in_ids)
-            .filter(name_col.is_not(None), name_col != "")
+            .filter(name_col.is_not(None), name_col != ""),
+            _p_order,
         )
         # The COUNT is its own query over every distinct name; the LIST is capped.
         # Counting the capped list would say "50 customers" for 200 (reviewer F-1).
@@ -196,18 +239,21 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
             summary["delivered_to"] = d_to.isoformat()
 
         if pids:
-            prod_rows = (
+            prod_q = (
                 db.query(
                     Product.product_code,
                     func.sum(OrderLine.quantity).filter(delivered),
-                    func.sum(OrderLine.quantity).filter(~delivered),
+                    func.sum(OrderLine.quantity).filter(pending),
                 )
                 .select_from(OrderLine)
                 .join(Order, Order.id == OrderLine.order_id)
                 .join(Product, Product.id == OrderLine.product_id)
                 .filter(in_ids)
                 .filter(OrderLine.product_id.in_(pids))
-                .group_by(Product.product_code)
+            )
+            prod_q = _scoped(_scoped(prod_q, _p_order), _p_line)
+            prod_rows = (
+                prod_q.group_by(Product.product_code)
                 .order_by(Product.product_code.asc())
                 .all()
             )

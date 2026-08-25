@@ -27,6 +27,8 @@ from app.models.order import OrderStatus
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.order_service import OrderService
 
+from app.models.order import Order
+
 from tests._mc_lookup_seed import (
     MOCHA_ID,
     customer,
@@ -61,14 +63,15 @@ def _status_id(db, code: str) -> str:
     return db.query(OrderStatus.id).filter(OrderStatus.status_code == code).scalar()
 
 
-def _do(db, *, cust, prod, wh, qty, status_code, delivered_on: date | None, number=None):
+def _do(db, *, cust, prod, wh, qty, status_code, delivered_on: date | None, number=None,
+        company_id: str = DEFAULT_COMPANY_ID):
     """One DO with one line of `qty` for `prod`."""
-    o = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=cust.id, number=number)
+    o = order(db, company_id=company_id, customer_id=cust.id, number=number)
     o.debtor_name = cust.customer_name
     o.order_status_id = _status_id(db, status_code)
     o.actual_delivery_date = delivered_on
     o.order_date = datetime(2026, 1, 1)
-    order_line(db, company_id=DEFAULT_COMPANY_ID, order_id=o.id, product_id=prod.id,
+    order_line(db, company_id=company_id, order_id=o.id, product_id=prod.id,
                warehouse_id=wh.id, quantity=qty)
     db.flush()
     return o
@@ -254,3 +257,52 @@ def test_qs_c6_by_product_route_accepts_order_status():
                  if isinstance(r, APIRoute) and r.path.endswith("/order-management/orders/by-product"))
     names = {p.name for p in route.dependant.query_params}
     assert "order_status" in names
+
+
+# ------------------------------------------------ cross-model review (Codex pass C)
+
+def test_qs_c2b_blank_debtor_name_falls_back_to_customer_name(db, scenario):
+    cust, prod, wh = scenario
+    o = _do(db, cust=cust, prod=prod, wh=wh, qty=3, status_code="DELIVERED", delivered_on=date(2026, 8, 2))
+    o.debtor_name = "   "  # blank, not NULL - coalesce alone would keep it and drop the customer
+    db.commit()
+
+    s = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])["summary"]
+    assert s["customer_count"] == 1 and s["customers"] == ["ECO WORLD SDN BHD"]
+
+
+def test_qs_c3b_null_status_with_a_date_is_pending_in_quantity_too(db, scenario):
+    """~delivered is SQL NULL for a NULL order_status_id: the order was counted in
+    pending_count (total - delivered) but its quantity vanished from pending_quantity."""
+    cust, prod, wh = scenario
+    o = _do(db, cust=cust, prod=prod, wh=wh, qty=9, status_code="NEW", delivered_on=date(2026, 8, 3))
+    o.order_status_id = None
+    db.commit()
+
+    s = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])["summary"]
+    assert s["order_count"] == 6 and s["delivered_count"] == 3 and s["pending_count"] == 3
+    assert s["products"][0]["pending_quantity"] == 17 + 9
+
+
+def test_qs_c9_company_scope_applies_inside_the_aggregate(db, scenario):
+    """A Mocha order (and its line) on the same product must not leak into a
+    Sorento-scoped summary - the scope predicate has to reach the subquery and
+    the joined line/product entities, not only the top-level rows."""
+    cust, prod, wh = scenario
+    m_cust = customer(db, company_id=MOCHA_ID, name="MOCHA BUYER SDN BHD")
+    m_wh = warehouse(db, company_id=MOCHA_ID)
+    _do(db, cust=m_cust, prod=prod, wh=m_wh, qty=99, status_code="DELIVERED", delivered_on=date(2026, 8, 4),
+        company_id=MOCHA_ID)
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    r = OrderService(db).list_orders(include_summary=True, product_ids=[prod.id])
+    assert r["pagination"]["total"] == 5
+    s = r["summary"]
+    assert s["row_count"] == 5 and s["customer_count"] == 1
+    assert s["products"][0]["delivered_quantity"] == 48  # not 48 + 99
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    s2 = OrderService(db).list_orders(include_summary=True, product_ids=[prod.id])["summary"]
+    assert s2["row_count"] == 6 and s2["customer_count"] == 2
+    assert s2["products"][0]["delivered_quantity"] == 48 + 99  # the same aggregate, scope widened
