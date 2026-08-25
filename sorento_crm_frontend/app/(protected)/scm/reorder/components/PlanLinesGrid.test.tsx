@@ -701,7 +701,7 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
   });
 });
 
-describe('the forecast advisory (2026-08-11 markup)', () => {
+describe('the trend verdict (2026-08-11 markup; advisory line removed P6, 25 Aug)', () => {
   const rising: TrajectoryEntry = {
     verdict: 'rising', recent_qty: 120, previous_qty: 90, change_pct: 33.33,
     year_ago_qty: null, year_change_pct: null, window_months: 12,
@@ -714,28 +714,20 @@ describe('the forecast advisory (2026-08-11 markup)', () => {
     expect(within(so).getByText('Orders rising - consider more')).toBeInTheDocument();
   });
 
-  it('advises how many more, and one click applies it as the decision with its reason', () => {
-    const { onDecide } = renderGrid(
+  it('never puts a "Consider N more/less" line in the decision cell (P6)', () => {
+    renderGrid(
       [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
       () => rising,
     );
-
-    const chip = screen.getByRole('button', { name: /Consider 34 more - orders rose 33%/ });
-    fireEvent.click(chip);
-    expect(onDecide).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'r1' }),
-      { buy: 134, reason: 'Trend: orders rose 33%' },
-    );
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 
-  it('advises fewer on a falling book, and never advises on a holding one', () => {
+  it('nor on a falling book - the trajectory popover keeps the whole argument (P6)', () => {
     renderGrid(
       [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
       () => ({ ...rising, verdict: 'falling', change_pct: -28.4 }),
     );
-    expect(
-      screen.getByRole('button', { name: /Consider 28 less - orders fell 28%/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 
   it('stays silent when the trend argues nothing', () => {
@@ -784,18 +776,15 @@ describe('product health (2026-08-11 markup)', () => {
     expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
   });
 
-  it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
+  it('states the thin margin on the row itself, with no advisory beside the decision (P6)', () => {
     // Base cost 92 (cash 9200 over 100 units) vs sells 100 -> 8% margin, below the floor.
     renderGrid(
       [line({ order_qty: 100, recommended_qty: 100, unit_cost: 92, cash_impact: 9200 })],
       {}, [], undefined, undefined, () => rising, () => econ(),
     );
 
-    expect(
-      screen.getByRole('button', {
-        name: /Consider 34 more - orders rose 33%, but margin only 8%/,
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Margin 8%/)).toBeInTheDocument();
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 });
 
