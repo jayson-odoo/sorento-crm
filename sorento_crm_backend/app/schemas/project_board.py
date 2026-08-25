@@ -752,6 +752,13 @@ class BoardCellLocation(BaseModel):
     #: "Available Qty": `on hand - SO + SPO`, SIGNED and never clamped - "oversold here by 632"
     #: is the signal, and a floor of zero would report it as "nothing left" instead.
     available_qty: Optional[str] = None
+    #: "PO qty": the open PURCHASE-order balance at this location, less what an order-inquiry
+    #: row already claims off those lines. SPO documents are excluded - they are already
+    #: `spo_qty`, and counting them twice would invent supply.
+    #:
+    #: INFORMATION ONLY, and deliberately outside `available_qty`: a purchase order reaches a
+    #: project line through a link, never by sitting at the location (PLAN section I).
+    po_open_qty: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"

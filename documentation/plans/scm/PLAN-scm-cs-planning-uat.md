@@ -42,6 +42,23 @@ AC-D1/D2/D3/D4 pass. Verified on :3080 against SO324132 rev 1, whose four lines 
 is blank on an UNDECIDED line**: the plan wanted a live `proposal_for` call there, and 300
 engine walks on a detail page is not worth the column, so the board stays the live surface.
 
+Section 4 item 7, **B (popover location table)**, is BUILT on `feat/scm-uat-popover-locations`
+(stacked on stock transfers): the cell payload lists every active site pool after the agent's
+group, own site first, tagged `site_pool` (`_pool_locations`, off the same
+`supply.site_pool_warehouses()` the ladder walks and the same per-location reader every other
+row uses); a stated location with no stock row reads 0 rather than "Not stated" (both the
+service and the table, one rule each side); `po_open_qty` on `BoardCellLocation` carries the
+open PO balance at that location netted for the order-inquiry rows already placed on those
+lines, SPO documents excluded, ONE query per board; and the table gains PO qty + Taken and
+drops Reserved (nothing else on the screen read it). AC-B1/B2/B3 pass. Measured on :3080:
+SRT382-6-DIY on SO415472 lists BRW-BB, the four -BB siblings and the five pools with BRW
+leading (pool BRW: on hand 1728, available 1716, PO qty 0); CWCY605 on SO324132 reads Taken
+454 / 267 / 211 at DC1-BB / MWH-BB / WH3-BB, 0 everywhere else, summing to the 932 needed.
+**A section of ONE row still prints no subtotal** (a single-row Own section is its own
+subtotal, which is the rule already shipped), and `po_open_qty` counts every non-SPO PO line
+with an open balance, `draft_recommendation` documents included - the plan's wording is "open
+PO balance", and the placement reader's stricter status gate is about what may be LINKED.
+
 **AC-A1 does NOT hold and the cause is not the ladder**:
 SRT382-6-DIY is classified DEALER HOT-SELLING at BRW, so PLAN 3.3a keeps the pool for retail
 and offers rung 3 nothing - see the trail reading below. Everything from item 3 down is still

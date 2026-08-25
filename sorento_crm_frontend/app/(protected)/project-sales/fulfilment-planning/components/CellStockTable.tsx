@@ -25,6 +25,17 @@ const NUMBER_COL = 'min-w-[100px]';
 const WHERE_COL = 'min-w-[104px]';
 
 /**
+ * What a figure the server did not state renders as, which after AC-B2 is ONE row: the line
+ * whose sales order names no location. A zero there would read as "that location is empty",
+ * and there is no location to be empty.
+ */
+const BLANK = '-';
+const NOT_STATED_TITLE = 'No location on the sales order line, so nothing to count';
+
+/** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
+const EMPTY_TAKEN: Map<string, string> = new Map();
+
+/**
  * Where a location stands, in the order the reader walks it: this line's own first, then the
  * agent's group, then the pools the ladder drew on, then anything outside the group.
  *
@@ -68,14 +79,17 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * its columns the moment content exceeds the declared width), and long text truncates with a
  * `title`.
  *
- * A NULL FIGURE IS "Not stated", NEVER 0. The two are opposite instructions - 0 free means do
- * not look here, nothing stated means nobody has said where to look - and a line whose sales
- * order names no location has every stock figure null by construction.
+ * A LOCATION WITH NO STOCK ROW READS 0 (AC-B2). It used to read "Not stated", and that was the
+ * answer to a different question: an absent `stock` row means the last upload counted none
+ * there, which is a fact, while "nobody has said where to look" is true only of a line whose
+ * sales order names no location at all. That one row keeps its blanks, and it is now the only
+ * row that can have any - the server states a figure for every location it names.
  */
 export function CellStockTable({
   locations,
   itemCode,
   groupNote,
+  taken,
 }: {
   locations: BoardCellLocation[];
   /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
@@ -87,7 +101,17 @@ export function CellStockTable({
    * exactly one place" - which is the belief the group listing exists to correct.
    */
   groupNote?: string | null;
+  /**
+   * How much this cell draws from each location, by warehouse code
+   * (`supplyVocabulary.takenByLocation`). A location with no entry reads 0.
+   *
+   * Passed in rather than derived here: it is the SAME switch between the decision and the
+   * suggestion that colours the cell on the grid, and computing it twice is how the bar and
+   * the table come to disagree about a line the planner has just amended.
+   */
+  taken?: Map<string, string>;
 }) {
+  const drawn = taken ?? EMPTY_TAKEN;
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
    * location and on the shared pool is opened precisely to compare the two, and an accordion
@@ -216,7 +240,7 @@ export function CellStockTable({
                     </span>
                   </td>
                   {NUMERIC_COLUMNS.map((column) => {
-                    const value = column.of(entry);
+                    const value = valueOf(column, entry, drawn);
                     // Signed and never clamped: a negative Available IS the shortfall, and the
                     // colour is what makes it the number the eye lands on.
                     const negative = column.signed && isNegative(value);
@@ -229,9 +253,9 @@ export function CellStockTable({
                             value === null && 'text-muted-foreground',
                             negative && 'text-destructive',
                           )}
-                          title={value ?? 'Not stated'}
+                          title={value ?? NOT_STATED_TITLE}
                         >
-                          {value ?? 'Not stated'}
+                          {value ?? BLANK}
                         </span>
                       </td>
                     );
@@ -272,7 +296,7 @@ export function CellStockTable({
                     if (!column.total) {
                       return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                     }
-                    const total = sumOf(section.rows, column.of);
+                    const total = sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
                     return (
                       <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                         <span
@@ -282,7 +306,7 @@ export function CellStockTable({
                             column.signed && isNegative(total) && 'text-destructive',
                           )}
                         >
-                          {total ?? 'Not stated'}
+                          {total ?? BLANK}
                         </span>
                       </td>
                     );
@@ -305,7 +329,7 @@ export function CellStockTable({
                 if (!column.total) {
                   return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                 }
-                const total = sumOf(locations, column.of);
+                const total = sumOf(locations, (entry) => valueOf(column, entry, drawn));
                 return (
                   <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                     <span
@@ -315,7 +339,7 @@ export function CellStockTable({
                         column.signed && isNegative(total) && 'text-destructive',
                       )}
                     >
-                      {total ?? 'Not stated'}
+                      {total ?? BLANK}
                     </span>
                   </td>
                 );
@@ -358,17 +382,17 @@ const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-
 const NUMERIC_COLUMNS: {
   key: string;
   label: string;
-  of: (entry: BoardCellLocation) => string | null;
+  of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null;
   /** Summed in the totals row. */
   total?: boolean;
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
 }[] = [
   { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
-  { key: 'reserved', label: 'Reserved', of: (entry) => entry.qty_reserved ?? null, total: true },
-  // No Free column. It is `On hand - Reserved` and the two columns beside it already state
-  // both, so it was a third number saying what the reader can see - and on a table this wide
-  // every column costs the ones that answer a question nothing else does.
+  // No Reserved column, and no Free one. Free is `On hand - Reserved`, and Reserved itself was
+  // read by nothing else on this screen: `Available` is `On hand - SO + SPO` and does not use
+  // it. Both went to make room for the two columns below, which answer questions no other
+  // number here does. Reserved is still on the wire and still in the row's own expansion.
   { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
   { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
   {
@@ -378,9 +402,42 @@ const NUMERIC_COLUMNS: {
     total: true,
     signed: true,
   },
+  // Information, deliberately NOT folded into Available: a purchase order reaches a project
+  // line through a link, never by sitting at the location. "500 already on order at DC1" is
+  // what decides between a Buy and a transfer, and until now the planner had to leave the
+  // dialog to find it.
+  { key: 'po', label: 'PO qty', of: (entry) => entry.po_open_qty ?? null, total: true },
+  // What the cell actually draws from this row. A location nothing was needed from reads 0,
+  // which is the answer to "why not MWH" - it was listed, it had stock, nothing was taken.
+  {
+    key: 'taken',
+    label: 'Taken',
+    of: (entry, taken) => (entry.location ? taken.get(entry.location) ?? '0' : null),
+    total: true,
+  },
 ];
 
-/** Absent stays absent: a column no location stated is "Not stated", never a total of 0. */
+/**
+ * One column's figure on one row, with AC-B2's rule applied HERE and nowhere else: a row that
+ * NAMES a location and carries no figure reads 0.
+ *
+ * An absent `stock` row means the last upload counted none there, which is a fact. The row
+ * whose sales order names no location keeps its blank, because there is no location whose
+ * stock could be counted and a 0 would read as "that location is empty".
+ *
+ * Stated once, so the cells and the two totals rows cannot come to disagree about a blank.
+ */
+function valueOf(
+  column: { of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null },
+  entry: BoardCellLocation,
+  taken: Map<string, string>,
+): string | null {
+  const value = column.of(entry, taken);
+  if (value !== null) return value;
+  return entry.location ? '0' : null;
+}
+
+/** Absent stays absent: a column no location stated has no total, never a total of 0. */
 function sumOf(
   locations: BoardCellLocation[],
   pick: (entry: BoardCellLocation) => string | null,
