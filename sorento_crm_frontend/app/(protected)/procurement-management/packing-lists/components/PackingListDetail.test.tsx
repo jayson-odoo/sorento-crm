@@ -453,3 +453,52 @@ describe('F9 - the packing list edits in place', () => {
     expect(updatePackingList).not.toHaveBeenCalled();
   });
 });
+
+describe('F9 - clearing a field actually clears it', () => {
+  beforeEach(() => {
+    searchParams.value = new URLSearchParams('tab=details');
+  });
+
+  it('sends null for a cleared text field, never omits it (AC-F3)', async () => {
+    state.packingList = mixedContainer({ invoice_number: 'INV-1', notes: 'left over' });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.change(screen.getByLabelText('Invoice Number'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const { data } = updatePackingList.mock.calls[0][0];
+    // JSON.stringify drops `undefined`, and the backend PUT is exclude_unset - so an
+    // omitted key means "unchanged" and the value the operator deleted comes back.
+    expect(data.invoice_number).toBeNull();
+    expect(data.notes).toBeNull();
+    expect(Object.keys(data)).toContain('invoice_number');
+  });
+
+  it('sends null for a cleared clearance date too', async () => {
+    state.packingList = mixedContainer({ etd_date: '2026-08-05' });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.change(screen.getByLabelText('ETD'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    expect(updatePackingList.mock.calls[0][0].data.etd_date).toBeNull();
+  });
+
+  it('still sends a value that was typed rather than cleared', async () => {
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.change(screen.getByLabelText('Bill of Lading Number'), {
+      target: { value: 'BL-9' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    expect(updatePackingList.mock.calls[0][0].data.bill_of_lading_number).toBe('BL-9');
+  });
+});

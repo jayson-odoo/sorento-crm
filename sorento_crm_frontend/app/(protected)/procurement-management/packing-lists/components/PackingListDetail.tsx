@@ -293,16 +293,23 @@ export default function PackingListDetail({
     setSaving(true);
     // Only what the operator can actually type. `total_items_shipped` is derived from the
     // lines by the backend, and sending our own would let the two disagree.
+    // NULL for a cleared field, never `undefined`: JSON.stringify drops undefined, and the
+    // backend PUT is `exclude_unset`, so an omitted key means "unchanged" - the value the
+    // operator just deleted came straight back on the next read, reading as a save that did
+    // not work. `null` is what the retired /edit form sent, and what clears the column.
+    const orNull = (value: string | undefined) => (value ?? '').trim() || null;
     const payload: Partial<PackingListFormData> = {
-      shipment_number: draft.shipment_number || undefined,
-      supplier_id: draft.supplier_id || undefined,
+      shipment_number: orNull(draft.shipment_number),
+      supplier_id: orNull(draft.supplier_id),
+      // The one field with no cleared state: the backend requires a shipment date, so
+      // sending null would be refused rather than clearing anything.
       shipment_date: draft.shipment_date,
-      estimated_arrival_date: draft.estimated_arrival_date || undefined,
-      actual_arrival_date: draft.actual_arrival_date || undefined,
-      bill_of_lading_number: draft.bill_of_lading_number || undefined,
-      shipping_container_number: draft.shipping_container_number || undefined,
-      invoice_number: draft.invoice_number || undefined,
-      notes: draft.notes || undefined,
+      estimated_arrival_date: orNull(draft.estimated_arrival_date),
+      actual_arrival_date: orNull(draft.actual_arrival_date),
+      bill_of_lading_number: orNull(draft.bill_of_lading_number),
+      shipping_container_number: orNull(draft.shipping_container_number),
+      invoice_number: orNull(draft.invoice_number),
+      notes: orNull(draft.notes),
       shipment_lines: draftLines.map((line) => ({
         product_id: line.product_id,
         quantity_shipped: Number(line.quantity_shipped || 0),
@@ -317,10 +324,10 @@ export default function PackingListDetail({
     // payload losing its type.
     const clearance = payload as unknown as Record<string, unknown>;
     for (const cp of checkpoints) {
-      clearance[cp.field] = draft[cp.field] || undefined;
+      clearance[cp.field] = orNull(draft[cp.field]);
     }
     for (const f of CLEARANCE_ATTRIBUTE_FIELDS) {
-      clearance[f.name] = draft[f.name] === '' ? undefined : draft[f.name];
+      clearance[f.name] = orNull(draft[f.name]);
     }
     try {
       await updatePackingListMutation.mutateAsync({

@@ -143,18 +143,24 @@ export interface PackingListDetail extends PackingList {
 }
 
 export interface PackingListFormData {
+  /**
+   * `null` CLEARS the field; omitting it leaves it alone (the backend PUT is
+   * `exclude_unset`). Every optional field here is nullable for that reason - an edit that
+   * could set a value but never unset one is half an edit, and it reads as a save that did
+   * not work.
+   */
   shipment_number?: string | null;
-  supplier_id?: string;
+  supplier_id?: string | null;
   shipment_date: string;
-  estimated_arrival_date?: string;
-  actual_arrival_date?: string;
-  bill_of_lading_number?: string;
-  shipping_container_number?: string;
-  invoice_number?: string;
+  estimated_arrival_date?: string | null;
+  actual_arrival_date?: string | null;
+  bill_of_lading_number?: string | null;
+  shipping_container_number?: string | null;
+  invoice_number?: string | null;
   shipment_status?: string;
   total_items_shipped?: number;
   total_cartons?: number;
-  notes?: string;
+  notes?: string | null;
   attachment_id?: string | null;
   shipment_lines?: Array<{
     product_id: string;
