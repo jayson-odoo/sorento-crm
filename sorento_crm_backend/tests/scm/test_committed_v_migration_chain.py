@@ -37,6 +37,21 @@ def _load(name: str):
     return mod
 
 
+def _column_types(db) -> dict:
+    """`scm.committed_v`'s column names and their SQL types, straight from the catalogue.
+
+    What `CREATE OR REPLACE VIEW` may not change, and therefore the thing a replacement has
+    to keep identical.
+    """
+    return {
+        name: type_
+        for name, type_ in db.execute(text(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = 'scm' AND table_name = 'committed_v'"
+        )).all()
+    }
+
+
 def _normalize(sql: str) -> str:
     return " ".join(
         line.strip()
@@ -221,6 +236,58 @@ def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
         # 422's own distinguishing feature, so a downgrade that installed some THIRD body
         # would not pass on the absence above alone.
         assert "lk.linked" in restored
+
+
+@requires_pg
+def test_424_replaces_423_in_place_and_changes_no_column_type():
+    """CREATE OR REPLACE over the view that is ALREADY there, which is the only way to
+    catch the failure this test exists for.
+
+    424 turned three leg columns into bare constants, and a bare `0` is an integer, so
+    `SUM(...)` came out bigint where the live column is numeric. Postgres refuses that:
+    `cannot change data type of view column "unclassified_committed" from numeric to
+    bigint`. It died on the captain's dev copy, not here, because every neighbour above
+    DROPS the view first and a fresh CREATE may pick any types it likes.
+
+    So this one installs 423's body and replaces it IN PLACE, and then reads the column
+    types out of the catalogue - a body that widens or narrows one is the same outage under
+    a different name.
+    """
+    with blank_session() as db:
+        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
+
+        m423 = _load("423_committed_v_form_rows")
+        m424 = _load("424_committed_v_project_oi_only")
+        db.execute(text(m423._AS_OF_423))
+        before = _column_types(db)
+
+        conn = db.connection()
+        ops = Operations(MigrationContext.configure(conn))
+        import alembic.op as op_module
+
+        op_module._proxy = ops
+        # No DROP in between: this is the statement the captain runs.
+        m424.upgrade()
+
+        assert _column_types(db) == before, (
+            "the replacement changed a column type, which Postgres refuses on any database "
+            "that already carries the view"
+        )
+        definition = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        # The tell of the new body: the book leg no longer speaks for project class.
+        assert definition and "scm_order_inquiry" not in definition
+
+        m424.downgrade()
+        assert _column_types(db) == before, "the downgrade changed a column type"
+        restored = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        assert restored and "scm_order_inquiry" in restored
 
 
 @requires_pg

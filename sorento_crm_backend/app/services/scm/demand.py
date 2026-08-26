@@ -234,6 +234,14 @@ ACTIVE_DECISION_STATE = "active"
 #: and `project_confirmed_qty` are always equal (`project_committed` IS the confirmed
 #: figure) and the old `decided` CTE has nothing left to exclude.
 #:
+#: Every constant leg column is `0::numeric`, and the cast is LOAD-BEARING. Postgres types a
+#: bare `0` as integer, `SUM(integer)` comes out bigint, and `CREATE OR REPLACE VIEW` refuses
+#: to change an existing column's type: applying this over a database already carrying the
+#: view dies with `cannot change data type of view column "unclassified_committed" from
+#: numeric to bigint`. It did, on the dev copy. The bodies before P3 never hit it because
+#: their zeros sat in a `CASE` whose other arm was numeric, which coerced them; a whole
+#: column of bare zeros has nothing to be coerced by.
+#:
 #: `unclassified_qty` is a CONSTANT ZERO, not a leg (P4). Nothing is unclassified any more:
 #: migration 425 stamped every NULL `demand_class` retail and the SO import now refuses a
 #: file that would create another, so a NULL class here reads as retail - the book-direct
@@ -251,11 +259,11 @@ WITH legs AS (
     -- channel - because nothing is unclassified any more (P4).
     SELECT sol.product_id,
            sol.warehouse_id,
-           0 AS project_qty,
-           0 AS project_confirmed_qty,
+           0::numeric AS project_qty,
+           0::numeric AS project_confirmed_qty,
            GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                   - COALESCE(sol.qty_delivered, 0), 0) AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
     WHERE so.status = 'open'
@@ -287,8 +295,8 @@ WITH legs AS (
                 ELSE sol.warehouse_id END AS warehouse_id,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN projects.so_supply_decisions d
       ON d.id = oir.supply_decision_id
@@ -338,8 +346,8 @@ WITH legs AS (
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN products fp
       ON fp.product_code = oir.item_code
@@ -401,11 +409,11 @@ def horizon_committed_select_sql() -> str:
 WITH legs AS (
     SELECT sol.product_id,
            sol.warehouse_id,
-           0 AS project_qty,
-           0 AS project_confirmed_qty,
+           0::numeric AS project_qty,
+           0::numeric AS project_confirmed_qty,
            GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                   - COALESCE(sol.qty_delivered, 0), 0) AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
     WHERE so.status = 'open'
@@ -425,8 +433,8 @@ WITH legs AS (
                 ELSE sol.warehouse_id END AS warehouse_id,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN projects.so_supply_decisions d
       ON d.id = oir.supply_decision_id
@@ -480,8 +488,8 @@ WITH legs AS (
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN products fp
       ON fp.product_code = oir.item_code

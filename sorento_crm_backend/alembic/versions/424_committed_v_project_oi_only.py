@@ -46,6 +46,12 @@ production's first replay of the SCM chain at migration 340.
 
 `CREATE OR REPLACE` is legal: same columns, same order, same names. Only leg predicates
 change inside the CTE.
+
+Every constant leg column is cast (`0::numeric`) and that is the whole reason this migration
+applies at all. A bare `0` is an integer, `SUM(integer)` is bigint, and `CREATE OR REPLACE
+VIEW` may not change a column's type - the first attempt on the dev copy died with `cannot
+change data type of view column "unclassified_committed" from numeric to bigint`. The bodies
+before this one never hit it: their zeros sat in a `CASE` whose other arm was numeric.
 """
 from alembic import op
 
@@ -67,11 +73,11 @@ WITH legs AS (
     -- channel - because nothing is unclassified any more (P4).
     SELECT sol.product_id,
            sol.warehouse_id,
-           0 AS project_qty,
-           0 AS project_confirmed_qty,
+           0::numeric AS project_qty,
+           0::numeric AS project_confirmed_qty,
            GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)
                   - COALESCE(sol.qty_delivered, 0), 0) AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS unclassified_qty
     FROM sales_order_lines sol
     JOIN sales_orders so ON so.id = sol.sales_order_id
     WHERE so.status = 'open'
@@ -103,8 +109,8 @@ WITH legs AS (
                 ELSE sol.warehouse_id END AS warehouse_id,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN projects.so_supply_decisions d
       ON d.id = oir.supply_decision_id
@@ -154,8 +160,8 @@ WITH legs AS (
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
-           0 AS retail_qty,
-           0 AS unclassified_qty
+           0::numeric AS retail_qty,
+           0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
     JOIN products fp
       ON fp.product_code = oir.item_code
