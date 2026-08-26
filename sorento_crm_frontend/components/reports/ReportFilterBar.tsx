@@ -1,10 +1,9 @@
 'use client';
 
 import { Label } from '@/components/ui/label';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
 import type {
   ReportParamMeta,
   ReportParamValue,
@@ -39,11 +38,29 @@ function asPeriod(value: ReportParamValue | undefined, fallback: ReportPeriod): 
   return fallback;
 }
 
-function parseYyyyMmDd(value: string): Date | undefined {
-  if (!value) return undefined;
-  const [y, m, d] = value.split('-').map(Number);
-  if (!y || !m || !d) return undefined;
-  return new Date(y, m - 1, d);
+/** This year where the users are, which is the year the report opens on. */
+function malaysiaYear(): number {
+  return Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kuala_Lumpur',
+      year: 'numeric',
+    }).format(new Date()),
+  );
+}
+
+/**
+ * The years the Period control offers.
+ *
+ * The dataset's own years are not enough: on 1 January nothing has been filed in the new
+ * year yet, so `years` would not hold it and the control the report is OPEN on would
+ * render blank. The year in hand and the default year are always offerable, whether or
+ * not a row is dated in them.
+ */
+function yearOptions(available: number[], ...alsoOffer: (number | undefined)[]): number[] {
+  const years = new Set<number>(available);
+  years.add(malaysiaYear());
+  for (const year of alsoOffer) if (year) years.add(year);
+  return [...years].sort((a, b) => b - a);
 }
 
 /**
@@ -87,12 +104,15 @@ export function ReportFilterBar({
 
         if (param.kind === 'period') {
           const period = asPeriod(values[param.key], param.default);
-          const fallbackYear = param.years[0] ?? new Date().getFullYear();
+          const years = yearOptions(
+            param.years,
+            param.default.kind === 'custom' ? undefined : param.default.year,
+            period.kind === 'custom' ? undefined : period.year,
+          );
+          const fallbackYear = years[0] ?? malaysiaYear();
           const kindValue = period.kind === 'year' ? String(period.year) : period.kind;
-          const options = [
-            ...param.years.map((year) => ({ value: String(year), label: String(year) })),
-            ...PERIOD_KIND_OPTIONS,
-          ];
+          const yearChoices = years.map((year) => ({ value: String(year), label: String(year) }));
+          const options = [...yearChoices, ...PERIOD_KIND_OPTIONS];
           return (
             <div key={param.key} className="flex w-full flex-wrap items-end gap-3 sm:w-auto">
               <div className="w-full sm:w-44">
@@ -132,7 +152,7 @@ export function ReportFilterBar({
                       id="report-param-period-year"
                       value={String(period.year)}
                       onChange={(next) => onChange(param.key, { ...period, year: Number(next) })}
-                      options={param.years.map((year) => ({ value: String(year), label: String(year) }))}
+                      options={yearChoices}
                       placeholder="Year"
                       triggerClassName="mt-1 w-full"
                       disabled={disabled}
@@ -178,40 +198,26 @@ export function ReportFilterBar({
               )}
 
               {period.kind === 'custom' && (
-                <>
-                  <div className="w-full sm:w-44">
-                    <Label htmlFor="report-param-period-start">From</Label>
-                    <DatePicker
-                      id="report-param-period-start"
-                      value={parseYyyyMmDd(period.from)}
-                      onChange={(date) =>
-                        onChange(param.key, {
-                          ...period,
-                          from: date ? formatLocalDateToYyyyMmDd(date) : period.from,
-                        })
-                      }
-                      disabled={disabled}
-                      className="mt-1"
-                      required
-                    />
-                  </div>
-                  <div className="w-full sm:w-44">
-                    <Label htmlFor="report-param-period-end">To</Label>
-                    <DatePicker
-                      id="report-param-period-end"
-                      value={parseYyyyMmDd(period.to)}
-                      onChange={(date) =>
-                        onChange(param.key, {
-                          ...period,
-                          to: date ? formatLocalDateToYyyyMmDd(date) : period.to,
-                        })
-                      }
-                      disabled={disabled}
-                      className="mt-1"
-                      required
-                    />
-                  </div>
-                </>
+                <div className="w-full sm:w-72">
+                  <Label htmlFor="report-param-period-range">Dates</Label>
+                  {/* ONE control: a range is one fact, and two pickers let the user cross
+                      the ends over before either is wrong (ADR-PRODUCT-STANDARDS 1c). */}
+                  <DateRangePicker
+                    id="report-param-period-range"
+                    aria-label="Custom date range"
+                    from={period.from}
+                    to={period.to}
+                    onChange={(next) =>
+                      onChange(param.key, {
+                        ...period,
+                        from: next.from ?? period.from,
+                        to: next.to ?? period.to,
+                      })
+                    }
+                    disabled={disabled}
+                    className="mt-1"
+                  />
+                </div>
               )}
             </div>
           );

@@ -106,7 +106,7 @@ vi.mock('@/services/reportService', async (importOriginal) => {
 });
 
 import { ReportCappedError, type ReportMeta, type ReportResult } from '@/services/reportService';
-import { ReportPage } from './ReportPage';
+import { ReportPage, numericSortingFn } from './ReportPage';
 
 const DEFAULT_VIEW = {
   params: {
@@ -161,7 +161,6 @@ const RESULT: ReportResult = {
   key: 'sponsorship',
   period_label: "Jan'26 to Dec'26",
   row_count: 2,
-  capped: false,
   layouts: {
     detail: {
       key: 'detail',
@@ -295,6 +294,21 @@ describe('ReportPage', () => {
     expect(screen.queryByRole('tab', { name: /Sponsorships/ })).not.toBeInTheDocument();
   });
 
+  it('names the empty state after the report it is rendering, not after sponsorships', async () => {
+    // One page renders every report, so a hardcoded noun is wrong for report #2. The empty
+    // state is named after the detail layout the backend sent.
+    runReport.mockResolvedValue({
+      ...EMPTY,
+      layouts: {
+        ...EMPTY.layouts,
+        detail: { ...EMPTY.layouts.detail, title: 'Orders' },
+      },
+    });
+    render();
+
+    expect(await screen.findByText(/No orders in Jan'26 to Dec'26/)).toBeInTheDocument();
+  });
+
   it('treats a capped run as an answer: the cap message plus an Export button', async () => {
     runReport.mockRejectedValue(
       new ReportCappedError('This run returns more than 5,000 rows. Narrow the period or export to Excel instead.'),
@@ -370,11 +384,46 @@ describe('ReportPage', () => {
     ]);
   });
 
+  it('still renders the report when the saved views cannot be loaded', async () => {
+    // Views are an ADDITION to the report, not a precondition for it. Waiting on a query
+    // whose error nothing renders leaves the page on skeletons for good.
+    fetchReportViews.mockRejectedValue(new Error('Server error. Try again or contact support.'));
+    render();
+
+    expect(await screen.findByText('PSSF26-0310')).toBeInTheDocument();
+  });
+
+  it('carries no explanatory prose about how many rows have a value', async () => {
+    // ADR 1d: the labels carry the meaning, and the blank cells already say which rows
+    // have no value.
+    render();
+    await screen.findByText('PSSF26-0310');
+
+    expect(screen.queryByText(/rows have a/i)).toBeNull();
+  });
+
   it('asks the backend for the whole catalog and hides client-side', async () => {
     render();
     await screen.findByText('PSSF26-0310');
 
     const [, , view] = runReport.mock.calls[0] as [string, unknown, { detail: { columns: string[] } }];
     expect(view.detail.columns).toEqual([]);
+  });
+});
+
+describe('numericSortingFn', () => {
+  /** Only what a sorting fn is handed: the value under the column id. */
+  const row = (value: unknown) => ({ getValue: () => value }) as never;
+
+  it('ranks money by its number, not by its digits as text', () => {
+    // Lexically "1166830.70" sorts before "900.00", which reads as a broken column.
+    expect(numericSortingFn(row('900.00'), row('1166830.70'), 'project_value')).toBeLessThan(0);
+    expect(numericSortingFn(row('1166830.70'), row('900.00'), 'project_value')).toBeGreaterThan(0);
+    expect(numericSortingFn(row('900.00'), row('900.00'), 'project_value')).toBe(0);
+  });
+
+  it('keeps a blank below every number rather than ranking it as zero', () => {
+    expect(numericSortingFn(row(null), row('0.00'), 'project_value')).toBeLessThan(0);
+    expect(numericSortingFn(row(null), row(null), 'project_value')).toBe(0);
   });
 });

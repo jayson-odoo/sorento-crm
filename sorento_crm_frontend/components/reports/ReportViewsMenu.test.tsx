@@ -126,6 +126,15 @@ describe('ReportViewsMenu', () => {
     expect(screen.getByText('Default')).toBeInTheDocument();
   });
 
+  it('names the owner of a shared view, and nobody on my own', async () => {
+    // A Shared list of bare names is unreadable: "Management default" says nothing about
+    // whose it is. My own views need no attribution.
+    render();
+
+    expect(await screen.findByText('Chin Wei Loon')).toBeInTheDocument();
+    expect(screen.queryByText('You')).not.toBeInTheDocument();
+  });
+
   it('says so when there is nothing saved yet', async () => {
     fetchReportViews.mockResolvedValue({ mine: [], shared: [] });
     render();

@@ -73,11 +73,25 @@ export function ReportViewsMenu({
     );
   };
 
-  const renderItem = (view: ReportView) => (
+  /**
+   * `showOwner` is set on the Shared list only: a column of bare names says nothing about
+   * whose view each one is, and on my own list the answer is always me.
+   */
+  const renderItem = (view: ReportView, showOwner = false) => (
     <DropdownMenuItem key={view.id} onClick={() => onApply(view)} className="gap-2">
       <Check className={view.id === currentViewId ? 'size-4 opacity-100' : 'size-4 opacity-0'} />
-      <span className="truncate" title={view.name}>
-        {view.name}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate" title={view.name}>
+          {view.name}
+        </span>
+        {showOwner && view.owner_name && (
+          <span
+            className="block truncate text-xs text-muted-foreground"
+            title={view.owner_name}
+          >
+            {view.owner_name}
+          </span>
+        )}
       </span>
       <span className="ms-auto flex shrink-0 items-center gap-1">
         {view.is_shared && mine.some((v) => v.id === view.id) && (
@@ -108,7 +122,9 @@ export function ReportViewsMenu({
         <DropdownMenuContent align="end" className="w-64">
           <DropdownMenuLabel>Mine</DropdownMenuLabel>
           {mine.length > 0 ? (
-            mine.map(renderItem)
+            // Wrapped rather than passed to map directly: map hands its callback the INDEX
+            // as a second argument, which would land in `showOwner`.
+            mine.map((view) => renderItem(view))
           ) : (
             <DropdownMenuItem disabled>No saved views yet</DropdownMenuItem>
           )}
@@ -116,7 +132,7 @@ export function ReportViewsMenu({
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Shared</DropdownMenuLabel>
           {shared.length > 0 ? (
-            shared.map(renderItem)
+            shared.map((view) => renderItem(view, true))
           ) : (
             <DropdownMenuItem disabled>No shared views yet</DropdownMenuItem>
           )}

@@ -41,6 +41,7 @@ export const KIND_LABEL: Record<string, string> = {
   promotions_pdf: 'Promotions PDF',
   quotation_pdf: 'Quotation PDF',
   quotation_xlsx: 'Quotation Excel',
+  report_xlsx: 'Report Excel',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {

@@ -25,6 +25,9 @@ sorento_crm_backend/.next/*
 # Lavish review artifacts (regenerated from the plan docs)
 .lavish/
 
+# Agent browser-verification evidence (screenshots, snapshots)
+.evidence/
+
 # OS files
 .DS_Store
 

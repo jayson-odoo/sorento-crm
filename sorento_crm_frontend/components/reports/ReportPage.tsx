@@ -97,6 +97,29 @@ function gridStateFromView(detail: ReportViewConfig['detail'], layout: ReportDet
   return { visibility, order, token: -1 };
 }
 
+/**
+ * Money travels as a DECIMAL STRING ("1166830.70"), so TanStack's default comparator ranks
+ * it as text: "1166830.70" lands before "900.00" and the column reads as broken. A blank
+ * is not zero and sorts below every number, the same way it renders as "-".
+ */
+export function numericSortingFn(
+  rowA: { getValue: (id: string) => unknown },
+  rowB: { getValue: (id: string) => unknown },
+  columnId: string,
+): number {
+  const parse = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const a = parse(rowA.getValue(columnId));
+  const b = parse(rowB.getValue(columnId));
+  if (a === null && b === null) return 0;
+  if (a === null) return -1;
+  if (b === null) return 1;
+  return a === b ? 0 : a - b;
+}
+
 function cellFor(column: ReportColumn) {
   return function Cell({ getValue }: { getValue: () => unknown }) {
     const value = getValue();
@@ -129,6 +152,10 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
     ),
     size: column.size ?? 140,
     cell: cellFor(column),
+    sortingFn:
+      column.type === 'money' || column.type === 'integer'
+        ? (a, b, id) => numericSortingFn(a, b, id)
+        : 'auto',
     /**
      * The totals row. Every column declares a footer so the "Total" label can follow the
      * column the user dragged to the front: pinning it to the column that happened to be
@@ -181,7 +208,10 @@ export function ReportPage({
 }) {
   const { data: meta, isLoading: metaLoading, error: metaError, refetch: refetchMeta } =
     useReportMeta(reportKey);
-  const { data: views } = useReportViews(reportKey);
+  // Saved views are an ADDITION to the report, never a precondition: the page seeds itself
+  // from the meta as soon as the views query has SETTLED, error included. Waiting on a
+  // query whose failure nothing renders is how a page stays on skeletons for good.
+  const { data: views, isLoading: viewsLoading } = useReportViews(reportKey);
   const exportMutation = useReportExport(reportKey);
 
   const [state, setState] = useState<PageState | null>(null);
@@ -208,8 +238,10 @@ export function ReportPage({
   // Both lists are searched: a published view stays under Mine for its own author, so
   // looking only at `shared` would miss the default from the account that published it.
   useEffect(() => {
-    if (state || !meta || !views) return;
-    const fallback = [...views.mine, ...views.shared].find((v) => v.is_default) ?? null;
+    if (state || !meta || viewsLoading) return;
+    const fallback = views
+      ? [...views.mine, ...views.shared].find((v) => v.is_default) ?? null
+      : null;
     const config = fallback?.view ?? meta.default_view;
     setState({
       viewId: fallback?.id ?? null,
@@ -218,7 +250,7 @@ export function ReportPage({
       pivot: config.pivot,
       token: 0,
     });
-  }, [state, meta, views]);
+  }, [state, meta, views, viewsLoading]);
 
   const runView: ReportViewConfig | null = useMemo(
     () =>
@@ -274,20 +306,22 @@ export function ReportPage({
     },
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
-    onColumnVisibilityChange: (updater) =>
-      setGridOverride((prev) => {
-        const base = prev ?? effectiveGrid;
-        if (!base || !state) return prev;
-        const next = typeof updater === 'function' ? updater(base.visibility) : updater;
-        return { visibility: next, order: base.order, token: state.token };
-      }),
-    onColumnOrderChange: (updater) =>
-      setGridOverride((prev) => {
-        const base = prev ?? effectiveGrid;
-        if (!base || !state) return prev;
-        const next = typeof updater === 'function' ? updater(base.order) : updater;
-        return { visibility: base.visibility, order: next, token: state.token };
-      }),
+    // Both changes start from `effectiveGrid`, which already DISCARDS an override written
+    // against an older token. Starting from the raw override instead resurrected the
+    // pre-view columns on the first toggle after a saved view was applied.
+    onColumnVisibilityChange: (updater) => {
+      if (!effectiveGrid || !state) return;
+      const next =
+        typeof updater === 'function' ? updater(effectiveGrid.visibility) : updater;
+      setGridOverride({ visibility: next, order: effectiveGrid.order, token: state.token });
+    },
+    onColumnOrderChange: (updater) => {
+      if (!effectiveGrid || !state) return;
+      const next = typeof updater === 'function' ? updater(effectiveGrid.order) : updater;
+      setGridOverride({ visibility: effectiveGrid.visibility, order: next, token: state.token });
+    },
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -402,12 +436,6 @@ export function ReportPage({
   const capped = runError instanceof ReportCappedError;
   const detailTitle = detailLayout?.title ?? 'Detail';
   const summary = result?.layouts.summary;
-  const moneyColumn = detailLayout?.columns.find((c) => c.type === 'money');
-  const withValue =
-    detailLayout && moneyColumn
-      ? detailLayout.rows.filter((row) => row[moneyColumn.key] != null && row[moneyColumn.key] !== '')
-          .length
-      : 0;
 
   return (
     <>
@@ -467,7 +495,12 @@ export function ReportPage({
           {!runError && result && result.row_count === 0 && (
             <Card>
               <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-                <p className="text-sm font-medium">No sponsorships in {result.period_label}</p>
+                <p className="text-sm font-medium">
+                  {/* Named after the report being rendered: one page serves every report,
+                      so a hardcoded noun is wrong for report #2. */}
+                  No {detailLayout ? detailLayout.title.toLowerCase() : 'rows'} in{' '}
+                  {result.period_label}
+                </p>
                 <Button
                   variant="outline"
                   size="sm"
@@ -516,11 +549,6 @@ export function ReportPage({
                     </CardFooter>
                   </Card>
                 </DataGrid>
-                {moneyColumn && (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    {withValue} of {result.row_count} rows have a {moneyColumn.label.toLowerCase()}
-                  </p>
-                )}
               </TabsContent>
 
               <TabsContent value="summary" className="mt-5">

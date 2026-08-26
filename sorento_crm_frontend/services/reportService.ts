@@ -148,11 +148,14 @@ export interface ReportPivotLayout {
   grand_total: Record<string, string>;
 }
 
+/**
+ * A run that came back. A run that did NOT is the 422 with `capped: true` on it
+ * (`ReportCappedError`), so there is no flag here: a result in hand was never capped.
+ */
 export interface ReportResult {
   key: string;
   period_label: string;
   row_count: number;
-  capped: boolean;
   layouts: {
     detail: ReportDetailLayout;
     summary: ReportPivotLayout;

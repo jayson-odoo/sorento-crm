@@ -13,7 +13,8 @@ copy with all 12 monthly totals equal to the client's GRAND TOTAL cells. S4 (Exc
 test-first) BUILT and browser-verified 2026-08-26: `engine.run_workbook` + the renderer's
 SUMMARY plus one sheet per month, the export queue knob, and the AC-D5 diff against the
 client's own workbook. **All five slices are built**; 176 pytest across the reporting
-suite, 26 vitest.
+suite, 26 vitest. Phase 3 review fixes applied 2026-08-26 (see "Contract points settled in
+review"): 196 pytest across the reporting suite, 58 vitest.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -260,6 +261,61 @@ reads.
   into the test's scratch schema; it never reads the developer copy that
   `--apply` writes to.
 
+### Contract points settled in review (Phase 3)
+
+- **A blank dimension value is a NAMED BUCKET, `(blank)`, on both axes, sorted last.** The
+  pivot used to `continue` past a blank row or column value, so the Summary grand total
+  silently disagreed with the Detail total for every dimension except `sales_agent` (which
+  S3 had coalesced to `Unassigned` in the dataset, one column at a time). The fix is in the
+  ENGINE, so it holds for every dimension of every report. The dataset's `Unassigned`
+  coalesce stays: it is the better label for that column, and it is what the filter offers.
+- **Dimension values are ranked NATURALLY, not lexically.** "Agent 2" before "Agent 10",
+  with `(blank)` last. Lexical order on any dimension carrying a number reads as a sorting
+  bug.
+- **Set as default requires the view to be SHARED, or the caller to own it.** It used to
+  flip `is_shared` on whatever id it was handed, so a holder of `reports.views.publish`
+  could expose somebody else's PRIVATE view to everyone by id alone. The owner may still
+  publish and default in one step, which is the screen's own flow; anyone else gets a 409.
+- **Listing column preferences vs saved views: last write wins, by design.** The DataGrid
+  persists whatever columns were last on screen under
+  `procurement.sponsorship_forms.report::detail`, and applying a saved view OVERWRITES them.
+  That is AC-C1 and AC-C3 together, not a conflict between them: AC-C1 is "my choice sticks
+  between visits", AC-C3 is "selecting a view applies it atomically", and a view that
+  politely left the previous columns alone would not have been applied at all.
+- **Times are bucketed in MALAYSIA time.** `approved_at` / `submitted_at` are stored naive
+  UTC, and the whole CRM reads MYT, so a form approved 31 Jul 17:30 UTC belongs to August.
+  The shift (`AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur'`) is applied once, to the
+  date basis, and to every `date`-typed catalog column and the dataset's year list, so the
+  period predicate, the month bucket, the year filter and the printed date cannot disagree.
+  A DATE basis (`request_date`) is left alone: it carries no time to shift.
+- **The default period resolves per REQUEST, not at import.** `date.today().year` evaluated
+  when the module loaded froze a long-lived process on its boot year. `PeriodParam.default`
+  now takes a callable (`registry.current_year_period`), the definition's default view names
+  no period at all, and `engine.view_config` fills any unnamed param from the param's own
+  default. `registry.validate` resolves that default at import, so a period the engine
+  cannot read is a definition error rather than a 422 on every page open.
+- **Params have ONE source: the top-level `params`, else the view's own.** `view.params`
+  used to be dead on the wire, so a body carrying only a view ran on the definition's
+  defaults - applying a saved view silently changed the period back. The filter bar still
+  wins when it sends params, because that is what is on screen.
+- **`POST /export` validates the VIEW, not just the params.** Same resolver the workbook
+  uses, so an unknown column is a 422 at the button rather than a failed row in My Downloads
+  a minute later.
+- **`ReportResult.capped` is gone.** It was always `false`: a capped run is the 422 that
+  carries `capped: true`, so a result in hand was never capped.
+- **The workbook writes real dates, and never overwrites a total with its own label.**
+  Date columns are date cells with a `DD/MM/YYYY` format (a text date cannot be sorted or
+  filtered, which is most of what a file is opened to do). `GRAND TOTAL` opens the row as
+  the client's sheets do, unless that cell carries a total, in which case it moves to the
+  first cell that does not.
+- **`PUT /reports/{key}/views/{id}` was removed.** No frontend caller; the menu offers Save,
+  Publish, Set default and Delete. A Rename can add it back with its own UI.
+- **The Views menu names the owner of a Shared view** (small muted text). A column of bare
+  names says nothing about whose view each one is; on Mine the answer is always me.
+- **Deferred, deliberately:** `scope="company"` is not fail-closed yet (no dataset declares
+  it; a TODO in `engine._predicates` names the trigger), and `POST /run` still computes both
+  layouts on every call (the row set is ~214 a year).
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
@@ -300,7 +356,8 @@ S2 and S3 may share a branch if S2 is small enough to review together.
   engine computed, so Excel cannot disagree with the screen. Stated in UAC D4.
 - **Permission drift.** `projects.reports.view` is declared in forecast.py and never seeded;
   not touched. New slugs are seeded by migration with a pytest asserting the seed.
-- **Data honesty.** Most 2026 forms carry no project value; blanks, not zeros, and the page
-  header shows "N of M rows have a project value".
+- **Data honesty.** Most 2026 forms carry no project value; blanks, not zeros. The
+  "N of M rows have a project value" footnote was REMOVED in review (ADR 1d, no
+  explanatory prose on screen): the blank cells already say it.
 - **Contact name churn.** `sales_agent` resolves LIVE from the contact FK, so a renamed
   contact regroups history. Accepted (same rule as `requested_by_contact_name`).
