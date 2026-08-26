@@ -186,10 +186,10 @@ def chain(scm_app):  # noqa: F811
         # Classified the way every stamp point classifies one (front planning 5.2): the
         # persisted `demand_class` is what the split and the demand drill read, and a
         # fixture that set only the source order type would be testing a row the importer
-        # cannot produce. Inquiry-created because project demand reaches the plan ONLY
-        # through the Order Inquiry (S13b) - without the origin this line would be set
-        # aside and the dated shortfall below would not exist.
-        order_type="project", demand_class=class_of("project"),
+        # cannot produce. DEALER, because the dated shortfall below is what these route
+        # cases assert and a project-class BOOK line is not demand since P3 - project
+        # demand is the un-linked remainder of a raised Order Inquiry row.
+        order_type="dealer", demand_class=class_of("dealer"),
         demand_origin=ORDER_INQUIRY_ORIGIN,
         order_date=_today() - timedelta(days=3),
     )
@@ -226,8 +226,8 @@ def chain(scm_app):  # noqa: F811
 
 @pytest.fixture()
 def channel_chain(scm_app):  # noqa: F811
-    """A product-grain run frozen WITH the channel breakdown (project confirmed, retail,
-    unclassified, and the unconfirmed sheet leg), at two warehouses, dp-0 UOM.
+    """A product-grain run frozen WITH the channel breakdown (project and retail), at two
+    warehouses, dp-0 UOM.
 
     `chain` above predates front planning: its one recommendation carries no `inputs`, so
     `write_rows` takes the legacy branch and freezes no channel field at all. The locations
@@ -280,9 +280,8 @@ def channel_chain(scm_app):  # noqa: F811
     # its own single location. Building these in the old row-only shape is what let the
     # network and pool freeze defects through.
     for warehouse, rounded, channel in (
-        (brw, 6, {"project_need": 4, "retail_need": 2, "unclassified_need": 1,
-                  "project_sheet_need": 5}),
-        (jb, 5, {"project_need": 0, "retail_need": 3, "unclassified_need": 2}),
+        (brw, 6, {"project_need": 4, "retail_need": 2}),
+        (jb, 5, {"project_need": 0, "retail_need": 3}),
     ):
         db.add(ReorderRecommendation(
             id=_u(), run_id=run.id, rec_type="buy", product_id=product.id,
@@ -351,7 +350,8 @@ def test_a_missing_input_arrives_as_null_and_not_zero(chain):
     assert row["avg_daily_demand"] is None
     assert row["unit_volume_cbm"] is None
     assert row["chosen_qty"] is None
-    assert row["max_days_outstanding"] is None
+    # `max_days_outstanding` is NOT in this list: the chain's order is dealer-class since
+    # P3 (a project book line dates nothing), so the row genuinely has an age to state.
 
 
 def test_no_identifier_reaches_the_wire(chain):
@@ -387,21 +387,26 @@ def test_reading_the_report_requires_the_view_permission(chain):
 
 
 def test_the_demand_drill_returns_the_lines_for_the_kind_asked_for(chain):
+    """The chain's order is dealer-class since P3, so the DEALER drill is the one with
+    lines in it - and the project drill beside it must come back empty rather than
+    borrowing them."""
     f = chain
     _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
     client = TestClient(f["app"])
 
     res = client.get(
-        f"/api/v1/scm/order-summary/{f['product'].product_code}/demand?kind=project"
+        f"/api/v1/scm/order-summary/{f['product'].product_code}/demand?kind=dealer"
     )
 
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["kind"] == "project"
+    # The route answers in the vocabulary it uses internally: `dealer` and `retail` are
+    # the same channel, and the response says `retail`.
+    assert body["kind"] == "retail"
     assert body["total_qty"] == 100
-    assert len(body["project_lines"]) == 1
-    assert body["project_lines"][0]["project_name"] == "acme projects"
-    assert body["dealer_lines"] == []
+    assert len(body["dealer_lines"]) == 1
+    assert body["dealer_lines"][0]["dealer_name"] == "acme projects"
+    assert body["project_lines"] == []
 
 
 def test_an_unknown_drill_kind_is_a_422(chain):
@@ -533,11 +538,12 @@ def test_a_negative_quantity_is_rejected_by_the_endpoint(chain):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_locations_drill_serialises_the_channel_breakdown_including_the_sheet_leg(
+def test_the_locations_drill_serialises_the_channel_breakdown(
     channel_chain,
 ):
-    """AC-F08: member locations, the channel split, the unconfirmed sheet leg named as
-    evidence, and the once-rounded suggested figure the drill reconciles against."""
+    """AC-F08: member locations, the channel split, and the once-rounded suggested figure
+    the drill reconciles against. TWO channels since P3/P4 - the sheet leg is retired and
+    nothing is unclassified - so the drill must state neither."""
     f = channel_chain
     _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
     client = TestClient(f["app"])
@@ -559,11 +565,10 @@ def test_the_locations_drill_serialises_the_channel_breakdown_including_the_shee
     )
     assert brw_loc["project_need"] == 4
     assert brw_loc["retail_need"] == 2
-    assert brw_loc["unclassified_need"] == 1
-    assert brw_loc["project_sheet_need"] == 5, "the sheet leg must reach the drill too"
+    assert "unclassified_need" not in brw_loc
+    assert "project_sheet_need" not in brw_loc
     assert sum(l["project_need"] for l in body["locations"]) == 4
     assert sum(l["retail_need"] for l in body["locations"]) == 5
-    assert sum(l["unclassified_need"] for l in body["locations"]) == 3
 
 
 def test_the_locations_drill_on_a_legacy_run_returns_none_channel_fields_not_zero(
