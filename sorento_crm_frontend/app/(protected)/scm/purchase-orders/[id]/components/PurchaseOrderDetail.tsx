@@ -61,6 +61,7 @@ import {
 } from '../../../services/scmOptionsService';
 import { getSalesOrderUoms } from '../../../services/salesOrderService';
 import PurchaseOrderNavigation from '../../components/PurchaseOrderNavigation';
+import { PurchaseOrderAllocations } from './PurchaseOrderAllocations';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
 import {
   isDraftPurchaseOrder,
@@ -1063,7 +1064,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           </Card>
         </TabsContent>
 
-        <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
+        <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
           {/* Lines - always rendered, explicit empty state. */}
           <DataGrid
             table={table}
@@ -1134,6 +1135,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               </CardFooter>
             </Card>
           </DataGrid>
+
+          {/* Allocated to - BELOW the grid, never columns in it (the captain, 25 Aug):
+              the buyer re-keys the split in AutoCount and re-uploads, and an upload
+              overwriting our split would lose it. Always rendered, empty state and all. */}
+          <PurchaseOrderAllocations allocations={po.allocations ?? []} />
         </TabsContent>
 
         <TabsContent value="goods-receipt" className="mt-0 focus-visible:outline-none">

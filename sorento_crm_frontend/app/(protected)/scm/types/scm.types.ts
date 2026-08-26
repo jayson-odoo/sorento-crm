@@ -560,6 +560,56 @@ export interface PurchaseOrderLine {
   currency?: string | null;
 }
 
+/**
+ * One order-inquiry placement sitting on a purchase-order line (section 3.G, AC-G1).
+ *
+ * The captain, 25 August 2026: when an order inquiry occupies quantity on a PO, the PO must
+ * show how much of its outstanding is occupied, by which inquiry and sales order, and at
+ * which location - and it must live BESIDE the line, never as columns in it, because the
+ * buyer re-keys the split in AutoCount and re-uploads, and an upload that overwrote our
+ * split would lose it.
+ *
+ * Everything here is a NAME, never an id: the inquiry by its number, the sales order by its
+ * document number, the customer and the agent by the labels the order-inquiry worklist
+ * already prints for them.
+ */
+export interface PurchaseOrderPlacement {
+  /** `OI-000006`. Null only on a row raised before the numbering stamp existed. */
+  inquiry_no: string | null;
+  /** The sales order this quantity is owed to - the AutoCount number where there is one. */
+  so_number: string | null;
+  /** `YOTU BUILDER / LOT 2752` - the same label the worklist's PROJECT/CUSTOMER prints. */
+  customer: string | null;
+  /** Who sold it, by person label or agent code. Null on an order with no agent. */
+  agent: string | null;
+  /** How much of the PO line this placement occupies. */
+  qty: number;
+  /** Where the demand needs it - `order_inquiry_rows.stock_location`. */
+  needed_at: string | null;
+  /**
+   * True when `needed_at` is not the PO line's own location: the PO line says DC1 and the
+   * demand is at BRW-BB. That IS the split instruction for AutoCount, which is why it is a
+   * mark on the row rather than a filter that hides it.
+   */
+  location_differs: boolean;
+}
+
+/** One purchase-order line's occupancy: the three figures, then who is on it (AC-G1). */
+export interface PurchaseOrderLineAllocation {
+  /** Which line this belongs to - matched against `PurchaseOrderLine.id`. */
+  line_id: string;
+  sku: string;
+  /** The PO LINE's own location, so the panel can say what it differs from. */
+  warehouse_code: string | null;
+  /** `qty_ordered - qty_received`, floored at 0 and 0 on a closed line. */
+  outstanding: number;
+  /** The sum of every link on this line. */
+  allocated: number;
+  /** `outstanding - allocated`, floored at 0. */
+  free: number;
+  placements: PurchaseOrderPlacement[];
+}
+
 export interface PurchaseOrder {
   id: string;
   /** Human-readable PO number - shown in the UI (never a UUID). */
@@ -580,6 +630,19 @@ export interface PurchaseOrder {
   open_qty?: number;
   open_line_count?: number;
   lines: PurchaseOrderLine[];
+  /**
+   * What order inquiries have OCCUPIED on this order, one entry per line that carries at
+   * least one placement (section 3.G). Absent on the list, present on the single read; an
+   * empty array is a purchase order nothing is linked to yet, and the panel says so.
+   */
+  allocations?: PurchaseOrderLineAllocation[];
+  /**
+   * The sum of every placement across the whole order, on the LIST as well as the single
+   * read (AC-G4). 0 is "nothing is linked to it", which is a different answer from a book
+   * row that predates the links table - and both read as 0 here, deliberately: an order
+   * nobody has linked to is exactly what the filter's "No" means.
+   */
+  allocated_qty?: number;
   created_at: string;
   /** True when this PO counts as incoming supply (on-order) - false for a draft
    *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */

@@ -375,6 +375,48 @@ class PurchaseOrderLine(BaseModel):
     expected_date: Optional[str] = None
 
 
+class PurchaseOrderPlacement(BaseModel):
+    """One order-inquiry placement sitting on a purchase-order line (section 3.G, AC-G1).
+
+    Every field is a NAME. The inquiry by its number, the sales order by its document
+    number, the customer and the agent by the labels the order-inquiry worklist already
+    prints for them - a UUID on this panel would tell the buyer nothing they could act on.
+    """
+
+    #: `OI-000006`. Null only on a row raised before the numbering stamp existed.
+    inquiry_no: Optional[str] = None
+    #: The sales order this quantity is owed to - its AutoCount number where it has one.
+    so_number: Optional[str] = None
+    customer: Optional[str] = None
+    #: Who sold it, by person label, falling back to the agent code.
+    agent: Optional[str] = None
+    qty: float = 0.0
+    #: Where the demand needs it: `order_inquiry_rows.stock_location`.
+    needed_at: Optional[str] = None
+    #: True when `needed_at` is not the PO line's own location - the PO line says DC1 and
+    #: the demand is at BRW-BB. That difference IS the split instruction for AutoCount,
+    #: which is why it is a mark on the row rather than a filter that hides it.
+    location_differs: bool = False
+
+
+class PurchaseOrderLineAllocation(BaseModel):
+    """One purchase-order line's occupancy: the three figures, then who is on it (AC-G1)."""
+
+    #: Which line this belongs to, matched against `PurchaseOrderLine.id`.
+    line_id: str
+    sku: str
+    #: The PO LINE's own location, so the panel can say what the demand differs from.
+    warehouse_code: Optional[str] = None
+    #: What is still to ARRIVE on the line - the same rule `PurchaseOrderLine` prints.
+    outstanding: float = 0.0
+    #: The sum of every live order-inquiry link on this line.
+    allocated: float = 0.0
+    #: `outstanding - allocated`, floored at 0. A line promised more than it has left is
+    #: over-committed, which is a finding for the buyer, not a credit to spend twice.
+    free: float = 0.0
+    placements: List[PurchaseOrderPlacement] = Field(default_factory=list)
+
+
 class PurchaseOrder(BaseModel):
     id: str
     po_number: str
@@ -404,6 +446,14 @@ class PurchaseOrder(BaseModel):
     #: priced line. Blank on rows predating the book having more than one.
     currency: Optional[str] = None
     lines: List[PurchaseOrderLine]
+    #: What order inquiries have OCCUPIED on this order, one entry per line carrying at
+    #: least one placement (section 3.G). Empty on the LIST, which does not pay for the
+    #: placement query per row; populated on the single read, which is where the panel is.
+    allocations: List[PurchaseOrderLineAllocation] = Field(default_factory=list)
+    #: The sum of every placement across the whole order - on the list as well as the
+    #: single read (AC-G4). Declared here or `response_model` drops it, which is exactly
+    #: how a carefully built figure goes out missing.
+    allocated_qty: float = 0.0
     created_at: str
     # M4 Slice B - draft→confirm→GR flow
     is_on_order: bool = False

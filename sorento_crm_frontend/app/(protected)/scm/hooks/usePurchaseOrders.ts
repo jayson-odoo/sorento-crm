@@ -19,6 +19,8 @@ interface UsePurchaseOrdersParams {
   productCode?: string | null;
   /** true = outstanding only, false = closed only, null/undefined = every status. */
   outstanding?: boolean | null;
+  /** true = something is linked to it, false = nothing is, null/undefined = every order. */
+  allocated?: boolean | null;
 }
 
 export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
@@ -35,6 +37,7 @@ export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
         supplier: params.supplier,
         productCode: params.productCode ?? null,
         outstanding: params.outstanding ?? null,
+        allocated: params.allocated ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
