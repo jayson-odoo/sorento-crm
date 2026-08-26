@@ -77,15 +77,16 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `384_committed_v_line_decision` (the per-LINE `decided` CTE that
-    partial confirmation needs), which replaces the body `376_scm_channel_read_model`
-    installed. Every superseded freeze stays exactly as it shipped, which is the whole
-    point of the guard, so 376's and 374's are checked below rather than updated here.
+    The newest one is `422_committed_v_link_netting` (the confirmed leg nets a row's
+    UNLINKED remainder instead of testing its state), which replaces the body
+    `384_committed_v_line_decision` installed. Every superseded freeze stays exactly as it
+    shipped, which is the whole point of the guard, so 384's, 376's and 374's are checked
+    below rather than updated here.
     """
-    m384 = _load("384_committed_v_line_decision")
-    assert _normalize(m384._AS_OF_384) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 384; "
-        "add a new migration that freezes the new body (384's pattern), so a from-zero "
+    m422 = _load("422_committed_v_link_netting")
+    assert _normalize(m422._AS_OF_422) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 422; "
+        "add a new migration that freezes the new body (422's pattern), so a from-zero "
         "replay stays true to history."
     )
 
@@ -130,10 +131,12 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     m374 = _load("374_so_supply_decisions")
     m376 = _load("376_scm_channel_read_model")
     m384 = _load("384_committed_v_line_decision")
+    m422 = _load("422_committed_v_link_netting")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
     assert _normalize(m384._AS_OF_376) == _normalize(m376._AS_OF_376)
+    assert _normalize(m422._AS_OF_384) == _normalize(m384._AS_OF_384)
 
 
 @requires_pg

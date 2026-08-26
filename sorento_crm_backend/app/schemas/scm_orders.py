@@ -53,6 +53,24 @@ class SalesOrderLineSupplyComponent(BaseModel):
     donor_so_number: Optional[str] = None
 
 
+class SalesOrderLineLink(BaseModel):
+    """One link on the order inquiry row covering a sales order line (AC-I9).
+
+    A subset of `OrderInquiryLinkOut`: what a LINE's column needs to say where its Buy
+    sits, and nothing about who linked it or when, which the order inquiry screen owns.
+    Never an id on screen - the document number and the line label are what a person
+    reads, and `line_label` is absent rather than invented when the book numbered nothing.
+    """
+
+    #: `po` or `spo`. Only an ORDER BACK row ever carries an `spo` link (part 2 4b).
+    kind: str
+    document: Optional[str] = None
+    line_label: Optional[str] = None
+    qty: str
+    location: Optional[str] = None
+    expected_date: Optional[str] = None
+
+
 class SalesOrderLine(BaseModel):
     id: str
     sku: str
@@ -110,6 +128,16 @@ class SalesOrderLine(BaseModel):
     #: 300 engine walks for a column the board already answers.
     supply_decided: Optional[List[SalesOrderLineSupplyComponent]] = None
     supply_proposed: Optional[List[SalesOrderLineSupplyComponent]] = None
+    #: WHERE this line's Buy sits (AC-I9): every link on the order inquiry row covering
+    #: the line, PO or SPO, with the quantity each holds. Read off the SAME child table
+    #: (`projects.order_inquiry_links`) the order inquiry worklist's "Linked to" column
+    #: and the PO occupancy panel read, through the one reader, so the three surfaces
+    #: cannot answer differently.
+    #:
+    #: `[]` when a row covers the line and nothing has been linked yet; `None` when no row
+    #: covers it at all. The two are different answers - "nothing has been linked" against
+    #: "nobody was told about this line" - and the column prints each in its own words.
+    linked_to: Optional[List[SalesOrderLineLink]] = None
 
 
 class SalesOrder(BaseModel):

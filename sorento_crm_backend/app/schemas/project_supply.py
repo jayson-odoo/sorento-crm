@@ -150,6 +150,12 @@ class SupplyFrozenLine(BaseModel):
     amend_reason: Optional[str] = None
     #: The reason a discontinued product was still bought (AC-B11), when one was given.
     buy_reason: Optional[str] = None
+    #: The frozen Buy was an ORDER BACK - a shortfall against something already ordered or
+    #: already shipped, not a fresh purchase - and the document CS cited for it, if any
+    #: (`PLAN-scm-purchasing-uat-journey.md` section 4b). Read back by the Amend editor so
+    #: re-opening a covered line shows what was actually decided.
+    order_back: bool = False
+    cited_document: Optional[str] = None
 
 
 class SupplyLine(BaseModel):
@@ -277,6 +283,19 @@ class ConfirmLine(BaseModel):
     borrow: List[ConfirmBorrowComponent] = Field(default_factory=list)
     buy_qty: Decimal = Decimal("0")
     buy_reason: Optional[str] = None
+    #: This Buy is an ORDER BACK (part 2 section 4b, captain 25 Aug): the quantity is owed
+    #: against something already ordered or already shipped rather than being a new
+    #: purchase, so the row purchasing gets carries verb `ORDER_BACK` and is the one row
+    #: whose links may name an `spo_allocations` row.
+    #:
+    #: Meaningless without a Buy, and ignored when `buy_qty` is 0: an order back with
+    #: nothing bought is not an instruction.
+    order_back: bool = False
+    #: The document CS named for it - "202604-S0083", "SPO-2026/08-0061" - as they spelled
+    #: it. Not a link by itself: it is what the auto-link walk tries FIRST, before any
+    #: location tier or date, and a document this system does not hold is recorded rather
+    #: than refused (AC-J2).
+    cited_document: Optional[str] = None
     #: Why this composition is not the one the engine proposed, in the planner's own words.
     #: Absent when they took the proposal as it stood: demanding a reason for agreeing is how
     #: a mandatory field becomes a rubber stamp. It is FROZEN with the line, beside the

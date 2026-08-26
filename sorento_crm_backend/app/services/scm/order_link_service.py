@@ -198,10 +198,16 @@ def claim_placed_on_po(
     po_number: str,
     item_code: Optional[str],
     so_line_id: Optional[str],
-    po_line_id: str,
+    po_line_id: Optional[str] = None,
+    spo_allocation_id: Optional[str] = None,
 ) -> OrderLinkClaim:
-    """Record "Place on PO"'s own pairing as a claim, for the audit trail
-    (PLAN-demo-followups-19aug-ladder-v2.md section G).
+    """Record a Link PO / Link SPO pairing as a claim, for the audit trail
+    (PLAN-demo-followups-19aug-ladder-v2.md section G, PLAN-scm-cs-planning-uat.md 3.I).
+
+    The purchase side is whichever column the caller resolved: `po_line_id` for a purchase
+    order line, `spo_allocation_id` for a shipping order, which since migration 420 is a
+    row in `spo_allocations`. Exactly one is passed, the same rule the resolver applies to
+    a claim it fills in itself and the same rule the link row's own CHECK constraint holds.
 
     Reuses the SAME identity `resolve()` matches on - (company, so_number, po_number,
     item_code coalesced), which is also the database's own unique index
@@ -225,6 +231,7 @@ def claim_placed_on_po(
         if existing.so_line_id is None:
             existing.so_line_id = so_line_id
         existing.po_line_id = po_line_id
+        existing.spo_allocation_id = spo_allocation_id
         existing.resolved_at = now
         return existing
 
@@ -237,6 +244,7 @@ def claim_placed_on_po(
         claimed_at=now,
         so_line_id=so_line_id,
         po_line_id=po_line_id,
+        spo_allocation_id=spo_allocation_id,
         resolved_at=now,
     )
     db.add(claim)
