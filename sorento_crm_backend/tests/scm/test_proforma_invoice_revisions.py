@@ -331,3 +331,49 @@ def test_an_invoice_cannot_be_marked_as_a_revision_of_itself():
         with pytest.raises(AppException) as exc:
             svc.mark_as_revision_of(db, str(first.id), str(first.id))
         assert exc.value.status_code == 422
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 4 - a chain cannot be made to eat its own tail
+# --------------------------------------------------------------------------------- #
+
+
+def test_marking_the_predecessor_as_a_revision_of_its_own_successor_is_refused():
+    """A -> B, then B -> A closes the loop: the superseded original comes back as current,
+    both documents answer "what is this container costing", and the chain walk relies on a
+    guard to terminate rather than on the data being sane."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w))
+        first = _invoices(db, w)[0]
+        out = _apply(db, w, _kailu(w, price_factor=1.1), revision_of={"1": str(first.id)})
+        second_id = out["results"][0]["invoice_id"]
+
+        with pytest.raises(AppException) as exc:
+            svc.mark_as_revision_of(db, str(first.id), second_id)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "revision_cycle"
+        db.refresh(first)
+        assert first.status == "superseded"
+
+
+def test_a_longer_loop_is_refused_too():
+    """A -> B -> C, then C -> A. The cycle is two hops away, so a check that only looked at
+    the immediate predecessor would let it through."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w))
+        first = _invoices(db, w)[0]
+        second_id = _apply(
+            db, w, _kailu(w, price_factor=1.1), revision_of={"1": str(first.id)}
+        )["results"][0]["invoice_id"]
+        third_id = _apply(
+            db, w, _kailu(w, price_factor=1.2), revision_of={"1": second_id}
+        )["results"][0]["invoice_id"]
+
+        with pytest.raises(AppException) as exc:
+            svc.mark_as_revision_of(db, str(first.id), third_id)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "revision_cycle"

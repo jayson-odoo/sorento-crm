@@ -548,6 +548,28 @@ def mark_as_revision_of(db: Session, invoice_id: str, previous_id: str) -> dict:
             f"'{invoice.pi_number}' is already a revision of another document.",
             code="already_a_revision",
         )
+    # A -> B, then B -> A closes the loop: the superseded original comes back as current,
+    # both documents answer "what is this container costing", and the chain walk terminates
+    # only because it counts its own steps. Walk BACK from the proposed predecessor - if it
+    # reaches this invoice, this invoice is its ancestor and the link would be a cycle.
+    ancestor = previous
+    guard = 0
+    while ancestor is not None and guard < 50:
+        if str(ancestor.id) == str(invoice.id):
+            raise AppException(
+                409,
+                f"'{previous.pi_number}' is already a revision of '{invoice.pi_number}', "
+                "so it cannot also be the document it revises.",
+                code="revision_cycle",
+            )
+        if not ancestor.revision_of_id:
+            break
+        ancestor = (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.id == str(ancestor.revision_of_id))
+            .first()
+        )
+        guard += 1
 
     invoice.revision_of_id = str(previous.id)
     invoice.revision_no = int(previous.revision_no or 1) + 1
