@@ -14,7 +14,7 @@ import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
 } from '../../_shared/components/OrderInquiryVerbPill';
-import { SupplyBar } from '../../fulfilment-planning/components/SupplyBar';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   KIND_COLOURS,
   KIND_LABELS,
@@ -243,8 +243,9 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           );
           // The same bar the schedule draws, off the same three kinds (AC-I14), so the
           // two views of this worklist cannot read differently: an unlinked row is a
-          // solid rose bar over the words that say so, a row linked 5 of 8 is sky over
-          // rose. No legend beside it - the cards above the list carry the words.
+          // faded rose bar over the words that say so (faded because nothing has been
+          // committed to yet), a row linked 5 of 8 is sky over rose. No legend beside it
+          // - the cards above the list carry the words.
           const bar = (
             <SupplyBar
               segments={segmentsOfRow(row.original)}

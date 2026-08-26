@@ -574,7 +574,12 @@ def order_inquiry_unplace_all_preview(
     `GET /order-inquiries` reads, `state` always forced to placed - and the product code
     when every one of them resolves to the same product. Gated on the write permission
     (`ACTION`), not the read one: this is a preview of a write a person is about to make,
-    not a browse."""
+    not a browse.
+
+    "The same filters" means the ones a person NARROWED the worklist with. `state`,
+    `linked` and `kind` are deliberately not among them: all three describe where a row's
+    quantity already sits, and this action is always about every placed row in the scope -
+    a pressed Buy card must not quietly shrink what "Unplace all" is about to unplace."""
     try:
         filters = _worklist_filters(
             query, delivery_month, raised_date, None, project_id, supplier_id, raised_by
@@ -595,7 +600,8 @@ async def unplace_order_inquiry_rows_in_scope(
     PLACED row matching the SAME filters `GET /order-inquiries` reads - one product when
     the filters happen to narrow to it, every placed row in the company when they name
     nothing - reverts to raised in one call, so Auto-place can re-deal them
-    earliest-first."""
+    earliest-first. Same scope as the preview above, and the same three exclusions:
+    `state`, `linked` and `kind` never narrow it."""
     try:
         if payload.project_id:
             validate_uuid_path(payload.project_id, resource="Project")

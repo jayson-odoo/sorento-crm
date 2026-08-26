@@ -10,9 +10,7 @@ import {
   fullyLinked,
   kindText,
   kindTotals,
-  rowCarriesKind,
   segmentsOfRow,
-  segmentsOfRows,
 } from './orderInquiryKinds';
 import type { OrderInquiryKindRow } from './orderInquiryKinds';
 import type { OrderInquiryLink } from '../types/orderInquiry.types';
@@ -118,27 +116,6 @@ describe('kindTotals', () => {
     const totals = kindTotals([row({ qty: '5', links: [link({ kind: 'po', qty: '9' })] })]);
 
     expect(totals.find((segment) => segment.kind === 'buy')?.qty).toBe('0');
-  });
-});
-
-describe('rowCarriesKind', () => {
-  it('answers true for BOTH kinds a split row carries', () => {
-    const split = row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] });
-
-    expect(rowCarriesKind(split, 'po')).toBe(true);
-    expect(rowCarriesKind(split, 'buy')).toBe(true);
-    expect(rowCarriesKind(split, 'spo')).toBe(false);
-  });
-
-  it('answers false for every kind on a cancelled row', () => {
-    const cancelled = row({
-      qty: '8',
-      links: [link({ kind: 'po', qty: '5' })],
-      state: 'cancelled',
-    });
-
-    expect(rowCarriesKind(cancelled, 'po')).toBe(false);
-    expect(rowCarriesKind(cancelled, 'buy')).toBe(false);
   });
 });
 

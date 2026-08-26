@@ -184,9 +184,10 @@ export function OrderInquiriesClient() {
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
   // Which card is pressed (AC-I11). Not one of the toolbar's filters: it lives on the
-  // strip above BOTH views, so the same press narrows the matrix and the list, and it is
-  // deliberately kept out of the summary's own request so the other two cards keep their
-  // figures while it is held down.
+  // strip above BOTH views, so the same press narrows the matrix and the list. It IS
+  // sent with the summary's own request all the same - only the `kinds` facet inside it
+  // drops the card, server-side, which is what keeps the other two cards readable while
+  // one is held down (see `listFilters` below).
   const [kindFilter, setKindFilter] = React.useState<OrderInquiryKind | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
