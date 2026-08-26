@@ -35,6 +35,23 @@ function dateLabel(iso: string | null): string {
  * A dialog rather than a popover on purpose: at 375px it fills the screen and scrolls, which
  * a popover anchored to a cell inside a horizontally-scrolling grid cannot do (AC-A2.5).
  */
+/**
+ * What the supplier says they hold, in the words of whichever document said it.
+ *
+ * A stock list states two quantities and they are never summed; a proforma states one, for
+ * one container. `qty_packed` reads 0 on a proforma-sourced row (the backend zeroes it - a
+ * proforma has no packed/unfinished split to report), which is how this line came to say
+ * "They hold 0" under a grid cell reading 400.
+ */
+function holdingLabel(row: ContainerRequestRow): string {
+  if (row.holding_source === 'proforma') {
+    const stamp = row.holding_as_of ? ` ${dateLabel(row.holding_as_of)}` : '';
+    return `They hold ${fmtInt(row.holding_qty ?? 0)} on PI${stamp}`;
+  }
+  if (row.holding_source === 'none') return 'Nothing of theirs on file';
+  return `They hold ${fmtInt(row.qty_packed)} packed · ${fmtInt(row.qty_unfinished)} unfinished`;
+}
+
 export function ContainerRequestRowDialog({
   row,
   askQty,
@@ -52,7 +69,6 @@ export function ContainerRequestRowDialog({
   onClose: () => void;
 }) {
   const title = row.item_code ?? row.product_name ?? 'Product';
-  const netted = Math.max(row.open_so_need - row.on_hand - row.incoming_spo, 0);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
@@ -96,13 +112,9 @@ export function ContainerRequestRowDialog({
               sub={
                 <>
                   need {fmtInt(row.open_so_need)} - pool stock {fmtInt(row.on_hand)} - SPO{' '}
-                  {fmtInt(row.incoming_spo)} = {fmtInt(netted)}
+                  {fmtInt(row.incoming_spo)} = {fmtInt(row.suggested_qty)}
                   <br />
-                  Incoming PL {fmtInt(row.incoming_pl)} and outstanding PO{' '}
-                  {fmtInt(row.outstanding_po)} are not deducted
-                  <br />
-                  They hold {fmtInt(row.qty_packed)} packed ·{' '}
-                  {fmtInt(row.qty_unfinished)} unfinished
+                  {holdingLabel(row)}
                 </>
               }
             />

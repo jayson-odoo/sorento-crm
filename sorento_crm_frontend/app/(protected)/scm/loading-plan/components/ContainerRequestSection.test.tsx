@@ -103,7 +103,7 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useUnfinishedStock: () => ({ data: state.unfinished }),
 }));
 
-import { ContainerRequestSection } from './ContainerRequestSection';
+import { ContainerRequestSection, holdingSortValue } from './ContainerRequestSection';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
   return {
@@ -599,5 +599,29 @@ describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card surv
     renderSection();
 
     expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
+  });
+});
+
+describe('holdingSortValue - what "They hold" sorts by', () => {
+  // The captain's ruling this column carries: it replaced the standalone "Waiting on
+  // production" list, which was ordered by UNFINISHED quantity descending. Sorting a
+  // stock-list row by its packed figure silently threw that ordering away, and the supplier
+  // with 500 unfired bodies stopped surfacing.
+  it('sorts a stock-list row by its unfinished quantity', () => {
+    expect(holdingSortValue(row({ holding_source: 'stock_list', holding_qty: 9, qty_unfinished: 500 })))
+      .toBe(500);
+  });
+
+  it('sorts a proforma row by the quantity it states', () => {
+    expect(
+      holdingSortValue(
+        row({ holding_source: 'proforma', holding_qty: 400, qty_packed: 0, qty_unfinished: 0 }),
+      ),
+    ).toBe(400);
+  });
+
+  it('sorts a row neither document names below every row that has a figure', () => {
+    expect(holdingSortValue(row({ holding_source: 'none', holding_qty: null, qty_unfinished: 0 })))
+      .toBeLessThan(0);
   });
 });
