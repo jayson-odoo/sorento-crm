@@ -576,3 +576,82 @@ def test_the_take_carries_its_lines_whole_open_balance_so_the_screen_can_do_the_
         # What each line has open, not what this cascade happened to take from it - the
         # figure the planner needs to re-cascade when a tick changes.
         assert [t["open_qty"] for t in takes] == [50, 100]
+
+
+# --------------------------------------------------------------------------- #
+# Review finding 10 - a retail order is not offered twice
+# --------------------------------------------------------------------------- #
+
+
+def test_a_retail_line_already_covered_by_one_container_is_offered_net_on_the_next():
+    """R7 stands - a retail tick writes no link row - but the tick still has to be
+    remembered, or the same 30 pieces are promised to SO-A on every container of the month
+    and each one is default-ticked at full quantity."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 500, 0)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 100, supplier)])
+        svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 100,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 100}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "retail"
+        )
+
+        # The whole 30 went on the first container, so there is nothing left to offer.
+        assert [c for c in coverage if str(retail.id) in c["key"]] == []
+
+
+def test_a_partly_covered_retail_line_is_offered_for_the_rest():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 500, 0)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 10, supplier)])
+        svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 10,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 10}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "retail"
+        )
+
+        entry = next(c for c in coverage if str(retail.id) in c["key"])
+        assert entry["qty"] == 20
+
+
+def test_an_untouched_retail_line_is_offered_in_full():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 500, 0)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        coverage = _coverage(
+            _line(svc.suggest(db, str(shipment.id)), str(lines[0].id)), "retail"
+        )
+
+        entry = next(c for c in coverage if str(retail.id) in c["key"])
+        assert entry["qty"] == 30

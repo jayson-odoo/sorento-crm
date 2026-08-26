@@ -311,10 +311,8 @@ class PurchaseOrderService:
         line's quantity is already on the water, on THAT packing list, landing at THOSE
         warehouses. Everything on the row is a name; nothing is an id.
         """
-        import json
-
         from app.models.procurement import InboundShipment, SPOAllocation
-        from app.services.scm.spo_conversion_service import SOURCE_SYSTEM
+        from app.services.scm.spo_conversion_service import SOURCE_SYSTEM, parse_source_ref
 
         if not line_ids:
             return {}
@@ -333,16 +331,12 @@ class PurchaseOrderService:
         wanted = set(line_ids)
         interesting = []
         for spo_line, spo in spo_lines:
-            try:
-                pulls = json.loads(spo_line.source_ref or "[]")
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(pulls, list):
-                continue
-            for pull in pulls:
-                source_id = str((pull or {}).get("po_line_id") or "")
+            # ONE decoder for that column, shared with the module that writes it - it holds
+            # the retail ticks as well as the pulls now, and two parsers would be two
+            # readings of one encoding.
+            for source_id, qty in parse_source_ref(spo_line.source_ref)["pulls"]:
                 if source_id in wanted:
-                    interesting.append((source_id, spo_line, spo, float(pull.get("qty") or 0)))
+                    interesting.append((source_id, spo_line, spo, qty))
         if not interesting:
             return {}
 

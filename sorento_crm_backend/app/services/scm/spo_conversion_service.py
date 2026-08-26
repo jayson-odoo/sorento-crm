@@ -822,6 +822,66 @@ def _warehouse_ids_by_code(db: Session) -> dict[str, str]:
     }
 
 
+def _retail_covered_qty(db: Session, product_id: str) -> dict[str, float]:
+    """Per sales-order line, how much of it a CRM SPO has already been pointed at.
+
+    Read off the SPO line's own `source_ref`, which is where the retail ticks are recorded
+    (`create`): the retail half writes no link row - the links table hangs off an
+    order-inquiry row and a retail line has none - so this is the only record that the
+    quantity has already been promised. Without it the same 30 pieces were offered, and
+    default-ticked, on every container of the month.
+
+    An unwound SPO takes its lines with it, so its record disappears with it, which is
+    correct: the promise was undone.
+    """
+    rows = (
+        db.query(PurchaseOrderLine.source_ref)
+        .filter(
+            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
+            PurchaseOrderLine.product_id == product_id,
+            PurchaseOrderLine.source_ref.isnot(None),
+        )
+        .all()
+    )
+    out: dict[str, float] = {}
+    for (raw,) in rows:
+        for so_line_id, qty in parse_source_ref(raw)["so_coverage"]:
+            out[so_line_id] = out.get(so_line_id, 0.0) + qty
+    return out
+
+
+def _retail_cover_for(
+    db: Session, product_id: str, ticked_keys: list[str], placing: float
+) -> list[dict]:
+    """What this SPO line is being asked to cover, per ticked RETAIL sales-order line.
+
+    Cascaded in the coverage list's own order and capped at what the line actually places,
+    so a tick list asking for more than the container holds records what the container can
+    honestly answer for rather than the whole wish.
+    """
+    wanted = [k.split(":", 1)[1] for k in ticked_keys if k.startswith(f"{_COVERAGE_RETAIL}:")]
+    if not wanted or placing <= 0:
+        return []
+    by_id = {
+        c["key"].split(":", 1)[1]: c
+        for c in _retail_coverage(db, product_id)
+    }
+    out: list[dict] = []
+    left = placing
+    for so_line_id in wanted:
+        if left <= 0:
+            break
+        entry = by_id.get(so_line_id)
+        if entry is None:
+            continue
+        take = min(float(entry["qty"]), left)
+        if take <= 0:
+            continue
+        out.append({"so_line_id": so_line_id, "qty": take})
+        left -= take
+    return out
+
+
 def _retail_coverage(db: Session, product_id: str) -> list[dict]:
     """Open sales-order book demand for this product - the retail half of the tick list.
 
@@ -857,20 +917,24 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
         )
         .all()
     )
-    return [
-        {
+    # Net of what earlier containers were already pointed at (review finding 10).
+    covered = _retail_covered_qty(db, product_id)
+    out: list[dict] = []
+    for r in rows:
+        left = float(r.qty or 0) - covered.get(str(r.id), 0.0)
+        if left <= 0:
+            continue
+        out.append({
             "key": f"{_COVERAGE_RETAIL}:{r.id}",
             "kind": _COVERAGE_RETAIL,
             "document": r.so_number,
             "customer_name": r.customer_name,
             "required_date": r.required_date.isoformat() if r.required_date else None,
-            "qty": float(r.qty or 0),
+            "qty": left,
             "warehouse_id": str(r.warehouse_id) if r.warehouse_id else None,
             "warehouse_code": r.warehouse_code,
-        }
-        for r in rows
-        if float(r.qty or 0) > 0
-    ]
+        })
+    return out
 
 
 def _so_coverage(db: Session, product_id: str, packed: float) -> list[dict]:
@@ -1235,6 +1299,7 @@ def create(
     groups: dict[str, dict[str, Any]] = {}
     skipped: list[tuple[str, str]] = []
     ticked_demand: dict[str, list[str]] = {}
+    retail_cover: dict[str, list[dict]] = {}
 
     for line_id, ln in shipment_lines.items():
         item = by_line[line_id]
@@ -1287,6 +1352,12 @@ def create(
         # Which demand this line's quantity was ticked against (AC-G3). Held per shipment
         # line so the links can be written AFTER the allocations exist to point at.
         ticked_demand[line_id] = [str(k) for k in (item.get("so_line_ids") or [])]
+        # The RETAIL half of the ticks, with what each one is being covered for. Cascaded
+        # in the order the coverage list walks, capped by the quantity this line is
+        # actually placing - the same walk the screen ticked with.
+        retail_cover[line_id] = _retail_cover_for(
+            db, str(ln.product_id), ticked_demand[line_id], covered_now
+        )
 
     if not groups:
         raise AppException(
@@ -1340,10 +1411,19 @@ def create(
                 # rather than a new link table. Replaces the shipment-line-id this column
                 # used to carry (redundant - `ShipmentLineSpoLink.inbound_shipment_line_id`
                 # already names it).
-                source_ref=json.dumps([
-                    {"po_line_id": str(src_line.id), "qty": qty}
-                    for src_line, _src_po, qty in takes
-                ]),
+                # WHERE this pull came from, and WHAT it is for. The retail half of the
+                # tick list has no link row to hang on (`order_inquiry_links.row_id` is NOT
+                # NULL and a retail sales-order line has none), so without this the same 30
+                # pieces were promised to SO-A on every container of the month, each one
+                # default-ticked at full quantity. Recorded here, beside the pull, because
+                # this line IS the thing that serves them.
+                source_ref=json.dumps({
+                    "pulls": [
+                        {"po_line_id": str(src_line.id), "qty": qty}
+                        for src_line, _src_po, qty in takes
+                    ],
+                    "so_coverage": retail_cover.get(str(ln.id), []),
+                }),
             )
             db.add(po_line)
             db.flush()
@@ -1683,26 +1763,48 @@ def unwind(db: Session, shipment_id: str) -> dict:
     }
 
 
-def _parse_pulls(source_ref: Optional[str]) -> list[tuple[str, float]]:
-    """`create`'s own encoding of `source_ref` on a `crm_spo` line - a JSON list of
-    `{"po_line_id", "qty"}`. Anything else (absent, unparsable, an older/foreign line's own
-    unrelated `source_ref` value) reads as "nothing to reverse" rather than raising - this is
-    read defensively, on a delete path, not trusted input."""
+def parse_source_ref(source_ref: Optional[str]) -> dict[str, list]:
+    """What a `crm_spo` line records about where it came from and what it is for.
+
+    `{"pulls": [{"po_line_id", "qty"}], "so_coverage": [{"so_line_id", "qty"}]}`. A BARE
+    LIST is the older encoding (pulls only) and still reads, because rows written before the
+    retail ticks existed are on file and a delete path must not start raising on them.
+
+    Read defensively throughout - absent, unparsable, or another writer's unrelated
+    `source_ref` all read as "nothing recorded" rather than raising.
+    """
+    empty: dict[str, list] = {"pulls": [], "so_coverage": []}
     if not source_ref:
-        return []
+        return empty
     try:
         data = json.loads(source_ref)
     except (ValueError, TypeError):
-        return []
-    if not isinstance(data, list):
-        return []
-    out: list[tuple[str, float]] = []
-    for item in data:
+        return empty
+    if isinstance(data, list):
+        raw_pulls, raw_coverage = data, []
+    elif isinstance(data, dict):
+        raw_pulls = data.get("pulls") or []
+        raw_coverage = data.get("so_coverage") or []
+    else:
+        return empty
+
+    out: dict[str, list] = {"pulls": [], "so_coverage": []}
+    for item in raw_pulls if isinstance(raw_pulls, list) else []:
         try:
-            out.append((str(item["po_line_id"]), float(item["qty"])))
+            out["pulls"].append((str(item["po_line_id"]), float(item["qty"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    for item in raw_coverage if isinstance(raw_coverage, list) else []:
+        try:
+            out["so_coverage"].append((str(item["so_line_id"]), float(item["qty"])))
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def _parse_pulls(source_ref: Optional[str]) -> list[tuple[str, float]]:
+    """Which open PO lines this SPO line drew from, and how much of each."""
+    return parse_source_ref(source_ref)["pulls"]
 
 
 def _reverse_advances(db: Session, po_lines: list[PurchaseOrderLine]) -> int:
