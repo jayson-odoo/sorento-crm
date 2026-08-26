@@ -309,16 +309,30 @@ export function ReportPage({
     // Both changes start from `effectiveGrid`, which already DISCARDS an override written
     // against an older token. Starting from the raw override instead resurrected the
     // pre-view columns on the first toggle after a saved view was applied.
+    //
+    // Both are also FUNCTIONAL updates, and that is load-bearing rather than tidiness:
+    // `useListingColumnPreferences` applies a saved config by calling `setColumnOrder` and
+    // `setColumnVisibility` back to back in one effect, so both handlers run against the
+    // same render. Reading `effectiveGrid` directly, the second call rebuilt the whole
+    // GridState from the render's stale value and threw away the order the first had just
+    // applied - the saved order was replaced by the report's default one, and the grid then
+    // PERSISTED that default over the user's order on the very next visit. Visibility
+    // survived, because it was the write that won.
     onColumnVisibilityChange: (updater) => {
       if (!effectiveGrid || !state) return;
-      const next =
-        typeof updater === 'function' ? updater(effectiveGrid.visibility) : updater;
-      setGridOverride({ visibility: next, order: effectiveGrid.order, token: state.token });
+      setGridOverride((prev) => {
+        const base = prev && prev.token === state.token ? prev : effectiveGrid;
+        const next = typeof updater === 'function' ? updater(base.visibility) : updater;
+        return { visibility: next, order: base.order, token: state.token };
+      });
     },
     onColumnOrderChange: (updater) => {
       if (!effectiveGrid || !state) return;
-      const next = typeof updater === 'function' ? updater(effectiveGrid.order) : updater;
-      setGridOverride({ visibility: effectiveGrid.visibility, order: next, token: state.token });
+      setGridOverride((prev) => {
+        const base = prev && prev.token === state.token ? prev : effectiveGrid;
+        const next = typeof updater === 'function' ? updater(base.order) : updater;
+        return { visibility: base.visibility, order: next, token: state.token };
+      });
     },
     columnResizeMode: 'onChange',
     enableColumnResizing: true,

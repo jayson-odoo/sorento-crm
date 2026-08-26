@@ -316,6 +316,44 @@ reads.
   it; a TODO in `engine._predicates` names the trigger), and `POST /run` still computes both
   layouts on every call (the row set is ~214 a year).
 
+### Column reorder, fixed and unfixed (2026-08-26)
+
+- **A dragged column order now SURVIVES the reload (fixed).** The grid read the saved order
+  back, applied it, and then PUT the report's DEFAULT order over it, so a reorder lasted
+  exactly one page load while show / hide persisted normally. Two causes, one per side.
+  `ReportPage` rebuilt its whole `gridOverride` from the render's `effectiveGrid` in BOTH
+  `onColumnOrderChange` and `onColumnVisibilityChange`, and `useListingColumnPreferences`
+  applies a saved config by calling `setColumnOrder` and `setColumnVisibility` back to back
+  in one effect - so the visibility call, reading the stale render value, threw away the
+  order the order call had just applied. Both handlers are functional updates now, so two
+  sets in one tick compose. The order was then written back because the hook's
+  `skipSaveOnceRef` was consumed by the save effect run that happens in the SAME commit as
+  the apply (with the pre-apply fingerprints, since no render has happened yet), leaving the
+  run that carried the applied state free to save it. The hook now also records what the
+  server holds (`persistedRef`, a fingerprint of order + visibility + sizing as applied) and
+  never writes an identical payload - which is a no-op for every listing except that it
+  stops one redundant PUT per page open. Pinned by
+  `components/reports/ReportPage.orderMemory.test.tsx`, which runs the real preferences hook
+  against a mocked column-config service.
+- **Browser evidence (:3090 / :8091, 2026-08-26):** sidebar to Project Sales Admin >
+  Sponsorship Report, drag `Project title` to the front, two reloads. Network shows one GET
+  per load and exactly ONE PUT (the drag), and the header row reads
+  `Project title | PS No | Sales agent | ...` on both reloads. No console errors.
+- **KEYBOARD reorder does not work on ANY listing, and that is PRE-EXISTING (not fixed
+  here).** Focusing a column grip and pressing Space, ArrowRight, Space announces
+  "Draggable item <id> was moved over droppable area <id>" - `over` resolves to the dragged
+  column itself - and nothing moves; mouse drag is unaffected. Cause:
+  `components/ui/data-grid-table-dnd.tsx` builds its keyboard sensor as
+  `useSensor(KeyboardSensor, {})`, with no `coordinateGetter: sortableKeyboardCoordinates`,
+  so dnd-kit's default getter shifts the pointer 25px per arrow press and never leaves the
+  active column's own rect. That line is unchanged since the repo's first commit
+  (`git log -S "useSensor(KeyboardSensor"` reports only `8b7057f85`), and the S1 group-header
+  change touched only `disabled` on group / placeholder headers, whose ids are not in the
+  sortable items list either way. Reproduced live on the Purchase Requests listing, a flat
+  grid whose DataGrid code is identical to `origin/main`: same announcement, same no-op.
+  Left alone deliberately - it is a shared-DataGrid accessibility gap affecting every
+  listing, not a reporting one, and widening this branch to carry it would hide it.
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
