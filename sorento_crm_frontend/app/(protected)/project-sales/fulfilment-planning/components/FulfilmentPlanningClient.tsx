@@ -132,6 +132,16 @@ export function FulfilmentPlanningClient() {
   const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
     urlOrders.length > 0 && urlOrders.length <= MAX_BOARD_SELECTION ? urlOrders : null,
   );
+  /**
+   * The planning-change batch the board was opened ON (AC-P3-1), from the same URL as the
+   * selection: `?orders=SO381895&batch=<id>`. The Planning changes list and the sales-order
+   * list's Changed badge both address the board this way, so a board on a change is one link
+   * and can be sent to somebody.
+   */
+  const batchId = React.useMemo(
+    () => searchParams.get('batch')?.trim() || null,
+    [searchParams],
+  );
   /** A link that asked for too many, so the refusal can be stated on the worklist. */
   const [refusedLink] = React.useState(() =>
     urlOrders.length > MAX_BOARD_SELECTION ? urlOrders.length : 0,
@@ -611,6 +621,7 @@ export function FulfilmentPlanningClient() {
     const next = new URLSearchParams(searchParams.toString());
     const fromSalesOrders = next.has('page') || next.has('limit');
     next.delete('orders');
+    next.delete('batch');
     next.delete('granularity');
     next.delete('product');
     const query = fromSalesOrders ? next.toString() : '';
@@ -622,7 +633,7 @@ export function FulfilmentPlanningClient() {
   // the current subject. Phase 2 puts the selection in the URL so a board can be linked.
   if (boardOrders) {
     return (
-      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={closeBoard} />
+      <FulfilmentBoardPanel soNumbers={boardOrders} batchId={batchId} onBack={closeBoard} />
     );
   }
 

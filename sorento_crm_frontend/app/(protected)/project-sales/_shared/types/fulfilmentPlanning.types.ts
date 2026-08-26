@@ -514,6 +514,18 @@ export interface ConfirmLine {
 
 export interface ConfirmSupplyBody {
   lines: ConfirmLine[];
+  /**
+   * The planning-change batch this Confirm is answering (AC-P3-4).
+   *
+   * Set when the board was opened at `?orders=...&batch=<id>`: the confirmation then APPLIES
+   * that batch - the lines above become the batch rows' own compositions, the batch reads
+   * applied with actor and time, and one revision is written. Absent on an ordinary board
+   * Confirm, which is the common case and behaves exactly as it always has.
+   *
+   * A second Confirm on a batch already applied is refused with a message rather than writing
+   * a second revision.
+   */
+  batch_id?: string | null;
 }
 
 export interface ConfirmException {

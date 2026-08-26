@@ -27,13 +27,19 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useReconciliationMutations,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
+import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
+import {
+  annotationsByCell,
+  preMarkedKeys,
+} from '../../_shared/lib/boardChangeAnnotations';
 import {
   boardAxis,
   bucketLabelText,
@@ -140,9 +146,18 @@ function granularityFrom(value: string | null): BoardGranularity {
  */
 export function FulfilmentBoardPanel({
   soNumbers,
+  batchId,
   onBack,
 }: {
   soNumbers: string[];
+  /**
+   * The planning-change batch the board was opened ON (`?batch=<id>`, AC-P3-1).
+   *
+   * Everything it changes is additive: the changed lines' cells carry a Was / Now table and
+   * arrive pre-marked, and Confirm applies the batch instead of writing an ordinary revision.
+   * A board opened without one is untouched.
+   */
+  batchId?: string | null;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -212,6 +227,15 @@ export function FulfilmentBoardPanel({
     false,
     dayWindow ? { dayWindow } : {},
   );
+
+  /**
+   * The batch the board was opened on (AC-P3-1). Undefined `batchId` fetches nothing.
+   *
+   * Read beside the board rather than folded into it: the board is a live read of what is
+   * outstanding and the batch is a record of what an upload did, and one payload carrying
+   * both would have the board refuse to render whenever the batch could not be loaded.
+   */
+  const changeBatch = usePlanningChangeBatch(batchId ?? undefined);
 
   /**
    * Move the day window by a whole window at a time.
@@ -328,7 +352,15 @@ export function FulfilmentBoardPanel({
           return;
         }
 
-        await confirm.mutateAsync({ psoId: psoId as string, body: { lines } });
+        // With a batch on screen, the SAME press applies it (AC-P3-4): the lines below are
+        // the batch rows' own compositions, the batch reads applied with actor and time, and
+        // exactly one revision is written. A second press is refused by the server rather
+        // than writing a second revision, so nothing here has to guard against it.
+        await confirm.mutateAsync({
+          psoId: psoId as string,
+          body: batchId ? { lines, batch_id: batchId } : { lines },
+        });
+        if (batchId) await changeBatch.refetch();
         const committed = new Set(lines.map((line) => line.project_line_id));
         setDraft((current) => {
           const next = { ...current };
@@ -363,7 +395,7 @@ export function FulfilmentBoardPanel({
         setConfirming(null);
       }
     },
-    [board, confirm, adopt, draft],
+    [board, confirm, adopt, draft, batchId, changeBatch],
   );
 
   /**
@@ -468,6 +500,30 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * Every changed line of the batch arrives PRE-MARKED (AC-P3-3).
+   *
+   * Seeded into the board's own DRAFT, not into a second state: the cell then colours, counts
+   * and confirms exactly as a line the planner ticked themselves, and un-ticking one is the
+   * same gesture it always was. Once, on the first board that carries both the batch and its
+   * lines - re-seeding on every render would put back a tick the planner had just cleared.
+   *
+   * A verdict the planner has already given is never overwritten.
+   */
+  const preMarked = React.useRef(false);
+  React.useEffect(() => {
+    if (!batchId || preMarked.current) return;
+    if (!changeBatch.data || allContributions.length === 0) return;
+    const keys = preMarkedKeys(changeBatch.data, allContributions);
+    if (keys.length === 0) return;
+    preMarked.current = true;
+    setDraft((current) => {
+      const next = { ...current };
+      for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
+      return next;
+    });
+  }, [batchId, changeBatch.data, allContributions]);
+
+  /**
    * The same lines, in the GRID's product order.
    *
    * The two views are two readings of one payload and the reader toggles between them to find
@@ -530,6 +586,19 @@ export function FulfilmentBoardPanel({
     }
     return { approved, undecided, orderCount: orderIds.size };
   }, [allContributions, draft]);
+
+  /**
+   * Why Confirm is off, when it is (AC-P3-4): the batch this board was opened on has already
+   * been applied, so a second press would be asking for a second revision of the same change.
+   * Stated rather than left as a dead button - and the server refuses it too, so the two
+   * cannot disagree.
+   */
+  const batchApplied = changeBatch.data?.applied_at ?? null;
+  const confirmBlocked = batchApplied
+    ? `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
+        changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
+      }.`
+    : null;
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -659,6 +728,15 @@ export function FulfilmentBoardPanel({
     }
     return boardAxis(rowAxis, cells);
   }, [board.data, rowAxis]);
+
+  /**
+   * What the re-uploaded book did to each cell's lines (AC-P3-2), keyed as the matrix keys
+   * its cells. Empty on every board opened without a batch.
+   */
+  const changeAnnotations = React.useMemo(
+    () => annotationsByCell(changeBatch.data ?? null, axis.cells),
+    [changeBatch.data, axis],
+  );
 
   /**
    * What the decision strip is summed over: THE LINES THE CURRENT VIEW CAN SHOW.
@@ -1080,6 +1158,7 @@ export function FulfilmentBoardPanel({
                   }
                   cells={visibleCells}
                   draft={draft}
+                  annotations={changeAnnotations}
                   onOpenCell={(cell) => setOpenCell(cell)}
                 />
               )}
@@ -1112,6 +1191,7 @@ export function FulfilmentBoardPanel({
                   busy={confirming === standing.sales_order_id}
                   refused={refusals[standing.sales_order_id] ?? []}
                   unpostable={unpostable[standing.sales_order_id] ?? []}
+                  blockedReason={confirmBlocked}
                   onConfirm={() => void confirmOrder(standing)}
                 />
               ))}
@@ -1166,6 +1246,7 @@ function OrderCommitRow({
   busy,
   refused,
   unpostable,
+  blockedReason,
   onConfirm,
 }: {
   standing: BoardOrderStanding;
@@ -1175,6 +1256,8 @@ function OrderCommitRow({
   refused: SupplyFailingLine[];
   /** Decided lines this confirmation must omit, each with the reason it cannot carry it. */
   unpostable: UnpostableLine[];
+  /** Why this Confirm is off, when it is - stated, never a dead button. */
+  blockedReason?: string | null;
   onConfirm: () => void;
 }) {
   const committing = preview?.committing ?? 0;
@@ -1216,7 +1299,7 @@ function OrderCommitRow({
           <Button
             type="button"
             size="sm"
-            disabled={committing === 0 || busy}
+            disabled={committing === 0 || busy || Boolean(blockedReason)}
             onClick={onConfirm}
           >
             {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
@@ -1227,6 +1310,12 @@ function OrderCommitRow({
           </Button>
         </div>
       </div>
+
+      {blockedReason ? (
+        <p data-testid="commit-blocked" className="text-sm text-muted-foreground break-words">
+          {blockedReason}
+        </p>
+      ) : null}
 
       {/* A line the planner decided that this confirmation cannot carry. Named, with why,
           because dropping it silently would tell them they committed something they did not -

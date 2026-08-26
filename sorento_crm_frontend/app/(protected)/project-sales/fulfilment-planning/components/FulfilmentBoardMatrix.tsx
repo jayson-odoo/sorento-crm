@@ -4,6 +4,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
+import { BoardChangeTable } from './BoardChangeTable';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
@@ -13,6 +14,7 @@ import {
   dominant,
   dominantText,
 } from '../../_shared/lib/supplyVocabulary';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -101,6 +103,7 @@ export function FulfilmentBoardMatrix({
   rowHeader,
   cells,
   draft,
+  annotations,
   onOpenCell,
 }: {
   dateBuckets: BoardDateBucket[];
@@ -114,6 +117,11 @@ export function FulfilmentBoardMatrix({
    * colours itself by what was ticked, and two readings of one draft would drift.
    */
   draft: BoardDraft;
+  /**
+   * What a re-uploaded book did to the lines in each cell, keyed the same way the cells are
+   * (AC-P3-2). Empty on every board opened without a `batch`, which is nearly all of them.
+   */
+  annotations?: Map<string, BoardChangeAnnotation[]>;
   onOpenCell: (cell: BoardCell) => void;
 }) {
   // Keyed by the cell's ROW KEY, which is the item code on the product axis and an id on the
@@ -202,11 +210,24 @@ export function FulfilmentBoardMatrix({
                     className={cn(DATE_COL, 'border-b border-e border-border p-0 align-top')}
                   >
                     {cell ? (
-                      <BoardCellButton
-                        cell={cell}
-                        draft={draft}
-                        onOpen={() => onOpenCell(cell)}
-                      />
+                      <>
+                        <BoardCellButton
+                          cell={cell}
+                          draft={draft}
+                          onOpen={() => onOpenCell(cell)}
+                        />
+                        {/* What the re-uploaded book did to the lines in this cell
+                            (AC-P3-2). A SIBLING of the button, never inside it: a table is
+                            not phrasing content, and nesting one in a button is invalid
+                            HTML the browser reflows out of it. */}
+                        {(annotations?.get(`${product.key}|${bucket.key}`) ?? []).map(
+                          (annotation) => (
+                            <div key={annotation.rowId} className="px-2 pb-1.5">
+                              <BoardChangeTable annotation={annotation} compact />
+                            </div>
+                          ),
+                        )}
+                      </>
                     ) : null}
                   </td>
                 );
