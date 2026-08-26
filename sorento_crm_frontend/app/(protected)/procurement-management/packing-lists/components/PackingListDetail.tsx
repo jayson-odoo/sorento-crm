@@ -725,7 +725,9 @@ export default function PackingListDetail({
               {sourcePiNumbers.length > 0 ? (
                 <p className="text-sm">
                   Created from {sourcePiNumbers.join(', ')}
-                  {packingList.created_by ? ` by ${packingList.created_by}` : ''}
+                  {/* The NAME the server resolved. `packingList.created_by` is a user id,
+                      and printing it put a UUID on the page. */}
+                  {sourceInvoices?.created_by ? ` by ${sourceInvoices.created_by}` : ''}
                   {packingList.created_at
                     ? ` on ${formatDate(new Date(packingList.created_at))}`
                     : ''}

@@ -317,6 +317,10 @@ export interface PackingListSourceInvoice {
 
 export interface PackingListSourceInvoices {
   invoices: PackingListSourceInvoice[];
+  /** Who created this container, BY NAME - `inbound_shipments.created_by` is a user id and
+   *  this screen prints it. "System" when nobody is recorded, or the actor's user row has
+   *  gone; never the id. */
+  created_by: string;
   /** Per shipment line id, which invoice(s) that line's goods were charged on. */
   by_shipment_line: Record<
     string,

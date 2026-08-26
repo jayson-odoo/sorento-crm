@@ -730,3 +730,64 @@ def test_a_skipped_line_says_why_rather_than_reading_as_placed():
         assert line["unmatched_reason"]
         assert line["placed_qty"] == 0
         assert line["packing_lists"] == []
+
+
+# --------------------------------------------------------------------------------- #
+# Browser finding 2 - the timeline names a person, never a user id
+# --------------------------------------------------------------------------------- #
+
+
+def _user(db, name):
+    from app.models.user import User
+
+    row = User(
+        id=str(uuid.uuid4()),
+        email=f"zzpl-{uuid.uuid4().hex[:8]}@example.com",
+        name=name,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_the_source_read_names_who_created_the_container():
+    """The Origin card and the timeline print this. "Created from PI-x by
+    9993276c-a55e-4a54-9686-7138f5fa1306" is a UUID on screen, which this repo forbids and
+    which tells its reader nothing."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        user = _user(db, "Ms Tee")
+        invoice = _kailu_invoice(db, w)
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)], created_by=str(user.id))
+
+        source = svc.source_proforma_invoices(db, out["shipment_id"])
+
+        assert source["created_by"] == "Ms Tee"
+        assert str(user.id) not in str(source)
+
+
+def test_a_container_nobody_is_recorded_against_reads_as_system():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        source = svc.source_proforma_invoices(db, out["shipment_id"])
+
+        assert source["created_by"] == "System"
+
+
+def test_an_actor_whose_user_row_is_gone_still_never_prints_the_id():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        stranger = str(uuid.uuid4())
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)], created_by=stranger)
+
+        source = svc.source_proforma_invoices(db, out["shipment_id"])
+
+        assert source["created_by"] == "System"
+        assert stranger not in str(source)

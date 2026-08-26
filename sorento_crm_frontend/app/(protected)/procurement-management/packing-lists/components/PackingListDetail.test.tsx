@@ -268,6 +268,7 @@ function sourceInvoices() {
     by_shipment_line: {
       'l-1': [{ proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 490 }],
     },
+    created_by: 'Ms Tee',
   };
 }
 
@@ -500,5 +501,31 @@ describe('F9 - clearing a field actually clears it', () => {
 
     await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
     expect(updatePackingList.mock.calls[0][0].data.bill_of_lading_number).toBe('BL-9');
+  });
+});
+
+describe('The origin line names a person, never a user id', () => {
+  it('prints the name the server resolved (AC-F9)', () => {
+    searchParams.value = new URLSearchParams('tab=timeline');
+    state.sourceInvoices = sourceInvoices();
+    // What the packing list itself carries is the raw id - it must not reach the screen.
+    state.packingList = mixedContainer({
+      created_by: '9993276c-a55e-4a54-9686-7138f5fa1306',
+    });
+    renderDetail();
+
+    expect(screen.getByText(/Created from PI-2026-001 by Ms Tee/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/9993276c-a55e-4a54-9686-7138f5fa1306/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says System when nobody is recorded against the container', () => {
+    searchParams.value = new URLSearchParams('tab=timeline');
+    state.sourceInvoices = { ...sourceInvoices(), created_by: 'System' };
+    state.packingList = mixedContainer({ created_by: null });
+    renderDetail();
+
+    expect(screen.getByText(/by System/)).toBeInTheDocument();
   });
 });

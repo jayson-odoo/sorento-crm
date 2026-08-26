@@ -1041,6 +1041,34 @@ def draft_shipments(db: Session, *, supplier_id: Optional[str] = None) -> list[d
     return out
 
 
+def _shipment_actor_name(db: Session, shipment_id: str) -> str:
+    """Who created this container, by NAME.
+
+    `inbound_shipments.created_by` holds a user id, and the origin line on the packing list
+    printed it: "Created from PI-x by 9993276c-a55e-4a54-9686-7138f5fa1306". A UUID on
+    screen is forbidden here and tells its reader nothing anyway.
+
+    "System" covers both silences - a container nobody is recorded against (an import, an
+    n8n write) and an actor whose user row has since gone. Neither can be resolved to a
+    person, and the id is not an acceptable stand-in for one.
+    """
+    actor = (
+        db.query(InboundShipment.created_by)
+        .filter(InboundShipment.id == str(shipment_id))
+        .scalar()
+    )
+    if not actor:
+        return "System"
+    row = db.execute(
+        text(
+            "SELECT COALESCE(NULLIF(TRIM(name), ''), email) AS label "
+            "FROM users WHERE id = :id"
+        ),
+        {"id": str(actor)},
+    ).mappings().first()
+    return (row["label"] if row and row["label"] else None) or "System"
+
+
 def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
     """Which proforma invoices this container's lines were charged on (AC-F9).
 
@@ -1063,8 +1091,9 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
         )
         .all()
     )
+    created_by = _shipment_actor_name(db, shipment_id)
     if not rows:
-        return {"invoices": [], "by_shipment_line": {}}
+        return {"invoices": [], "by_shipment_line": {}, "created_by": created_by}
 
     prices: dict[str, Optional[float]] = {}
     line_ids = {str(link.proforma_invoice_line_id) for link, _ in rows}
@@ -1129,6 +1158,7 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
     return {
         "invoices": sorted(invoices.values(), key=lambda i: i["pi_number"]),
         "by_shipment_line": by_line,
+        "created_by": created_by,
     }
 
 
