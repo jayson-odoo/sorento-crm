@@ -367,34 +367,25 @@ export interface ReorderRecommendation {
   // `outstanding_po` and `reorder_level` above stay single shared facts of the
   // product-location and gain no channel dimension, because counting the same stock
   // once per channel would double the supply the plan believes it has.
-  /** Confirmed unplaced Project Buy at this location. Firm: never netted again. */
+  /**
+   * Un-linked Project Buy at this location: what CS raised on the Order Inquiry, less
+   * whatever of it already sits on a purchase or shipping order. Firm - never netted
+   * again - and since P3 it is the WHOLE of project demand: a project sales-order line
+   * nobody has decided on the board is awaiting CS, not demand.
+   */
   project_need?: number | null;
-  /** Retail-class need after normal netting. Answers the sheet leg below as well. */
+  /** Retail-class need after normal netting. */
   retail_need?: number | null;
   /**
-   * The unconfirmed sheet-origin Project leg (`demand_origin = 'scm_order_inquiry'` with
-   * no confirmed CS decision). Project-class in the reading, but NOT firm: the engine put
-   * it through ordinary netting, so it is already inside `retail_need` and must never be
-   * added to it. Shown as evidence for where a project-class quantity went (plan 4 / 5.3).
-   */
-  project_sheet_need?: number | null;
-  /**
-   * Demand whose SO carries no persisted class. Visible, and EXCLUDED from the
-   * actionable need in both grains until it is classified (AC-F05 / AC-E06).
-   */
-  unclassified_need?: number | null;
-  /**
    * front-planning follow-up (19-20 Aug): the RAW `committed_v` split - this location's
-   * OPEN demand by channel, before Project narrows to the confirmed-for-buy subset above.
-   * The grouped Product view's channel COLUMNS read these (summed across a product's
-   * locations), not `project_need`/`retail_need`/`unclassified_need`, because a buyer
-   * reading "Project" as a column wants everything on a project-class order, not only the
-   * firm leg the engine already bypassed netting for. The three sum to
-   * `outstanding_sales`, the same invariant `committed_v` guarantees per location.
+   * OPEN demand by channel. The grouped Product view's channel COLUMNS read these (summed
+   * across a product's locations) rather than `project_need`/`retail_need`. The two sum to
+   * `outstanding_sales`, the same invariant `committed_v` guarantees per location. There
+   * is no third channel: a sales order with no class reads as retail, and the SO import
+   * refuses a file that would create one (P4).
    */
   project_committed?: number | null;
   retail_committed?: number | null;
-  unclassified_committed?: number | null;
   /**
    * True when this run is decided at the Product grain, or is legacy, so the
    * per-location row is a read and drill row rather than a decision surface

@@ -243,12 +243,7 @@ function numCell(value: number | null | undefined) {
  * otherwise pass this gate and still show an all-dash row.
  */
 function memberHasActivity(m: PlanLine): boolean {
-  const figures = [
-    m.rec.project_committed,
-    m.rec.retail_committed,
-    m.rec.unclassified_committed,
-    m.order_qty,
-  ];
+  const figures = [m.rec.project_committed, m.rec.retail_committed, m.order_qty];
   return figures.some((v) => typeof v === 'number' && v !== 0);
 }
 
@@ -284,17 +279,14 @@ function liveCell(value: number | null | undefined, negative?: boolean) {
  * per line (5.3/5.4: Location grain stays a read and drill view under Product grain;
  * nothing here is a decision).
  *
- * The Project / Retail / Unclass. columns read the FROZEN COMMITTED split
- * (`project_committed` etc.), the same figures the group row's channel columns read - NOT
- * the engine's `project_need` / `retail_need`. Those two are different facts with
- * misleading names here: `project_need` is only the CONFIRMED-for-buy leg (0 with no CS
- * decision), and `retail_need` is the netted sized buy, which swallows the project SHEET
- * leg - so a location whose demand was 100% project-class read "Retail 1,872" (captain,
- * SRT-H3005 BRW-BB, 20 Aug). There is no SO column: the split sums to the SO figure by
- * construction, so stating both said the same thing twice (captain, same day). Unclass. is
- * rendered only when some visible member actually carries a nonzero figure for it - the
- * captain's own words are "nothing should be unclassified", so a column that would read all
- * zeros is a column that should not exist here at all.
+ * The Project / Retail columns read the FROZEN COMMITTED split (`project_committed` etc.),
+ * the same figures the group row's channel columns read - NOT the engine's `project_need` /
+ * `retail_need`. Those are different facts with misleading names here: `retail_need` is the
+ * netted sized buy, so a location whose demand was 100% project-class read "Retail 1,872"
+ * (captain, SRT-H3005 BRW-BB, 20 Aug). There is no SO column: the split sums to the SO
+ * figure by construction, so stating both said the same thing twice (captain, same day).
+ * There is no Unclass. column either - "nothing should be unclassified" (P4): a sales order
+ * with no class reads as retail and the SO import refuses a file that would create one.
  *
  * On hand / Reserved / Free / SPO / Available are a SEPARATE chapter: LIVE, fetched from
  * the location-stock endpoint the moment the panel mounts (which is to say, on expand -
@@ -323,7 +315,6 @@ function GroupMembersPanel({
 }) {
   const active = group.members.filter(memberHasActivity);
   const visible = active.length > 0 ? active : group.members;
-  const showUnclassified = visible.some((m) => (m.rec.unclassified_committed ?? 0) !== 0);
   const productId = group.members[0]?.product_id ?? null;
   const { data: liveStock, isLoading: liveLoading } = useLocationStock(productId, true);
 
@@ -356,9 +347,6 @@ function GroupMembersPanel({
               <th className="max-w-28 px-2 py-1 text-left font-medium">Location</th>
               <th className="px-2 py-1 text-right font-medium">Project</th>
               <th className="px-2 py-1 text-right font-medium">Retail</th>
-              {showUnclassified ? (
-                <th className="px-2 py-1 text-right font-medium">Unclass.</th>
-              ) : null}
               <th className="px-2 py-1 text-right font-medium">On hand</th>
               <th className="px-2 py-1 text-right font-medium">Reserved</th>
               <th className="px-2 py-1 text-right font-medium">Free</th>
@@ -412,21 +400,6 @@ function GroupMembersPanel({
                       </StopClick>
                     </span>
                   </td>
-                  {showUnclassified ? (
-                    <td className="px-2 py-1 text-right tabular-nums">
-                      <span className="inline-flex items-center justify-end gap-0.5">
-                        {numCell(m.rec.unclassified_committed)}
-                        <StopClick>
-                          <PlanDemandPopover
-                            runId={runId}
-                            recId={m.id}
-                            channel="unclassified"
-                            label={`Unclassified demand at ${m.warehouse}`}
-                          />
-                        </StopClick>
-                      </span>
-                    </td>
-                  ) : null}
                   <td className="px-2 py-1 text-right">
                     {liveLoading ? liveCellSkeleton() : liveCell(live?.on_hand)}
                   </td>
@@ -578,7 +551,7 @@ export function PlanLinesGrid({
   /**
    * Product-grain runs only (5.3, follow-up 19-20 Aug): group the fetched per-warehouse
    * rows into one row per PRODUCT - "1 line of retail, 1 line of project" folded into ONE
-   * line, with Project/Retail/Unclassified as dynamic COLUMNS on it instead of a row each -
+   * line, with Project/Retail as dynamic COLUMNS on it instead of a row each -
    * rather than one row per (product, warehouse). A group row sums the shared display
    * fields across its warehouses; every location-only fact (price, supplier, MOQ,
    * AutoCount level) stays on the per-warehouse rows reachable by expanding it. Omit or
@@ -888,7 +861,7 @@ export function PlanLinesGrid({
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       } satisfies ColumnDef<PlanLine>] : []),
-      // The Order-type chip and the SO/Project/Retail/Unclassified columns are an
+      // The Order-type chip and the SO/Project/Retail columns are an
       // UNGROUPED-only chapter (5.3 follow-up, 19-20 Aug): grouped mode replaces all five
       // with the dynamic channel columns below - "instead of 1 column SO, 1 column
       // project, 1 column retail, it should be 2 columns" - so a channel is never both a
@@ -961,10 +934,10 @@ export function PlanLinesGrid({
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>,
-      // The SO column's channel split (AC-F05 / AC-F07). Three DEMAND columns; the
-      // supply columns below stay single shared facts of this product-location and
-      // are deliberately NOT repeated per channel. Unclassified is visible and is
-      // excluded from the actionable need until somebody classifies it.
+      // The SO column's channel split (AC-F05 / AC-F07). TWO demand columns; the supply
+      // columns below stay single shared facts of this product-location and are
+      // deliberately NOT repeated per channel. There is no third: a sales order with no
+      // class reads as retail and the SO import refuses a file that would create one (P4).
       {
         id: 'project_need',
         accessorFn: (row) => row.rec.project_need ?? -1,
@@ -975,7 +948,7 @@ export function PlanLinesGrid({
           <span className="inline-flex items-center gap-0.5">
             <ChannelNeed
               value={row.original.rec.project_need}
-              title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
+              title="What CS asked for, less what is already on a PO or SPO. Firm: Retail netting never reduces it"
             />
             {/* Same drill the per-location group panel already has (21 Aug follow-up:
                 "where is the tooltip for me to open at project and retail") - the row
@@ -1009,32 +982,6 @@ export function PlanLinesGrid({
         size: 90,
         enableSorting: true,
         meta: { headerTitle: 'Retail need', skeleton: <Skeleton className="h-4 w-10" /> },
-      } satisfies ColumnDef<PlanLine>,
-      {
-        id: 'unclassified_need',
-        accessorFn: (row) => row.rec.unclassified_need ?? -1,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Unclass." visibility column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="inline-flex items-center gap-0.5">
-            <ChannelNeed
-              value={row.original.rec.unclassified_need}
-              title="Demand whose sales order carries no demand class. Not in the actionable need"
-              tone="exception"
-            />
-            <StopClick>
-              <PlanDemandPopover
-                runId={runId ?? null}
-                recId={row.original.id}
-                channel="unclassified"
-              />
-            </StopClick>
-          </span>
-        ),
-        size: 90,
-        enableSorting: true,
-        meta: { headerTitle: 'Unclassified need', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>] : []),
       // The dynamic channel columns (5.3 follow-up, 19-20 Aug): one per channel present in
       // the run (`dynamicChannels`), each showing that channel's WHOLE open demand
@@ -1526,7 +1473,7 @@ export function PlanLinesGrid({
         ]
       : [
           'rank', 'side', 'sku', 'warehouse',
-          'suggested', 'needed', 'project_need', 'retail_need', 'unclassified_need',
+          'suggested', 'needed', 'project_need', 'retail_need',
           'on_hand', 'incoming_spo', 'outstanding_po',
           'decision',
           'price', 'supplier', 'moq', 'cost',
