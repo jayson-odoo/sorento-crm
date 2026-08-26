@@ -880,15 +880,9 @@ def test_amend_with_a_borrow_that_carries_no_reason_is_refused(api):
     line via `set_row_decision(..., "amend", composition)` before Apply re-checks it
     against live facts.
 
-    NOTE for the review: `_check_borrow` raises `SupplyLinesRefused` naming the SPECIFIC
-    reason ("Borrowing takes a reason. Say why this line is taking somebody else's
-    stock.") in its `failing_lines`, but `_confirm_a_planning_change`
-    (`app/api/v1/projects/fulfilment_planning.py:540-548`) re-raises only the generic
-    per-order summary and drops `failing_lines` entirely - so on the board's
-    batch-confirm path (unlike an ordinary Confirm) the planner never sees WHICH line or
-    WHY, only "N line(s) cannot be confirmed." This test pins the status and the generic
-    text actually returned; it does not assert the specific reason, because the route
-    does not carry it through."""
+    And it says WHICH line and WHY. The batch-confirm path used to re-raise the per-order
+    summary alone and drop `failing_lines`, so the same refusal that marks the row on an
+    ordinary Confirm read "1 line cannot be confirmed" here with nothing to act on."""
     client, world = api
     db = world.db
     core_so = _core_so(db, world.company_id)
@@ -921,6 +915,10 @@ def test_amend_with_a_borrow_that_carries_no_reason_is_refused(api):
     )
     assert response.status_code == 422, response.text
     assert "cannot be confirmed" in response.text.lower(), response.text
+    failing = response.json().get("failing_lines")
+    assert failing, response.text
+    assert failing[0]["line_no"] == 1, failing
+    assert "reason" in failing[0]["reason"].lower(), failing
 
 
 # ---------------------------------------------------------------------------
@@ -1002,29 +1000,14 @@ def test_a_batch_confirm_on_an_order_with_no_batch_rows_takes_the_extra_lines_pa
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "`_shift_links_off_retired_lines` (app/services/planning_change_service.py:2008-2013) "
-        "only ever offers a link to a candidate whose full headroom covers the WHOLE link "
-        "(`_unlinked_need(row) >= _dec(link.qty)`); a survivor with PARTIAL headroom is never "
-        "taken from at all and the entire link goes back to the cascade unlinked. AC-P3-6's "
-        "'whatever that row cannot take goes back through the cascade' describes a split, "
-        "which is not implemented."
-    ),
-    strict=False,
-)
 def test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_survivor_and_cascade(api):
     """What AC-P3-6 asks for when the survivor cannot take the whole link: "whatever that
-    row cannot take goes back through the cascade" (PLAN part 3) describes a SPLIT - the
-    survivor takes as much as its own headroom allows and the remainder goes back to the
-    cascade - not an all-or-nothing choice.
+    row cannot take goes back through the cascade" (PLAN part 3) is a SPLIT - the survivor
+    takes as much as its own headroom allows and the remainder goes back to the cascade -
+    not an all-or-nothing choice.
 
-    `_shift_links_off_retired_lines` (`planning_change_service.py`) only ever tries a
-    candidate whose FULL headroom covers the WHOLE link
-    (`service._unlinked_need(row) >= _dec(link.qty)`); a survivor with partial headroom is
-    never offered any of it, and the entire link goes back to the cascade instead.
-    Confirmed here against a survivor short by 4 of a 10-unit link: XFAIL, not a fix -
-    see PR note for file:line.
+    Pinned against a survivor short by 4 of a 10-unit link: it takes its 6 on a link of
+    its own naming the same document, and the other 4 is unlinked and free again.
     """
     client, world = api
     db = world.db
@@ -1071,20 +1054,28 @@ def test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_su
     db.commit()
 
     service = ProjectOrderInquiryService(db)
-    survivor = _order_row(world, line_1)
-    survivor_docs = {
-        link.document: Decimal(str(link.qty)) for link in service._links_of(survivor.id)
-    }
+    # The surviving line's own live ORDER rows, whatever shape the confirmation left them
+    # in: line 1 carries no batch row here (only the closed line does), so it goes through
+    # as an ordinary confirmation and its partly-linked row is shrunk to what was on a
+    # document with the remainder re-raised beside it. What the split is about is where the
+    # RETIRING document ended up, so the documents are summed across the line.
+    survivors = [
+        r for r in _rows_of(world, line_1)
+        if r.verb == IV_ORDER and r.state != INQUIRY_CANCELLED
+    ]
+    assert survivors, "the surviving line still owes something"
+    survivor_docs: dict = {}
+    for row in survivors:
+        for link in service._links_of(row.id):
+            survivor_docs[link.document] = survivor_docs.get(
+                link.document, Decimal("0")
+            ) + Decimal(str(link.qty))
     retiring_rows = [r for r in _rows_of(world, line_2) if r.state == INQUIRY_CANCELLED]
     assert retiring_rows, "the closed line's row is cancelled, never deleted"
     retiring_links = service._links_of(retiring_rows[-1].id)
 
     took = survivor_docs.get("RETIRING")
-    if took is None:
-        pytest.fail(
-            "the survivor took none of the retiring link at all - the current "
-            "all-or-nothing behaviour this test is marked xfail against"
-        )
+    assert took is not None, "the survivor takes what it can hold, never nothing at all"
     assert took == Decimal("6"), "the survivor takes exactly its own headroom, 6 of the 10"
     assert not retiring_links, "the retired row keeps no link of its own"
     # The other 4 goes back through the cascade (unlinked, free for the next row) rather
@@ -1134,20 +1125,6 @@ def test_a_second_confirm_refusal_carries_a_stable_code_and_the_batch_still_read
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "app/services/scm/sales_order_service.py:589-604 (`_line_links`) builds the SO "
-        "detail's `linked_to` entries by hand and never copies `late` off the "
-        "`links_for_rows` dict it reads from - only kind/document/line_label/qty/"
-        "location/expected_date are carried over. `SalesOrderLineLink.late` therefore "
-        "keeps its schema default (False) on every row, whatever the real lateness is. "
-        "Confirmed live: expected_date 2026-09-30 against a required_date of 2026-08-19 "
-        "reads late=false on this endpoint while the SAME data reads late=true through "
-        "/order-inquiries (`links_for_rows`' own late computation is correct; only this "
-        "one caller drops it on the floor)."
-    ),
-    strict=False,
-)
 def test_the_late_flag_reaches_the_sales_order_detail_linked_to_column_on_the_wire(api):
     """`test_a_link_arriving_after_the_new_date_stays_linked_and_reads_late` already pins
     `late` through `/order-inquiries`. AC-P3-7 says "wherever the link is shown", and the
@@ -1169,3 +1146,408 @@ def test_the_late_flag_reaches_the_sales_order_detail_linked_to_column_on_the_wi
     line_out = lines[str(core_1.id)]
     assert line_out["linked_to"], detail.text
     assert all(link["late"] for link in line_out["linked_to"]), detail.text
+
+
+# ---------------------------------------------------------------------------
+# Review B1: one press confirms ONE order of the batch, never the whole batch
+# ---------------------------------------------------------------------------
+
+
+def _two_order_batch(api):
+    """One upload, two changed orders, one line each. The shape a book re-upload has."""
+    client, world = api
+    db = world.db
+    built = []
+    changes = []
+    line_ids = []
+    for _ in range(2):
+        core_so = _core_so(db, world.company_id)
+        core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                          required_date=WAS_1)
+        order = _project_so(db, world.project, so_id=core_so.id,
+                            autocount_doc_no=core_so.so_number)
+        line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+        db.commit()
+        assert _confirm(
+            client, order.id, [_line_payload(line.id, buy_qty="10")]
+        ).status_code == 200
+        core.qty_ordered = Decimal("25")
+        line.qty = Decimal("25")
+        db.commit()
+        built.append({"core_so": core_so, "core": core, "order": order, "line": line})
+        changes.append(
+            _change(QTY_CHANGED, core, so_number=core_so.so_number, old_date=WAS_1,
+                    new_date=WAS_1, old_qty="10", new_qty="25")
+        )
+        line_ids.append(str(core.id))
+
+    diff = Diff(
+        scope_documents=tuple(entry["core_so"].so_number for entry in built),
+        changes=changes,
+    )
+    batch = planning_change_service.build_batch(
+        world.db, diff,
+        applied_line_ids={id(c): line_ids[i] for i, c in enumerate(changes)},
+        order_ids={
+            entry["core_so"].so_number: str(entry["order"].id) for entry in built
+        },
+        actor=world.actor, import_job_id=None,
+        file_name="Outstanding SO 19 Aug.xlsx",
+    )
+    db.commit()
+    assert batch is not None
+    return client, world, batch, built
+
+
+def _batch_rows_for(world, batch, order):
+    from app.models.planning_change import PlanningChangeRow as PlanningChangeRowModel
+
+    return (
+        world.db.query(PlanningChangeRowModel)
+        .filter(
+            PlanningChangeRowModel.batch_id == batch.id,
+            PlanningChangeRowModel.project_sales_order_id == str(order.id),
+        )
+        .all()
+    )
+
+
+def test_confirming_one_order_of_a_batch_applies_that_order_alone(api):
+    """The board presses Confirm PER ORDER, so an apply carries one order (B1, review of
+    part 3). Applying the whole batch off one press wrote a revision for an order nobody
+    had confirmed and stamped `applied_at`, which locked every other order's rows: the
+    row-decision PUT answered 409 and the second order's own Confirm had nothing left to
+    do."""
+    client, world, batch, built = _two_order_batch(api)
+    first, second = built
+    db = world.db
+
+    from app.models.project_so import SOSupplyDecision
+
+    response = _confirm(
+        client, first["order"].id, [_line_payload(first["line"].id, buy_qty="25")],
+        batch_id=str(batch.id),
+    )
+    assert response.status_code == 200, response.text
+    db.commit()
+    db.refresh(batch)
+
+    assert batch.applied_at is None, (
+        "the batch is not done while another order of it is still waiting"
+    )
+    assert all(r.applied_state == "applied" for r in _batch_rows_for(world, batch, first["order"]))
+    assert all(
+        r.applied_state == "pending"
+        for r in _batch_rows_for(world, batch, second["order"])
+    ), "the order nobody confirmed keeps its rows exactly as they were"
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == second["order"].id)
+        .count()
+    ) == 1, "no revision is written for an order nobody confirmed"
+
+    # And the second order's own decisions are still editable, which `applied_at` would
+    # have refused (409, `planning_change_batch_applied`).
+    row = _batch_rows_for(world, batch, second["order"])[0]
+    edited = client.put(
+        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "accept"}
+    )
+    assert edited.status_code == 200, edited.text
+
+    # Then the second press, and only now is the batch itself done.
+    again = _confirm(
+        client, second["order"].id, [_line_payload(second["line"].id, buy_qty="25")],
+        batch_id=str(batch.id),
+    )
+    assert again.status_code == 200, again.text
+    db.commit()
+    db.refresh(batch)
+    assert batch.applied_at is not None
+    assert str(batch.applied_by) == str(world.actor)
+
+
+def test_a_second_press_on_an_order_already_applied_from_the_batch_is_refused(api):
+    """Per ORDER, before the batch as a whole reads applied: pressing Confirm twice on the
+    first order of a two-order batch says the change is already applied rather than
+    answering 422 "nothing could be confirmed"."""
+    client, world, batch, built = _two_order_batch(api)
+    first = built[0]
+
+    assert _confirm(
+        client, first["order"].id, [_line_payload(first["line"].id, buy_qty="25")],
+        batch_id=str(batch.id),
+    ).status_code == 200
+    world.db.commit()
+
+    again = _confirm(
+        client, first["order"].id, [_line_payload(first["line"].id, buy_qty="25")],
+        batch_id=str(batch.id),
+    )
+    assert again.status_code == 409, again.text
+    assert again.json().get("code") == "planning_change_batch_applied", again.text
+
+
+# ---------------------------------------------------------------------------
+# Review S5: a release row confirmed FROM THE BOARD takes the release path
+# ---------------------------------------------------------------------------
+
+
+def test_a_release_row_confirmed_from_the_board_reaches_the_pool_path(api):
+    """AC-P3-10 through the board's own Confirm. The board pre-marks every changed line
+    and posts it, and the route used to record each as an `amend` - which sent a `release`
+    row down the confirm branch, so the RELEASE rule never fired from the screen it is
+    decided on. A release is "yes, do what the book did", not an amendment of the line's
+    supply."""
+    fixture = _released_line(api, linked=True)
+    client = fixture["client"]
+    world = fixture["world"]
+    line = fixture["line"]
+    row_id = str(fixture["row"].id)
+
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(line.id, buy_qty="40")],
+        batch_id=str(fixture["batch"].id),
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
+    assert row.state != INQUIRY_CANCELLED
+    assert row.stock_location == world.pool_wh.warehouse_code, (
+        "the purchase is for the pool now, not for this line"
+    )
+    assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
+    assert "2027-03-10" in (row.note or ""), "the note names the delay"
+    raised = [
+        r for r in _rows_of(world, line)
+        if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
+    ]
+    assert raised == [], "a release raises no new order inquiry row"
+
+
+# ---------------------------------------------------------------------------
+# Review B3: the closed lines' documents reach the survivor BEFORE the cascade
+# ---------------------------------------------------------------------------
+
+
+def test_the_survivor_takes_the_closed_lines_documents_not_a_strangers(api):
+    """Order of operations inside one apply (B3, review of part 3).
+
+    The confirmation settles the survivor at 25 with its own 10 already linked, which
+    leaves 15 of headroom. The cascade used to run INSIDE `confirm`, so it filled that 15
+    from any free purchase-order line it could find, and the closed lines' own 10 + 5
+    arrived a moment later to a row with nothing left to give them - unlinked and re-dealt
+    to a stranger, the opposite of AC-P3-6. The cancel and the shift now run first."""
+    fixture = _form_three(api)
+    world = fixture["world"]
+    line_1 = fixture["lines"][0]
+
+    # A free purchase order for the same product, big enough to swallow the whole
+    # headroom, and nobody's yet.
+    supplier = _supplier(world)
+    _po_line(world, supplier, qty=15, expected_date=date(2026, 8, 5), number="ZZT-PO-FREE")
+    world.db.commit()
+
+    assert _apply_from_board(fixture).status_code == 200
+    world.db.commit()
+
+    survivor = _order_row(world, line_1)
+    documents = sorted(
+        link.document
+        for link in ProjectOrderInquiryService(world.db)._links_of(survivor.id)
+    )
+    assert documents == ["202604-S0083", "202606-S0082", "202607-S0031"], (
+        "the closed lines' own placements follow the line that still needs them"
+    )
+    assert "ZZT-PO-FREE" not in documents, (
+        "a free purchase order is not dealt in ahead of the order's own supply"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review S2: a settle answers the CANCEL_BALANCE an earlier revision raised
+# ---------------------------------------------------------------------------
+
+
+def test_a_settle_cancels_the_still_raised_cancel_balance_for_the_same_line(api):
+    """A `CANCEL_BALANCE` says "placed X, new need Y" about a quantity the settle has just
+    restated in place, so left raised it asks purchasing to answer a question about a
+    figure that no longer exists - beside the row that now carries the true one. The
+    supersede path cancels it on every reconfirm; the settle path skipped it."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20",
+                      required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(line.id, buy_qty="20")]).status_code == 200
+
+    supplier = _supplier(world)
+    row = _order_row(world, line)
+    _, po_line = _po_line(world, supplier, qty=20, expected_date=date(2026, 8, 1))
+    _link(world, row, po_line, qty=20, document="ALREADY-BOUGHT")
+    # The exception an earlier revision raised for this line, still waiting on an answer.
+    exception = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=row.order_inquiry_id,
+        so_line_id=line.id, item_code=row.item_code, qty=Decimal("4"),
+        delivery_date=row.delivery_date, stock_location=row.stock_location,
+        verb=IV_CANCEL_BALANCE, state=INQUIRY_RAISED,
+        supply_decision_id=row.supply_decision_id, note="Placed 20, new need 16",
+    )
+    db.add(exception)
+    db.commit()
+
+    core.qty_ordered = Decimal("16")
+    line.qty = Decimal("16")
+    db.commit()
+    changes = [_change(QTY_CHANGED, core, so_number=core_so.so_number, old_date=WAS_1,
+                       new_date=WAS_1, old_qty="20", new_qty="16")]
+    batch = _build(world, changes, core_so, [str(core.id)])
+    assert batch is not None
+
+    response = _confirm(client, order.id, [_line_payload(line.id, buy_qty="16")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    db.refresh(exception)
+    assert exception.state == INQUIRY_CANCELLED, (
+        "the settle answers the exception rather than leaving it beside the true figure"
+    )
+    assert "Superseded by revision" in (exception.note or "")
+
+
+# ---------------------------------------------------------------------------
+# Review S3: a lone PLACED row with NO link declines the settle (SO349754)
+# ---------------------------------------------------------------------------
+
+
+def test_a_placed_row_with_no_link_declines_settle_and_keeps_its_placed_quantity(api):
+    """The SO349754 WESERP10B shape: purchasing placed 5 through a path that wrote no link
+    row. Settling that row in place would have restated it at the new need and demoted it
+    back to raised through `_refresh_link_state` - losing the netting that says 5 of it is
+    already bought. The caller's own path nets `placed` off the need and raises only the
+    difference, which is the honest answer."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                      required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(line.id, buy_qty="5")]).status_code == 200
+
+    row = _order_row(world, line)
+    row_id = str(row.id)
+    # Placed, with no link row behind it - the live "Place on PO" shape this predates.
+    row.state = INQUIRY_PLACED
+    db.commit()
+
+    core.qty_ordered = Decimal("10")
+    line.qty = Decimal("10")
+    db.commit()
+    changes = [_change(QTY_CHANGED, core, so_number=core_so.so_number, old_date=WAS_1,
+                       new_date=WAS_1, old_qty="5", new_qty="10")]
+    batch = _build(world, changes, core_so, [str(core.id)])
+    assert batch is not None
+
+    response = _confirm(client, order.id, [_line_payload(line.id, buy_qty="10")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    placed = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
+    assert placed.state == INQUIRY_PLACED, "placed supply is not demoted back to raised"
+    assert Decimal(str(placed.qty)) == Decimal("5"), "and it still says what was bought"
+    fresh = [
+        r for r in _rows_of(world, line)
+        if str(r.id) != row_id and r.state != INQUIRY_CANCELLED and r.verb == IV_ORDER
+    ]
+    assert len(fresh) == 1
+    assert Decimal(str(fresh[0].qty)) == Decimal("5"), (
+        "5 already placed, 5 still outstanding - never the full 10 on top of it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Review S6: AC-P3-11 when part of the new quantity sits on no document at all
+# ---------------------------------------------------------------------------
+
+
+def test_committed_v_counts_the_part_of_the_new_quantity_nobody_has_bought(api):
+    """The AC-P3-11 companion. `test_committed_v_counts_twenty_five_for_the_product_and_
+    nothing_else` pins the fully-covered case, where every one of the 25 sits on a
+    document and the plan has nothing left to buy - which cannot tell a correct residual
+    from a residual of zero. Here the closed line brought no placement with it, so 10 of
+    the 25 is bought and 15 is not, and `committed_v` says 15."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_1)
+    core_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_2)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_2)
+    db.commit()
+
+    assert _confirm(client, order.id, [
+        _line_payload(line_1.id, buy_qty="10"),
+        _line_payload(line_2.id, buy_qty="10"),
+    ]).status_code == 200
+
+    # Only line 1 was ever put on a purchase order. Line 2's row is raised and bare, so
+    # the retire has nothing to shift and the survivor's extra 15 stays unbought.
+    supplier = _supplier(world)
+    row_1 = _order_row(world, line_1)
+    _, po_line_1 = _po_line(world, supplier, qty=10, expected_date=date(2026, 8, 10))
+    _link(world, row_1, po_line_1, qty=10, document="202604-S0083")
+    db.commit()
+
+    core_1.qty_ordered = Decimal("25")
+    core_1.required_date = NOW
+    line_1.qty = Decimal("25")
+    line_1.delivery_date = NOW
+    core_2.line_status = "closed"
+    line_2.qty = Decimal("0")
+    db.commit()
+
+    changes = [
+        _change(DATE_AND_QTY_CHANGED, core_1, so_number=core_so.so_number,
+                old_date=WAS_1, new_date=NOW, old_qty="10", new_qty="25"),
+        _change(CLOSED, core_2, so_number=core_so.so_number, old_date=WAS_2,
+                new_date=None, old_qty="10", new_qty="0"),
+    ]
+    batch = _build(world, changes, core_so, [str(core_1.id), str(core_2.id)])
+    assert batch is not None
+
+    response = _confirm(client, order.id, [_line_payload(line_1.id, buy_qty="25")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    survivor = _order_row(world, line_1)
+    assert Decimal(str(survivor.qty)) == Decimal("25")
+    linked = sum(
+        Decimal(str(link.qty))
+        for link in ProjectOrderInquiryService(db)._links_of(survivor.id)
+    )
+    assert linked == Decimal("10"), "only the placement line 1 already had"
+
+    committed = db.execute(
+        text(
+            "SELECT COALESCE(SUM(project_confirmed_committed), 0) "
+            "FROM scm.committed_v WHERE product_id = :pid"
+        ),
+        {"pid": world.product.id},
+    ).scalar()
+    assert Decimal(str(committed)) == Decimal("15"), (
+        "the part of the new quantity nobody has bought is exactly what is left to buy"
+    )
