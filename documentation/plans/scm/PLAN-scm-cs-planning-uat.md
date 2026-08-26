@@ -175,15 +175,37 @@ Sorento books every sales order at `BRW-<group>` while the stock sits at any `<s
 
 | Rung / reader | v3 | v4 |
 | --- | --- | --- |
-| own group (rung 2) | own location capped at `available_to_this_line` (the rank queue), siblings at signed available each | `group_net = sum(on hand) + sum(SPO) - sum(SO)` over every `*-<group>` location (AutoCount's signed available, summed). Nothing is offered when the net is not positive; the offer is the net, drawn own location first then siblings by site. The rank queue no longer decides availability |
-| site pools (rung 3) | own-site pool first, each pool's own signed available | ALL FIVE pools as one pile: `pools_net = sum(signed available)` over BRW, DC1, MWH, RSW, WH3; nothing when not positive; drawn own site first |
+| own group (rung 2) | own location capped at `available_to_this_line` (the rank queue), siblings at signed available each | `group_net = sum(on hand) + sum(SPO) - sum(SO)` over every `*-<group>` location (AutoCount's signed available, summed). **The offer is `max(group_net + this line's own open quantity, 0)`**, drawn own location first then siblings by site. The rank queue no longer decides availability |
+| site pools (rung 3) | own-site pool first, each pool's own signed available | ALL FIVE pools as one pile: `pools_net = sum(signed available)` over BRW, DC1, MWH, RSW, WH3. The offer is `max(pools_net, 0)` - no per-pool cap, exactly as rung 2 has no per-location one - drawn own site first, then the other pools by on hand. This line's demand is booked at `BRW-<group>`, never at a pool, so nothing of it is inside `pools_net` and nothing is un-netted here |
 | cross-group borrow (rung 4) | a donor warehouse's free stock, capped | the DONOR GROUP's net as a whole (all `*-IR`), capped as before; a single warehouse's on hand means nothing if its group nets negative |
 | incoming (rung 1) | SPO at the line's location arriving by the required date | SPO counts INSIDE the group net (an SPO to BRW-IB is owed to the IB backlog first); what is incoming for this line is the positive remainder, same overdue wording |
 | PO link candidates (section I) | tiers, never filtered | a group-location PO line is free only to the extent `group_net + sum(open PO at the group) > 0`; in deficit the group's lines are spoken for and only pool-location lines link; the row otherwise stays raised and buys |
 | popover table (section B) | per-row figures with subtotals | same rows; the subtotal IS the number that matters, and Taken appears only where the net allows |
 | order back | same-agent borrow only | a borrow from another `-xx` group or from another order raises an ORDER BACK row against the donor; a pool draw raises nothing (ruled 26 Aug) |
 
-One function, `group_net(product, group)` (and `pools_net(product)`), is the only reader of availability for the engine, the popover, the PO candidate walk and the WhatsApp stock answer (S12), so none of them can disagree. The line's own SO quantity is already inside `sum(SO)`, so nothing is double counted. Golden set changes again with the captain's sign-off. Status: RULED 26 Aug, build queued ahead of part 3.
+One function, `group_net(product, group)` (and `pools_net(product)`), is the only reader of
+availability for the engine, the popover, the PO candidate walk and the WhatsApp stock
+answer (S12), so none of them can disagree.
+
+**THE OFFER, exactly (ruled while building, AC-L14).** `sum(SO)` counts every open line at
+the group INCLUDING the one asking, so the net is the group's position AFTER this line is
+served. What this line may take is therefore `max(group_net + its own open quantity, 0)`:
+its own claim is handed back to it, every other line's stays netted. Without the un-netting
+a line standing alone on exactly the stock it needs reads a net of zero and buys stock that
+is sitting in the warehouse waiting for it - and every line whose only cover is an SPO
+loses rung 1 the same way. The band it produces, on a line of 60: net -70 offers 0, net -20
+offers 40, net 0 offers 60, and the offer is never more than the line asks for because the
+ladder stops when the line is covered.
+
+**What it does NOT do is re-introduce the queue.** The offer is the same for every line of
+the group, so on a group whose book runs ahead of its stock EVERY line of it buys, the line
+at the front included: 1,015 on hand against 9,080 owed proposes a Buy for the 80 at the
+front as well as for the 9,000 behind it, where v3 reserved the 80. While the group is
+short, its stock is promised to nobody in particular and whoever ships first uses it. That
+is the price of `available_to_this_line` retiring, and it is the behaviour AC-L7 asks for.
+
+Golden set changes again with the captain's sign-off. Status: RULED 26 Aug, build queued
+ahead of part 3.
 
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 

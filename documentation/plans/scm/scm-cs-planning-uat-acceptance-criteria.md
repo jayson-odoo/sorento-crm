@@ -9,7 +9,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-A4 The stock documents popover has no "On hand - SO + SPO = Available" header line.
 
 ## B. Location table
-- AC-B1 For a BRW-BB line the table lists BRW-BB, then MWH-BB / DC1-BB / WH3-BB / RSW-BB, then BRW / MWH / DC1 / WH3 / RSW, each with a Where tag and a subtotal per tag with more than one row (a one-row section IS its own subtotal, and printing it twice under two words says nothing).
+- AC-B1 For a BRW-BB line the table lists BRW-BB, then MWH-BB / DC1-BB / WH3-BB / RSW-BB, then BRW / MWH / DC1 / WH3 / RSW, each with a Where tag and a subtotal per tag with more than one row. **The subtotal half is SUPERSEDED by AC-L12 (26 Aug):** rows are subtotalled by the SET availability is counted over rather than by Where tag (the line's own location subtotals with its group), and a section of ONE row DOES print a subtotal when it states a net, because the net covers locations this table does not list and no single row can say it.
 - AC-B2 A row with no stock upload shows 0, not "Not stated".
 - AC-B3 The Taken column sums exactly to the quantity needed when the line is fully covered; pools not drawn on show 0.
 
@@ -88,6 +88,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-L11 B2155-NL-BLUE's raised row does not link to 202607-S0067 BRW-IB while the IB group is in deficit; SRTWC8605-SC-RL links to 202607-S0039 BRW 9 (pool) and not to 202603-S0109 BRW-IB 11.
 - AC-L12 The popover's Group subtotal, Site pool subtotal and Other group rows read the nets the engine used; Taken is 0 on every row of a non-positive net.
 - AC-L13 A pool draw raises no ORDER BACK row.
+- AC-L14 The group's offer to a line is `max(group_net + that line's own open quantity, 0)`, because `sum(SO)` already counts the line asking. On a line of 60: group net 0 offers 60 (the line is covered from the group), net -20 offers 40 (and the whole-line rule then buys the 60 anyway, since 40 is not all of it), net -70 offers 0 (the line buys). Every OTHER line's demand stays netted, so a group that is short offers the same nothing to the front of its queue as to the back of it.
 
 ## I2. Order inquiries read like the board (ruled 26 Aug)
 - AC-I11 The schedule view shows three cards above the matrix: Use SPO, Use PO, Buy, with totals over the current filter; clicking one narrows the matrix; a second click clears.

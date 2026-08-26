@@ -433,3 +433,50 @@ def test_an_spo_inside_a_negative_group_net_covers_nothing():
     )
     assert [c["kind"] for c in components] == ["buy"]
     assert components[0]["qty"] == "10"
+
+
+# -------------------------------------------------------------------------- AC-L14
+
+
+def test_the_group_offer_is_the_net_plus_this_lines_own_quantity():
+    """AC-L14, the band, one line of 60 against three group positions.
+
+    `sum(SO)` counts every open line at the group INCLUDING the one asking, so the net is
+    the group's position AFTER this line is served and its own claim has to be handed back
+    to it. Every OTHER line's demand stays netted, which is why the offer does not depend on
+    where in the queue this line stands.
+
+    Read off `fact.group_offer` rather than off the composition, because the composition
+    also carries the whole-line rule: a group net of -20 offers 40 and the LINE still buys
+    the whole 60, since 40 is not all of it. The offer and the verdict are two facts and
+    this pins the first.
+    """
+    def _offer(other_demand: int) -> Decimal:
+        with blank_session() as db:
+            company_id, _eling, project, product = _world(db)
+            _group, sites = _group_sites(db)
+            own, _pool = sites["BRW"]
+            sibling, _sibling_pool = sites["MWH"]
+            _stock(db, product, sibling, on_hand=100)
+            if other_demand:
+                _demand(db, company_id, product, own, other_demand, so_number="SO830001")
+            db.commit()
+
+            order, _line, _cso, _cline = _seed_line(
+                db, company_id, project, product, own, qty_ordered="60",
+            )
+            service = ProjectSupplyService(db)
+            facts = service._facts_for(order, service.lines_of(str(order.id)))
+            fact = next(iter(facts.values()))
+            return fact.group_net, fact.group_offer
+
+    # Net 0 - the group covers its book exactly - offers this line its whole 60. Reading
+    # the bare net here would buy 60 units that are sitting in the warehouse for it.
+    assert _offer(40) == (Decimal("0"), Decimal("60"))
+
+    # Net -20 offers 40: the group is 20 short across its whole book, and this line's own
+    # 60 less that shortfall is what is left for it.
+    assert _offer(60) == (Decimal("-20"), Decimal("40"))
+
+    # Net -70 offers nothing: 60 does not lift it above zero, so the line buys.
+    assert _offer(110) == (Decimal("-70"), Decimal("0"))
