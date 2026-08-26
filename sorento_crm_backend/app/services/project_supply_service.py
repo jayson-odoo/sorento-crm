@@ -95,6 +95,7 @@ from app.services.error_handler import AppException
 from app.services.scm import priority, spo_supply
 from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
+from app.services.scm.group_netting import GroupNetting
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
@@ -106,6 +107,7 @@ from app.services.scm.front_planning_engine import (
     TIMELY_SPO,
     Component,
     attribute_sources,
+    group_take_reason,
     pool_reserve_capacity,
     propose_line,
     qty_text,
@@ -360,6 +362,10 @@ class _LineFacts:
     #: What was left AT THIS LINE'S OWN LOCATION when it was reached - `on hand - reserved -
     #: held - so_qty_ahead`. Distinct from `own_free`, which is what the line actually TOOK of
     #: it (capped at what it needs), and from a Reserve total, which may also draw on the pool.
+    #:
+    #: REPORTING ONLY since ladder v4 (section 1d). It was the own location's Reserve cap
+    #: under v3; availability is now the ownership GROUP's (`group_net`), and the rank queue
+    #: decides the ORDER lines are served in, not how much exists.
     available_to_this_line: Decimal = _ZERO
     #: WHO is in that queue: the first `_AHEAD_NAMED` of it in rank order, how many more there
     #: are, and a count of the whole queue by the factor that put each line there. The captain,
@@ -410,6 +416,21 @@ class _LineFacts:
     #: (`BRW-BB` -> `BB`) - or `None` for a location that carries no group (a bare pool
     #: code, or an inactive/unrecognised warehouse).
     group_code: Optional[str] = None
+    #: Ladder v4 (section 1d). What the WHOLE ownership group holds of this product -
+    #: `sum(on hand) - sum(SO) + sum(SPO)` over every active `*-<group>` location, signed -
+    #: and what the five site pools hold between them. These, not any one warehouse's own
+    #: reading, are what rungs 1 to 4 may draw on: `MWH-IB` holding 7000 offers nothing
+    #: while the IB group nets -15514, because those 7000 are already owed at `BRW-IB`.
+    group_net: Decimal = _ZERO
+    pools_net: Decimal = _ZERO
+    #: The group's position location by location (`group_netting.LocationNet`), the evidence
+    #: behind `group_net`.
+    group_net_by_location: List[Any] = field(default_factory=list)
+    #: What rung 1 WOULD have counted before the group's own backlog was served (section 1d:
+    #: an SPO to `BRW-IB` is owed to the IB backlog first). `timely_qty` above is already
+    #: netted; this is kept so the trail can say "110 arrives, and none of it is free for
+    #: this line" rather than showing nothing at all.
+    timely_qty_before_group_net: Decimal = _ZERO
 
     @property
     def own_code(self) -> Optional[str]:
@@ -595,6 +616,11 @@ class ProjectSupplyService:
         # Lazily filled, and only when somebody asks for borrow donors: a board that offers
         # no Borrow must not pay for three more reads. `None` means "not asked yet".
         self._pile_cache: Optional[Dict[Tuple[str, str], Dict[str, Decimal]]] = None
+        # Ladder v4's own reader (`app.services.scm.group_netting`), built off the pile
+        # cache above and thrown away with it. `None` means "not built for this span yet".
+        self._netting_cache: Optional[GroupNetting] = None
+        # Every active warehouse by id, read once: the span the nets are summed over.
+        self._active_warehouses_cache: Optional[Dict[str, Warehouse]] = None
         # Warehouse and project rows this request has already read, by id. A donor list is
         # asked for once per line, and a board of hundreds of lines paid two round trips
         # per line to re-read the same handful of rows.
@@ -890,6 +916,12 @@ class ProjectSupplyService:
             group_take_candidates=group_take,
             cross_group_borrow_candidates=cross_group,
             outside_reserve_window=outside_window,
+            # Ladder v4 (section 1d): the two piles the rungs are bounded by. `group_net` is
+            # already applied to `group_take` above and travels on so each reason can name
+            # the number it is a share of; `pools_net` bounds rung 3 inside the engine,
+            # where the hot-selling gate that can zero the whole rung already lives.
+            group_net=fact.group_net if fact.group_code else None,
+            pools_net=fact.pools_net,
         )
 
     # ---------------------------------------- ladder v3 rung candidates, for the trail
@@ -1049,43 +1081,51 @@ class ProjectSupplyService:
         return dict(cache)
 
     def _group_take_candidates(self, fact: _LineFacts) -> List[Dict[str, Any]]:
-        """Rung 2: positive Available at a location of this line's ownership group
-        (section 1b), `capacity = max(min(free, available), 0)` - the same formula the pool
-        rung uses.
+        """Rung 2, LADDER V4 (section 1d): what the OWNERSHIP GROUP holds, drawn own
+        location first then the siblings by site.
 
-        THIS LINE'S OWN LOCATION FIRST, then the siblings by site code. The order is decided
-        here and nowhere else: `propose_line` walks the list it is handed and never
-        re-sorts, so a planner reading "40 from BRW-BB, 30 from DC1-BB" is reading one
-        decision about draw order, not two.
+        The whole rung offers `max(group_net, 0)` and not a unit more - the group is one
+        pile. `B2155-NL-BLUE` is the case that forced it: `MWH-IB` holds 7000 with nothing
+        owed against it, and under v3 that read as 7000 free to promise, while `BRW-IB` -
+        where the orders are booked - owed 27,804 against 5,290 on hand. The group nets
+        -15,514, so there is nothing to take, and the line buys.
 
-        The OWN location is capped differently, and it has to be: `available` nets every
-        open sales order at a location, INCLUDING THIS LINE'S OWN, so a line standing alone
-        on exactly the stock it needs would read zero available and buy it. Its capacity is
-        `available_to_this_line` instead - what the pile held once the demand the active
-        policy ranks AHEAD of this line was served, which is the same figure the board
-        prints beside the row as "N left for this line". One number, one meaning, and the
-        confirm-time recheck draws on this same list.
+        Per LOCATION the offer is also capped at `max(min(free, that location's own net), 0)`,
+        because stock has to physically be somewhere: a group whose net is positive because
+        one site is flush still cannot ship from a site that has none. The total across the
+        locations is what the group net bounds.
+
+        Rung 1 comes off the SAME pile (the group's SPO is inside its net), so whatever
+        incoming already covers is deducted first - otherwise one SPO would be counted twice,
+        once as Incoming and once as group stock.
+
+        The rank queue no longer takes part. `available_to_this_line` was v3's own-location
+        cap; it says which line is served FIRST when several want one pile, not how much
+        exists, and reading it as availability is what made a line standing alone on exactly
+        the stock it needed buy it anyway.
         """
-        if not fact.product_id:
+        if not fact.product_id or not fact.group_code:
+            return []
+        left = max(_dec(fact.group_net), _ZERO) - max(_dec(fact.timely_qty), _ZERO)
+        if left <= _ZERO:
             return []
         siblings = self._group_sibling_warehouses(fact)
         ordered = sorted(
             siblings.items(), key=lambda item: (item[0] != fact.own_code, item[0])
         )
+        nets = {
+            entry.location: entry.net
+            for entry in self.netting().group_net(fact.product_id, fact.group_code).by_location
+        }
         out: List[Dict[str, Any]] = []
         for code, warehouse in ordered:
-            if code == fact.own_code:
-                capacity = max(_dec(fact.available_to_this_line), _ZERO)
-            else:
-                free = self._free_at(fact.product_id, str(warehouse.id))
-                triple = self._pile_facts().get(
-                    (fact.product_id, str(warehouse.id)),
-                    {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO},
-                )
-                available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
-                capacity = max(min(free, available), _ZERO)
+            if left <= _ZERO:
+                break
+            free = self._free_at(fact.product_id, str(warehouse.id))
+            capacity = min(max(min(free, nets.get(code, _ZERO)), _ZERO), left)
             if capacity > _ZERO:
                 out.append({"location": code, "qty": capacity})
+                left -= capacity
         return out
 
     def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:
@@ -1287,6 +1327,7 @@ class ProjectSupplyService:
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
             pools=pools,
+            pools_net=fact.pools_net,
         ):
             if remaining <= _ZERO:
                 break
@@ -1311,27 +1352,58 @@ class ProjectSupplyService:
         inside = self._reserve_location_ids(fact) | {
             str(w.id) for w in self._group_sibling_warehouses(fact).values()
         }
+        netting = self.netting()
         free_index, _holds_index = self._by_product()
         free_here = free_index.get(fact.product_id, {})
+        # LADDER V4 (section 1d): what may be borrowed from another group is that GROUP's
+        # OWN NET, not one of its warehouses' free balance - `MWH-IR` holding 100 lends
+        # nothing while the whole `-IR` group is oversold, because those 100 are already
+        # owed at another `-IR` site. The group's remaining headroom is drawn down as its
+        # locations are walked, so two of its warehouses cannot each offer the whole net.
+        #
+        # A SITE POOL is not a donor group and never appears here: it has no ownership
+        # group at all, it is rung 3's own pile, and offering it under this name would let
+        # a pool that rung 3 just refused (pools net <= 0) come back as a Borrow.
+        group_left: Dict[str, Decimal] = {}
         candidates: List[Dict[str, Any]] = []
-        for warehouse_id, free in free_here.items():
+        # By CODE, so the group's headroom is drawn down in the same order on every run: a
+        # dict's own order would make which sibling gets the last 40 an accident.
+        for warehouse_id, free in sorted(
+            free_here.items(),
+            key=lambda item: (
+                (self._warehouse_row(item[0]).warehouse_code or "")
+                if self._warehouse_row(item[0])
+                else ""
+            ),
+        ):
             if free <= _ZERO or warehouse_id in inside:
                 continue
             warehouse = self._warehouse_row(warehouse_id)
             if warehouse is None or not warehouse.warehouse_code:
                 continue
             code = warehouse.warehouse_code
-            if sales_agent_service.group_of_warehouse_code(code) == fact.group_code:
+            donor_group = sales_agent_service.group_of_warehouse_code(code)
+            if not donor_group or donor_group == fact.group_code:
+                continue
+            if donor_group not in group_left:
+                group_left[donor_group] = netting.donor_group_net(
+                    fact.product_id, donor_group
+                ).offer
+            offer = min(free, group_left[donor_group])
+            if offer <= _ZERO:
                 continue
             within_qty = max_qty is not None and residual <= max_qty
             within_pct = (
                 max_pct is not None
-                and free > _ZERO
-                and residual <= (free * max_pct / Decimal("100"))
+                and offer > _ZERO
+                and residual <= (offer * max_pct / Decimal("100"))
             )
             if not (within_qty or within_pct):
                 continue
-            candidates.append({"location": code, "qty": free})
+            group_left[donor_group] -= offer
+            candidates.append(
+                {"location": code, "qty": offer, "group_code": donor_group}
+            )
         candidates.sort(key=lambda c: (-_dec(c["qty"]), c["location"]))
         return candidates
 
@@ -1418,6 +1490,7 @@ class ProjectSupplyService:
             product_ids, exclude_line_ids=exclude_line_ids
         )
         self._pile_cache = None
+        self._netting_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
         pool_piles = self._pile_facts()
@@ -1551,7 +1624,33 @@ class ProjectSupplyService:
                     warehouse.warehouse_code if warehouse else None
                 ),
             )
+            self._apply_group_nets(facts[str(row["key"])])
         return facts
+
+    def _apply_group_nets(self, fact: _LineFacts) -> None:
+        """Ladder v4 (section 1d): stamp the two piles on the line, and net rung 1 against
+        the group's own.
+
+        ONE copy of the rule, called by both fact builders, because the sheet and the board
+        proposing different quantities for one line is the exact failure this module keeps
+        being repaired for.
+
+        Rung 1 is netted here rather than in the ladder because `timely_qty` is read by
+        everything downstream - the trail, the confirm-time recheck, the frozen snapshot -
+        and a figure that means "arriving" in one place and "arriving and free for this
+        line" in another is two numbers under one name. `MWH-IB`'s SPO of 110 is real and is
+        still shown (`timely_qty_before_group_net`); what it is not is available to a line
+        whose group already owes 2,335 against it.
+        """
+        netting = self.netting()
+        group = netting.group_net(fact.product_id, fact.group_code)
+        pools = netting.pools_net(fact.product_id)
+        fact.group_net = group.net
+        fact.group_net_by_location = list(group.by_location)
+        fact.pools_net = pools.net
+        fact.timely_qty_before_group_net = fact.timely_qty
+        if fact.group_code:
+            fact.timely_qty = min(fact.timely_qty, group.offer)
 
     def _serialize_line(
         self,
@@ -2211,6 +2310,7 @@ class ProjectSupplyService:
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
             pools=pools,
+            pools_net=fact.pools_net,
         ):
             source = self._warehouse_by_code(location)
             if source is None:
@@ -2940,7 +3040,7 @@ class ProjectSupplyService:
                 (fact.product_id or "", warehouse_id),
                 {
                     "borrowed": _ZERO,
-                    "reserved": _ZERO,
+                    "group": None,
                     "item_code": fact.item_code,
                     "lines": [],
                     "line": line,
@@ -2988,10 +3088,18 @@ class ProjectSupplyService:
                     }
                 )
 
+        # LADDER V4 (section 1d, ruled 26 August 2026): a borrow from ANOTHER OWNERSHIP
+        # GROUP raises an order back against that group, for the WHOLE quantity taken and
+        # not merely for a hole. A POOL DRAW RAISES NOTHING (AC-L13). The v3 rule - raise
+        # only where the donor pile's own availability went negative - was the right rule
+        # when a warehouse's own reading decided what it could lend; under v4 rung 3 draws
+        # the pool only while the five pools NET positive between them and rung 4 borrows
+        # only within the donor group's own net, so neither can push a pile below zero and
+        # the negativity test would raise nothing at all, ever. What is left to record is
+        # the fact itself: the `-IR` group lent 40 to a `-BB` line and is owed 40 back.
         for line, entry, fact in checked:
             if not fact.product_id:
                 continue
-            pool_id = str(fact.pool.id) if fact.pool else None
             own_id = str(fact.warehouse.id) if fact.warehouse else None
             for item in entry.borrow or []:
                 qty = _dec(item.qty)
@@ -3000,68 +3108,41 @@ class ProjectSupplyService:
                 if str(item.warehouse_id) == own_id:
                     continue
                 if getattr(item, "donor_core_line_id", None):
-                    # A group borrow (B3): already raised, unconditionally, as its own
-                    # order-back in `order_backs` above. `donor_availability` nets every
-                    # open SO's `so_qty` at this location - INCLUDING the donor's own
-                    # committed quantity - so feeding the same item into this pile too
-                    # double-counts it: the pile goes negative from the donor's own
-                    # demand alone, and a second `IV_BORROW_SHORTFALL` row is raised for
-                    # a hole that is really the same borrow already accounted for.
+                    # A borrow from another ORDER: already raised above, against the donor
+                    # LINE, which is a sharper record than the location it sits at.
+                    continue
+                donor_group = self.netting().group_of(str(item.warehouse_id))
+                if not donor_group or donor_group == fact.group_code:
+                    # The line's own group (its stock to move) or a pool (shared, and
+                    # nobody is owed it back).
                     continue
                 pile = pile_for(line, fact, str(item.warehouse_id))
                 pile["borrowed"] += qty
                 pile["lines"].append(line.line_no)
-            if not pool_id or pool_id == own_id:
-                continue
-            for item in entry.reserve or []:
-                qty = _dec(item.qty)
-                if qty <= _ZERO or str(item.warehouse_id) != pool_id:
-                    continue
-                pile = pile_for(line, fact, pool_id)
-                pile["reserved"] += qty
-                pile["lines"].append(line.line_no)
+                pile["group"] = donor_group
         if not piles:
             return order_backs
 
-        availability = self.donor_availability(piles.keys())
-        # The WHOLE order's holds are left out here, named and carried alike, because
-        # `checked` re-adds every one of them as `taken` above.
-        held_from_elsewhere = self._holds_from_elsewhere(
-            piles.keys(),
-            exclude_line_ids=[str(line.id) for line, _entry, _fact in checked],
-        )
         out: List[Dict[str, Any]] = list(order_backs)
         for key, pile in piles.items():
-            taken = pile["borrowed"] + pile["reserved"]
-            after = (
-                availability.get(key, _ZERO)
-              - held_from_elsewhere.get(key, _ZERO)
-              - taken
-            )
-            if after >= _ZERO:
+            taken = pile["borrowed"]
+            if taken <= _ZERO:
                 continue
             warehouse = self._warehouse_row(key[1])
             code = warehouse.warehouse_code if warehouse else ""
             lines = ", ".join(f"line {no}" for no in sorted(set(pile["lines"])))
-            parts: List[str] = []
-            if pile["borrowed"] > _ZERO:
-                parts.append(f"borrowed {qty_text(pile['borrowed'])}")
-            if pile["reserved"] > _ZERO:
-                parts.append(f"reserved {qty_text(pile['reserved'])} at {code}")
-            what = " and ".join(parts)
-            what = what[:1].upper() + what[1:]
             out.append(
                 {
                     "line": pile["line"],
                     "item_code": pile["item_code"],
-                    # The hole, not the take: taking 20 from a location with 10 to spare
-                    # leaves 10 to be bought, and the other 10 was theirs to give.
-                    "qty": min(taken, -after),
+                    "qty": taken,
                     "required_date": pile["required_date"],
+                    # The DONOR's location: the order back is owed where the stock left
+                    # from, not where the borrowing line sits.
                     "stock_location": code,
                     "note": (
-                        f"{what} for {reference} {lines}; "
-                        f"{code} goes short by {qty_text(-after)}"
+                        f"Order-back: {code} lent {qty_text(taken)} to {reference} "
+                        f"{lines}"
                     ),
                 }
             )
@@ -3279,14 +3360,17 @@ class ProjectSupplyService:
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
             pools=self._pool_chain(fact, own_pool_free_left=None),
+            pools_net=fact.pools_net,
         ):
             if candidate == location:
                 return reason
         for candidate in self._group_take_candidates(fact):
             if candidate["location"] == location:
-                return (
-                    f"{location} has {qty_text(_dec(candidate['qty']))} available"
-                    f"{f' in the {fact.group_code} group' if fact.group_code else ''}"
+                return group_take_reason(
+                    str(location),
+                    _dec(candidate["qty"]),
+                    fact.group_code,
+                    fact.group_net if fact.group_code else None,
                 )
         return f"free stock at {location} covers the need by the required date"
 
@@ -3735,6 +3819,7 @@ class ProjectSupplyService:
         self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
+        self._netting_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
         pool_piles = self._pile_facts()
@@ -3893,6 +3978,7 @@ class ProjectSupplyService:
                     warehouse.warehouse_code if warehouse else None
                 ),
             )
+            self._apply_group_nets(facts[str(line.id)])
         return facts
 
     # -------------------------------------------------------------- fact readers
@@ -4155,45 +4241,6 @@ class ProjectSupplyService:
                 SOLineAllocation.so_line_id.notin_(list(exclude_line_ids))
             )
         return query
-
-    def _holds_from_elsewhere(
-        self, pairs: Iterable[Tuple[str, str]], *, exclude_line_ids: Optional[Sequence[str]]
-    ) -> Dict[Tuple[str, str], Decimal]:
-        """What other confirmed decisions hold at each (product, warehouse) FROM ELSEWHERE.
-
-        The holds `_pile_read`'s `SO qty` cannot see: a borrow or a pool take by a line
-        whose OWN location (its core line's warehouse) is somewhere else. A hold by a line
-        whose own location is this very pile is a Reserve at home, and that line's demand
-        is already inside the pile's SO qty - counting the hold too would count it twice.
-        """
-        wanted = {(str(product_id), str(warehouse_id)) for product_id, warehouse_id in pairs}
-        if not wanted:
-            return {}
-        rows = (
-            self._hold_query(
-                [product_id for product_id, _w in wanted],
-                exclude_line_ids=exclude_line_ids,
-            )
-            .filter(
-                SOLineAllocation.warehouse_id.in_([w for _p, w in wanted]),
-                or_(
-                    SalesOrderLine.warehouse_id.is_(None),
-                    SalesOrderLine.warehouse_id != SOLineAllocation.warehouse_id,
-                ),
-            )
-            .with_entities(
-                _hold_product,
-                SOLineAllocation.warehouse_id,
-                func.coalesce(func.sum(SOLineAllocation.qty), 0),
-            )
-            .group_by(_hold_product, SOLineAllocation.warehouse_id)
-            .all()
-        )
-        return {
-            (str(product_id), str(warehouse_id)): _dec(qty)
-            for product_id, warehouse_id, qty in rows
-            if (str(product_id), str(warehouse_id)) in wanted
-        }
 
     def _holds_by_project(
         self, product_ids: Iterable[str], *, exclude_line_ids: Optional[Sequence[str]]
@@ -5104,13 +5151,53 @@ class ProjectSupplyService:
         if self._pile_cache is not None:
             return self._pile_cache
 
+        # EVERY ACTIVE WAREHOUSE, not only the ones carrying a `stock` row for the product
+        # (ladder v4). The span used to come off the free cache, which is built from `stock`
+        # rows - so a location holding nothing and owing 27,804 was absent, read as three
+        # zeroes, and made the ownership group's net look better than the book says it is.
+        # Same three queries either way; only the `IN` list is wider.
         self._pile_cache = self._pile_read(
             {product_id for product_id, _w in self._free_cache}
             | {product_id for product_id, _w, _p in self._holds_cache},
-            {warehouse_id for _p, warehouse_id in self._free_cache}
-            | {warehouse_id for _p, warehouse_id, _project in self._holds_cache},
+            set(self._active_warehouses()),
         )
         return self._pile_cache
+
+    def _active_warehouses(self) -> Dict[str, Warehouse]:
+        """Every active warehouse by id, read once per request.
+
+        The span ladder v4 nets over (`group_netting`), and the same rows
+        `_group_sibling_warehouses` filters for one group's members.
+        """
+        if self._active_warehouses_cache is None:
+            self._active_warehouses_cache = {
+                str(row.id): row
+                for row in self.db.query(Warehouse)
+                .filter(Warehouse.is_active.is_(True))
+                .all()
+            }
+        return self._active_warehouses_cache
+
+    def netting(self) -> GroupNetting:
+        """The ONE reader of availability for this request (section 1d).
+
+        Built off `_pile_facts()`, which the request has already read - so the ladder, the
+        board's cell table, the order-inquiry link walk and the confirm-time recheck all
+        net the same three figures, and none of them can come to a different view of what
+        the IB group holds. Re-created whenever the pile cache is (`demand_facts` /
+        `_facts_for` reset both), because the un-netting carve-outs differ per call.
+        """
+        if self._netting_cache is None:
+            self._netting_cache = GroupNetting(
+                triples=self._pile_facts(),
+                warehouse_codes={
+                    warehouse_id: warehouse.warehouse_code
+                    for warehouse_id, warehouse in self._active_warehouses().items()
+                    if warehouse.warehouse_code
+                },
+                pool_warehouse_ids=set(self._site_pool_warehouses()),
+            )
+        return self._netting_cache
 
     def _pile_read(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
@@ -5170,32 +5257,6 @@ class ProjectSupplyService:
         ways. One batched read for every pool pile a board touches, never one per rung.
         """
         return self._pile_read(product_ids, warehouse_ids)
-
-    def donor_availability(
-        self, pairs: Iterable[Tuple[str, str]]
-    ) -> Dict[Tuple[str, str], Decimal]:
-        """Signed `available_qty` per (product, location), for the confirmation.
-
-        Public because the confirm path asks the same question the donor list answers: a
-        borrow that pushes a donor's availability below zero opens a hole somebody has to
-        buy (PLAN 13.11), and asking it twice in two ways is how the screen and the
-        confirmation come to disagree about who was hurt.
-        """
-        wanted = [(str(product_id), str(warehouse_id)) for product_id, warehouse_id in pairs]
-        if not wanted:
-            return {}
-        # Its own read, deliberately: the request-wide caches belong to the composition
-        # that is mid-flight when the confirmation asks this, and refilling them here would
-        # answer a later question with the wrong span.
-        facts = self._pile_read(
-            {product_id for product_id, _w in wanted},
-            {warehouse_id for _p, warehouse_id in wanted},
-        )
-        out: Dict[Tuple[str, str], Decimal] = {}
-        for key in wanted:
-            pile = facts.get(key, {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO})
-            out[key] = pile["on_hand"] - pile["so_qty"] + pile["spo_qty"]
-        return out
 
     # --------------------------------------------------------------- the Plans page (D1)
 
