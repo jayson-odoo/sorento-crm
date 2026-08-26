@@ -23,13 +23,12 @@ Plan: `PLAN-scm-oi-handshake.md`. Verified on the lane (:3080 / :8080) by browse
 
 ## E. Upload on the Order Inquiries page
 - AC-H12 The OI toolbar offers the PO book and SPO book uploads; the upload runs on the worker and shows in the upload activity drawer exactly as it does from the reorder page.
-- AC-H13 When the upload lands, the drawer offers Link now and Open purchase orders; Link now links acknowledged unlinked rows of the uploaded products and reports how many; Open purchase orders opens the PO list filtered to the upload.
+- AC-H13 While the worker is still reading the book the page offers nothing. When the job reaches a terminal state the Order Inquiries page (not the shared drawer) offers Link now and Open purchase orders: Link now links acknowledged unlinked rows of the products THAT upload wrote and reports how many; Open purchase orders opens the PO list narrowed to that upload's own documents, with a chip saying how many and one press to show them all. A book naming more documents than the job lists opens the unfiltered list rather than a partial set dressed up as the whole.
 - AC-H14 Every new row field (`ack_state`, who, when, reason, changed_at) is on the wire from the list, the summary export and the SO detail's links.
 - AC-H15 Tests in the same PR per plan section 6; browser evidence for AC-H1, H2, H5, H6, H8, H12, H13 on SO381895; no dashes in the diff.
 
 **Result (27 Aug, `feat/scm-uat-oi-handshake`).** AC-H1 to AC-H12 and AC-H14 pass; the
-evidence run is written up in `PLAN-scm-oi-handshake.md` section 8. **AC-H13 is half
-done**: Link now and Open purchase orders are built and offered the moment an upload this
-page queued is accepted, but the pair was not walked in a browser - it needs a real
-purchase-order book to import, and that is the tester's step. AC-H12's own half (the two
-uploads mount their home pages' dialogs) was walked.
+evidence run is written up in `PLAN-scm-oi-handshake.md` section 8. **AC-H13 now reads as
+above and is built to it** (review round, same branch): the pair waits for the job to land,
+Link now carries the upload's own products, and Open purchase orders carries its own
+documents. AC-H12's own half (the two uploads mount their home pages' dialogs) was walked.

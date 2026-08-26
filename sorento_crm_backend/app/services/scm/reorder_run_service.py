@@ -497,13 +497,21 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     their request. Reading `[]` as "no filter" is what turned one mistyped location code
     into an 11,585-row plan of every warehouse.
 
-    ``horizon`` is the run's own "Plan until" date (captain, 20 Aug): when set, demand
-    with a stated required/delivery date AFTER it is excluded from ``committed`` (the
-    horizon SIDE of the equation; unscheduled demand carrying no date is always still
-    counted). ``None`` (the default) keeps the ORIGINAL ``committed`` source -
-    ``np.committed`` straight off ``scm.net_position_v`` - so an unhorizoned run's
-    committed figure is byte-identical to before. On-order is never touched either way;
-    only which demand rows qualify.
+    ``committed`` comes from ``demand.horizon_committed_select_sql`` on EVERY run, not
+    from ``np.committed`` off ``scm.net_position_v``. That branch is gone (the handshake,
+    `PLAN-scm-oi-handshake.md` section 3): a plan may only buy against an order-inquiry
+    row purchasing has ACKNOWLEDGED, and the view goes on counting an awaiting one because
+    it is still owed to the customer. One SELECT holds both halves of the rule, rather
+    than a branch here that could answer differently on two runs of one plan.
+
+    ``horizon`` is the run's own "Plan until" date (captain, 20 Aug) and rides into that
+    same SELECT: when set, demand with a stated required/delivery date AFTER it is
+    excluded from ``committed`` (the horizon SIDE of the equation; unscheduled demand
+    carrying no date is always still counted). ``None`` - the daily run, and any manual
+    run that leaves the field empty - binds NULL, and every date comparison in the SELECT
+    short-circuits true, so an unhorizoned run nets exactly as it did except for the
+    acknowledgement rule. On-order is never touched either way; only which demand rows
+    qualify.
 
     ``quantity_on_hand`` (and therefore ``net_position``, built from it below) is NOT the
     view's own figure any more: it is recomputed to DEALER-only on every row, horizon or

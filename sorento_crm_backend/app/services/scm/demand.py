@@ -220,6 +220,10 @@ REJECTED_ACK_STATE = "rejected"
 #: what is owed, and `horizon_committed_select_sql` - which every plan run now reads
 #: through - says what may be BOUGHT today.
 PLANNED_ACK_STATES = ("acknowledged", "changed")
+#: The same tuple as a SQL list, so the four predicates below are written from the
+#: constants rather than beside them. Two spellings of one rule is how the view and the
+#: plan come to disagree about a row without anybody editing both.
+_PLANNED_ACK_SQL = ", ".join(f"'{state}'" for state in PLANNED_ACK_STATES)
 
 #: The body of `scm.committed_v`. Kept as a constant so the migration that installs it and
 #: the expression above are edited in the same file.
@@ -267,7 +271,7 @@ PLANNED_ACK_STATES = ("acknowledged", "changed")
 #: `CREATE OR REPLACE VIEW` may only append columns, never drop one, and dropping it would
 #: mean dropping and rebuilding `scm.net_position_v` and everything under it for a figure
 #: that is now always 0.
-COMMITTED_V_SQL = """
+COMMITTED_V_SQL = f"""
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH legs AS (
     -- The BOOK leg, and it is the RETAIL channel entire (P3). A project-class line is
@@ -329,7 +333,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
-      AND oir.ack_state <> 'rejected'
+      AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       AND oir.qty > COALESCE(lk.linked, 0)
     UNION ALL
@@ -402,7 +406,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
-      AND oir.ack_state <> 'rejected'
+      AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       AND oir.qty > COALESCE(flk.linked, 0)
 )
@@ -453,7 +457,7 @@ def horizon_committed_select_sql() -> str:
     predicate added to each leg - the same relationship `COMMITTED_V_SQL` already has to
     the individual predicates in this module (`PLAN_DEMAND_ORDER_SQL` etc).
     """
-    return """
+    return f"""
 WITH legs AS (
     SELECT sol.product_id,
            sol.warehouse_id,
@@ -497,7 +501,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
-      AND oir.ack_state IN ('acknowledged', 'changed')
+      AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
       AND oir.qty > COALESCE(lk.linked, 0)
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
@@ -574,7 +578,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
-      AND oir.ack_state IN ('acknowledged', 'changed')
+      AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
       AND oir.qty > COALESCE(flk.linked, 0)
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no

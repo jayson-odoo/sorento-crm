@@ -2182,10 +2182,13 @@ class ProjectOrderInquiryService:
     def _uncover_rejected_line(self, row: OrderInquiryRow, *, actor_user_id: str) -> None:
         """Send the rejected row's sales-order line back to the board undecided.
 
-        Best-effort in the same sense the cascade is not: a row that traces to no line
-        (an amendment exception, a form row the book carries no line for) has no decision
-        to uncover, and that is an ordinary answer rather than a failure. Everything else
-        goes through the ONE seam - a fresh revision carrying every line but this one.
+        NOT best-effort: every failure below this point takes the rejection down with it,
+        because a row marked rejected on a line the board still reads as decided and
+        promised is the exact state the board exists to make impossible. What it DOES
+        answer quietly is a row that traces to no line at all - an amendment exception, a
+        form row the book carries no line for. That row has no decision to uncover, which
+        is an ordinary outcome and not a failure. Everything else goes through the ONE
+        seam: a fresh revision carrying every line but this one.
         """
         if not row.so_line_id:
             return
@@ -3331,8 +3334,10 @@ class ProjectOrderInquiryService:
         ordering (`delivery_date` then `created_at`), so this is a strict refinement of
         the old behaviour, never a different one. A second run places nothing further: a
         row this pass placed (or split) is no longer `raised`, so it drops out of the
-        very query that feeds the next run - the idempotence the three triggers (import,
-        decision confirm, the worklist button) all rely on.
+        very query that feeds the next run - the idempotence the three triggers all rely
+        on. The three are ACKNOWLEDGE, Link now and a purchase-order confirm (the
+        handshake, section 3); a decision confirm is no longer one of them, because a row
+        CS has just raised is one nobody has read.
 
         `trigger` is stamped onto every placement it makes (`_apply_placement`'s
         `auto_trigger`), so "why is this placed" is always answerable from the row's own

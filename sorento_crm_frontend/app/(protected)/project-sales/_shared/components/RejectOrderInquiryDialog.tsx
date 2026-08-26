@@ -63,8 +63,10 @@ export function RejectOrderInquiryDialog({
             {itemCode ? `Reject ${itemCode}?` : 'Reject this row?'}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            The row stops counting as demand and the sales-order line goes back to CS to be
-            decided again. They see the reason on the line.
+            {/* What the action does, in the words of the action. The sentences it replaced
+                explained the mechanism (demand, the line, who sees what), which is the
+                user guide's job and not a dialog's. */}
+            Rejects this row with your reason. CS decides the line again.
           </AlertDialogDescription>
         </AlertDialogHeader>
 

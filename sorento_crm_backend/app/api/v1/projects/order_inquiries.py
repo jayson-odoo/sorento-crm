@@ -58,7 +58,7 @@ ACTION = "projects.order_inquiry.action"
 #: purchasing taking CS's instruction on, and it is what links documents to a row. Its own
 #: grant rather than `ACTION`, because CS holds that one for their own screens and must
 #: not be able to acknowledge their own instructions.
-ACKNOWLEDGE = "project_sales.order_inquiries.acknowledge"
+ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 
 #: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
@@ -309,7 +309,6 @@ def export_order_inquiry_worklist(
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
 
 
 @router.post("/order-inquiries/acknowledge", response_model=AcknowledgeResult)

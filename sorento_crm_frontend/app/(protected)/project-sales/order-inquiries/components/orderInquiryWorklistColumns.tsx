@@ -56,7 +56,7 @@ export function useOrderInquiryWorklistColumns({
    */
   selectable?: boolean;
   /**
-   * Whether this person may acknowledge or reject (`project_sales.order_inquiries.acknowledge`).
+   * Whether this person may acknowledge or reject (`projects.order_inquiries.acknowledge`).
    * CS sees the column and the filter; the actions are purchasing's.
    */
   canAcknowledge?: boolean;
@@ -512,18 +512,18 @@ export function useOrderInquiryWorklistColumns({
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
           <div className="flex min-w-0 items-center gap-1">
-          <OrderInquiryRowActions
-            rowId={row.original.id}
-            verb={row.original.verb}
-            state={row.original.state}
-            itemCode={row.original.item_code}
-            qty={row.original.qty}
-            linkedQty={row.original.linked_qty}
-            linkCount={(row.original.links ?? []).length}
-            poLabel={row.original.po_number}
-            hasLinkCandidate={row.original.has_link_candidate}
-          />
-          {canAcknowledge ? <OrderInquiryRejectAction row={row.original} /> : null}
+            <OrderInquiryRowActions
+              rowId={row.original.id}
+              verb={row.original.verb}
+              state={row.original.state}
+              itemCode={row.original.item_code}
+              qty={row.original.qty}
+              linkedQty={row.original.linked_qty}
+              linkCount={(row.original.links ?? []).length}
+              poLabel={row.original.po_number}
+              hasLinkCandidate={row.original.has_link_candidate}
+            />
+            {canAcknowledge ? <OrderInquiryRejectAction row={row.original} /> : null}
           </div>
         ),
       },

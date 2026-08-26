@@ -56,8 +56,14 @@ depends_on = "426_committed_v_form_leg_scope"
 #: The handshake's own grant, and the one it is derived from. Written as literals: a
 #: migration describes a point in history, and importing the live registry is the shape
 #: that killed production's first replay of the SCM chain.
-_TARGET = "project_sales.order_inquiries.acknowledge"
+_TARGET = "projects.order_inquiries.acknowledge"
 _SOURCE = "projects.order_inquiry.action"
+#: The desks this grant is FOR, by role name. The derived sweep below is not enough on its
+#: own: on the live copy `projects.order_inquiry.action` is held by Admin alone, so
+#: deriving from it would ship the feature to one role and hide it from the two people it
+#: was built for. Matched case-insensitively on the name, and a no-op where a database has
+#: no such role.
+_ROLE_NAMES = ("purchasing", "purchasing manager role")
 _NAME = "Acknowledge Order Inquiry Rows"
 _DESCRIPTION = (
     "Purchasing grant: acknowledge an order inquiry row (which is what links documents "
@@ -469,11 +475,16 @@ def upgrade() -> None:
 def _grant_acknowledge(bind) -> None:
     """The new permission reaches every role that already ACTS on an order inquiry row.
 
-    A permission granted to nobody is indistinguishable from a broken feature. The source
-    is `projects.order_inquiry.action` and there is no second candidate: whoever may mark
-    a row today is purchasing, and acknowledging is the same desk's work. Derived from the
-    live grants rather than from a hand-written role list, so it stays correct on a
-    database whose roles were customised after provisioning.
+    A permission granted to nobody is indistinguishable from a broken feature. Two sweeps,
+    because neither is enough alone:
+
+    * DERIVED from `projects.order_inquiry.action` - whoever may mark a row today is
+      purchasing, and acknowledging is the same desk's work. Derived rather than
+      hand-listed so it stays correct on a database whose roles were customised after
+      provisioning;
+    * NAMED (`_ROLE_NAMES`) - because on the live copy that source is held by Admin and
+      nobody else, so the derivation alone would ship the feature to one role and hide it
+      from Joey, who is the person it was built for.
 
     Idempotent both ways: the permission row is created only when absent (a fresh deploy
     runs migrations before the app's registry sync, so it may genuinely not be there yet),
@@ -503,6 +514,22 @@ def _grant_acknowledge(bind) -> None:
             """
         ),
         {"source": _SOURCE, "target": _TARGET},
+    )
+    # And the desks by NAME. Same statement shape, same idempotency; it simply names the
+    # roles rather than deriving them, because the derivation reaches Admin only.
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+            SELECT gen_random_uuid()::text, r.id, tgt.id, now()
+            FROM user_roles r
+            CROSS JOIN user_permissions tgt
+            WHERE tgt.slug = :target
+              AND lower(btrim(r.name)) = ANY(:role_names)
+            ON CONFLICT (role_id, permission_id) DO NOTHING
+            """
+        ),
+        {"target": _TARGET, "role_names": list(_ROLE_NAMES)},
     )
 
 

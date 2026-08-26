@@ -3136,6 +3136,12 @@ class ProjectSupplyService:
                 actor_user_id=str(active.confirmed_by or actor_user_id),
                 uncover_line_ids=sorted(wanted),
             )
+            # WHY the revision this call just retired was retired. `confirm` stamps its
+            # own "Reconfirmed by CS.", which is not what happened here - nobody
+            # reconfirmed anything, purchasing refused a row - and that sentence is the
+            # only record of the cause on the superseded revision.
+            active.superseded_reason = reason
+            self.db.flush()
         else:
             self.supersede_for_material_change(order, reason)
         return True
@@ -3143,10 +3149,13 @@ class ProjectSupplyService:
     def auto_place_for_confirmed_products(
         self, product_ids: Sequence[str], *, actor_user_id: str
     ) -> None:
-        """G2 rule 4: a decision confirm is one of the three moments the cascade runs -
-        the rows `refresh_for_decision` just raised may already have an outstanding PO
-        line waiting for them, and the captain's ask was that placement never waits on a
-        person clicking it.
+        """The cascade for these products, run by a caller that owes it one.
+
+        NOT a decision confirm any more (`PLAN-scm-oi-handshake.md` section 3): a board
+        confirm links nothing, because links are purchasing's. What still calls this is
+        the planning-change apply, which deferred its own pass (`defer_auto_place`) and
+        owes it afterwards - and the pass is a no-op for every row nobody has acknowledged,
+        which is what makes it safe to keep.
 
         Best-effort on purpose, in a SAVEPOINT, mirroring
         `ProjectOrderInquiryService._hand_to_purchasing`: the confirm itself already
