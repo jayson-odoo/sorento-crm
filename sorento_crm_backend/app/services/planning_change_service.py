@@ -2324,6 +2324,12 @@ def _apply_one_order(
             db, line_id, "The line was closed by a planning change batch."
         )
     if retired_line_ids:
+        # FLUSH FIRST. The application's session runs `autoflush=False`
+        # (`app.database.SessionLocal`), so the cancellations above are pending ORM state
+        # and the shift's own query would come back empty - which is exactly what happened
+        # live on SO381895 (26 August 2026): both closed rows kept their links while the
+        # test suite, on an autoflushing session, saw them move.
+        db.flush()
         _shift_links_off_retired_lines(db, order, retired_line_ids, actor)
 
     # Read the previous revision's OWN reason back by id, now that `confirm()`/

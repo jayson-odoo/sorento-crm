@@ -689,12 +689,20 @@ class ProjectOrderInquiryService:
         )
 
         if need <= _ZERO:
+            # Nothing is bought for this line any more - the book reduced it to nothing, or
+            # the fresh plan meets it from stock. Its placements go back, so the document is
+            # free for whoever needs it next rather than held against a withdrawn
+            # instruction; `_remove_links` writes its own "Unlinked from ..." stamp.
+            links = self._links_of(row.id)
+            if links:
+                self._remove_links(row, links)
             row.state = INQUIRY_CANCELLED
             row.note = (
                 f"{row.note}; {moved}; the book left nothing to buy"
                 if row.note
                 else f"{moved}; the book left nothing to buy"
             )
+            self.db.flush()
             return True
 
         links = self._links_of(row.id)

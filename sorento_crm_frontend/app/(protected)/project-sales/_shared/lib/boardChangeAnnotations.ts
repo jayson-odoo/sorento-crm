@@ -215,6 +215,85 @@ export function annotationsByCell(
 }
 
 /**
+ * A line the BOOK has moved is no longer covered by the decision that was taken for it.
+ *
+ * The board's own rule is that a covered line offers Amend and nothing else, and that its
+ * frozen composition is what gets carried forward - both correct while the line still says
+ * what it said when it was decided. Once the book has changed its quantity or its date, the
+ * frozen decision is about a line that no longer exists; the lazy drift check
+ * (`challenge_if_drifted`) says so already, one read too late. So on a board opened with a
+ * batch, the lines that batch changed arrive UNCOVERED, carrying the fresh proposal the
+ * batch computed for them.
+ *
+ * Nothing is thrown away: what the line held is the Was column of its own Was / Now table.
+ *
+ * A pure remap of the payload, cells and top-level contributions alike, because Confirm,
+ * the previews and Approve all read the top-level list while the grid reads the cells - a
+ * change on one copy only is invisible to half the screen.
+ */
+export function uncoverChangedLines<
+  T extends { cells: BoardCell[]; contributions: BoardContribution[] },
+>(board: T, batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined): T {
+  const proposals = proposalsByLine(batch);
+  if (proposals.size === 0) return board;
+  const uncover = (contribution: BoardContribution): BoardContribution => {
+    if (!contribution.project_line_id) return contribution;
+    const entry = proposals.get(contribution.project_line_id);
+    if (!entry) return contribution;
+    // THE BATCH'S OWN PROPOSAL, not a second one. A covered line's `sources` and
+    // `qty_proposed_*` are its FROZEN composition rebuilt - the old quantity, at the old
+    // date - so uncovering it alone would leave the cell offering to confirm 10 against a
+    // line the book has opened for 25, which the server refuses (measured live on
+    // SO381895, 26 August 2026). The batch walked the ladder at the new date when it was
+    // built (AC-R07, "the row and the board show one proposal, not two"), and this is
+    // that walk. Identity stays the LIVE board's: the key is what the draft is keyed by.
+    const proposal = entry.proposal;
+    const merged = proposal ? { ...contribution, ...proposal } : contribution;
+    return {
+      ...merged,
+      key: contribution.key,
+      sales_order_id: contribution.sales_order_id,
+      project_line_id: contribution.project_line_id,
+      so_number: contribution.so_number,
+      line_no: contribution.line_no,
+      item_code: contribution.item_code,
+      covered: false,
+      decision: null,
+    };
+  };
+  return {
+    ...board,
+    cells: board.cells.map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map(uncover),
+    })),
+    contributions: board.contributions.map(uncover),
+  };
+}
+
+/** The planning lines a batch names, and the fresh proposal it holds for each. */
+function proposalsByLine(
+  batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
+): Map<string, { proposal: BoardContribution | null }> {
+  const out = new Map<string, { proposal: BoardContribution | null }>();
+  for (const order of batch?.orders ?? []) {
+    for (const row of order.rows ?? []) {
+      const proposal = (row.proposal ?? null) as BoardContribution | null;
+      const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
+      if (lineId) out.set(lineId, { proposal });
+    }
+  }
+  return out;
+}
+
+/** The planning lines a batch names, however the row spells them. */
+function changedLineIds(
+  batch: Pick<PlanningChangeBatch, 'orders'> | null | undefined,
+): Set<string> {
+  return new Set(proposalsByLine(batch).keys());
+}
+
+/**
  * The decision every changed line arrives PRE-MARKED with (AC-P3-3).
  *
  * A row whose reaction leaves the line's own supply alone is approved as it stands; a row
@@ -227,20 +306,13 @@ export function preMarkedKeys(
   contributions: BoardContribution[],
 ): string[] {
   if (!batch) return [];
-  const changedLineIds = new Set<string>();
-  for (const order of batch.orders ?? []) {
-    for (const row of order.rows ?? []) {
-      const proposal = (row.proposal ?? null) as BoardContribution | null;
-      const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
-      if (lineId) changedLineIds.add(lineId);
-    }
-  }
+  const changed = changedLineIds(batch);
   return contributions
     .filter(
       (contribution) =>
         contribution.project_line_id !== null &&
         contribution.project_line_id !== undefined &&
-        changedLineIds.has(contribution.project_line_id) &&
+        changed.has(contribution.project_line_id) &&
         !contribution.unplannable,
     )
     .map((contribution) => contribution.key);

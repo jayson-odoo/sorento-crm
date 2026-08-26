@@ -39,6 +39,7 @@ import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningSer
 import {
   annotationsByCell,
   preMarkedKeys,
+  uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
 import {
   boardAxis,
@@ -218,7 +219,16 @@ export function FulfilmentBoardPanel({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [granularity, rowAxis, productSearch, view, pathname, router, searchParams]);
 
-  const board = usePlanningBoard(
+  /**
+   * The batch the board was opened on (AC-P3-1). Undefined `batchId` fetches nothing.
+   *
+   * Read beside the board rather than folded into it: the board is a live read of what is
+   * outstanding and the batch is a record of what an upload did, and one payload carrying
+   * both would have the board refuse to render whenever the batch could not be loaded.
+   */
+  const changeBatch = usePlanningChangeBatch(batchId ?? undefined);
+
+  const rawBoard = usePlanningBoard(
     soNumbers,
     granularity,
     // Always the LIVE policy. The preview was a what-if for showing a fair weighting before one
@@ -229,13 +239,20 @@ export function FulfilmentBoardPanel({
   );
 
   /**
-   * The batch the board was opened on (AC-P3-1). Undefined `batchId` fetches nothing.
-   *
-   * Read beside the board rather than folded into it: the board is a live read of what is
-   * outstanding and the batch is a record of what an upload did, and one payload carrying
-   * both would have the board refuse to render whenever the batch could not be loaded.
+   * The board as the CHANGED lines make it: a line the book has moved is no longer covered
+   * by the decision taken for it, so it arrives undecided carrying the batch's own fresh
+   * proposal (`uncoverChangedLines`). Identity on every board opened without a batch.
    */
-  const changeBatch = usePlanningChangeBatch(batchId ?? undefined);
+  const changeBatchData = changeBatch.data ?? null;
+  const board = React.useMemo(
+    () => ({
+      ...rawBoard,
+      data: rawBoard.data
+        ? uncoverChangedLines(rawBoard.data, changeBatchData)
+        : rawBoard.data,
+    }),
+    [rawBoard, changeBatchData],
+  );
 
   /**
    * Move the day window by a whole window at a time.
@@ -512,8 +529,8 @@ export function FulfilmentBoardPanel({
   const preMarked = React.useRef(false);
   React.useEffect(() => {
     if (!batchId || preMarked.current) return;
-    if (!changeBatch.data || allContributions.length === 0) return;
-    const keys = preMarkedKeys(changeBatch.data, allContributions);
+    if (!changeBatchData || allContributions.length === 0) return;
+    const keys = preMarkedKeys(changeBatchData, allContributions);
     if (keys.length === 0) return;
     preMarked.current = true;
     setDraft((current) => {
@@ -521,7 +538,7 @@ export function FulfilmentBoardPanel({
       for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
       return next;
     });
-  }, [batchId, changeBatch.data, allContributions]);
+  }, [batchId, changeBatchData, allContributions]);
 
   /**
    * The same lines, in the GRID's product order.
@@ -734,8 +751,8 @@ export function FulfilmentBoardPanel({
    * its cells. Empty on every board opened without a batch.
    */
   const changeAnnotations = React.useMemo(
-    () => annotationsByCell(changeBatch.data ?? null, axis.cells),
-    [changeBatch.data, axis],
+    () => annotationsByCell(changeBatchData, axis.cells),
+    [changeBatchData, axis],
   );
 
   /**
