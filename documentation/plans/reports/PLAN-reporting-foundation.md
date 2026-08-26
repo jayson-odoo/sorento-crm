@@ -3,7 +3,10 @@
 Status: S1 (Phase 1, frontend against mocks) BUILT and browser-verified 2026-08-26 on
 branch `feat/reporting-foundation`. S2 (Phase 2, kernel, test-first) BUILT 2026-08-26 on the
 same branch: registry, engine, xlsx renderer skeleton, views service, routes, migration 422
-and the RQ export task, with 96 pytest over a synthetic dataset. S3 onwards not started.
+and the RQ export task, with 96 pytest over a synthetic dataset. S3 (sponsorship dataset +
+definition, and the frontend swapped off the mock) BUILT and browser-verified 2026-08-26:
+34 pytest on a seeded chain, 25 vitest, the S1 mock deleted, and the report shown on
+:3090/:8091 against the 18 real approved 2026 forms. S4 and S5 not started.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -101,7 +104,7 @@ sorento_crm_frontend/
                                            listing_key = procurement.sponsorship_forms.report::detail),
                                            Summary (pivot table), Configure summary, Views, Export
   components/reports/{ReportFilterBar,ReportPivotTable,ConfigureSummaryDialog,ReportViewsMenu}.tsx
-  components/reports/__mocks__/sponsorshipReport.fixtures.ts   S1 ONLY, deleted in S2
+  components/reports/__mocks__/sponsorshipReport.fixtures.ts   S1 ONLY, deleted in S3
   services/reportService.ts; hooks/useReports.ts (useReportMeta / useReportRun /
                                            useReportViews / useReportViewMutations / useReportExport)
   config/menu.config.tsx: Report entry under Sponsorship Forms (both menu copies)
@@ -154,6 +157,33 @@ reads.
   `generate_report_xlsx` runs at the all-companies scope - a `scope="company"` dataset must
   add an enqueuer-company argument to that task before it ships.
 
+### Contract points settled while building S3 (binding on S4 and S5)
+
+- **An unattributed form is grouped under `Unassigned`.** The pivot drops a row whose row
+  dimension is blank, so a form with no requestor at all was counted in the DETAIL total and
+  missing from the summary GRAND total: on the live 2026 data that was 6,948.00 against
+  6,548.00 on one screen. `sales_agent` therefore coalesces to a named bucket, which is also
+  what the filter offers and what the workbook will print.
+- **`sponsor_subject` reads `<lookup label>: <free text>`** when the subject is `others`
+  ("Others: Sales Gallery"), the same shape the form's own listing and detail page use.
+- **`status` is the LABEL, not the slug** ("Processed by CS"), from one table shared with
+  the status filter's options, so the filter and the column can never disagree.
+- **The year list spans all three date bases**, not just the default one: a user who switches
+  to Form date must be able to pick the year their forms are dated in. An empty dataset falls
+  back to the current year rather than an empty dropdown.
+- **The default period is `date.today().year`**, resolved at import, not a year baked into a
+  release.
+- **The workbook title block is company "Sorento", department "PROJECT SALES"** (AC-D2 input
+  for S4).
+- **The dataset reaches `projects.projects`, `respond_contacts`, the lookup tables and the
+  request lines as CORE tables, never mapped entities.** `Project` is company-scoped, and the
+  ORM's `do_orm_execute` listener splices that scope into any statement naming the mapped
+  class - which is exactly the blanking `scope="none"` exists to avoid.
+- **The frontend is off the mock.** `components/reports/__mocks__/`, `readMockScenario` and
+  the `?mock=` forced states are deleted; every service function goes through
+  `lib/api-client` with `extractApiError`. The capped 422 is detected by reading `capped` /
+  `code` off a CLONE of the response while the message still comes from the shared extractor.
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
@@ -175,7 +205,7 @@ their owner only; shared views to anyone with the report permission.
 |---|---|---|---|
 | S1 | FE mock (Phase 1) DONE | `ReportPage` + wrapper route against a mocked ReportResult: filter bar (date basis, period, agent, status), Detail with Columns show/hide + drag, Summary pivot, Configure summary dialog, Views menu (Mine / Shared, Save, Publish, Set default), Export button; sidebar entry + listing Report button; 375 / 1280 | The §4 contract is what the screen needs; user sees the shape before backend |
 | S2 | Kernel (Phase 2, test-first) DONE | registry, engine, xlsx renderer, views service, routes, migration (table + slugs), RQ task. pytest on a SYNTHETIC dataset registered by the test, not sponsorship | The kernel is generic; report #2 costs what §Why says |
-| S3 | Sponsorship dataset + definition | dataset select + catalog; definition; seeded-chain pytest asserting Summary cell = sum of Detail rows for the same agent/month, blanks vs zero, date basis switch changes the month | Report #1 on the real page with real 2026 rows |
+| S3 | Sponsorship dataset + definition DONE | dataset select + catalog; definition; the frontend swapped off the S1 mock; seeded-chain pytest asserting Summary cell = sum of Detail rows for the same agent/month, blanks vs zero, date basis switch changes the month; vitest for the page states, Configure summary and the Views menu | Report #1 on the real page with real 2026 rows |
 | S4 | Excel export | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
 | S5 | Local 2025 fixture | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |
 
