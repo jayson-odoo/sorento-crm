@@ -483,6 +483,29 @@ def request_and_notify(
     filename = _request_filename(supplier)
     provider, key = _store(document, filename)
 
+    # F4: their own sheet back to them, with the quantity to load filled in. Best-effort by
+    # design - `container_request_xlsx.build` never raises, and if the store below did, the
+    # request would fail for the sake of the SECOND copy of an ask the PDF already states.
+    xlsx_filename: Optional[str] = None
+    xlsx_provider: Optional[str] = None
+    xlsx_key: Optional[str] = None
+    try:
+        from app.services.scm import container_request_xlsx
+
+        sheet = container_request_xlsx.build(
+            db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
+        )
+        xlsx_filename = container_request_xlsx.filename(supplier)
+        xlsx_provider, xlsx_key = _store(sheet, xlsx_filename)
+    except Exception:  # noqa: BLE001 - the PDF and the notice still go
+        xlsx_filename = xlsx_provider = xlsx_key = None
+        logger.warning(
+            "container request for supplier %s: the stock-list xlsx could not be produced; "
+            "the notice and its PDF are unaffected",
+            supplier_id,
+            exc_info=True,
+        )
+
     notices: list[SupplierNotice] = []
     for channel in CHANNELS:
         notice = SupplierNotice(
@@ -493,6 +516,9 @@ def request_and_notify(
             document_filename=filename,
             storage_provider=provider,
             storage_key=key,
+            xlsx_filename=xlsx_filename,
+            xlsx_storage_provider=xlsx_provider,
+            xlsx_storage_key=xlsx_key,
             line_count=len(pack),
             production_line_count=0,
             created_by=actor,
@@ -526,13 +552,24 @@ def request_and_notify(
     }
 
 
+#: What each file this module stores is served as. Taken off the extension rather than passed
+#: in, so `_store`'s two-argument shape (which every suite here monkeypatches) is unchanged.
+_CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
 def _store(data: bytes, filename: str) -> tuple[str, str]:
     from app.services.storage_router import default_provider, get_backend
 
     provider = default_provider()
     key = f"exports/supplier-notice/{datetime.utcnow():%Y/%m}/{_rand()}/{filename}"
+    ext = filename[filename.rfind(".") :].lower() if "." in filename else ""
     stored_key, _signed = get_backend(provider).upload_file(
-        file_content=data, file_path=key, content_type="application/pdf"
+        file_content=data,
+        file_path=key,
+        content_type=_CONTENT_TYPES.get(ext, "application/octet-stream"),
     )
     return provider, stored_key or key
 
@@ -577,14 +614,30 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
     try:
         from app.services import email_outbox_service
 
+        metadata: dict[str, Any] = {
+            "supplier_notice_id": str(notice.id),
+            "loading_plan_id": str(notice.loading_plan_id or ""),
+        }
+        # ONE email carrying both files (AC-C1). The outbox row's own attachment columns hold
+        # the PDF; the second file travels in the metadata the drainer already reads, because
+        # a notice has exactly two documents and a second set of columns on every outbox row
+        # would be three columns nothing else in the system fills.
+        if notice.xlsx_storage_key:
+            metadata["extra_attachments"] = [
+                {
+                    "filename": notice.xlsx_filename,
+                    "storage_provider": notice.xlsx_storage_provider,
+                    "storage_key": notice.xlsx_storage_key,
+                }
+            ]
+
         email_outbox_service.enqueue(
             db,
             event_key=EVENT_KEY,
             to=to,
             subject=subject,
             body_text=body,
-            metadata={"supplier_notice_id": str(notice.id),
-                      "loading_plan_id": str(notice.loading_plan_id or "")},
+            metadata=metadata,
             attachment_filename=notice.document_filename,
             attachment_storage_provider=notice.storage_provider,
             attachment_storage_key=notice.storage_key,
@@ -659,6 +712,8 @@ def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
         "last_error": notice.last_error,
         "document_filename": notice.document_filename,
         "has_document": bool(notice.storage_key),
+        "xlsx_filename": notice.xlsx_filename,
+        "has_xlsx": bool(notice.xlsx_storage_key),
         "container_type": notice.container_type,
         "container_count": notice.container_count,
         "planned_cbm": _f(notice.planned_cbm),
@@ -710,16 +765,39 @@ def list_for_supplier(db: Session, supplier_id: str, *, limit: int = 50) -> list
     return [serialize(db, n) for n in rows]
 
 
-def document_url(db: Session, notice_id: str, *, expires_in: int = 3600) -> dict:
+#: The two files a notice can carry, and where each one's storage triple lives (F4).
+_DOCUMENT_KINDS = {
+    "pdf": ("storage_provider", "storage_key", "document_filename"),
+    "xlsx": ("xlsx_storage_provider", "xlsx_storage_key", "xlsx_filename"),
+}
+
+
+def document_url(
+    db: Session, notice_id: str, *, kind: str = "pdf", expires_in: int = 3600
+) -> dict:
+    """A short-lived link to one of the notice's files.
+
+    `kind` defaults to `pdf`, so every existing caller reads exactly as before; `xlsx` is the
+    stock list handed back with the quantity to load (F4), which only a container request has.
+    """
     notice = db.query(SupplierNotice).filter(SupplierNotice.id == notice_id).one_or_none()
     if notice is None:
         raise AppException(404, "Supplier notice not found")
-    if not notice.storage_key:
+    if kind not in _DOCUMENT_KINDS:
+        raise AppException(422, f"Unknown document kind: {kind}")
+
+    provider_attr, key_attr, name_attr = _DOCUMENT_KINDS[kind]
+    key = getattr(notice, key_attr, None)
+    if not key:
         raise AppException(409, "This notice has no document.")
 
     from app.services.storage_router import get_backend
 
-    url = get_backend(notice.storage_provider).get_signed_url(
-        notice.storage_key, expires_in=expires_in
+    url = get_backend(getattr(notice, provider_attr, None)).get_signed_url(
+        key, expires_in=expires_in
     )
-    return {"url": url, "filename": notice.document_filename, "expires_in": expires_in}
+    return {
+        "url": url,
+        "filename": getattr(notice, name_attr, None),
+        "expires_in": expires_in,
+    }
