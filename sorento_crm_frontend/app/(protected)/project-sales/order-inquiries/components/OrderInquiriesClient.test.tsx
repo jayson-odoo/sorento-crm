@@ -846,38 +846,44 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     );
   });
 
-  // DEFECT, reported not fixed (tester's brief): `buildSelectColumn`'s `enableRow`
-  // (`orderInquiryWorklistColumns.tsx`, the `isAcknowledgeable` predicate wired to the
-  // select column) has no effect, because `useReactTable` here sets a plain BOOLEAN
-  // `enableRowSelection: canAcknowledge` (OrderInquiriesClient.tsx:465) rather than a
-  // function. `row.getCanSelect()` (`@tanstack/table-core`'s `RowSelection` feature)
-  // reads ONLY `table.options.enableRowSelection`, never a column-level property -
-  // `data-grid-select-column.tsx:78` sets `enableRowSelection` on the COLUMN DEF, which
-  // `ColumnDef` does not recognise and react-table silently ignores. So every row's
-  // checkbox is tickable regardless of `ack_state`/`state`, including a CANCELLED or
-  // ACTIONED one - the exact gotcha this codebase already has a comment about at
-  // `FulfilmentPlanningClient.tsx:547` ("a column-level `enableRowSelection` is
-  // silently ignored, and every row would tick") and three OTHER callers of
-  // `buildSelectColumn` correctly avoid by passing a matching FUNCTION to the table's
-  // own `enableRowSelection` (`SalesOrdersPanel.tsx:383`,
-  // `FulfilmentPlanningClient.tsx:548`, `StockTransfersPanel.tsx:480`). Plan section 7's
-  // "found in the browser, where the first press took on three cancelled rows" is this
-  // exact bug, described as fixed; it is not, at the wiring level this test pins.
-  it.fails(
-    'offers no checkbox at all for a row that cannot be acknowledged (cancelled/actioned)',
-    async () => {
-      granted = new Set([
-        'projects.order_inquiry.action',
-        'project_sales.order_inquiries.acknowledge',
-      ]);
-      renderClient();
-      await screen.findByText('SO385126');
+  it('offers no tickable checkbox for a row that cannot be acknowledged', async () => {
+    // The predicate has to be the TABLE's own `enableRowSelection` - `row.getCanSelect()`
+    // reads nothing else, so a column-level one is silently ignored and every row ticks.
+    granted = new Set([
+      'projects.order_inquiry.action',
+      'project_sales.order_inquiries.acknowledge',
+    ]);
+    renderClient();
+    await screen.findByText('SO385126');
 
-      // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent, exactly
-      // the way a locked record's checkbox is elsewhere in this codebase.
-      expect(screen.getByLabelText('Select SRTWB5400 on SO385126')).toBeDisabled();
-    },
-  );
+    // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent, exactly
+    // the way a locked record's checkbox is elsewhere in this codebase.
+    expect(screen.getByLabelText('Select SRTWB5400 on SO385126')).toBeDisabled();
+    // ... and a row that is still owed and unread stays tickable.
+    expect(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461')).toBeEnabled();
+  });
+
+  it('leaves a disabled row out of the bulk press even when Select all is used', async () => {
+    granted = new Set([
+      'projects.order_inquiry.action',
+      'project_sales.order_inquiries.acknowledge',
+    ]);
+    acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 0, links: 0 });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    const button = await screen.findByRole('button', { name: /^Acknowledge \(/ });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(acknowledgeOrderInquiryRows).toHaveBeenCalled());
+    const sent = acknowledgeOrderInquiryRows.mock.calls[0][0] as string[];
+    // The actioned and cancelled rows of the fixture are not purchasing's to take on, so
+    // the press that follows a Select all must not carry them into a batch the server
+    // refuses whole.
+    expect(sent).not.toContain('row-1');
+    expect(sent).not.toContain('row-4');
+  });
 
   it('a CS user (no acknowledge grant) sees the Acknowledged column and the filter, but none of the actions', async () => {
     // The default `beforeEach` grant is exactly this: `projects.order_inquiry.action`
