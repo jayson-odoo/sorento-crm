@@ -362,17 +362,19 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     presentations of it.
 
     **The unit is the sizing GROUP, not the recommendation row.** Project need is additive
-    across locations, so summing rows happened to work for it. Netted Retail replenishment is not: a pool and a network buy are netted
-    ONCE on the aggregate, and their member cells can each read 0 - individually
-    untriggered under their own reorder level - while the group is short 213. Summing the
-    rows therefore stated "Suggested 0" for a run that had just sized a 213-unit buy. The
-    group states its own netted figure and the freeze reads that.
+    across locations, so summing rows happened to work for it. Netted Retail replenishment
+    is not: a pool and a network buy are netted ONCE on the aggregate, and their member
+    cells can each read 0 - individually untriggered under their own reorder level - while
+    the group is short 213. Summing the rows therefore stated "Suggested 0" for a run that
+    had just sized a 213-unit buy. The group states its own netted figure and the freeze
+    reads that.
 
     **Demand is read from every kind of row, sizing only from the buys.** Project demand is
-    a statement about the order book, so it comes from every group the product produced - covered, unsourceable and un-levelled included,
-    or a product buying at location A silently loses location B's readings and B itself
-    from the evidence. Netted Retail replenishment is the figure a purchase was sized on,
-    so it comes only from groups that bought; a covered group's is 0 by definition.
+    a statement about the order book, so it comes from every group the product produced -
+    covered, unsourceable and un-levelled included, or a product buying at location A
+    silently loses location B's readings and B itself from the evidence. Netted Retail
+    replenishment is the figure a purchase was sized on, so it comes only from groups that
+    bought; a covered group's is 0 by definition.
 
     A run frozen before the basis existed (or a hand-built recommendation) has no group,
     and falls back to the row-wise sum over the BUY rows, which is exactly right for the
@@ -402,10 +404,15 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             for g in sources for loc in (g.get("locations") or [])
         ]
     else:
+        # The LEGACY branch: a run frozen before `plan_basis` existed. `unclassified_need`
+        # is read here and nowhere else - the current engine states no such figure, but a
+        # run that DID state one is re-frozen through this path, and dropping it would
+        # rewrite that run's own report to say 0 for something it measured.
         sources = [
             {
                 "project_need": (r.inputs or {}).get("project_need"),
                 "retail_need": (r.inputs or {}).get("retail_need"),
+                "unclassified_need": (r.inputs or {}).get("unclassified_need"),
             }
             for r in buy_recs
         ]
@@ -431,9 +438,10 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
 
     project = sum(float(s.get("project_need") or 0.0) for s in sources)
     retail = sum(float(s.get("retail_need") or 0.0) for s in retail_sources)
-    # Always 0 since P3/P4 (nothing is unclassified and the plan row no longer states a
-    # figure), and kept as a named reading rather than deleted: `order_summary_row` still
-    # carries the column, and a reader of an OLD run's report must see what that run said.
+    # 0 on every run the current engine writes - nothing is unclassified and the plan row
+    # states no such figure (P4) - and NOT deleted, because `order_summary_row` still
+    # carries the column and an OLD run re-frozen through the legacy branch above must
+    # report what that run actually measured.
     unclassified = sum(float(s.get("unclassified_need") or 0.0) for s in sources)
     raw_need = project + retail
     moq = constraints.get("moq")

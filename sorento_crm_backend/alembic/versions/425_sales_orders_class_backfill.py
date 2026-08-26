@@ -10,7 +10,16 @@ and the honest fix is upstream. Since QP1 an SO upload naming an order nothing c
 is refused outright, so "upstream" has to mean the master data as well as the orders.
 
 The captain's ruling of 26 Aug 2026 is that all 148 open orders carrying no class are
-RETAIL. Read off the dev copy, they belong to fifteen debtors, grouped by who sold them:
+RETAIL. Measured on the dev copy, that book is wider than the debtor list suggests:
+
+    11,154 orders carry no class       148 open, 11,006 closed
+    the 148 open ones                  spread across 23 customer rows
+    the whole 11,154                   9,000 name a customer and no debtor code,
+                                       2,021 name NEITHER a code nor a customer,
+                                       133 name both
+    distinct debtor CODES stated       14
+
+The 14 codes, grouped by the agent who sold their open orders:
 
     agent LCL        117 orders   300-A036, 300-C108, 300-C110, 300-M172, 300-P121,
                                   300-P122, 300-S289, 303-K001, 303-M004
@@ -18,6 +27,10 @@ RETAIL. Read off the dev copy, they belong to fifteen debtors, grouped by who so
     KATHERINE         10 orders   300-C083, 301-C001
     XUAN               3 orders   300-M168, 302-J005
     JAMYN CHANG        2 orders   300-M168
+
+A code is not a row: `customers.customer_code` is unique per COMPANY, so those 14 codes
+resolve to 123 customer rows across nine companies - which is why the debtor arm below
+matches under the order's own company and not on the code alone.
 
 TWO backfills, because stamping only the orders leaves a trap one upload away.
 
@@ -42,6 +55,9 @@ TWO backfills, because stamping only the orders leaves a trap one upload away.
    already carry one are LEFT ALONE. That exception is the point: 300-F004's segment reads
    `project`, and overwriting it would silently demote a project buyer to retail on the
    strength of an order somebody forgot to classify.
+
+   The AGENT is the fourth and last source, and it is NOT filled here: migration 427 does
+   that, for the four agents the captain ruled on.
 
    Company-safe on both arms. An order's `customer_id` is already the right row; the
    debtor-code arm is matched under the order's OWN company, because `customers.
@@ -166,18 +182,26 @@ def downgrade() -> None:
     # Only the rows this migration stamped, and only while they still read what it wrote: a
     # row somebody has since reclassified is theirs, not ours, and putting a NULL back on it
     # would delete a real decision.
+    #
+    # GUARDED on the table existing. A downgrade run twice, or run on a database that never
+    # saw the upgrade, would otherwise die on `relation does not exist` in the middle of a
+    # chain and leave the rest of the revision unapplied - the one moment a migration has to
+    # be at its most forgiving.
     op.execute(
         f"""
-        UPDATE sales_orders SET demand_class = NULL
-        WHERE demand_class = '{_RETAIL}'
-          AND id IN (SELECT sales_order_id FROM {_ORDERS})
-        """
-    )
-    op.execute(
-        f"""
-        UPDATE customers SET market_segment_code = NULL
-        WHERE market_segment_code = '{_RETAIL_SEGMENT}'
-          AND id IN (SELECT customer_id FROM {_CUSTOMERS})
+        DO $$
+        BEGIN
+            IF to_regclass('{_ORDERS}') IS NOT NULL THEN
+                UPDATE sales_orders SET demand_class = NULL
+                WHERE demand_class = '{_RETAIL}'
+                  AND id IN (SELECT sales_order_id FROM {_ORDERS});
+            END IF;
+            IF to_regclass('{_CUSTOMERS}') IS NOT NULL THEN
+                UPDATE customers SET market_segment_code = NULL
+                WHERE market_segment_code = '{_RETAIL_SEGMENT}'
+                  AND id IN (SELECT customer_id FROM {_CUSTOMERS});
+            END IF;
+        END $$;
         """
     )
     op.execute(f"DROP TABLE IF EXISTS {_ORDERS}")
