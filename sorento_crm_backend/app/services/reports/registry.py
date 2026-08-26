@@ -21,13 +21,51 @@ basis is a plain column - it cannot depend on itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from zoneinfo import ZoneInfo
 
+from sqlalchemy import DateTime, func
 from sqlalchemy.sql import ColumnElement, Select
 
 COLUMN_TYPES = frozenset({"text", "money", "integer", "date", "bool"})
 COLUMN_TAGS = frozenset({"dimension", "measure", "date", "text"})
 SCOPES = frozenset({"company", "none"})
+
+#: Every date in this system means Malaysia. Datetimes are STORED naive UTC, so a report
+#: that buckets them raw files a 31 July 17:30 approval under July when the office that
+#: approved it was already in August. Shifted once, here, so the period predicate, the
+#: month bucket, the year list and the printed date can never disagree.
+MALAYSIA_TZ = "Asia/Kuala_Lumpur"
+_MY_TZINFO = ZoneInfo(MALAYSIA_TZ)
+
+
+def to_malaysia(expr: ColumnElement) -> ColumnElement:
+    """A datetime expression as Malaysia wall clock. A DATE is returned untouched.
+
+    A DATE carries no time to shift, and shifting one would move every row back a day.
+    """
+    type_ = getattr(expr, "type", None)
+    if not isinstance(type_, DateTime):
+        return expr
+    if getattr(type_, "timezone", False):
+        return func.timezone(MALAYSIA_TZ, expr)
+    # naive UTC -> aware -> Malaysia wall clock (`AT TIME ZONE 'UTC' AT TIME ZONE '...'`).
+    return func.timezone(MALAYSIA_TZ, func.timezone("UTC", expr))
+
+
+def today_malaysia():
+    """Today where the users are, not where the server is."""
+    return datetime.now(_MY_TZINFO).date()
+
+
+def current_year_period() -> Dict[str, Any]:
+    """This calendar year in Malaysia, resolved when it is ASKED FOR.
+
+    Evaluated at import instead, a process booted on 31 December 2026 keeps opening the
+    report on 2026 for as long as it stays up.
+    """
+    return {"kind": "year", "year": today_malaysia().year}
 
 
 @dataclass(frozen=True)
@@ -126,7 +164,12 @@ class DateBasisParam:
 class PeriodParam:
     key: str
     label: str
-    default: Dict[str, Any]
+    #: The period the screen opens on. A CALLABLE (e.g. ``current_year_period``) when it
+    #: means "now", so the answer is the user's year rather than the process's boot year.
+    default: Union[Dict[str, Any], Callable[[], Dict[str, Any]]]
+
+    def resolved_default(self) -> Dict[str, Any]:
+        return dict(self.default() if callable(self.default) else self.default)
 
 
 @dataclass(frozen=True)
@@ -145,6 +188,15 @@ class SelectParam:
 
 
 Param = Any  # DateBasisParam | PeriodParam | SelectParam
+
+
+def default_value(param: Param) -> Any:
+    """What a param means when the caller names no value for it."""
+    if isinstance(param, PeriodParam):
+        return param.resolved_default()
+    if isinstance(param, SelectParam):
+        return list(param.default)
+    return param.default
 
 
 # ------------------------------------------------------------------------ layouts
@@ -242,6 +294,23 @@ def validate(definition: ReportDefinition) -> None:
             f"Report '{definition.key}' default view uses date basis '{basis}', "
             "which the dataset does not offer"
         )
+    for param in definition.params:
+        if not isinstance(param, PeriodParam):
+            continue
+        # Local import: the engine imports THIS module, and a period a report cannot open
+        # on should fail at import rather than 422 every time somebody opens the page.
+        from app.services.reports.engine import resolve_period
+
+        for candidate in (param.resolved_default(), (view.get("params") or {}).get(param.key)):
+            if candidate is None:
+                continue
+            try:
+                resolve_period(candidate)
+            except Exception as exc:  # noqa: BLE001 - re-raised as a definition error
+                raise ValueError(
+                    f"Report '{definition.key}' param '{param.key}' declares a period the "
+                    f"engine cannot resolve ({candidate!r}): {exc}"
+                )
 
 
 _REGISTRY: Dict[str, ReportDefinition] = {}

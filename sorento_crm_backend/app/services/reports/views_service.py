@@ -7,10 +7,11 @@ Mine vs Shared, settled while building S2:
   view they just made.
 - **Shared** = OTHER people's published views.
 
-Ownership is the write rule: rename, delete and publish are the owner's, and a view that is
+Ownership is the write rule: delete and publish are the owner's, and a view that is
 not the caller's answers 404 rather than 403 - a view id in someone else's hand is not a
 licence to learn that it exists. Setting the report default additionally needs
-`reports.views.publish` (enforced at the route) and works on any shared view.
+`reports.views.publish` (enforced at the route) and works on any SHARED view, or on one
+the caller owns (owner publishes and defaults in one step).
 """
 from __future__ import annotations
 
@@ -21,7 +22,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.report_view import ReportView as ReportViewRow
-from app.models.user import User
 from app.schemas.report import ReportView, ReportViewConfig, ReportViews
 from app.services.error_handler import AppException, handle_not_found
 
@@ -94,40 +94,6 @@ class ReportViewsService:
         self.db.refresh(row)
         return self._to_schema(row, self._owner_names([row.owner_user_id]))
 
-    def update(
-        self,
-        report_key: str,
-        view_id: str,
-        user_id: str,
-        *,
-        name: Optional[str] = None,
-        config: Optional[ReportViewConfig] = None,
-    ) -> ReportView:
-        row = self._owned(report_key, view_id, user_id)
-        if name is not None:
-            cleaned = name.strip()
-            if not cleaned:
-                raise AppException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    message="A view needs a name",
-                    code="VALIDATION_ERROR",
-                )
-            row.name = cleaned
-        if config is not None:
-            row.view = config.model_dump(mode="json")
-        try:
-            self.db.flush()
-        except IntegrityError:
-            self.db.rollback()
-            raise AppException(
-                status_code=status.HTTP_409_CONFLICT,
-                message=f'You already have a view called "{name}"',
-                code="CONFLICT",
-            )
-        self.db.commit()
-        self.db.refresh(row)
-        return self._to_schema(row, self._owner_names([row.owner_user_id]))
-
     def delete(self, report_key: str, view_id: str, user_id: str) -> None:
         row = self._owned(report_key, view_id, user_id)
         self.db.delete(row)
@@ -143,10 +109,23 @@ class ReportViewsService:
         self.db.refresh(row)
         return self._to_schema(row, self._owner_names([row.owner_user_id]))
 
-    def set_default(self, report_key: str, view_id: str) -> ReportView:
+    def set_default(self, report_key: str, view_id: str, user_id: str) -> ReportView:
+        """Make one SHARED view the report default for everyone.
+
+        The owner may publish and default in one step, which is the screen's own flow. Anyone
+        else has to work with a view its author already published: without that rule a holder
+        of the publish grant could expose somebody else's PRIVATE view to the whole company
+        by knowing its id.
+        """
         row = self._row(report_key, view_id)
         if row is None:
             raise handle_not_found("View", view_id)
+        if not row.is_shared and row.owner_user_id != str(user_id):
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                message="That view is not shared. Only a shared view can be the report default.",
+                code="CONFLICT",
+            )
         # Clear first: the partial unique index would otherwise reject the second default.
         self.db.query(ReportViewRow).filter(
             ReportViewRow.report_key == report_key,
@@ -175,11 +154,12 @@ class ReportViewsService:
         return row
 
     def _owner_names(self, user_ids: List[str]) -> dict:
-        ids = {str(i) for i in user_ids if i}
-        if not ids:
-            return {}
-        rows = self.db.query(User.id, User.name, User.email).filter(User.id.in_(ids)).all()
-        return {str(r[0]): (r[1] or r[2]) for r in rows}
+        """Display names, through the one bulk lookup the route serialisers share."""
+        from app.services.project_service import resolve_user_names
+
+        return {
+            str(k): v for k, v in resolve_user_names(self.db, [i for i in user_ids if i]).items()
+        }
 
     @staticmethod
     def _to_schema(row: ReportViewRow, names: dict) -> ReportView:

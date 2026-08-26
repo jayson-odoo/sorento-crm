@@ -13,6 +13,7 @@ The renderer knows nothing about months, dates or filters. It is handed a
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from typing import List, Optional
@@ -27,6 +28,9 @@ from app.services.reports.engine import WorkbookData
 from app.services.reports.registry import ReportDefinition
 
 MONEY_FORMAT = "#,##0.00"
+# The CRM writes dates dd/mm/yyyy everywhere else, and a text date cannot be sorted,
+# filtered or reformatted in Excel - which is most of what a file is opened to do.
+DATE_FORMAT = "DD/MM/YYYY"
 TICK = "X"
 
 _TITLE_FONT = Font(bold=True, size=14)
@@ -58,6 +62,17 @@ def _write_money(sheet: Worksheet, row: int, column: int, value: Optional[str]) 
         return  # blank, not zero - the client's sheet prints "-" here
     cell.value = amount
     cell.number_format = MONEY_FORMAT
+
+
+def _write_date(sheet: Worksheet, row: int, column: int, value: Optional[str]) -> None:
+    """An ISO date string as a REAL date cell. Anything unparseable stays the text it was."""
+    cell = sheet.cell(row=row, column=column)
+    try:
+        cell.value = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        cell.value = value
+        return
+    cell.number_format = DATE_FORMAT
 
 
 def _autosize(sheet: Worksheet, widths: List[int]) -> None:
@@ -155,6 +170,9 @@ def _render_detail(
             value = record.get(column.key)
             if column.type == "money":
                 _write_money(sheet, row, index, value)
+            elif column.type == "date":
+                if value is not None:
+                    _write_date(sheet, row, index, value)
             elif column.type == "bool":
                 if value:
                     sheet.cell(row=row, column=index, value=TICK).alignment = _CENTRE
@@ -162,9 +180,17 @@ def _render_detail(
                 sheet.cell(row=row, column=index, value=value)
         row += 1
 
-    sheet.cell(row=row, column=1, value="GRAND TOTAL").font = _HEADER_FONT
+    # The label opens the row, as the client's own sheets do - unless that cell carries a
+    # total, in which case writing the label over it would silently lose the money. It then
+    # takes the first cell that holds no total, or a dedicated one past the last column.
+    totalled = {c.key for c in detail.columns if c.type == "money" and c.key in detail.totals}
+    label_column = next(
+        (positions[c.key] for c in detail.columns if c.key not in totalled),
+        len(detail.columns) + 1,
+    )
+    sheet.cell(row=row, column=label_column, value="GRAND TOTAL").font = _HEADER_FONT
     for column in detail.columns:
-        if column.type == "money" and column.key in detail.totals:
+        if column.key in totalled:
             _write_money(sheet, row, positions[column.key], detail.totals[column.key])
 
     _autosize(sheet, [max(12, min(40, (c.size or 120) // 8)) for c in detail.columns])

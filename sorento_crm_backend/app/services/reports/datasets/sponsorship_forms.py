@@ -37,6 +37,7 @@ from app.models.lookup import LookupOption, LookupSet
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import Project
 from app.services.reports import registry as reg
+from app.services.reports.engine import month_label
 
 # Core tables, not mapped entities (see the module docstring).
 _PR = PurchaseRequestHeader.__table__
@@ -61,11 +62,6 @@ STATUS_LABELS: Tuple[Tuple[str, str], ...] = (
 )
 
 DEFAULT_STATUSES: Tuple[str, ...] = ("approved", "processed_by_cs")
-
-_MONTH_ABBR = (
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-)
-
 
 def _blank_to_null(column) -> Any:
     return sa.func.nullif(sa.func.btrim(column), "")
@@ -151,11 +147,6 @@ def _month(ctx) -> Any:
     return sa.func.to_char(sa.func.date_trunc("month", ctx.date_basis), "YYYY-MM")
 
 
-def _month_label(value: str) -> str:
-    year, month = str(value).split("-")
-    return f"{_MONTH_ABBR[int(month) - 1]}'{year[2:]}"
-
-
 # ------------------------------------------------------------------------- the row set
 
 
@@ -179,18 +170,19 @@ def years(db) -> List[int]:
     unable to pick the year their forms are actually dated in. An empty dataset falls back
     to the current year, so the filter is never a dropdown with nothing in it.
     """
-    from datetime import date
-
     found = set()
     for column in (_PR.c.approved_at, _PR.c.request_date, _PR.c.submitted_at):
+        # The same Malaysia shift the engine buckets by: a form approved 31 Dec 17:00 UTC
+        # is a January form here, so January's year is the one to offer for it.
+        local = reg.to_malaysia(column)
         stmt = (
-            sa.select(sa.distinct(sa.func.extract("year", column)))
+            sa.select(sa.distinct(sa.func.extract("year", local)))
             .select_from(_PR)
             .where(sa.and_(*_row_predicates()))
             .where(column.isnot(None))
         )
         found.update(int(row[0]) for row in db.execute(stmt) if row[0] is not None)
-    return sorted(found, reverse=True) or [date.today().year]
+    return sorted(found, reverse=True) or [reg.today_malaysia().year]
 
 
 def sales_agent_options(db) -> Sequence[Tuple[str, str]]:
@@ -249,7 +241,9 @@ COLUMNS: Tuple[reg.Column, ...] = (
         _month,
         size=110,
         period_months=True,
-        value_label=_month_label,
+        # The engine already names a month bucket for the workbook's sheet tabs; one
+        # rule, so the screen's header and the file's tab can never read differently.
+        value_label=month_label,
     ),
     reg.Column("status", "Status", "text", "dimension", lambda c: _STATUS_LABEL, size=140),
     reg.Column("approved_at", "Approved on", "date", "date", lambda c: _PR.c.approved_at, size=130),

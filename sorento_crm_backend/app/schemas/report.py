@@ -92,10 +92,12 @@ class ReportLayouts(BaseModel):
 
 
 class ReportResult(BaseModel):
+    """A run that came back. A run that did NOT is the 422 with `capped: true` on it, so
+    there is no flag here: a result the caller is holding was never capped."""
+
     key: str
     period_label: str
     row_count: int
-    capped: bool
     layouts: ReportLayouts
 
 
@@ -208,11 +210,6 @@ class ReportExportResult(BaseModel):
 class ReportViewCreate(BaseModel):
     name: str
     view: ReportViewConfig
-
-
-class ReportViewUpdate(BaseModel):
-    name: Optional[str] = None
-    view: Optional[ReportViewConfig] = None
 
 
 class ReportViewPublish(BaseModel):

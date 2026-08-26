@@ -199,7 +199,6 @@ def test_run_returns_every_field_the_screen_reads(api):
     assert result["key"] == KEY
     assert result["period_label"] == "Jan'26 to Dec'26"
     assert result["row_count"] == 5
-    assert result["capped"] is False
 
     detail = result["layouts"]["detail"]
     assert detail["key"] == "detail"
@@ -230,6 +229,42 @@ def test_run_without_a_view_falls_back_to_the_report_default(api):
     resp = client.post(f"{BASE}/run", json={"params": _config()["params"], "view": None})
     assert resp.status_code == 200, resp.text
     assert resp.json()["layouts"]["summary"]["row_dim"]["key"] == "agent"
+
+
+def test_a_run_with_no_top_level_params_falls_back_to_the_views_own(api):
+    """A saved view carries the params it was saved with. A body that sends only the view
+    used to run on the DEFINITION's defaults, so applying a saved view silently changed the
+    period back."""
+    client, _allow = api
+    view = _config(
+        params={
+            "date_basis": "booked_on",
+            "period": {"kind": "year", "year": 2025},
+            "agent": [],
+            "region": ["North", "South"],
+        }
+    )
+    resp = client.post(f"{BASE}/run", json={"params": {}, "view": view})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["period_label"] == "Jan'25 to Dec'25"
+    assert resp.json()["row_count"] == 1  # Z-006, the 2025 order
+
+
+def test_top_level_params_win_over_the_views_own(api):
+    """The filter bar is live: what is on screen beats what the view was saved with."""
+    client, _allow = api
+    view = _config(
+        params={
+            "date_basis": "booked_on",
+            "period": {"kind": "year", "year": 2025},
+            "agent": [],
+            "region": ["North", "South"],
+        }
+    )
+    body = {"params": _config()["params"], "view": view}
+
+    assert client.post(f"{BASE}/run", json=body).json()["period_label"] == "Jan'26 to Dec'26"
 
 
 def test_run_is_403_without_the_report_permission(api):
@@ -316,6 +351,42 @@ def test_export_goes_on_the_queue_the_settings_name(api, monkeypatch):
     assert queued["queue_name"] == "zzt_reports_lane"
 
 
+def test_export_refuses_an_unknown_detail_column_at_the_button(api, db):
+    """A bad view used to reach the worker: the user pressed Export, got a download row,
+    and it failed a minute later in a drawer. The 422 belongs at the button."""
+    from app.models.download import UserDownload
+
+    client, _allow = api
+    body = _run_body(view=_config(detail={"columns": ["no_such_column"], "order": []}))
+    resp = client.post(f"{BASE}/export", json=body)
+    assert resp.status_code == 422, resp.text
+    assert "no_such_column" in resp.json()["message"]
+    assert db.query(UserDownload).count() == 0
+
+
+def test_export_refuses_an_unknown_pivot_measure(api, db):
+    from app.models.download import UserDownload
+
+    client, _allow = api
+    body = _run_body(
+        view=_config(pivot={"rows": "agent", "cols": "month", "measures": ["no_such_measure"]})
+    )
+    resp = client.post(f"{BASE}/export", json=body)
+    assert resp.status_code == 422, resp.text
+    assert "no_such_measure" in resp.json()["message"]
+    assert db.query(UserDownload).count() == 0
+
+
+def test_export_refuses_a_pivot_grouped_by_a_measure(api):
+    client, _allow = api
+    body = _run_body(
+        view=_config(pivot={"rows": "amount", "cols": "month", "measures": ["amount"]})
+    )
+    resp = client.post(f"{BASE}/export", json=body)
+    assert resp.status_code == 422, resp.text
+    assert "amount" in resp.json()["message"]
+
+
 def test_export_is_403_without_the_report_permission(api):
     client, allow = api
     allow.clear()
@@ -381,16 +452,6 @@ def test_my_own_published_view_stays_under_mine(api):
     assert listed["shared"] == []
 
 
-def test_a_view_can_be_renamed_and_reconfigured(api):
-    client, _allow = api
-    view_id = _create_view(client, "Draft").json()["id"]
-    config = _config(pivot={"rows": "region", "cols": "month", "measures": ["fee"]})
-    resp = client.put(f"{BASE}/views/{view_id}", json={"name": "Final", "view": config})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["name"] == "Final"
-    assert resp.json()["view"]["pivot"]["rows"] == "region"
-
-
 def test_a_view_is_hard_deleted(api):
     client, _allow = api
     view_id = _create_view(client, "Temporary").json()["id"]
@@ -436,6 +497,46 @@ def test_at_most_one_view_is_the_default_for_a_report(api):
     listed = client.get(f"{BASE}/views").json()
     defaults = [v["name"] for v in listed["mine"] + listed["shared"] if v["is_default"]]
     assert defaults == ["Second"]
+
+
+def test_another_users_private_view_cannot_be_made_the_default(api, db):
+    """Set as default used to publish whatever id it was handed, so a holder of the publish
+    grant could expose somebody else's PRIVATE view to everyone by id alone."""
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    other = _seed_other_view(db, name="Private to them", is_shared=False)
+
+    resp = client.post(f"{BASE}/views/{other}/set-default")
+    assert resp.status_code == 409, resp.text
+    assert "shared" in resp.json()["message"].lower()
+
+    # Still private, still nobody's default.
+    listed = client.get(f"{BASE}/views").json()
+    assert listed["mine"] == []
+    assert listed["shared"] == []
+    assert client.get(BASE).json()["default_view"]["pivot"]["rows"] == "agent"
+
+
+def test_another_users_shared_view_can_be_made_the_default(api, db):
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    other = _seed_other_view(db, name="Theirs, published", is_shared=True)
+
+    resp = client.post(f"{BASE}/views/{other}/set-default")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_default"] is True
+
+
+def test_the_owner_may_publish_and_default_a_view_in_one_step(api):
+    """The screen's own flow: Set as default on a view you own shares it as it defaults it."""
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    view_id = _create_view(client, "Mine to share").json()["id"]
+
+    resp = client.post(f"{BASE}/views/{view_id}/set-default")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_shared"] is True
+    assert resp.json()["is_default"] is True
 
 
 def test_the_shared_default_becomes_the_reports_default_view(api):

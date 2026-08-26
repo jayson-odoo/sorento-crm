@@ -349,6 +349,16 @@ def _view_with_pivot(rows: str, cols: str, measures=("project_value",)):
 # -------------------------------------------------------------------- AC-B4 date basis
 
 
+def test_the_default_period_is_the_year_the_user_is_in(db, monkeypatch):
+    """Resolved at import, a process booted in 2026 keeps opening the report on 2026 for as
+    long as it stays up - and the report the user asked for is always "this year"."""
+    from app.services.reports import engine, registry as reg
+
+    monkeypatch.setattr(reg, "today_malaysia", lambda: date(2031, 3, 4))
+
+    assert engine.view_config(_definition()).params["period"] == {"kind": "year", "year": 2031}
+
+
 def test_the_dataset_offers_the_three_dates(db):
     dataset = _definition().dataset
     assert [b.key for b in dataset.date_bases] == ["approved_at", "request_date", "submitted_at"]
@@ -378,6 +388,58 @@ def test_switching_the_date_basis_moves_a_form_between_months(db):
     assert _row(form_date, "0300")["month"] == "2026-01"
     assert approved.layouts.summary.cells["Amirul"].keys() == {"2026-04"}
     assert form_date.layouts.summary.cells["Amirul"].keys() == {"2026-01"}
+
+
+def test_a_late_evening_utc_approval_lands_in_the_malaysian_month(db):
+    """`approved_at` is stored NAIVE UTC, and the whole CRM reads Malaysia time.
+
+    31 Jul 2026 17:30 UTC is 1 Aug 2026 01:30 in Kuala Lumpur, so the form is August's
+    takings on both layouts and prints 01/08 in the detail. Bucketing the raw UTC files it
+    under July: invisible in a year total, wrong in every summary cell.
+    """
+    _form(
+        db,
+        "0310",
+        approved_at=datetime(2026, 7, 31, 17, 30),
+        requested_by="Amirul",
+        total_project_value=Decimal("500.00"),
+    )
+
+    view = _view_with_columns(["request_number", "sales_agent", "month", "approved_at"])
+    result = _run(db, view=view)
+    row = _row(result, "0310")
+
+    assert row["month"] == "2026-08"
+    assert row["approved_at"] == "2026-08-01"
+    assert result.layouts.summary.cells["Amirul"].keys() == {"2026-08"}
+
+
+def test_a_malaysian_new_year_approval_is_not_pushed_out_of_the_period(db):
+    """31 Dec 2025 17:00 UTC is 1 Jan 2026 in Kuala Lumpur: inside a 2026 period, and the
+    period predicate has to agree with the month bucket or a form falls between them."""
+    _form(db, "0311", approved_at=datetime(2025, 12, 31, 17, 0), requested_by="Amirul")
+
+    view = _view_with_columns(["request_number", "sales_agent", "month"])
+    assert _row(_run(db, view=view), "0311")["month"] == "2026-01"
+
+
+def test_the_year_list_reads_the_malaysian_year_too(db):
+    """A form approved at 2025-12-31 17:00 UTC is a 2026 form here, so 2026 is the year the
+    filter must offer for it - not 2025, where the report will show nothing."""
+    _form(db, "0312", approved_at=datetime(2025, 12, 31, 17, 0))
+
+    assert _definition().dataset.years(db) == [2026]
+
+
+def test_a_date_basis_that_is_a_plain_date_is_left_alone(db):
+    """`request_date` is a DATE: it carries no time to shift, and shifting it would move
+    every form back a day."""
+    _form(db, "0313", request_date=date(2026, 1, 1), requested_by="Amirul")
+
+    view = _view_with_columns(["request_number", "month", "request_date"])
+    row = _row(_run(db, {"date_basis": "request_date"}, view=view), "0313")
+    assert row["month"] == "2026-01"
+    assert row["request_date"] == "2026-01-01"
 
 
 def test_a_form_outside_the_period_on_the_chosen_basis_is_absent(db):

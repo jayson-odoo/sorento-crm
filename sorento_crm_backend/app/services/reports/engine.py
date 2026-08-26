@@ -17,6 +17,7 @@ The sync path is capped (5,000 detail rows / 5,000 pivot cells) and answers 422 
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -51,6 +52,13 @@ _MONTH_ABBR = (
 )
 
 _TWO_PLACES = Decimal("0.01")
+
+#: Every blank dimension value groups here, on both axes, sorted last. Skipping a blank
+#: value is how a Summary grand total ends up smaller than the Detail total it is meant to
+#: be the same money as: the row is in the register, so it has to be in the pivot too.
+BLANK_VALUE = "(blank)"
+
+_DIGITS = re.compile(r"(\d+)")
 
 
 class ReportCapped(AppException):
@@ -92,10 +100,6 @@ class Period:
 
 def _month_key(value: date) -> str:
     return f"{value.year}-{value.month:02d}"
-
-
-def _month_label(value: date) -> str:
-    return f"{_MONTH_ABBR[value.month - 1]}'{str(value.year)[2:]}"
 
 
 def month_label(key: str) -> str:
@@ -220,7 +224,7 @@ def resolve(db: Session, definition: reg.ReportDefinition, params: Dict[str, Any
                 raise _invalid(f"Unknown date basis '{basis_key}' for '{param.key}'")
             values[param.key] = basis_key
         elif isinstance(param, reg.PeriodParam):
-            period = resolve_period(given if given is not None else param.default)
+            period = resolve_period(given if given is not None else param.resolved_default())
             values[param.key] = period
         elif isinstance(param, reg.SelectParam):
             chosen = _as_list(given) if given is not None else list(param.default)
@@ -235,7 +239,9 @@ def resolve(db: Session, definition: reg.ReportDefinition, params: Dict[str, Any
         db=db,
         definition=definition,
         date_basis_key=basis_key,
-        date_basis=definition.dataset.basis(basis_key).expr,
+        # Malaysia wall clock, once: the period predicate, the month bucket, the ordering
+        # and the printed date all read this one expression, so they cannot disagree.
+        date_basis=reg.to_malaysia(definition.dataset.basis(basis_key).expr),
         period=period,
         values=values,
     )
@@ -259,6 +265,9 @@ def _predicates(ctx: QueryContext) -> List[ColumnElement]:
 
     dataset = ctx.dataset
     if dataset.scope == "company":
+        # TODO: make this arm FAIL-CLOSED (no scope resolved = no rows) the day a dataset
+        # declares scope="company"; today none does, and an unset scope must not silently
+        # widen a report to every company.
         from app.services.company_scope import admin_listing_company_filter
 
         company = admin_listing_company_filter(ctx.db, dataset.company_column)
@@ -298,11 +307,35 @@ def _dimension_value(value: Any) -> str:
     return str(value)
 
 
+def _bucket(value: Any) -> str:
+    """A dimension value as the pivot groups it: blank is a named bucket, never a gap."""
+    return _dimension_value(value) or BLANK_VALUE
+
+
+def _natural_key(value: str) -> Tuple:
+    """Rank a dimension value the way a reader does: "Agent 2" before "Agent 10".
+
+    Plain lexical order puts 10 first, which reads as a sorting bug on any dimension whose
+    values carry a number (year, week, agent 2). The blank bucket always sorts last.
+    """
+    if value == BLANK_VALUE:
+        return (1,)
+    chunks = [c for c in _DIGITS.split(value) if c != ""]
+    return (0, tuple((1, int(c), "") if c.isdigit() else (0, 0, c.casefold()) for c in chunks))
+
+
 def _totals(sums: Dict[str, Optional[Decimal]]) -> Dict[str, str]:
     return {key: str(total.quantize(_TWO_PLACES)) for key, total in sums.items() if total is not None}
 
 
 # -------------------------------------------------------------------------- detail
+
+
+def _column_expr(ctx: QueryContext, column: reg.Column) -> ColumnElement:
+    """A catalog column's SQL. A ``date`` column reads in Malaysia time, like every other
+    date the CRM prints; anything else is the dataset's expression verbatim."""
+    expr = column.expr(ctx)
+    return reg.to_malaysia(expr) if column.type == "date" else expr
 
 
 def _select_columns(ctx: QueryContext, keys: List[str]) -> List[reg.Column]:
@@ -319,7 +352,7 @@ def _select_columns(ctx: QueryContext, keys: List[str]) -> List[reg.Column]:
 
 def _detail_statement(ctx: QueryContext, columns: List[reg.Column], *extra):
     stmt = ctx.dataset.base(ctx).add_columns(
-        *[c.expr(ctx).label(c.key) for c in columns], *extra
+        *[_column_expr(ctx, c).label(c.key) for c in columns], *extra
     )
     stmt = stmt.where(and_(*_predicates(ctx)))
     order_by = list(ctx.definition.detail.order_by(ctx))
@@ -426,10 +459,17 @@ def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetai
 # --------------------------------------------------------------------------- pivot
 
 
-def _dimension(ctx: QueryContext, key: str, role: str) -> reg.Column:
-    column = ctx.dataset.column(key)
+def _dimension(dataset: reg.Dataset, key: str, role: str) -> reg.Column:
+    column = dataset.column(key)
     if column is None or column.tag != "dimension":
         raise _invalid(f"'{key}' is not a dimension this report can group {role} by")
+    return column
+
+
+def _measure(dataset: reg.Dataset, key: str) -> reg.Column:
+    column = dataset.column(key)
+    if column is None or column.tag != "measure":
+        raise _invalid(f"'{key}' is not a measure this report can total")
     return column
 
 
@@ -440,18 +480,13 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
 
     if config.rows == config.cols:
         raise _invalid("Rows and Columns cannot be the same dimension")
-    row_column = _dimension(ctx, config.rows, "rows")
-    col_column = _dimension(ctx, config.cols, "columns")
+    row_column = _dimension(dataset, config.rows, "rows")
+    col_column = _dimension(dataset, config.cols, "columns")
 
-    measures: List[reg.Column] = []
-    for key in config.measures:
-        column = dataset.column(key)
-        if column is None or column.tag != "measure":
-            raise _invalid(f"'{key}' is not a measure this report can total")
-        measures.append(column)
+    measures: List[reg.Column] = [_measure(dataset, key) for key in config.measures]
 
-    row_expr = row_column.expr(ctx)
-    col_expr = col_column.expr(ctx)
+    row_expr = _column_expr(ctx, row_column)
+    col_expr = _column_expr(ctx, col_column)
     stmt = dataset.base(ctx).add_columns(
         row_expr.label("__row"),
         col_expr.label("__col"),
@@ -468,10 +503,8 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
     present_cols: List[str] = []
 
     for group in grouped:
-        row_value = _dimension_value(group["__row"])
-        col_value = _dimension_value(group["__col"])
-        if not row_value or not col_value:
-            continue
+        row_value = _bucket(group["__row"])
+        col_value = _bucket(group["__col"])
         if row_value not in row_values:
             row_values.append(row_value)
         if col_value not in present_cols:
@@ -488,16 +521,21 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
             col_sums[col_value][measure.key] = col_sums[col_value].get(measure.key, Decimal(0)) + amount
             grand[measure.key] = grand.get(measure.key, Decimal(0)) + amount
 
-    row_values.sort()
+    row_values.sort(key=_natural_key)
     if col_column.period_months:
         # Every month of the period, empty ones included - the workbook has twelve sheets
         # whether or not December had a form.
         col_values = list(ctx.period.months)
+        if BLANK_VALUE in present_cols:
+            col_values.append(BLANK_VALUE)
     else:
-        col_values = sorted(present_cols)
+        col_values = sorted(present_cols, key=_natural_key)
 
     value_labels = (
-        {value: col_column.value_label(value) for value in col_values}
+        {
+            value: value if value == BLANK_VALUE else col_column.value_label(value)
+            for value in col_values
+        }
         if col_column.value_label
         else None
     )
@@ -533,8 +571,19 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
 
 
 def view_config(definition: reg.ReportDefinition) -> ReportViewConfig:
-    """The definition's own default view, as the wire shape."""
-    return ReportViewConfig.model_validate(definition.default_view)
+    """The definition's own default view, as the wire shape.
+
+    A param the default view does not name falls back to the PARAM's default, resolved
+    now: that is how "this year" stays the user's year rather than the year the process
+    booted in.
+    """
+    raw = dict(definition.default_view)
+    params = dict(raw.get("params") or {})
+    for param in definition.params:
+        if params.get(param.key) is None:
+            params[param.key] = reg.default_value(param)
+    raw["params"] = params
+    return ReportViewConfig.model_validate(raw)
 
 
 def run(
@@ -556,7 +605,6 @@ def run(
         key=definition.key,
         period_label=ctx.period.label,
         row_count=len(detail.rows),
-        capped=False,
         layouts=ReportLayouts(detail=detail, summary=summary),
     )
 
@@ -599,6 +647,27 @@ def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -
     if requested:
         return requested
     return list((definition.default_view.get("detail") or {}).get("columns") or [])
+
+
+def validate_view(definition: reg.ReportDefinition, view: ReportViewConfig) -> None:
+    """Answer a bad view at the button, not in a download row a minute later.
+
+    ``run`` finds these faults on the way to the screen, but ``export`` hands the view to a
+    worker: an unknown column there is a failed row in My Downloads with no way back to the
+    press that caused it. Same resolver the workbook uses, same messages.
+    """
+    dataset = definition.dataset
+    for key in workbook_columns(definition, view):
+        if dataset.column(key) is None:
+            raise _invalid(f"Unknown detail column '{key}'")
+
+    pivot = view.pivot
+    if pivot.rows == pivot.cols:
+        raise _invalid("Rows and Columns cannot be the same dimension")
+    _dimension(dataset, pivot.rows, "rows")
+    _dimension(dataset, pivot.cols, "columns")
+    for key in pivot.measures:
+        _measure(dataset, key)
 
 
 def _month_sheets(ctx: QueryContext, view: ReportViewConfig) -> List[WorkbookSheet]:

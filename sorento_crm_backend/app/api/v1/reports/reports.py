@@ -36,7 +36,6 @@ from app.schemas.report import (
     ReportViewCreate,
     ReportViewPublish,
     ReportViews,
-    ReportViewUpdate,
 )
 from app.services.error_handler import AppException, handle_not_found
 from app.services.reports import engine, registry as reg
@@ -111,7 +110,7 @@ def _params_meta(db: Session, definition: reg.ReportDefinition) -> List[ReportPa
                 ReportPeriodParam(
                     key=param.key,
                     label=param.label,
-                    default=param.default,
+                    default=param.resolved_default(),
                     years=_years(db, definition),
                 )
             )
@@ -171,6 +170,18 @@ def get_report_meta(
     )
 
 
+def _params_of(body: ReportRunRequest) -> dict:
+    """One source for the params of a run.
+
+    Top-level params are what the FILTER BAR is showing, so they win. A body that carries
+    only a view (which is how a saved view is applied) runs on the params that view was
+    saved with, rather than silently on the report's own defaults.
+    """
+    if body.params:
+        return dict(body.params)
+    return dict(body.view.params) if body.view else {}
+
+
 @router.post("/{key}/run", response_model=ReportResult)
 def run_report(
     key: str,
@@ -180,7 +191,7 @@ def run_report(
 ) -> ReportResult:
     """Both layouts over one row set, capped (the export path is not)."""
     definition = _authorised(db, current_user, key)
-    return engine.run(db, definition, body.params, body.view)
+    return engine.run(db, definition, _params_of(body), body.view)
 
 
 def _export_filename(definition: reg.ReportDefinition, period: engine.Period) -> str:
@@ -208,10 +219,12 @@ def export_report(
     definition = _authorised(db, current_user, key)
     # Validate the params here rather than on the worker: a 422 the user can act on beats a
     # download row that fails a minute later in a drawer.
-    ctx = engine.resolve(db, definition, body.params)
+    params = _params_of(body)
+    ctx = engine.resolve(db, definition, params)
     filename = _export_filename(definition, ctx.period)
 
     view = body.view or engine.view_config(definition)
+    engine.validate_view(definition, view)
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind="report_xlsx",
@@ -222,7 +235,7 @@ def export_report(
             generate_report_xlsx,
             str(download.id),
             definition.key,
-            body.params,
+            params,
             view.model_dump(mode="json"),
             str(current_user["id"]),
             queue_name=settings.report_export_queue,
@@ -260,21 +273,6 @@ def create_report_view(
 ) -> ReportView:
     _authorised(db, current_user, key)
     return ReportViewsService(db).create(key, str(current_user["id"]), body.name, body.view)
-
-
-@router.put("/{key}/views/{view_id}", response_model=ReportView)
-def update_report_view(
-    key: str,
-    view_id: str,
-    body: ReportViewUpdate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> ReportView:
-    _authorised(db, current_user, key)
-    validate_uuid_path(view_id, resource="View")
-    return ReportViewsService(db).update(
-        key, view_id, str(current_user["id"]), name=body.name, config=body.view
-    )
 
 
 @router.delete("/{key}/views/{view_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -315,4 +313,4 @@ def set_default_report_view(
     _authorised(db, current_user, key)
     _require_publish(db, current_user)
     validate_uuid_path(view_id, resource="View")
-    return ReportViewsService(db).set_default(key, view_id)
+    return ReportViewsService(db).set_default(key, view_id, str(current_user["id"]))

@@ -659,7 +659,7 @@ PERMISSION_REGISTRY.extend([
     {
         "slug": "reports.views.publish",
         "name": "Publish Report Views",
-        "description": "Share a saved report view and set the default view for everyone.",
+        "description": "Permission to share a saved report view and set the default for everyone.",
     },
 ])
 

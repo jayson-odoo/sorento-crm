@@ -19,6 +19,10 @@ from app.database import SessionLocal
 from app.services.company_scope import set_company_scope
 from app.services.download_service import DownloadService
 from app.services.storage_router import default_provider, get_backend
+# The other exports' rollback-then-mark-failed rule, not a second copy of it: when the
+# thing that failed was the DATABASE, psycopg2 leaves the transaction aborted and
+# `mark_failed` would raise too, leaving the row spinning in 'processing' for good.
+from app.tasks.export_tasks import _record_failure
 
 logger = logging.getLogger(__name__)
 
@@ -86,24 +90,7 @@ def generate_report_xlsx(
         return {"download_id": download_id, "status": "ready", "bytes": len(content)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_report_xlsx failed for download %s", download_id)
-        _record_failure(db, svc, download_id, e)
+        _record_failure(db, svc, download_id, e, "generate_report_xlsx")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()
-
-
-def _record_failure(db, svc: DownloadService, download_id: str, error: Exception) -> None:
-    """Write the failure onto the row, rolling back first.
-
-    When the thing that failed was the DATABASE, psycopg2 leaves the transaction aborted and
-    every later statement on that session raises - ``mark_failed`` included - which leaves
-    the row in 'processing' for good and the drawer spinning.
-    """
-    try:
-        db.rollback()
-    except Exception:  # noqa: BLE001 - a session too broken to roll back is still worth trying
-        logger.exception("generate_report_xlsx: rollback before failing %s", download_id)
-    try:
-        svc.mark_failed(download_id, str(error))
-    except Exception:  # noqa: BLE001
-        logger.exception("generate_report_xlsx: could not mark %s failed", download_id)

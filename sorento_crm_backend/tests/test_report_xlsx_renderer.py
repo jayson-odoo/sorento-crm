@@ -258,6 +258,60 @@ def test_the_workbook_carries_exactly_the_views_columns_in_its_order():
     assert _headers(sheet) == ["Amount", "Order no", "Agent"]
 
 
+def _rendered(columns):
+    """The JAN'26 sheet of a workbook rendered with exactly these detail columns."""
+    from openpyxl import load_workbook
+
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine
+    from app.services.reports.xlsx_renderer import render_workbook
+
+    definition = fixture.definition()
+    view = ReportViewConfig.model_validate(
+        {
+            "params": definition.default_view["params"],
+            "detail": {"columns": list(columns), "order": []},
+            "pivot": definition.default_view["pivot"],
+        }
+    )
+    with pg_session() as db:
+        fixture.create_table(db)
+        data = engine.run_workbook(db, definition, definition.default_view["params"], view)
+        content = render_workbook(definition, data)
+    return load_workbook(BytesIO(content))["JAN'26"]
+
+
+def test_the_grand_total_label_never_overwrites_a_money_total():
+    """A view whose FIRST column is a measure used to lose that column's total: the label
+    was written into cell A, then the money was written over it."""
+    sheet = _rendered(["amount", "order_no", "agent"])
+    total_row = sheet.max_row
+
+    values = [sheet.cell(row=total_row, column=c).value for c in range(1, sheet.max_column + 1)]
+    assert "GRAND TOTAL" in values
+    assert float(sheet.cell(row=total_row, column=1).value) == 1250.25
+
+
+def test_the_grand_total_label_still_opens_the_row_when_it_can():
+    """The client's own sheets read GRAND TOTAL in the first column; nothing moves unless
+    that cell carries money."""
+    sheet = _rendered(["order_no", "agent", "amount"])
+    assert sheet.cell(row=sheet.max_row, column=1).value == "GRAND TOTAL"
+
+
+def test_a_date_column_is_a_real_date_not_a_string():
+    """A text date cannot be sorted, filtered or formatted in Excel, which is most of what
+    somebody opens the file to do."""
+    from datetime import date, datetime
+
+    sheet = _rendered(["order_no", "booked_on"])
+    cell = sheet.cell(row=_FIRST_DATA_ROW, column=2)
+
+    assert isinstance(cell.value, (date, datetime))
+    assert cell.value.year == 2026 and cell.value.month == 1
+    assert cell.number_format == "DD/MM/YYYY"
+
+
 def test_an_empty_column_list_falls_back_to_the_definitions_default_columns():
     """A twenty-column sheet is unreadable, so a workbook never means the whole catalog.
 

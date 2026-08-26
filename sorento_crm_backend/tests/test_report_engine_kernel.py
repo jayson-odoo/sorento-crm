@@ -317,6 +317,82 @@ def test_the_grand_total_equals_the_detail_total(db, definition):
     assert result.layouts.summary.grand_total["amount"] == result.layouts.detail.totals["amount"]
 
 
+def _pivot_view(rows: str, cols: str, measures):
+    from app.schemas.report import ReportViewConfig
+
+    return ReportViewConfig(
+        params={},
+        detail={"columns": [], "order": []},
+        pivot={"rows": rows, "cols": cols, "measures": list(measures)},
+    )
+
+
+def _blank_row(db, order_no: str = "Z-007") -> None:
+    """A row with NO agent and NO region: the money the pivot used to lose."""
+    db.execute(
+        sa.text(
+            f"""
+            INSERT INTO {TABLE}
+                (order_no, agent, region, booked_on, shipped_on, amount, fee)
+            VALUES (:o, NULL, NULL, '2026-02-14', '2026-02-20', 77.00, 3.00)
+            """
+        ),
+        {"o": order_no},
+    )
+
+
+def test_a_blank_dimension_value_is_bucketed_not_dropped(db, definition):
+    """The pivot used to `continue` past a blank row or column value, so the Summary
+    grand total silently disagreed with the Detail total. Every blank now falls in one
+    named bucket and the two totals are equal again."""
+    from app.services.reports import engine
+
+    _blank_row(db)
+    view = _pivot_view("agent", "region", ["amount", "fee"])
+    result = _run(db, definition, {"region": []}, view=view)
+    pivot = result.layouts.summary
+
+    assert engine.BLANK_VALUE in pivot.row_values
+    assert engine.BLANK_VALUE in pivot.col_dim.values
+    assert pivot.cells[engine.BLANK_VALUE][engine.BLANK_VALUE]["amount"] == "77.00"
+    assert pivot.grand_total["amount"] == result.layouts.detail.totals["amount"] == "1827.24"
+    assert pivot.grand_total["fee"] == result.layouts.detail.totals["fee"] == "39.51"
+
+
+def test_the_blank_bucket_sorts_last_on_both_axes(db, definition):
+    from app.services.reports import engine
+
+    _blank_row(db)
+    pivot = _run(
+        db, definition, {"region": []}, view=_pivot_view("agent", "region", ["amount"])
+    ).layouts.summary
+
+    assert pivot.row_values[-1] == engine.BLANK_VALUE
+    assert pivot.col_dim.values[-1] == engine.BLANK_VALUE
+    assert pivot.row_values[:-1] == ["Alice", "Bob"]
+
+
+def test_dimension_values_are_ranked_numerically_not_lexically(db, definition):
+    """"Agent 2" before "Agent 10". Plain lexical ordering puts 10 first, which reads as a
+    sorting bug on any dimension whose values carry a number."""
+    for index, agent in ((1, "Agent 10"), (2, "Agent 2")):
+        db.execute(
+            sa.text(
+                f"""
+                INSERT INTO {TABLE}
+                    (order_no, agent, region, booked_on, shipped_on, amount, fee)
+                VALUES (:o, :a, 'North', '2026-05-0{index}', '2026-05-09', 10.00, 1.00)
+                """
+            ),
+            {"o": f"Z-01{index}", "a": agent},
+        )
+    pivot = _run(
+        db, definition, view=_pivot_view("agent", "region", ["amount"])
+    ).layouts.summary
+
+    assert pivot.row_values == ["Agent 2", "Agent 10", "Alice", "Bob"]
+
+
 def test_a_different_pivot_configuration_regroups_the_same_rows(db, definition):
     from app.schemas.report import ReportViewConfig
 
@@ -361,7 +437,6 @@ def test_the_export_path_has_no_cap(db, definition, monkeypatch):
     monkeypatch.setattr(engine, "PIVOT_CELL_CAP", 3)
     result = _run(db, definition, cap=False)
     assert result.row_count == 5
-    assert result.capped is False
 
 
 # ------------------------------------------------------------------ company scope
@@ -428,6 +503,55 @@ def test_a_default_view_naming_a_measure_as_a_dimension_is_refused(definition):
     with pytest.raises(ValueError):
         reg.register(broken)
     reg._REGISTRY.pop("zzt_orders", None)
+
+
+def test_a_definition_whose_default_period_is_nonsense_is_refused_at_import(definition):
+    """A bad default period used to surface as a 422 on every page open, which reads as a
+    broken screen rather than a broken definition."""
+    from dataclasses import replace
+
+    from app.services.reports import registry as reg
+
+    params = tuple(
+        reg.PeriodParam(key=p.key, label=p.label, default={"kind": "fortnight"})
+        if isinstance(p, reg.PeriodParam)
+        else p
+        for p in definition.params
+    )
+    with pytest.raises(ValueError) as excinfo:
+        reg.register(replace(definition, params=params))
+    assert "period" in str(excinfo.value).lower()
+    reg._REGISTRY.pop("zzt_orders", None)
+
+
+def test_a_callable_period_default_is_resolved_when_it_is_asked_for(definition):
+    """"This year" has to mean the year the USER is in, not the year the process booted."""
+    from dataclasses import replace
+
+    from app.services.reports import engine
+    from app.services.reports import registry as reg
+
+    years = iter([2031, 2032])
+    params = tuple(
+        reg.PeriodParam(key=p.key, label=p.label, default=lambda: {"kind": "year", "year": next(years)})
+        if isinstance(p, reg.PeriodParam)
+        else p
+        for p in definition.params
+    )
+    # The default view names no period, so it falls through to the param's own default.
+    with_callable = replace(
+        definition,
+        params=params,
+        default_view={
+            **definition.default_view,
+            "params": {
+                k: v for k, v in definition.default_view["params"].items() if k != "period"
+            },
+        },
+    )
+
+    assert engine.view_config(with_callable).params["period"] == {"kind": "year", "year": 2031}
+    assert engine.view_config(with_callable).params["period"] == {"kind": "year", "year": 2032}
 
 
 def test_the_engine_totals_with_decimals_not_floats(db, definition):

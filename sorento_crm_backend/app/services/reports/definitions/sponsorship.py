@@ -15,8 +15,6 @@ The defaults are the workbook's own shape, decided with the user on 2026-08-26:
 """
 from __future__ import annotations
 
-from datetime import date
-
 from app.services.reports import registry as reg
 from app.services.reports.datasets import sponsorship_forms as ds
 
@@ -48,8 +46,9 @@ REPORT = reg.register(
             reg.PeriodParam(
                 key="period",
                 label="Period",
-                # The year in front of the user, not a year hard-coded into a release.
-                default={"kind": "year", "year": date.today().year},
+                # Resolved per request: the year in front of the USER, not a year baked
+                # into a release and not the year this process happened to boot in.
+                default=reg.current_year_period,
             ),
             reg.SelectParam(
                 key="sales_agent",
@@ -79,7 +78,8 @@ REPORT = reg.register(
         default_view={
             "params": {
                 "date_basis": "approved_at",
-                "period": {"kind": "year", "year": date.today().year},
+                # `period` is deliberately absent: the engine fills it from the param's
+                # own default, which is resolved per request.
                 "sales_agent": [],
                 "status": list(ds.DEFAULT_STATUSES),
             },
