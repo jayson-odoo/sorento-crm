@@ -250,6 +250,64 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
   });
 });
 
+/**
+ * P8: "Use PO" is a retail answer, never a project one.
+ *
+ * The backend already keeps a project-only cell out of the `po_book` map. This is the other
+ * half of the same decision, and the half that matters on a GROUPED row: a product whose
+ * project bin and dealer bin are summed together must still show the dealer bin's receipts
+ * while showing none of the project bin's.
+ */
+describe('usePlanLines - poFor never offers a project row a purchase order', () => {
+  function row(over: Record<string, unknown> = {}) {
+    return {
+      id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
+      abc_class: null, xyz_class: null, warehouse_code: 'DC1', warehouse_name: 'DC1',
+      product_id: 'p1', warehouse_id: 'wh-DC1', is_network: false, allocation: null,
+      order_qty: 10, recommended_qty: 10, reorder_point: 10, min_qty: null, max_qty: null,
+      order_up_to: 20, net_position: -10, days_of_cover: null, reason: 'reorder_point',
+      reason_label: '', confidence: 'low', sample_size: 0,
+      supplier: { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10,
+                  lead_time_days: 30, composite_score: 0, is_primary: true },
+      alternatives: [], is_exception: false, disposition_action: null, transfer_flag: null,
+      forecast_daily_demand: 1, lead_time_days: 30, lead_time_source: 'default',
+      safety_stock: 0, safety_stock_method: null, safety_stock_fallback: null,
+      service_level: null, safety_days: 0, review_days: 30, demand_window_days: 90,
+      moq: null, order_multiple: null, policy_type: 'reorder_point',
+      supplier_selection: 'primary', unit_cost: 10, cash_impact: 100, rank: 1,
+      rank_score: 0, funding_status: null, days_to_stockout: null, rank_factors: [],
+      segment: 'dealer', on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 10, reorder_level: null, master_reorder_level: null,
+      project_committed: 0, retail_committed: 10,
+      ...over,
+    };
+  }
+
+  const receipt = { po_number: 'PO-1', status: 'active', expected_date: null, remaining: 20 };
+
+  it('serves the receipts of a retail row', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([row()]);
+    getPoBook.mockResolvedValue({ po_book: { 'p1:wh-DC1': [receipt] } });
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(1));
+
+    expect(result.current.poFor(result.current.lines[0])).toHaveLength(1);
+  });
+
+  it('serves none to a project row, even when the map still carries its key', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([
+      row({ project_committed: 9857, retail_committed: 0 }),
+    ]);
+    getPoBook.mockResolvedValue({ po_book: { 'p1:wh-DC1': [receipt] } });
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(1));
+
+    expect(result.current.poFor(result.current.lines[0])).toEqual([]);
+  });
+});
+
 describe('usePlanLines - the photo map is lazy too, and one call for the whole run (AC-7)', () => {
   it('does NOT fetch the photos on mount', async () => {
     renderHook(() => usePlanLines('run-1', true), { wrapper });
