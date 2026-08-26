@@ -486,3 +486,95 @@ def test_a_plain_re_upload_of_an_untouched_invoice_still_replaces_its_lines():
 
         assert len(again) == len(first) == 5
         assert {i.id for i in again} == {i.id for i in first}
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 3 - the capacity gate judges what is actually being loaded
+# --------------------------------------------------------------------------------- #
+
+
+def test_placing_only_part_of_an_over_capacity_invoice_is_not_refused():
+    """Block 1 is 69.36 cbm in a 65 cbm box, and half of it is not. The gate judged the
+    whole invoice however little of it was being placed, so the split Q9 exists for was
+    unreachable without the override."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        half = float(line.qty) / 2
+
+        out = svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(line.id): half}
+        )
+
+        assert out["shipment_id"]
+
+
+def test_adding_to_a_draft_that_is_already_full_is_refused():
+    """The second invoice fits on its own and does not fit in the box the first one is
+    already in - which is the whole question "add to this packing list" asks.
+
+    The volumes are stated here rather than taken from the file: only the MATCHED lines of
+    a block reach a shipment, so the file's own block totals are not what ends up in the box
+    and an assertion against them would be reading a different number than the gate does.
+    """
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoices = _apply_preloading(db, w)
+
+        def _measure(invoice, cbm):
+            """One matched line carrying all of `cbm`, every other matched line carrying
+            none - so the volume this convert places is exactly `cbm`."""
+            matched = [ln for ln in _lines(db, invoice.id) if ln.product_id]
+            for i, ln in enumerate(matched):
+                ln.cbm_per_unit = (cbm / float(ln.qty)) if i == 0 else 0
+                ln.cbm_total = cbm if i == 0 else 0
+            db.flush()
+            return {str(ln.id): float(ln.qty) for ln in matched}
+
+        first_qtys = _measure(invoices[4], 30)
+        first = svc.convert_to_draft_shipment(
+            db, [str(invoices[4].id)], line_quantities=first_qtys
+        )
+
+        second_qtys = _measure(invoices[2], 40)
+
+        with pytest.raises(AppException) as exc:
+            svc.convert_to_draft_shipment(
+                db,
+                [str(invoices[2].id)],
+                line_quantities=second_qtys,
+                target_shipment_id=first["shipment_id"],
+            )
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "over_capacity"
+        # 40 loaded onto the 30 already in the box: neither figure alone is over 65.
+        assert "70" in exc.value.detail["message"]
+        assert "already in it" in exc.value.detail["message"]
+
+        # And the same 40 goes into a box of its own without a murmur.
+        assert svc.convert_to_draft_shipment(
+            db, [str(invoices[3].id)],
+            line_quantities=_measure(invoices[3], 40),
+        )["shipment_id"]
+
+
+def test_adding_to_a_draft_that_still_has_room_goes_through():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoices = _apply_preloading(db, w)
+        first = svc.convert_to_draft_shipment(db, [str(invoices[4].id)])
+        line = next(ln for ln in _lines(db, invoices[2].id) if ln.product_id)
+        # A single small line on top of 27.1 cbm - well inside the 65.
+        out = svc.convert_to_draft_shipment(
+            db,
+            [str(invoices[2].id)],
+            line_quantities={str(line.id): 1},
+            target_shipment_id=first["shipment_id"],
+        )
+
+        assert out["shipment_id"] == first["shipment_id"]

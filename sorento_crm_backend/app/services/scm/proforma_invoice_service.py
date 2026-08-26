@@ -1110,26 +1110,70 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
     }
 
 
-def _over_capacity(db: Session, invoices: list[ProformaInvoice]) -> list[str]:
+def _over_capacity(
+    db: Session,
+    invoices: list[ProformaInvoice],
+    placing: dict[str, float],
+    already_in_box: float = 0.0,
+) -> list[str]:
     """One sentence per invoice that will not fit, naming both figures (AC-E5).
+
+    Judged on what is ACTUALLY being loaded, not on the whole document: `placing` is the
+    volume of the quantities this convert is placing, so half of a 69 cbm invoice is 35 cbm
+    and goes in the box - which is the split Q9 exists for, and was unreachable while the
+    gate read the whole invoice however little of it was moving.
+
+    `already_in_box` is what the target draft is holding before this convert adds to it. A
+    container is loaded over several days; the second factory's invoice fits on its own and
+    does not fit on top of the first one's, and that is exactly the question "add to this
+    packing list" asks.
 
     An invoice whose lines state NO volume is not over capacity - it is unmeasured, and
     refusing it would break the Kailu shape that has converted since G3b (AC-H3). Silence
     about a number nobody has is the honest answer; a guess is not.
     """
     sizes_by_id, default_size = _container_sizes(db)
-    volumes = _volumes(db, [str(inv.id) for inv in invoices])
     out: list[str] = []
     for invoice in invoices:
-        total_cbm, _ = volumes.get(str(invoice.id), (None, 0))
-        fit = _fit(invoice, total_cbm, sizes_by_id, default_size)
+        placed_cbm = placing.get(str(invoice.id))
+        if placed_cbm is None:
+            continue
+        total = placed_cbm + already_in_box
+        fit = _fit(invoice, total, sizes_by_id, default_size)
         if fit["over_by_cbm"]:
+            loaded = (
+                f" (this loads {_num(placed_cbm)} onto {_num(already_in_box)} already in it)"
+                if already_in_box
+                else ""
+            )
             out.append(
-                f"{invoice.pi_number} is {_num(fit['total_cbm'])} cbm and the "
+                f"{invoice.pi_number} is {_num(total)} cbm and the "
                 f"{fit['container_size_code'] or 'container'} holds "
-                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
+                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm"
+                f"{loaded}."
             )
     return out
+
+
+def _placing_volume(line: ProformaInvoiceLine, qty: float) -> Optional[float]:
+    """How much room `qty` of this line takes. None when the document measured nothing."""
+    if line.cbm_per_unit is not None:
+        return float(line.cbm_per_unit) * qty
+    if line.cbm_total is not None and line.qty:
+        return float(line.cbm_total) * (qty / float(line.qty))
+    return None
+
+
+def _shipment_volume(db: Session, shipment_id: Optional[str]) -> float:
+    """What a draft is already holding, in cbm. 0 for a box that does not exist yet."""
+    if not shipment_id:
+        return 0.0
+    total = (
+        db.query(func.coalesce(func.sum(InboundShipmentLine.cbm), 0))
+        .filter(InboundShipmentLine.shipment_id == str(shipment_id))
+        .scalar()
+    )
+    return float(total or 0)
 
 
 def _target_shipment(db: Session, shipment_id: Optional[str]) -> Optional[InboundShipment]:
@@ -1286,20 +1330,6 @@ def convert_to_draft_shipment(
             code="superseded",
         )
 
-    over = _over_capacity(db, invoices)
-    if over and not override_capacity:
-        raise AppException(
-            409,
-            " ".join(over) + " Convert anyway to load it regardless.",
-            code="over_capacity",
-        )
-    if over and override_capacity and not (override_reason or "").strip():
-        raise AppException(
-            422,
-            "Say why this container is being loaded over its planned volume.",
-            detail="override_reason",
-        )
-
     lines: list[ProformaInvoiceLine] = (
         db.query(ProformaInvoiceLine)
         .filter(ProformaInvoiceLine.invoice_id.in_(ids))
@@ -1314,6 +1344,9 @@ def convert_to_draft_shipment(
     groups: dict[tuple[str, Optional[str]], dict[str, Any]] = {}
     skipped: list[tuple[ProformaInvoiceLine, str]] = []
     product_ids: set[str] = set()
+    #: Per invoice, the volume of the quantities THIS convert is placing - what the capacity
+    #: gate judges, rather than the whole document however little of it is moving.
+    placing: dict[str, float] = {}
 
     # How much of each line is still to place, and how much of it this convert is taking.
     # The default is the whole remainder, because "all of what is left" is the normal case
@@ -1380,6 +1413,9 @@ def convert_to_draft_shipment(
             group["cartons"] = (group["cartons"] or 0) + int(round(float(ln.cartons) * share))
         group["placed"] = group.get("placed", {})
         group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
+        placing_cbm = _placing_volume(ln, qty)
+        if placing_cbm is not None:
+            placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
         if ln.unit_price is not None:
             if group["unit_cost"] is None:
                 group["unit_cost"] = ln.unit_price
@@ -1403,6 +1439,22 @@ def convert_to_draft_shipment(
             "None of the selected invoices' lines match a product we hold, so there is "
             "nothing to draft a shipment from.",
             detail="unmatched",
+        )
+
+    # Checked HERE, after the placed quantities are known and before the first write: the
+    # question is whether what is being loaded fits in the box it is going into (AC-E5).
+    over = _over_capacity(db, invoices, placing, _shipment_volume(db, target_shipment_id))
+    if over and not override_capacity:
+        raise AppException(
+            409,
+            " ".join(over) + " Convert anyway to load it regardless.",
+            code="over_capacity",
+        )
+    if over and override_capacity and not (override_reason or "").strip():
+        raise AppException(
+            422,
+            "Say why this container is being loaded over its planned volume.",
+            detail="override_reason",
         )
 
     uoms = _product_base_uoms(db, product_ids)
