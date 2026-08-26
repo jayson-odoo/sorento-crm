@@ -216,6 +216,18 @@ def list_supplier_code_aliases(
     return {"data": supplier_code_alias_service.list_for_supplier(db, supplier_id)}
 
 
+@router.get("/supplier-code-aliases/unmatched")
+def list_unmatched_supplier_codes(
+    supplier_id: str = Query(..., description="Whose unbound codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The codes this supplier sent that bind to nothing we hold - the list somebody comes
+    back to answer (R16). Declared before the `{alias_id}` routes so the literal path is not
+    swallowed by the parameter."""
+    return {"data": supplier_code_alias_service.unmatched_for_supplier(db, supplier_id)}
+
+
 @router.post("/supplier-code-aliases", status_code=status.HTTP_201_CREATED)
 def create_supplier_code_alias(
     body: SupplierCodeAliasWrite,

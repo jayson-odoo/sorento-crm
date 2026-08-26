@@ -258,6 +258,13 @@ export interface ProformaInvoiceLine {
   /** The product we hold, by CODE - null when the line matched nothing (AC-P1.3). */
   product_code: string | null;
   matched: boolean;
+  /** Which rung of the supplier-code ladder bound it, or `manual` for a person's own pick
+   *  (R16). Null when the codes agreed exactly - nothing was worked out, so there is
+   *  nothing to check. */
+  matched_by: string | null;
+  match_source: 'auto' | 'manual' | null;
+  /** The recorded match, so it can be changed. Null on an exact agreement. */
+  match_id: string | null;
   /** Where this line went, once converted to a draft shipment - null until the first
    *  convert. Set only when the line actually became a shipment line. */
   shipment_id: string | null;

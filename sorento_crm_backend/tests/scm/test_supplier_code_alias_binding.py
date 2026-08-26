@@ -378,3 +378,72 @@ def test_recording_a_match_without_the_write_permission_is_403(scm_app):
     )
 
     assert r.status_code == 403, r.text
+
+
+def test_the_codes_this_supplier_sent_that_bind_to_nothing_are_listed():
+    """The durable surface. The upload dialog counts them and goes away; the loading plan is
+    where somebody comes back to answer them, so the unbound rows have to be readable after
+    the upload that created them."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-RL")
+        bound = w.supplier_code("SRTWC8357-RL")
+        orphan = w.supplier_code("NOTHING-LIKE-THIS")
+        stock_svc.apply(
+            db,
+            _stock_workbook([
+                [bound, "toilet", 10, 0, 0.17, None],
+                [orphan, "mystery", 5, 2, 0.2, "no idea"],
+            ]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+
+        out = alias_svc.unmatched_for_supplier(db, str(w.supplier.id))
+
+        assert [r["item_code"] for r in out] == [orphan]
+        assert out[0]["qty_packed"] == 5
+        assert out[0]["product_name"] == "mystery"
+
+
+def test_a_line_bound_by_the_ladder_says_so_on_the_invoice():
+    """An automatic bind has to be visible AS one. A screen that cannot tell a guess from a
+    decision cannot ask anyone to check the guess."""
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-300-RL")
+        code = w.supplier_code("SRTWC8357-RL-300")
+        pi_svc.apply(db, _pi_workbook(code), supplier_id=str(w.supplier.id),
+                     currency="CNY", source_ref="jinbaichuan.xlsx", actor="Ms Tee")
+        from app.models.scm import ProformaInvoice
+
+        invoice = db.query(ProformaInvoice).filter(
+            ProformaInvoice.supplier_id == w.supplier.id
+        ).one()
+
+        line = pi_svc.serialize(db, invoice)["lines"][0]
+
+        assert line["matched"] is True
+        assert line["matched_by"] == "token_set"
+        assert line["match_source"] == "auto"
+
+
+def test_a_line_that_matched_exactly_claims_no_ladder_rung():
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-RL")
+        code = w.supplier_code("SRTWC8357-RL")
+        pi_svc.apply(db, _pi_workbook(code), supplier_id=str(w.supplier.id),
+                     currency="CNY", source_ref="jinbaichuan.xlsx", actor="Ms Tee")
+        from app.models.scm import ProformaInvoice
+
+        invoice = db.query(ProformaInvoice).filter(
+            ProformaInvoice.supplier_id == w.supplier.id
+        ).one()
+
+        line = pi_svc.serialize(db, invoice)["lines"][0]
+
+        assert line["matched"] is True
+        assert line["matched_by"] is None
+        assert line["match_source"] is None

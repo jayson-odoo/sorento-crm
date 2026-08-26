@@ -13,6 +13,7 @@ import AttachmentPreviewModal, {
 import { useStockListApplied, useSupplierStockListFile } from '../../hooks/useFulfilment';
 import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
 import { StockListUploadDialog } from './StockListUploadDialog';
+import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
 
 /**
@@ -134,12 +135,17 @@ export function LoadingPlanView() {
           </p>
         </Card>
       ) : (
+        <>
+        {/* The queue of codes this supplier's file names and our catalogue does not - the
+            stock behind them is invisible to the plan below until somebody answers them. */}
+        <UnmatchedSupplierCodesPanel supplierId={supplierId} />
         <ContainerRequestSection
           supplierId={supplierId}
           supplierName={supplierName}
           planHorizonDate={planHorizonDate || null}
           onUploadStockList={() => setUploadOpen(true)}
         />
+        </>
       )}
 
       {supplierId ? (

@@ -161,6 +161,39 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     ]
 
 
+def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
+    """The codes this supplier sent that bind to nothing we hold.
+
+    Read off the STOCK rows rather than off the last upload's summary: the upload dialog
+    counts them and then goes away, and the loading plan is where somebody comes back to
+    answer them. The supplier's own words for the item travel with the code, because that is
+    what the person matching it has to recognise.
+    """
+    if not _is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+    rows = (
+        db.query(SupplierInventory)
+        .filter(
+            SupplierInventory.supplier_id == str(supplier_id),
+            SupplierInventory.product_id.is_(None),
+        )
+        .order_by(SupplierInventory.item_code)
+        .all()
+    )
+    return [
+        {
+            "item_code": row.item_code,
+            "product_name": row.product_name,
+            "brand": row.brand,
+            "spec": row.spec,
+            "qty_packed": float(row.qty_packed or 0),
+            "qty_unfinished": float(row.qty_unfinished or 0),
+            "as_of": row.as_of.isoformat() if row.as_of else None,
+        }
+        for row in rows
+    ]
+
+
 def _rebind(
     db: Session, supplier_id: str, code: str, product_id: Optional[str]
 ) -> dict:

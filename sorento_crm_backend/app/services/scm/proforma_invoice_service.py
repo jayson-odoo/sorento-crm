@@ -35,6 +35,7 @@ from app.models.scm import (
     ProformaInvoice,
     ProformaInvoiceLine,
     ProformaInvoiceShipmentLink,
+    SupplierProductCodeAlias,
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -2521,6 +2522,14 @@ def serialize(
     )
     codes = _product_codes(db, [str(ln.product_id) for ln in lines if ln.product_id])
     line_placements = _line_placements(db, str(invoice.id))
+    # How each line's code came to mean a product, where it was not an exact agreement
+    # (R16): an automatic bind has to be visible AS one, or nobody can be asked to check it.
+    aliases = {
+        str(row.supplier_code).strip().upper(): row
+        for row in db.query(SupplierProductCodeAlias)
+        .filter(SupplierProductCodeAlias.supplier_id == str(invoice.supplier_id))
+        .all()
+    }
 
     # Where each line went, if it has been converted (the PI -> draft-shipment convert):
     # `(shipment_id, shipment_number)` when it became a real shipment line, or an
@@ -2579,6 +2588,22 @@ def serialize(
             # carrying an id nobody can read.
             "product_code": codes.get(str(ln.product_id)) if ln.product_id else None,
             "matched": ln.product_id is not None,
+            # Null on an exact match: the codes agreed, and nothing was worked out.
+            "matched_by": (
+                aliases[ln.item_code.strip().upper()].matched_by
+                if ln.product_id and ln.item_code.strip().upper() in aliases
+                else None
+            ),
+            "match_source": (
+                aliases[ln.item_code.strip().upper()].source
+                if ln.product_id and ln.item_code.strip().upper() in aliases
+                else None
+            ),
+            "match_id": (
+                str(aliases[ln.item_code.strip().upper()].id)
+                if ln.product_id and ln.item_code.strip().upper() in aliases
+                else None
+            ),
             # Where this line went, once converted - null on every line until the first
             # convert. `shipment_number`/`shipment_id` are set only when it became a real
             # shipment line; `unmatched_reason` is set only when the convert skipped it.

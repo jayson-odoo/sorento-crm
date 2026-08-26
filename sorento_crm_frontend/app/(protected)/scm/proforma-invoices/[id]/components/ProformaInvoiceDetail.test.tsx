@@ -64,6 +64,7 @@ const state = {
 
 /** The three adjust writes, so a test can assert what the page ASKED the backend for. */
 const writes = {
+  matchCode: vi.fn(),
   updateLine: vi.fn(),
   removeLine: vi.fn(),
   updateInvoice: vi.fn(),
@@ -160,6 +161,9 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         placed_qty: 0,
         remaining_qty: 10,
         packing_lists: [],
+        matched_by: null,
+        match_source: null,
+        match_id: null,
         product_code: 'ITEM-1',
         matched: true,
         shipment_id: null,
@@ -246,6 +250,7 @@ describe('ProformaInvoiceDetail - loading / error / data states', () => {
           po_ref: null, remark: null, cartons: null, cbm_per_unit: null, cbm_total: null,
           supplier_qty: 5, supplier_unit_price: 20,
           placed_qty: 0, remaining_qty: 5, packing_lists: [],
+          matched_by: null, match_source: null, match_id: null,
           product_code: null, matched: false,
           shipment_id: null, shipment_number: null, unmatched_reason: null,
         },
@@ -646,5 +651,71 @@ describe('A line nothing could carry is not a line already placed', () => {
     fireEvent.click(screen.getByRole('button', { name: /convert the rest/i }));
 
     expect(screen.getByText(/already fully placed/)).toBeInTheDocument();
+  });
+});
+
+vi.mock('../../../hooks/useSupplierCodeAliases', () => ({
+  useMatchSupplierCode: () => ({ mutateAsync: writes.matchCode, isPending: false }),
+}));
+
+describe('F11 - answering a supplier code by hand', () => {
+  it('offers Match to product on a line that binds to nothing', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          matched: false,
+          product_code: null,
+          unmatched_reason: "No catalogue product matches this line's item code.",
+        },
+      ],
+    });
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: /match to product/i })).toBeInTheDocument();
+  });
+
+  it('marks a bind the ladder worked out, and names the rung in the title', () => {
+    state.data = detail({
+      lines: [
+        { ...detail().lines[0], match_source: 'auto', matched_by: 'token_set', match_id: 'a-1' },
+      ],
+    });
+    renderDetail();
+
+    const badge = screen.getByText('auto');
+    expect(badge).toHaveAttribute('title', 'Matched by token_set');
+    // A guess can be corrected; an exact agreement has nothing to correct.
+    expect(screen.getByRole('button', { name: /^change$/i })).toBeInTheDocument();
+  });
+
+  it('says nothing about a code that matched exactly', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(screen.queryByText('auto')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
+  });
+
+  it('opens the picker on the line it was pressed for', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          item_code: 'SRTWC286-SH-250UF',
+          description: 'One piece toilet',
+          matched: false,
+          product_code: null,
+        },
+      ],
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /match to product/i }));
+
+    // The button and the dialog title read the same words - the dialog is open when the
+    // code it was pressed for is on screen.
+    expect(screen.getAllByText('Match to product').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/SRTWC286-SH-250UF - One piece toilet/)).toBeInTheDocument();
   });
 });

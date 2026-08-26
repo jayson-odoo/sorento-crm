@@ -39,6 +39,7 @@ import {
   type ProformaInvoiceLine,
 } from '../../../services/proformaInvoiceService';
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
+import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
@@ -95,6 +96,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     targetShipmentId: string | null;
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  /** The line whose supplier code is being answered by hand (R16). */
+  const [codeToMatch, setCodeToMatch] = useState<ProformaInvoiceLine | null>(null);
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
   const superseded = data?.status === 'superseded';
@@ -297,23 +300,64 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       {
         id: 'matched',
         header: ({ column }) => <DataGridColumnHeader title="Matched" column={column} />,
-        cell: ({ row }) =>
-          row.original.matched ? (
-            <div className="flex flex-col">
-              <Badge variant="success" appearance="light">
-                Matched
-              </Badge>
-              {row.original.product_code ? (
-                <span className="mt-0.5 text-xs text-muted-foreground">
-                  {row.original.product_code}
-                </span>
+        cell: ({ row }) => {
+          const line = row.original;
+          if (!line.matched) {
+            // The code binds to nothing we hold. Answering it here is the point: the
+            // convert reads these lines, so an unmatched one is a line that cannot ship.
+            return (
+              <div className="flex flex-col items-start gap-1">
+                <Badge variant="secondary" appearance="light">
+                  Not in catalogue
+                </Badge>
+                {canAdjust ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-2xs"
+                    onClick={() => setCodeToMatch(line)}
+                  >
+                    Match to product
+                  </Button>
+                ) : null}
+              </div>
+            );
+          }
+          return (
+            <div className="flex flex-col items-start gap-0.5">
+              <span className="flex items-center gap-1">
+                <Badge variant="success" appearance="light">
+                  Matched
+                </Badge>
+                {line.match_source === 'auto' ? (
+                  // A guess, marked as one, with the rung that made it in the title. The
+                  // reason is not spelled out on screen (no explanations here) - it is in
+                  // the tooltip for whoever is checking it.
+                  <Badge
+                    variant="secondary"
+                    appearance="light"
+                    title={`Matched by ${line.matched_by ?? 'the supplier code ladder'}`}
+                  >
+                    auto
+                  </Badge>
+                ) : null}
+              </span>
+              {line.product_code ? (
+                <span className="text-xs text-muted-foreground">{line.product_code}</span>
+              ) : null}
+              {canAdjust && line.match_source ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-2xs"
+                  onClick={() => setCodeToMatch(line)}
+                >
+                  Change
+                </Button>
               ) : null}
             </div>
-          ) : (
-            <Badge variant="secondary" appearance="light">
-              Not in catalogue
-            </Badge>
-          ),
+          );
+        },
         size: 150,
         enableSorting: false,
         meta: { headerTitle: 'Matched' },
@@ -503,7 +547,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data?.currency, editing, draftQty],
+    [data?.currency, editing, draftQty, canAdjust],
   );
 
   const table = useReactTable({
@@ -769,6 +813,17 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           if (lineToRemove) await removeLineMutation.mutateAsync(lineToRemove.id);
         }}
         successMessage="Line removed."
+      />
+
+      {/* "This code is that product" - recorded once, and every row already uploaded
+          under it is re-bound in the same write (R16). */}
+      <MatchToProductDialog
+        open={!!codeToMatch}
+        onOpenChange={(o) => !o && setCodeToMatch(null)}
+        supplierId={invoice.supplier_id}
+        supplierCode={codeToMatch?.item_code ?? null}
+        supplierLabel={codeToMatch?.description ?? null}
+        onMatched={() => setCodeToMatch(null)}
       />
 
       <OverCapacityDialog
