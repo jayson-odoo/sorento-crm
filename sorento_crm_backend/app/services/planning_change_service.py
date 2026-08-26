@@ -1165,31 +1165,27 @@ def get_batch(db: Session, batch_id: str) -> dict:
     }
 
 
-def _so_numbers_out(db: Session, pso_ids: set) -> dict:
-    """`{"so_numbers": [...]}` for a batch's own orders, in a stable order."""
-    if not pso_ids:
-        return {"so_numbers": []}
-    orders = (
-        db.query(ProjectSalesOrder)
-        .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
-        .all()
-    )
-    return {"so_numbers": sorted({_so_number(order) for order in orders})}
-
-
-def _summary_out(db: Session, batch: PlanningChangeBatch) -> dict:
-    rows = (
-        db.query(PlanningChangeRow.applied_state, PlanningChangeRow.project_sales_order_id)
-        .filter(PlanningChangeRow.batch_id == batch.id)
-        .all()
-    )
-    pending = sum(1 for (s, _pso) in rows if s == PLANNING_CHANGE_STATE_PENDING)
-    failed = sum(1 for (s, _pso) in rows if s == PLANNING_CHANGE_STATE_FAILED)
+def _summary_out(
+    db: Session,
+    batch: PlanningChangeBatch,
+    rows: Sequence[Tuple[Optional[str], Optional[str]]],
+    so_numbers_by_pso: Dict[str, str],
+) -> dict:
+    """One batch's list row. `rows` and `so_numbers_by_pso` are read ONCE for the whole
+    page by `list_batches` - reading them here made the listing two queries per row."""
+    pending = sum(1 for (state, _pso) in rows if state == PLANNING_CHANGE_STATE_PENDING)
+    failed = sum(1 for (state, _pso) in rows if state == PLANNING_CHANGE_STATE_FAILED)
     # The orders this batch moved, by NUMBER (AC-P3-1): the list row's Plan action opens
     # the board on exactly these, and a second call per row to find that out would be one
     # per row on a paged list.
     return {
-        **_so_numbers_out(db, {str(pso) for _s, pso in rows if pso}),
+        "so_numbers": sorted(
+            {
+                so_numbers_by_pso[str(pso)]
+                for _state, pso in rows
+                if pso and str(pso) in so_numbers_by_pso
+            }
+        ),
         "id": str(batch.id),
         "created_at": batch.created_at,
         "created_by_name": _user_name(db, batch.created_by),
@@ -1229,8 +1225,42 @@ def list_batches(
     total = q.count()
     offset = max(page - 1, 0) * max(limit, 1)
     batches = q.offset(offset).limit(limit).all()
+
+    # TWO queries for the whole page, never two per row: every row of every batch on the
+    # page, then every sales-order number those rows name.
+    batch_ids = [str(b.id) for b in batches]
+    rows_by_batch: Dict[str, List[Tuple[Optional[str], Optional[str]]]] = defaultdict(list)
+    if batch_ids:
+        for batch_id, state, pso in (
+            db.query(
+                PlanningChangeRow.batch_id,
+                PlanningChangeRow.applied_state,
+                PlanningChangeRow.project_sales_order_id,
+            )
+            .filter(PlanningChangeRow.batch_id.in_(batch_ids))
+            .all()
+        ):
+            rows_by_batch[str(batch_id)].append((state, pso))
+    pso_ids = {
+        str(pso)
+        for rows in rows_by_batch.values()
+        for _state, pso in rows
+        if pso
+    }
+    so_numbers_by_pso: Dict[str, str] = {}
+    if pso_ids:
+        for order in (
+            db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
+            .all()
+        ):
+            so_numbers_by_pso[str(order.id)] = _so_number(order)
+
     return {
-        "data": [_summary_out(db, b) for b in batches],
+        "data": [
+            _summary_out(db, b, rows_by_batch.get(str(b.id), []), so_numbers_by_pso)
+            for b in batches
+        ],
         "total": total,
         "page": page,
         "limit": limit,
@@ -1735,9 +1765,11 @@ def _release_inquiry_rows(
 def _has_unlinked_row(db: Session, project_line_id: Optional[str]) -> bool:
     """Does this line still have an inquiry row nobody has put on a document?
 
-    The question a release turns on (AC-P3-10). Read over EVERY state but `actioned`: the
-    confirmation may already have cancelled the raised row (the line left the revision),
-    and it is still the row purchasing was holding.
+    The question a release turns on (AC-P3-10). Read over `raised`, `placed` and
+    `partly_linked` - never `actioned`, which is purchasing's own word, and never
+    `cancelled`: a row somebody cancelled months ago is not a row purchasing is holding,
+    and counting it made a released line whose live rows all moved to the pool hand
+    purchasing a DELAY on top of the move.
     """
     if not project_line_id:
         return False
@@ -1746,7 +1778,7 @@ def _has_unlinked_row(db: Session, project_line_id: Optional[str]) -> bool:
         .outerjoin(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
         .filter(
             OrderInquiryRow.so_line_id == project_line_id,
-            OrderInquiryRow.state != INQUIRY_ACTIONED,
+            OrderInquiryRow.state.notin_((INQUIRY_ACTIONED, INQUIRY_CANCELLED)),
             OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)),
             OrderInquiryLink.id.is_(None),
         )

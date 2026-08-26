@@ -473,7 +473,7 @@ def test_clear_plan_row_decision_then_confirm_line_gone(db):
 
 def test_bulk_confirm_auto_places_a_raised_order_inquiry_buy_row():
     """Confirming a draft PO (either grain) is now a THIRD trigger of the same
-    idempotent cascade `project_supply_service._auto_place_after_confirm` already
+    idempotent cascade `project_supply_service.auto_place_for_confirmed_products` already
     runs on decision confirm - a RAISED buy row for the same product claims the
     line the confirm just opened, in the same run, best-effort."""
     with blank_session() as db:

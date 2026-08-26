@@ -634,12 +634,37 @@ All ruled. Go/no-go on the order in section 4.
 
 ## Part 3. A changed sales order (captain, 25 Aug: SO381895 forms (2) -> (3), SRTWCX7405-RL-S-PJ 10 + 10 + 5 on 25 Aug / 5 Sep / 10 Sep becomes 25 on 19 Aug)
 
-**Status:** **BUILT** on `feat/scm-uat-so-change` (stacked on I2, #331), 26 Aug. UAC
-AC-P3-1..P3-13 in the acceptance criteria file. **No migration**: every new fact is derived
-or rides an existing JSON column, so the lane head stays `427_sales_agents_class_backfill`.
-15 pytest in `tests/test_planning_change_apply_on_board.py` (red first, on the real database
-because `scm.committed_v` is a view the blank scratch schema has none of) plus vitest for the
-Was / Now cell, the pre-mark, Confirm carrying the batch and the retired page's entry points.
+**Status:** **BUILT + REVIEWED** on `feat/scm-uat-so-change` (stacked on I2, #331), 26-27
+Aug. UAC AC-P3-1..P3-13 in the acceptance criteria file. **No migration**: every new fact is
+derived or rides an existing JSON column, so the lane head stays
+`427_sales_agents_class_backfill`. 28 pytest in
+`tests/test_planning_change_apply_on_board.py` (red first, on the real database because
+`scm.committed_v` is a view the blank scratch schema has none of) plus vitest for the Was /
+Now cell, the pre-mark, Confirm carrying the batch, the per-order block and the retired
+page's entry points.
+
+**The captain accepted the coder's two rulings** (27 Aug): AC-P3-13's "three annotated
+cells" reads "three annotations", because a closed instalment that is the only line of its
+product at its own date has no cell to be annotated on and lands on the survivor's; and a
+line the book moved arrives UNCOVERED carrying the batch's own proposal, because its frozen
+composition is about a line that no longer exists. The UAC wording was corrected to match.
+
+**Review fixes (27 Aug), all with a test:** one press confirms ONE order of the batch
+(`apply(..., only_pso_ids=)`), and `applied_at` is stamped only once no order it left out is
+still pending - a batch-wide stamp used to lock every other order of the same upload; the
+board's Confirm blocks per order, not batch-wide; a `release` / `retire` row confirmed from
+the board is accepted as the batch row's own reaction rather than posted as an amend, so
+AC-P3-10's RELEASE branch actually fires from the screen it is decided on; the closed lines'
+documents reach the survivor BEFORE the cascade (`defer_auto_place`), which used to fill the
+survivor's headroom from any free purchase-order line and re-deal the closed lines' own
+supply to a stranger; a survivor with PARTIAL headroom now SPLITS a retired link rather than
+refusing all of it; a settle answers the `CANCEL_BALANCE` an earlier revision raised for the
+same line; a lone `placed` row carrying no link declines the settle (the SO349754 WESERP10B
+shape) and is netted the old way; `late` reaches the sales-order detail's Linked to column
+(`_line_links` never copied it); a proposal-less row lands on its OWN cell; a board opened on
+a batch is not subject to the 50-order cap; the batch listing is two queries per page rather
+than two per row; and the batch-confirm refusal carries `failing_lines`, so it names WHICH
+line and why exactly as an ordinary Confirm does.
 
 What shipped, and where it differs from the paragraphs below:
 
@@ -648,9 +673,12 @@ What shipped, and where it differs from the paragraphs below:
   `partsBreakdown` the Suggestion and Decision cards use, so the batch's own vocabulary never
   reaches the screen. A line the book CLOSED has left the board, so it has no cell of its own:
   it is annotated on the surviving cell of the same product on the same order and reads
-  `Closed` in the Now column. **Coder's call, captain to confirm:** AC-P3-13 says "three
-  annotated cells"; on a board whose closed instalments are the only lines of their product at
-  their own dates, the three tables land on ONE cell. Verified that way live.
+  `Closed` in the Now column. **Captain confirmed (27 Aug):** AC-P3-13 said "three annotated
+  cells"; on a board whose closed instalments are the only lines of their product at their own
+  dates, the three tables land on ONE cell, and the UAC now says "three annotations". A
+  changed line that DOES have a cell of its own gets its own table there - the row's own
+  `project_line_id` is read before the proposal's, so a second instalment no longer borrows
+  the first one's cell.
 - **A changed line arrives UNCOVERED, carrying the batch's own proposal.** A covered line's
   `sources` / `qty_proposed_*` are its frozen composition rebuilt, so a line the book has
   moved offered to confirm the OLD quantity - measured live on SO381895: the board sent Buy 10

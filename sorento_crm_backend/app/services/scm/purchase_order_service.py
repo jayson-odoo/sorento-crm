@@ -872,7 +872,7 @@ class PurchaseOrderService:
         runs (captain, 21 Aug): a line an internal draft PO just opened may already
         have a RAISED buy row waiting on exactly this product, so placement should not
         wait on someone clicking a separate button - the same idempotent cascade
-        ``project_supply_service._auto_place_after_confirm`` runs on a decision
+        ``project_supply_service.auto_place_for_confirmed_products`` runs on a decision
         confirm, a THIRD trigger of it rather than a mirror of that function's own
         shape: it runs a SAVEPOINT (``begin_nested``) inside the SAME transaction as
         its caller's writes, because that caller has not committed yet; this one runs
