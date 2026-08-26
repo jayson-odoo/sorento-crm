@@ -23,6 +23,13 @@ the export. 210 pytest across the reporting suite, 92 vitest (reports + shared D
 listing column preferences); the JAN'25 export read back with openpyxl carries GRAND TOTAL
 14,850,000.00 / 29,195.00 in F25 / G25 and the SUMMARY closes on the client's own
 257,076,027.91 / 518,605.38.
+S6 review fixes applied 2026-08-26 (the deltas below, each pinned by its own test): the
+delivery date is offerable as a column of its own, the reload skeleton is clamped, the month
+chips and the period selects agree, a custom period reads DD/MM/YYYY, the GRAND TOTAL label
+stays inside the table, a saved view is validated before it is stored or published, a default
+view no longer freezes its year, column memory belongs to the report default, and the shared
+DataGrid keeps a column group whole through a drag. 220 pytest across the reporting suite,
+109 vitest (reports + shared DataGrid + listing column preferences).
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`

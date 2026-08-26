@@ -235,7 +235,7 @@ function withParamDefaults(
   const filled: ReportParamValues = { ...params };
   for (const param of metaParams) {
     if (param.key in filled) continue;
-    filled[param.key] = (param.kind === 'select' ? param.default : param.default) as ReportParamValue;
+    filled[param.key] = param.default as ReportParamValue;
   }
   return filled;
 }
