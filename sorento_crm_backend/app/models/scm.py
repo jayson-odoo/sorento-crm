@@ -1123,6 +1123,57 @@ class ContainerSize(Base):
     )
 
 
+class SupplierProductCodeAlias(Base, CompanyScopedMixin):
+    """One supplier's spelling of one of our product codes (R16, migration 431).
+
+    Suppliers do not write our codes. They reorder the tokens, spell out a trap size ours
+    omits because it is the default, glue a suffix on. `supplier_code_matcher` works that
+    out with a ladder, and this table is where the answer is KEPT - so the ladder is never
+    re-run against a code somebody has already ruled on, and a wrong guess is corrected once
+    instead of being re-derived on every upload.
+
+    `source` is who decided and `matched_by` is which rung did it. Both are on the row
+    because an automatic bind has to be visible AS one: a screen that cannot tell a guess
+    from a decision cannot ask anyone to check the guess.
+
+    The code is stored VERBATIM - it is what the supplier's file says. Normalising happens
+    where codes are compared, never on the way in.
+    """
+    __tablename__ = "supplier_product_code_alias"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    supplier_code = Column(String(120), nullable=False)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    source = Column(String(10), nullable=False, server_default=text("'auto'"))
+    matched_by = Column(Text, nullable=True)
+    created_by = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('auto', 'manual')", name="ck_scm_supplier_code_alias_source"
+        ),
+        Index("ix_scm_supplier_code_alias_supplier", "supplier_id"),
+        Index("ix_scm_supplier_code_alias_product", "product_id"),
+        # Declared on the MODEL as well as in migration 431: a CI database is built with
+        # `create_all` and never runs a migration body, so without it the guard against one
+        # supplier code meaning two products exists in production and nowhere else.
+        Index(
+            "uq_scm_supplier_code_alias_identity",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            "supplier_id",
+            text("upper(supplier_code)"),
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
 class SupplierInventory(Base, CompanyScopedMixin):
     """What one supplier is holding for us right now: packed, unfinished, and how big it is.
 
