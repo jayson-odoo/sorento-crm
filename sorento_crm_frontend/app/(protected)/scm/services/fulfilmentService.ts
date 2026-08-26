@@ -443,11 +443,30 @@ export interface ContainerRequestRow {
    *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
    *  20 Aug follow-up - see the module docstring). */
   suggested_qty: number;
+  /** SITE POOLS ONLY (`warehouses.segment <> 'project'`), the reorder engine's own predicate.
+   *  Stock sitting in a group location is real, but it is spoken for, so it can neither be
+   *  asked against nor netted off the ask; it travels beside this as `on_hand_group` and is
+   *  shown muted in the row popover. */
   on_hand: number;
+  on_hand_group: number;
+  /** Open SPO allocations landing at a site pool. Same split, same reason. */
   incoming_spo: number;
+  incoming_spo_group: number;
+  /** Unreceived packing-list quantity on shipments that have not arrived, any destination.
+   *  A REFERENCE beside the ask, never subtracted from it (Q1): a packing list is not
+   *  location-specific, so it cannot be netted against a pool the way an SPO can. */
+  incoming_pl: number;
+  incoming_pl_shipments: ContainerRequestIncomingShipment[];
   /** Placed with a supplier but not yet allocated to a shipment - real context, never
-   *  deducted from `suggested_qty`. */
+   *  deducted from `suggested_qty`. Company-wide, not pool-only: a PO carries no landing
+   *  location until it is allocated. */
   outstanding_po: number;
+  outstanding_po_lines: ContainerRequestPoLine[];
+  /** On hand and SPO per site pool, zero rows included - a site with nothing in it is a fact
+   *  the reader needs, not an absence. */
+  sites: ContainerRequestSite[];
+  /** Everything the pool predicate excluded, as one muted line. */
+  group_locations: ContainerRequestGroupLocations;
   /** Gross split - explains the NEED, not the netted `suggested_qty`. */
   project_qty: number;
   retail_qty: number;
@@ -465,6 +484,38 @@ export interface ContainerRequestRow {
   /** False for a stock-list product with no open sales-order need behind it - still shown
    *  (one table), just unranked and muted. */
   has_demand: boolean;
+}
+
+/** One site pool (BRW / MWH / WH3 / DC1 / RSW), for the row popover's location table. */
+export interface ContainerRequestSite {
+  warehouse_code: string;
+  on_hand: number;
+  incoming_spo: number;
+}
+
+/** What the pool predicate left out, aggregated: the group locations feeding project orders. */
+export interface ContainerRequestGroupLocations {
+  count: number;
+  on_hand: number;
+  incoming_spo: number;
+  /** A few codes to name the group, longest-holding first - never the whole list. */
+  warehouse_codes: string[];
+}
+
+/** One packing-list shipment carrying this product, unreceived. `shipment_number` is null on
+ *  a draft that has not been numbered yet. */
+export interface ContainerRequestIncomingShipment {
+  shipment_id: string;
+  shipment_number: string | null;
+  estimated_arrival_date: string | null;
+  qty: number;
+}
+
+/** One outstanding PO line for this product - context in the popover, never netted. */
+export interface ContainerRequestPoLine {
+  po_number: string | null;
+  expected_date: string | null;
+  qty: number;
 }
 
 /** One open SO line behind a demand row - `include_lines=true` on the build. Flat, so the FE
@@ -517,6 +568,61 @@ export async function buildContainerRequest(
     }),
   });
   return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
+}
+
+/**
+ * Sales history behind a loading-plan row: what was ORDERED, per product, per month, over the
+ * last 12 full months, in two series (project and retail).
+ *
+ * A SIDECAR rather than a column on the build, because it is asked for the visible page's
+ * products only - a supplier with 120 products would otherwise pay 240 monthly series on every
+ * refresh for the 25 rows anybody is looking at.
+ *
+ * "Ordered", never "sold": the source is the sales-order book (`sales_order_lines.qty_ordered`
+ * by `sales_orders.order_date`), so a booked order counts from the day it was booked whether
+ * or not it has shipped.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
+ *  GET /api/v1/scm/container-requests/history?supplier_id=&product_ids=&product_ids=
+ *      -> 200 ContainerRequestHistory. Auth: `scm.dashboard.view`.
+ */
+export interface ContainerRequestHistoryPoint {
+  /** `YYYY-MM`. Twelve of them, zero-filled, oldest first. */
+  month: string;
+  qty: number;
+}
+
+export interface ContainerRequestHistorySeries {
+  months: ContainerRequestHistoryPoint[];
+  total: number;
+  /** Mean over the twelve buckets, zeros included. */
+  avg: number;
+  /** Null when the series is empty - there is no peak of nothing. */
+  peak_month: string | null;
+  peak_qty: number;
+}
+
+export interface ContainerRequestHistoryProduct {
+  product_id: string;
+  project: ContainerRequestHistorySeries;
+  retail: ContainerRequestHistorySeries;
+}
+
+export interface ContainerRequestHistory {
+  /** First and last bucket, so the FE never has to work out which twelve months these are. */
+  from_month: string;
+  to_month: string;
+  products: ContainerRequestHistoryProduct[];
+}
+
+export async function getContainerRequestHistory(
+  supplierId: string,
+  productIds: string[],
+): Promise<ContainerRequestHistory> {
+  const params = new URLSearchParams({ supplier_id: supplierId });
+  for (const id of productIds) params.append('product_ids', id);
+  const res = await apiFetch(`/api/v1/scm/container-requests/history?${params.toString()}`);
+  return readJson<ContainerRequestHistory>(res, 'Failed to load the sales history');
 }
 
 export interface ContainerRequestLine {

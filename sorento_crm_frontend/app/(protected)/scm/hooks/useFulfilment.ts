@@ -11,6 +11,7 @@ import {
   deleteSpo,
   downloadSpoWorksheet,
   getConsolidatedPackingList,
+  getContainerRequestHistory,
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlan,
@@ -193,6 +194,27 @@ export function useContainerRequestBuild(
     queryFn: () => buildContainerRequest(supplierId as string, planHorizonDate),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * The sales history behind the rows currently ON SCREEN (AC-B8).
+ *
+ * Keyed on the product ids, so paging to the next 25 rows is a new query rather than a
+ * refetch of everything: the sidecar exists precisely so a 120-product supplier does not pay
+ * for 120 products' worth of monthly series to read one page.
+ *
+ * `cold` because a month bucket cannot change while she is looking at it - this is closed
+ * history, not the live sales book.
+ */
+export function useContainerRequestHistory(supplierId: string | null, productIds: string[]) {
+  // Sorted so two pages holding the same products in a different order share one cache entry.
+  const key = [...productIds].sort().join(',');
+  return useQuery({
+    queryKey: [...KEY, 'container-request', 'history', supplierId, key],
+    queryFn: () => getContainerRequestHistory(supplierId as string, productIds),
+    enabled: !!supplierId && productIds.length > 0,
+    ...cold,
   });
 }
 

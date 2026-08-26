@@ -1,0 +1,79 @@
+'use client';
+
+import { StatCard } from '@/components/scm/StatCard';
+import { fmtInt } from '../../lib/format';
+import type { ContainerRequestSummary } from './containerRequestSummary';
+
+/** Two decimals, the way the stock list states a volume. */
+const cbmFmt = new Intl.NumberFormat('en-MY', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * The five figures above the grid (PLAN section 2b, AC-A2.1) - the same cards the fulfilment
+ * board opens with, reading the loading plan's own vocabulary.
+ *
+ * They carry the colour swatches, which is why there is no separate legend (r4): pool stock
+ * emerald, SPO violet, the ask rose, exactly as the board paints those three kinds.
+ */
+export function ContainerRequestStatCards({
+  summary,
+  horizonDate,
+}: {
+  summary: ContainerRequestSummary;
+  /** "Plan until", as applied by the build - null when there is no cutoff. */
+  horizonDate: string | null;
+}) {
+  return (
+    <div
+      data-testid="container-request-stat-cards"
+      // Two per row at phone width rather than five stacked cards: stacked, the grid they
+      // summarise starts a screen and a half down the page.
+      className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5"
+    >
+      <StatCard
+        testId="stat-need"
+        label="Need"
+        value={fmtInt(summary.need)}
+        sub={horizonDate ? `open SO, until ${horizonDate}` : 'open SO'}
+      />
+      <StatCard
+        testId="stat-pool"
+        label="From pool stock"
+        value={fmtInt(summary.fromPool)}
+        swatch="bg-emerald-500"
+        tone="text-emerald-700"
+        sub="site pools only"
+      />
+      <StatCard
+        testId="stat-spo"
+        label="From SPO"
+        value={fmtInt(summary.fromSpo)}
+        swatch="bg-violet-500"
+        tone="text-violet-700"
+        sub="on the water"
+      />
+      <StatCard
+        testId="stat-ask"
+        label="To ask"
+        value={fmtInt(summary.toAsk)}
+        swatch="bg-rose-500"
+        tone="text-rose-700"
+        sub={
+          summary.askCbmUnmeasured > 0
+            ? `est. ${cbmFmt.format(summary.askCbm)} cbm, ${summary.askCbmUnmeasured} unmeasured`
+            : `est. ${cbmFmt.format(summary.askCbm)} cbm`
+        }
+      />
+      <StatCard
+        testId="stat-packed"
+        label="They can pack now"
+        value={fmtInt(summary.canPackNow)}
+        sub="of the ask, packed"
+      />
+    </div>
+  );
+}
+
+export default ContainerRequestStatCards;
