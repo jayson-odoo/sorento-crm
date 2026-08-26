@@ -425,15 +425,19 @@ def test_an_empty_column_list_falls_back_to_the_definitions_default_columns():
 
 
 def test_the_company_name_comes_from_system_settings():
-    """AC-G7. The letterhead is the customer's own, edited in Settings, not a constant a
-    developer has to change per install."""
+    """AC-G7. A definition that names no company takes the letterhead from Settings.
+    (A definition that does name one wins, because the live install's settings row still
+    reads "Metronic"; see test_the_definition_names_the_company_when_settings_does_not.)"""
+    from dataclasses import replace
+
     from openpyxl import load_workbook
 
     from app.models.user import SystemSetting
     from app.services.reports import engine
     from app.services.reports.xlsx_renderer import render_workbook
 
-    definition = fixture.definition()
+    base = fixture.definition()
+    definition = replace(base, workbook=replace(base.workbook, company_name=""))
     with blank_session() as db:
         fixture.create_table(db)
         db.add(SystemSetting(id="zzt-settings", name="ZZT Holdings Berhad"))
@@ -445,6 +449,25 @@ def test_the_company_name_comes_from_system_settings():
 
 
 def test_the_definition_names_the_company_when_settings_does_not(workbook):
-    """An install that never set one falls back to the definition, which is also what
+    """The definition's name is the letterhead whenever it has one; this is also what
     every test in this file renders under (the blank schema holds no settings row)."""
     assert workbook[SUMMARY]["A2"].value == "ZZT SDN BHD"
+
+
+def test_the_definition_name_beats_a_settings_row_that_still_says_metronic():
+    """The live install's system_settings.name is the template default; a definition that
+    names the client must not be overridden by it."""
+    from openpyxl import load_workbook
+
+    from app.models.user import SystemSetting
+    from app.services.reports import engine
+    from app.services.reports.xlsx_renderer import render_workbook
+
+    definition = fixture.definition()
+    with blank_session() as db:
+        fixture.create_table(db)
+        db.add(SystemSetting(id="zzt-settings", name="Metronic"))
+        db.flush()
+        data = engine.run_workbook(db, definition, definition.default_view["params"])
+        wb = load_workbook(BytesIO(render_workbook(definition, data)))
+    assert wb[SUMMARY]["A2"].value == "ZZT SDN BHD"

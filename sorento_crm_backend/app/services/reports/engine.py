@@ -766,14 +766,18 @@ def run_workbook(
 def company_name(db: Session, definition: reg.ReportDefinition) -> str:
     """How this installation writes its own name, for the title block (AC-G7).
 
-    System settings is where a customer edits it, so that wins; the definition's value is
-    the fallback for an install that never set one (and for a test with no settings row).
+    The definition's value wins when it names one: it is the legal name the client puts on
+    the paper ("SORENTO SDN BHD"), and system_settings.name still carries the template's
+    "Metronic" on the live install, which would otherwise print on every export. System
+    settings is the fallback for a definition that names no company.
     """
     from app.models.user import SystemSetting
 
+    named = (definition.workbook.company_name or "").strip()
+    if named:
+        return named
     try:
         stored = db.query(SystemSetting.name).order_by(SystemSetting.id).first()
     except Exception:  # noqa: BLE001 - a report must not fail over its own letterhead
         stored = None
-    name = (stored[0] if stored else None) or ""
-    return name.strip() or definition.workbook.company_name
+    return ((stored[0] if stored else None) or "").strip()
