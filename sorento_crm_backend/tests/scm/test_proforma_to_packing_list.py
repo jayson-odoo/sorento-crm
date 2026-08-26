@@ -411,3 +411,89 @@ def test_a_container_with_no_proforma_behind_it_answers_empty_rather_than_404():
 
         assert source["invoices"] == []
         assert source["by_shipment_line"] == {}
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 2 - a link whose shipment line is gone is not a container
+# --------------------------------------------------------------------------------- #
+
+
+def test_deleting_a_shipment_line_takes_its_proforma_links_with_it():
+    """The packing list's in-place editor deletes a line the payload no longer names. The
+    FK is SET NULL, so the link survived as a phantom: no shipment line, no quantity that
+    can ever be received, and every guard on the invoice still reading it as converted."""
+    from app.schemas.procurement import InboundShipmentUpdate
+    from app.services.procurement_service import InboundShipmentService
+
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        assert (
+            db.query(ProformaInvoiceShipmentLink)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_id == invoice.id,
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+            )
+            .count()
+            > 0
+        )
+
+        # Save the packing list with no lines at all - what Remove-then-Save does.
+        InboundShipmentService(db).update_shipment(
+            out["shipment_id"], InboundShipmentUpdate(shipment_lines=[]), None
+        )
+
+        # Not one link naming a shipment line is left. The SKIP rows stay - they record
+        # that the convert ran and could not carry those lines, which is still true.
+        assert (
+            db.query(ProformaInvoiceShipmentLink)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_id == invoice.id,
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+            )
+            .count()
+            == 0
+        )
+
+
+def test_an_invoice_whose_shipment_lines_were_deleted_can_be_converted_again():
+    from app.schemas.procurement import InboundShipmentUpdate
+    from app.services.procurement_service import InboundShipmentService
+
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        InboundShipmentService(db).update_shipment(
+            out["shipment_id"], InboundShipmentUpdate(shipment_lines=[]), None
+        )
+
+        detail = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+        assert detail["placement"] == "not_converted"
+        # And it is editable again - the goods are on no container.
+        line = _lines(db, invoice.id)[0]
+        svc.adjust_line(db, str(invoice.id), str(line.id), qty=1, actor="Ms Tee")
+
+
+def test_an_invoice_matching_no_product_says_so_rather_than_already_converted():
+    """Nothing has ever been placed, so "already converted" is the wrong sentence - and it
+    sends the reader to look for a container that does not exist."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        # Every line names a code this catalogue does not hold. Set here rather than by
+        # uploading un-mapped codes: the local database is a copy of production, so the
+        # real file's own item codes DO resolve on it and the test would prove nothing.
+        for line in _lines(db, invoice.id):
+            line.product_id = None
+        db.flush()
+
+        with pytest.raises(AppException) as exc:
+            svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        assert exc.value.status_code == 422
+        assert exc.value.detail["detail"] == "unmatched"

@@ -1249,6 +1249,13 @@ def convert_to_draft_shipment(
         if entry.get("remaining_qty", 0) > 0:
             live_ids.append(invoice_id)
             continue
+        if entry.get("placed_qty", 0) <= 0:
+            # Nothing was ever placed and nothing ever can be - every line names a code
+            # this catalogue does not hold. "Already converted" is the wrong sentence: it
+            # sends the reader looking for a container that does not exist. Let it through
+            # to the grouping below, which refuses it by NAME.
+            live_ids.append(invoice_id)
+            continue
         names = ", ".join(
             p["shipment_number"] or "a draft" for p in entry.get("packing_lists", [])
         )
@@ -1907,20 +1914,15 @@ def _editable_or_409(db: Session, invoice: ProformaInvoice) -> None:
             f"'{invoice.pi_number}' has been superseded by a newer revision and is read-only.",
             code="superseded",
         )
-    link = (
-        db.query(InboundShipment.shipment_number)
-        .join(
-            ProformaInvoiceShipmentLink,
-            ProformaInvoiceShipmentLink.inbound_shipment_id == InboundShipment.id,
-        )
-        .filter(ProformaInvoiceShipmentLink.proforma_invoice_id == invoice.id)
-        .first()
-    )
-    if link:
+    # The SAME "live link" predicate the placement readers use (`_placed_invoice_ids`): a
+    # skip row, or a link whose shipment line has been deleted, is not a container the goods
+    # are on, and counting it here froze an invoice nothing was holding.
+    placed = _placed_invoice_ids(db, [str(invoice.id)])
+    if placed:
         raise AppException(
             409,
-            f"'{invoice.pi_number}' is already in packing list '{link[0] or '?'}', so its "
-            "quantities can no longer be changed.",
+            f"'{invoice.pi_number}' is already in packing list "
+            f"'{placed[str(invoice.id)]}', so its quantities can no longer be changed.",
             code="already_converted",
         )
 

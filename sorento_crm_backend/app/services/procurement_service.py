@@ -1193,9 +1193,24 @@ class InboundShipmentService:
         # Delete before insert: the unique index on (shipment, product, supplier) treats
         # NULL as a value, so an insert that reuses a departing row's key would collide if
         # the unit of work flushed the save first.
-        for line in existing:
-            if str(line.id) not in claimed:
-                self.db.delete(line)
+        departing = [line for line in existing if str(line.id) not in claimed]
+        if departing:
+            # The proforma-invoice links pointing at these lines go with them, HERE, in the
+            # same transaction. The FK is ON DELETE SET NULL, which left a phantom behind:
+            # a link naming a shipment but no line on it, so the invoice read as sitting on
+            # a container that no longer holds its goods, refused every further write, and
+            # could never be converted again. One writer for the deletion and the trail it
+            # invalidates, rather than a sweeper that runs later and sometimes.
+            from app.models.scm import ProformaInvoiceShipmentLink
+
+            self.db.query(ProformaInvoiceShipmentLink).filter(
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                    [str(line.id) for line in departing]
+                )
+            ).delete(synchronize_session=False)
+            self.db.flush()
+        for line in departing:
+            self.db.delete(line)
         self.db.flush()
 
         for line, d in updates:
