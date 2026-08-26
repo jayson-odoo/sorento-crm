@@ -69,6 +69,9 @@ class SalesOrderLineLink(BaseModel):
     qty: str
     location: Optional[str] = None
     expected_date: Optional[str] = None
+    #: The document arrives AFTER the row's own required date (AC-P3-7). Read here as well
+    #: as on the worklist, because "arrives late" has to say so wherever the link is shown.
+    late: bool = False
 
 
 class SalesOrderLine(BaseModel):

@@ -339,6 +339,12 @@ export interface SalesOrderLineLink {
   qty: string;
   location?: string | null;
   expected_date?: string | null;
+  /**
+   * The document arrives AFTER the row's own required date (AC-P3-7). Stated, never acted
+   * on: purchasing decides whether a late document is still the answer, and unlinking it
+   * would leave the line with nothing rather than with something late.
+   */
+  late?: boolean;
 }
 
 /**

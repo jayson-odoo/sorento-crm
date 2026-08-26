@@ -4,6 +4,7 @@ import {
   deliveryMonthLabel,
   flowExclusionLabel,
   formatInquiryQty,
+  linkedSummary,
   orderInquiryRowHref,
 } from './orderInquiryWorklist';
 
@@ -94,5 +95,29 @@ describe('flowExclusionLabel', () => {
   it('falls back to a generic honest label for an unmapped non-ORDER verb', () => {
     expect(flowExclusionLabel('BORROW_SHORTFALL')).toBe('Not an ORDER row');
     expect(flowExclusionLabel('RESERVE_AND_ORDER')).toBe('Not an ORDER row');
+  });
+});
+
+describe('linkedSummary - a document that arrives late (AC-P3-7)', () => {
+  it('marks the document late without unlinking it', () => {
+    const summary = linkedSummary('25', '25', [
+      { id: 'l1', kind: 'po', document: '202604-S0083', qty: '10', late: false },
+      { id: 'l2', kind: 'po', document: '202606-S0082', qty: '15', late: true },
+    ]);
+    expect(summary).not.toBeNull();
+    expect(summary?.documents.map((entry) => [entry.document, entry.late])).toEqual([
+      ['202604-S0083', false],
+      ['202606-S0082', true],
+    ]);
+    expect(summary?.headline).toBe('25 of 25');
+  });
+
+  it('makes the whole document late when any of its lines is', () => {
+    const summary = linkedSummary('20', '20', [
+      { id: 'l1', kind: 'po', document: '202604-S0083', qty: '10', late: false },
+      { id: 'l2', kind: 'po', document: '202604-S0083', qty: '10', late: true },
+    ]);
+    expect(summary?.documents).toHaveLength(1);
+    expect(summary?.documents[0].late).toBe(true);
   });
 });

@@ -276,7 +276,9 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
                   (candidate) =>
                     candidate.document === entry.document && candidate.kind === entry.kind,
                 );
-                const label = `${entry.document}: ${entry.parts}`;
+                const label = entry.late
+                  ? `${entry.document}: ${entry.parts} - arrives late`
+                  : `${entry.document}: ${entry.parts}`;
                 return (
                   <span
                     key={`${entry.kind}-${entry.document}`}
@@ -297,6 +299,16 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
                     <span className="truncate text-xs text-muted-foreground">
                       {entry.parts}
                     </span>
+                    {/* AC-P3-7: the document lands after this row needs it. Said, never
+                        acted on - nothing is unlinked for lateness. */}
+                    {entry.late ? (
+                      <span
+                        data-testid={`link-late-${entry.document}`}
+                        className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800"
+                      >
+                        arrives late
+                      </span>
+                    ) : null}
                   </span>
                 );
               })}

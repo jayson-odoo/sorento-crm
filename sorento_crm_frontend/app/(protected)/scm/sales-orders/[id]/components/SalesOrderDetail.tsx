@@ -899,12 +899,19 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   <span
                     key={`${link.kind}-${link.document}-${where ?? index}`}
                     className="flex min-w-0 items-center gap-1"
-                    title={label}
+                    title={link.late ? `${label} - arrives late` : label}
                   >
                     <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
                       {link.kind}
                     </span>
                     <span className="truncate tabular-nums">{label}</span>
+                    {/* AC-P3-7: it lands after the line needs it. Purchasing decides;
+                        nothing is unlinked for lateness. */}
+                    {link.late ? (
+                      <span className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
+                        arrives late
+                      </span>
+                    ) : null}
                   </span>
                 );
               })}
