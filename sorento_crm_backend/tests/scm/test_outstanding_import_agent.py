@@ -133,9 +133,15 @@ def _classified_agent(db, code: str, demand_class: str) -> str:
     return agent.sales_agent
 
 
+#: The last code `_unknown_debtor` handed out, so a test can assert the refusal names it
+#: without threading the value through three call sites.
+_last_debtor = [""]
+
+
 def _unknown_debtor() -> str:
     """A debtor code no customer holds, so the market-segment fallback cannot answer."""
-    return f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
+    _last_debtor[0] = f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
+    return _last_debtor[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -290,6 +296,11 @@ def test_an_agent_with_no_class_refuses_the_file_and_names_the_document(db, seed
     assert preview["unclassified_documents"] == [seeded.project_so]
     assert not applied["ok"] and applied["unclassified_documents"] == [seeded.project_so]
     assert _row(db, seeded.project_so) is None, "a refused file wrote an order anyway"
+    # BOTH sources named, because either one is a fix the operator can make: give the
+    # customer a market segment, or give the agent a class. A message naming only one
+    # sends them to whichever desk happens to be mentioned.
+    assert any(code in line and _last_debtor[0] in line for line in _reported(applied)), (
+        f"the refusal named neither the debtor nor the agent: {_reported(applied)}")
     assert any(seeded.project_so in line for line in _reported(preview)), (
         f"the preview showed nothing about an order it cannot classify: {_reported(preview)}")
     assert any(code in line for line in _reported(applied)), (
@@ -441,3 +452,45 @@ def test_the_import_resolves_agents_through_the_masters_normaliser_not_a_copy(
         "the importer keyed the agent under a spelling the master does not answer to")
     assert db.query(SalesAgent).count() == before, (
         "the same agent, spelled differently, created a second master row")
+
+
+# --------------------------------------------------------------------------- #
+# 4b. the Friday shape: a real customer who simply states no segment
+# --------------------------------------------------------------------------- #
+#
+# The one migration 425 could not reach. 425 gave a segment to every customer a NULL-class
+# order named; a customer whose orders were all classified some other way still states
+# none, and the real export carries no order type column - so the AGENT is the only source
+# left, and JACKSON I / JACKSON IV are the two who cannot answer (migration 427).
+
+
+def test_a_customer_with_no_segment_is_carried_by_a_classified_agent(db, seeded):
+    """Accepted, and classified from the agent. No silent default anywhere: the class is
+    the agent's own stated one."""
+    debtor = f"{MARKER}-BLANKSEG-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
+    db.flush()
+    code = _classified_agent(db, _agent_code("CARRIER"), DEFAULT_DEMAND_CLASS)
+
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert out["ok"], out.get("unclassified_documents")
+    assert _row(db, seeded.project_so).demand_class == DEFAULT_DEMAND_CLASS
+
+
+def test_a_customer_with_no_segment_and_a_blank_agent_refuses_and_names_both(db, seeded):
+    """Refused only when BOTH are blank, and the message has to name both - this is
+    JACKSON I on the live book, and neither half is guessable."""
+    debtor = f"{MARKER}-BLANKSEG-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
+    db.flush()
+    code = _agent_code("ALSOBLANK")
+    agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
+
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert not out["ok"]
+    assert out["unclassified_documents"] == [seeded.project_so]
+    reported = " ".join(str(v) for p in out["row_problems"] for v in p.values())
+    assert debtor in reported, "the refusal never named the customer"
+    assert code in reported, "the refusal never named the agent"

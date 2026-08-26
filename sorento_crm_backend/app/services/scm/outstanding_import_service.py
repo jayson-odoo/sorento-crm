@@ -755,18 +755,31 @@ def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
     with no segment" are both None and both nothing to go on, and a segment that says
     retail is an answer. There is deliberately no defaulting wrapper around this any more
     (QP1): the import refuses a document it cannot classify rather than writing a guess.
-    Since the amendment of 4 Aug 2026 the segment is the FALLBACK, not the source of truth:
-    it is NULL on 3,276 of 3,284 customers, so an answer from it is a bonus rather than the
-    rule, and treating its silence as "retail" is exactly the invisible mis-prioritisation
-    the report path exists to prevent.
+    Since the amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of
+    truth, because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that
+    balance - it stamped 503 customers retail so the real AutoCount export, which carries no
+    order type column, can classify at all - but not the rule: silence here is still
+    silence, and treating it as "retail" is exactly the invisible mis-prioritisation the
+    refusal exists to prevent.
     """
     if not debtor_code:
         return None
     # ORM again: customers are company-scoped too, and reading another company's customer
     # would decide this order's fulfilment priority from the wrong row.
+    #
+    # ORDERED, because `LIMIT 1` without one picks whatever the planner returns first. The
+    # scope should leave at most one row per code (`customer_code` is unique per company),
+    # and on the day it leaves two - a company-shared row, an unscoped principal - the
+    # useful answer is the one that STATES a segment rather than a coin toss between an
+    # answer and a blank. `id` breaks the remaining tie so a re-run cannot classify the
+    # same file two ways.
     return (
         db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
         .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
+        .order_by(
+            (func.coalesce(func.trim(Customer.market_segment_code), "") == ""),
+            Customer.id,
+        )
         .limit(1)
         .scalar()
     )
@@ -909,7 +922,12 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
         agent_says = (f"agent {agent_code} carries no demand class" if agent_code
                       else "it names no agent")
         debtor = resolved.party_code_by_doc.get(number, "")
-        debtor_says = (f"debtor {debtor} resolves to no customer market segment" if debtor
+        # The buyer's NAME beside the code where the file states one. The code is what the
+        # operator searches on and the name is what tells them whether they have the right
+        # customer open, and this message is the only place they get either.
+        label = resolved.party_label_by_code.get(debtor) if debtor else None
+        who = f"debtor {debtor}" + (f" ({label})" if label else "")
+        debtor_says = (f"{who} carries no customer market segment" if debtor
                        else "it names no debtor code")
         problems.append(RowProblem(
             first_row.get(number, 0),
