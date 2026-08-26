@@ -1,0 +1,261 @@
+"""What a report IS: a dataset, a few params, two layouts and a workbook spec.
+
+The foundation's whole claim is that report #2 costs one dataset plus one definition and
+a two-line route wrapper. So everything a report varies is declared here as data, and
+nothing about any particular report lives in the engine, the renderer or the routes.
+
+Deliberately small (PRINCIPLES.md, "simplest thing that works"):
+
+- **Two layouts.** Detail (a flat table) and Pivot (row dim x col dim x measures). The
+  workbook is 12 identical detail tables plus one pivot, and every operational report the
+  client has asked for decomposes the same way.
+- **Three param types.** Date basis, period, select. A fourth is added when a report needs
+  one, not before.
+- **One derived column shape.** ``TickGroup`` - a dimension rendered as one tick column per
+  value present, under a merged header. That is the workbook's "EXPECTED YEAR OF DELIVERY".
+
+An expression is a function of the query context, because the interesting ones depend on
+which date basis the user picked (the month bucket is ``date_trunc(<basis>)``). A date
+basis is a plain column - it cannot depend on itself.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+from sqlalchemy.sql import ColumnElement, Select
+
+COLUMN_TYPES = frozenset({"text", "money", "integer", "date", "bool"})
+COLUMN_TAGS = frozenset({"dimension", "measure", "date", "text"})
+SCOPES = frozenset({"company", "none"})
+
+
+@dataclass(frozen=True)
+class Column:
+    """One catalog column: what it is called, what it holds, and how to select it."""
+
+    key: str
+    label: str
+    type: str
+    tag: str
+    # The SQL expression, given the query context (which carries the chosen date basis).
+    expr: Callable[[Any], ColumnElement]
+    size: Optional[int] = None
+    # A dimension whose values are the MONTHS OF THE PERIOD rather than the months the
+    # data happens to contain: an empty month still gets a column, as the workbook has.
+    period_months: bool = False
+    # Renders a raw dimension value for the screen ("2026-01" -> "Jan'26"). The frontend
+    # must not invent a formatting rule per dimension, so the dataset supplies one.
+    value_label: Optional[Callable[[Any], str]] = None
+
+    def __post_init__(self) -> None:
+        if self.type not in COLUMN_TYPES:
+            raise ValueError(
+                f"Report column '{self.key}' has type '{self.type}'; "
+                f"expected one of {sorted(COLUMN_TYPES)}"
+            )
+        if self.tag not in COLUMN_TAGS:
+            raise ValueError(
+                f"Report column '{self.key}' has tag '{self.tag}'; "
+                f"expected one of {sorted(COLUMN_TAGS)}"
+            )
+
+
+@dataclass(frozen=True)
+class DateBasis:
+    """A date column the period can bind to (approved / form date / submitted)."""
+
+    key: str
+    label: str
+    expr: ColumnElement
+
+
+@dataclass(frozen=True)
+class Dataset:
+    """The rows a report runs over, plus the catalog of what can be shown about them."""
+
+    key: str
+    scope: Optional[str]
+    columns: Tuple[Column, ...]
+    date_bases: Tuple[DateBasis, ...]
+    # FROM + joins + the fixed predicates that define the row set. Carries no columns;
+    # the engine adds whichever the layout asks for.
+    base: Callable[[Any], Select]
+    # Required when scope == "company": the column the session's company scope filters on.
+    company_column: Optional[ColumnElement] = None
+    # Years the dataset actually holds rows for, newest first. Optional: without it the
+    # filter bar offers the current year and the four before it.
+    years: Optional[Callable[[Any], List[int]]] = None
+
+    def __post_init__(self) -> None:
+        if self.scope not in SCOPES:
+            raise ValueError(
+                f"Dataset '{self.key}' must declare scope='company' or scope='none' "
+                "(a dataset that says nothing about scope is how one company's rows "
+                "end up in another company's report)"
+            )
+        if self.scope == "company" and self.company_column is None:
+            raise ValueError(
+                f"Dataset '{self.key}' declares scope='company' but names no company_column"
+            )
+        if not self.date_bases:
+            raise ValueError(f"Dataset '{self.key}' declares no date basis")
+        keys = [c.key for c in self.columns]
+        duplicates = {k for k in keys if keys.count(k) > 1}
+        if duplicates:
+            raise ValueError(f"Dataset '{self.key}' repeats column key(s): {sorted(duplicates)}")
+
+    def column(self, key: str) -> Optional[Column]:
+        return next((c for c in self.columns if c.key == key), None)
+
+    def basis(self, key: str) -> Optional[DateBasis]:
+        return next((b for b in self.date_bases if b.key == key), None)
+
+
+# ------------------------------------------------------------------------- params
+
+
+@dataclass(frozen=True)
+class DateBasisParam:
+    key: str
+    label: str
+    default: str
+
+
+@dataclass(frozen=True)
+class PeriodParam:
+    key: str
+    label: str
+    default: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SelectParam:
+    """A filter the user picks values for. The param IS the predicate."""
+
+    key: str
+    label: str
+    multi: bool
+    default: Tuple[str, ...]
+    # (value, label) pairs; a callable so an options list can come from the database.
+    options: Callable[[Any], Sequence[Tuple[str, str]]]
+    # Given the query context and the chosen values (never empty), the WHERE fragment.
+    condition: Callable[[Any, List[str]], Optional[ColumnElement]]
+    clearable: bool = True
+
+
+Param = Any  # DateBasisParam | PeriodParam | SelectParam
+
+
+# ------------------------------------------------------------------------ layouts
+
+
+@dataclass(frozen=True)
+class TickGroup:
+    """A dimension rendered as one tick column per value present, under a merged header."""
+
+    source: str
+    label: str
+
+
+@dataclass(frozen=True)
+class DetailLayout:
+    title: str
+    order_by: Callable[[Any], Sequence[ColumnElement]]
+    groups: Tuple[TickGroup, ...] = ()
+    key: str = "detail"
+
+
+@dataclass(frozen=True)
+class PivotLayout:
+    title: str
+    key: str = "summary"
+
+
+@dataclass(frozen=True)
+class WorkbookSpec:
+    """The title block every sheet opens with (AC-D2)."""
+
+    company_name: str
+    department: Optional[str] = None
+
+
+# --------------------------------------------------------------------- definition
+
+
+@dataclass(frozen=True)
+class ReportDefinition:
+    key: str
+    title: str
+    permission: str
+    dataset: Dataset
+    params: Tuple[Param, ...]
+    detail: DetailLayout
+    pivot: PivotLayout
+    # {"params": {...}, "detail": {"columns": [...], "order": [...]},
+    #  "pivot": {"rows": ..., "cols": ..., "measures": [...]}}
+    default_view: Dict[str, Any]
+    workbook: WorkbookSpec
+
+
+def validate(definition: ReportDefinition) -> None:
+    """Fail at import time rather than on the first run of the screen."""
+    dataset = definition.dataset
+    view = definition.default_view
+    pivot = view.get("pivot") or {}
+
+    for role in ("rows", "cols"):
+        key = pivot.get(role)
+        column = dataset.column(key) if key else None
+        if column is None or column.tag != "dimension":
+            raise ValueError(
+                f"Report '{definition.key}' default view names '{key}' as its pivot {role}, "
+                "which is not a catalog dimension"
+            )
+    if pivot.get("rows") == pivot.get("cols"):
+        raise ValueError(
+            f"Report '{definition.key}' default view pivots '{pivot.get('rows')}' against itself"
+        )
+    for key in pivot.get("measures") or ():
+        column = dataset.column(key)
+        if column is None or column.tag != "measure":
+            raise ValueError(
+                f"Report '{definition.key}' default view names '{key}' as a measure, "
+                "which is not a catalog measure"
+            )
+    for key in (view.get("detail") or {}).get("columns") or ():
+        if dataset.column(key) is None:
+            raise ValueError(
+                f"Report '{definition.key}' default view names detail column '{key}', "
+                "which the dataset catalog does not hold"
+            )
+    for group in definition.detail.groups:
+        column = dataset.column(group.source)
+        if column is None or column.tag != "dimension":
+            raise ValueError(
+                f"Report '{definition.key}' groups on '{group.source}', "
+                "which is not a catalog dimension"
+            )
+    basis = (view.get("params") or {}).get("date_basis")
+    if basis is not None and dataset.basis(basis) is None:
+        raise ValueError(
+            f"Report '{definition.key}' default view uses date basis '{basis}', "
+            "which the dataset does not offer"
+        )
+
+
+_REGISTRY: Dict[str, ReportDefinition] = {}
+
+
+def register(definition: ReportDefinition) -> ReportDefinition:
+    validate(definition)
+    _REGISTRY[definition.key] = definition
+    return definition
+
+
+def get(key: str) -> Optional[ReportDefinition]:
+    return _REGISTRY.get(key)
+
+
+def all_definitions() -> List[ReportDefinition]:
+    return sorted(_REGISTRY.values(), key=lambda d: d.title)
