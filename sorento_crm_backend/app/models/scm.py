@@ -1540,14 +1540,20 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
     #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
     #: Null on a real link.
     unmatched_reason = Column(String(255), nullable=True)
+    #: HOW MUCH of the line went to that shipment (Q9, migration 429). One line may be split
+    #: across two containers, so the quantity lives on the link rather than being implied by
+    #: the line. NULL on a SKIP row: nothing was placed, and a number there would say goods
+    #: went somewhere they did not.
+    qty = Column(Numeric, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_scm_pi_shipment_link_invoice", "proforma_invoice_id"),
         Index("ix_scm_pi_shipment_link_shipment", "inbound_shipment_id"),
-        # One conversion outcome per PI line, ever - this is what makes a second convert
-        # attempt on an already-converted PI detectable rather than a silent duplicate.
-        Index("uq_scm_pi_shipment_link_line", "proforma_invoice_line_id", unique=True),
+        # NOT unique since migration 429: one PI line legitimately sits in two packing lists
+        # (Q9). What stops a silent double convert is now the service, which compares what
+        # is already placed against what the line holds - arithmetic an index cannot do.
+        Index("ix_scm_pi_shipment_link_line", "proforma_invoice_line_id"),
         {"schema": "scm"},
     )
 
