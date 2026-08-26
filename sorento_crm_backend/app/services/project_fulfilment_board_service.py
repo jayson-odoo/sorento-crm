@@ -41,7 +41,7 @@ The locking fix belongs to the confirmation path and is not attempted here.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -1170,6 +1170,11 @@ class FulfilmentBoardService:
         entirely - and what the column answers is "what is the current instruction". The
         ordering ends on the row id so a same-timestamp tie resolves the same way on every
         read: inside one transaction `now()` is a constant, so `created_at` is no tiebreaker.
+
+        That tiebreaker is a random uuid, though, so "last writer" cannot be trusted to
+        pick the LIVE row when a refused row and the row CS raised in its place share a
+        `created_at`. An answered refusal is therefore taken out of the running explicitly
+        rather than left to lose the coin flip - see `_refusal_answered`.
         """
         if not core_line_ids:
             return {}
@@ -1199,17 +1204,48 @@ class FulfilmentBoardService:
             .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
             .all()
         )
-        # The CURRENT instruction per line, last writer winning, exactly as before.
-        out: Dict[str, Dict[str, Any]] = {
-            str(core_id): {
+        answered = decided_at or {}
+
+        def _refusal_answered(core_key: str, rejected_at: Optional[datetime]) -> bool:
+            """Has CS decided this line again SINCE purchasing refused it?
+
+            `>=` and not `>`, deliberately. The two instants land on the same tick often
+            enough to be ordinary rather than exotic - `now()` is frozen for the length of
+            a transaction, and both stamps are written microseconds apart - and a refusal
+            that outlives its own answer by one tick reads as an open objection on a line
+            somebody has already dealt with. Equal means answered.
+
+            The revision the REJECT itself writes cannot be mistaken for that answer: it
+            uncovers the line, so it is not among the covering decisions the caller reads
+            `decided_at` off (`_frozen_decisions`), and a line it left uncovered has no
+            entry here at all.
+            """
+            decided = answered.get(core_key)
+            if decided is None or rejected_at is None:
+                return False
+            return decided >= rejected_at
+
+        # The CURRENT instruction per line, last writer winning - except that a refusal CS
+        # has already answered is not a current instruction, so it never outranks a live
+        # row on the same line however the two happened to sort. It still seeds the entry
+        # when it is the only row the line has: the cell keeps the inquiry number it was
+        # last told about rather than going blank.
+        out: Dict[str, Dict[str, Any]] = {}
+        for core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name in rows:
+            core_key = str(core_id)
+            if (
+                ack_state == ACK_REJECTED
+                and core_key in out
+                and _refusal_answered(core_key, rejected_at)
+            ):
+                continue
+            out[core_key] = {
                 "inquiry_no": inquiry_no,
                 "state": state,
                 "ack_state": ack_state,
                 "rejected_reason": None,
                 "rejected_by_name": None,
             }
-            for core_id, inquiry_no, state, ack_state, _at, _reason, _name in rows
-        }
         # The REFUSAL is read off the line rather than off its current row, and that is
         # the difference between the cell saying why it came back and saying nothing. A
         # line routinely carries several rows - an order back beside the order, an
@@ -1222,15 +1258,13 @@ class FulfilmentBoardService:
         # revision covering the line, confirmed after the refusal - the cell is about that
         # decision and not about the objection that prompted it. A flag that outlived the
         # answer would read as an open refusal on a line somebody had already dealt with.
-        answered = decided_at or {}
         for core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name in rows:
             if ack_state != ACK_REJECTED:
                 continue
             entry = out.get(str(core_id))
             if entry is None:
                 continue
-            decided = answered.get(str(core_id))
-            if decided is not None and rejected_at is not None and decided > rejected_at:
+            if _refusal_answered(str(core_id), rejected_at):
                 continue
             entry["ack_state"] = ACK_REJECTED
             entry["rejected_reason"] = reason
