@@ -82,6 +82,12 @@ export interface PurchaseOrderListQuery {
    * can never disagree.
    */
   allocated?: boolean | null;
+  /**
+   * Keep only these purchase order NUMBERS. What the Order Inquiries page hands over when
+   * the buyer asks to see the book they have just uploaded (AC-H13); omitted on every
+   * other read of this list.
+   */
+  documents?: string[] | null;
 }
 
 /** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
@@ -141,6 +147,7 @@ export async function getPurchaseOrders(
       product_code: params.productCode || undefined,
       outstanding: params.outstanding ?? undefined,
       allocated: params.allocated ?? undefined,
+      documents: params.documents?.length ? params.documents.join(',') : undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);

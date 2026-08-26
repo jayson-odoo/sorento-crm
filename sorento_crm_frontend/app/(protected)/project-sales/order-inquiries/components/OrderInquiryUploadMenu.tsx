@@ -10,6 +10,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 import { HistoryUploadDialog } from '../../../scm/reorder/components/HistoryUploadDialog';
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 
@@ -27,7 +28,16 @@ import { OutstandingUploadDialog } from '../../../scm/reorder/components/Outstan
  * The sales-order book is deliberately NOT offered. It is CS's document, and the plan's
  * whole point is that the two desks own different halves.
  */
-export function OrderInquiryUploadMenu({ onQueued }: { onQueued?: () => void }) {
+export function OrderInquiryUploadMenu({
+  onQueued,
+}: {
+  /**
+   * The queued JOB, passed straight through from whichever dialog was used. The page
+   * needs its id: the two next steps it offers are about what the WORKER wrote, and it
+   * follows the job to its end through the upload drawer's own feed (AC-H13).
+   */
+  onQueued?: (queued: ImportQueuedResult) => void;
+}) {
   const [channel, setChannel] = React.useState<'purchase-orders' | 'purchase-history' | null>(
     null,
   );

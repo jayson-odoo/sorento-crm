@@ -77,6 +77,14 @@ def list_purchase_orders(
             "column sums, so the filter and the figure cannot disagree."
         ),
     ),
+    documents: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated purchase order numbers - keep only these. What the Order "
+            "Inquiries page hands over when the buyer asks to see the book they just "
+            "uploaded (AC-H13). Omitted = every order; naming none matches none."
+        ),
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
@@ -97,10 +105,14 @@ def list_purchase_orders(
     narrows the list to the orders that are, or are not, spoken for. WHO is on an order is
     the detail page's Allocated to panel - a list of 13,000 orders answers "is this one
     taken", never "by whom".
+
+    `documents` is the narrowest of them: the exact orders one upload wrote, so "Open
+    purchase orders" after a book lands shows that book and not the other 13,000.
     """
     return PurchaseOrderService(db).list(
         page, limit, sort, dir, query, status, supplier,
         product_code=product_code, outstanding=outstanding, allocated=allocated,
+        documents=documents.split(",") if documents is not None else None,
     )
 
 

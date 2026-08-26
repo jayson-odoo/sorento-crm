@@ -2,10 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import {
   acknowledgeOrderInquiryRows,
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
+  getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
@@ -38,6 +40,7 @@ export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summar
 export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
 export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
 export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
+export const ORDER_INQUIRY_UPLOAD_JOB_KEY = 'order-inquiry-upload-job';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -305,6 +308,40 @@ export function useUnplaceAllOrderInquiryRows() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+/**
+ * The upload this page queued, watched to its end (AC-H13).
+ *
+ * The drawer's own feed is the watcher - one poll for every upload in the system, already
+ * running - so this reads the session whose id is the job's rather than starting a second
+ * one. `landed` is the moment the worker is done with it, whichever way it ended; only
+ * then is the job asked what it wrote, because before then the answer is half a book.
+ *
+ * A job the feed has never heard of reads as still running: it was queued a moment ago and
+ * the feed has not caught up, and offering to link against a book nobody has read yet is
+ * the thing this gate exists to stop.
+ */
+export function useUploadedBook(jobId: string | null) {
+  const { sessions } = useUploadActivity();
+  const session = jobId
+    ? sessions.find((s) => s.session_id === jobId || s.import_job_id === jobId)
+    : undefined;
+  const landed = Boolean(
+    session && session.status !== 'uploading' && session.status !== 'processing',
+  );
+
+  const scope = useQuery({
+    queryKey: [ORDER_INQUIRY_UPLOAD_JOB_KEY, jobId],
+    queryFn: () => getOrderInquiryUploadJob(jobId as string),
+    enabled: Boolean(jobId) && landed,
+    // The job is terminal by now, so its answer cannot change; a refetch on every focus
+    // would ask the same question again for the life of the alert.
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  return { landed, failed: session?.status === 'failed', scope: scope.data ?? null };
 }
 
 /**

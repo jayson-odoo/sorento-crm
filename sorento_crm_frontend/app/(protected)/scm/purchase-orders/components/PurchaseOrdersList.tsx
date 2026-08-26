@@ -36,7 +36,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -102,6 +102,13 @@ export default function PurchaseOrdersList() {
   // "Is this purchase order already spoken for" (section 3.G, AC-G4). '' = every order,
   // 'yes' = something is linked to a line of it, 'no' = nothing is.
   const [allocatedFilter, setAllocatedFilter] = useState<AllocatedFilter>('');
+  // `?documents=a,b,c` - the exact orders ONE upload wrote, which is how the Order
+  // Inquiries page sends the buyer here to look at the book they just uploaded (AC-H13).
+  // Read from the URL and clearable like any other filter; absent on every other visit.
+  const searchParams = useSearchParams();
+  const [documentsFilter, setDocumentsFilter] = useState<string[]>(() =>
+    (searchParams.get('documents') ?? '').split(',').filter(Boolean),
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Confirm-flow dialog state.
@@ -122,6 +129,7 @@ export default function PurchaseOrdersList() {
     productCode: productFilter || null,
     outstanding: OUTSTANDING_TO_PARAM[outstandingFilter],
     allocated: ALLOCATED_TO_PARAM[allocatedFilter],
+    documents: documentsFilter.length ? documentsFilter : null,
   });
 
   // `createGr` is deliberately not taken: recording what arrived is a receiving decision
@@ -133,7 +141,14 @@ export default function PurchaseOrdersList() {
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, statusFilter, productFilter, outstandingFilter, allocatedFilter]);
+  }, [
+    searchQuery,
+    statusFilter,
+    productFilter,
+    outstandingFilter,
+    allocatedFilter,
+    documentsFilter,
+  ]);
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
 
@@ -321,7 +336,10 @@ export default function PurchaseOrdersList() {
   });
 
   const filtersActive =
-    (statusFilter ? 1 : 0) + (productFilter ? 1 : 0) + (allocatedFilter ? 1 : 0);
+    (statusFilter ? 1 : 0) +
+    (productFilter ? 1 : 0) +
+    (allocatedFilter ? 1 : 0) +
+    (documentsFilter.length ? 1 : 0);
   const lastCost = data?.product_cost ?? null;
 
   // Confirm applies to the DRAFT subset of the selection (select-all can include actives);
@@ -404,6 +422,19 @@ export default function PurchaseOrdersList() {
         onRowClick={(row) => router.push(detailHref(row))}
       >
         <Card>
+          {documentsFilter.length ? (
+            // A list narrowed to somebody else's link is not a state to leave unexplained:
+            // it says how many orders it is showing and gives them all back in one press.
+            <div className="flex items-center justify-between gap-3 border-b px-5 py-2.5 text-sm">
+              <span>
+                Showing the {documentsFilter.length} purchase order
+                {documentsFilter.length === 1 ? '' : 's'} from one upload.
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setDocumentsFilter([])}>
+                Show all
+              </Button>
+            </div>
+          ) : null}
           {productFilter ? (
             <div
               className="border-b px-5 py-2.5 text-sm"
@@ -543,6 +574,7 @@ export default function PurchaseOrdersList() {
                             setProductFilter('');
                             setProductDraft('');
                             setAllocatedFilter('');
+                            setDocumentsFilter([]);
                           }}
                         >
                           Clear filters

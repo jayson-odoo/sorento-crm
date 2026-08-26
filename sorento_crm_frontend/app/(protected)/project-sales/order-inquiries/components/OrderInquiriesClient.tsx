@@ -54,6 +54,7 @@ import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
+  useUploadedBook,
 } from '../../_shared/hooks/useOrderInquiry';
 import { ACK_LABELS, ACK_STATES, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
@@ -213,9 +214,10 @@ export function OrderInquiriesClient() {
   // state through `buildSelectColumn`, never a hand-rolled Set: the canonical toolbar
   // reads exactly this for its bulk strip.
   const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
-  // The last upload this page queued, so the completion state can offer Link now and the
-  // purchase orders it just wrote (AC-H13). Null until somebody uploads a book here.
-  const [uploaded, setUploaded] = React.useState(false);
+  // The last upload this page queued, by job id, so the two next steps can be offered when
+  // the WORKER is done with it rather than when the request was accepted (AC-H13). Null
+  // until somebody uploads a book here.
+  const [uploadJobId, setUploadJobId] = React.useState<string | null>(null);
   // Which card is pressed (AC-I11). Not one of the toolbar's filters: it lives on the
   // strip above BOTH views, so the same press narrows the matrix and the list. It IS
   // sent with the summary's own request all the same - only the `kinds` facet inside it
@@ -239,6 +241,24 @@ export function OrderInquiriesClient() {
     () => matrixGranularityFrom(searchParams.get('granularity')),
   );
   const [openCell, setOpenCell] = React.useState<OrderInquiryMatrixCell | null>(null);
+
+  // The queued book, watched through the drawer's own feed, and what it wrote once the
+  // worker is done with it (AC-H13). Nothing is offered before `landed`: linking against
+  // a book still being read links the half of it that exists.
+  const uploadedBook = useUploadedBook(uploadJobId);
+  const uploadLanded = uploadedBook.landed;
+  const uploadFailed = uploadedBook.failed;
+  const uploadedProducts = uploadedBook.scope?.product_ids ?? [];
+  // The purchase orders THIS upload wrote, when it can name them - the list filters on
+  // exactly those numbers. A book naming more than the endpoint lists (or none at all, as
+  // a failed read does) sends the buyer to the unfiltered list rather than to a filter
+  // that would quietly show fifty of two hundred documents as if they were all of them.
+  const uploadedDocuments = uploadedBook.scope?.documents ?? [];
+  const purchaseOrdersHref =
+    uploadedDocuments.length > 0 &&
+    uploadedDocuments.length === (uploadedBook.scope?.document_count ?? 0)
+      ? `/scm/purchase-orders?documents=${encodeURIComponent(uploadedDocuments.join(','))}`
+      : '/scm/purchase-orders';
 
   // `view`, `rows`, `granularity` and `query` travel in the URL, so a link to the Schedule
   // view or a filtered search is shareable. `replace`, not `push`: turning a dial (or
@@ -577,16 +597,17 @@ export function OrderInquiriesClient() {
         onToggle={(kind) => setKindFilter((current) => (current === kind ? null : kind))}
       />
 
-      {/* An upload this page queued has landed on the worker (AC-H13). Two next steps and
-          no third: link what the new documents can now cover, or go and look at the
-          purchase orders that arrived. Dismissed by acting, never by a timer. */}
-      {uploaded && canAcknowledge ? (
+      {/* The book this page queued has been READ (AC-H13) - the worker is done with it,
+          which is when its documents exist to link against. Two next steps and no third:
+          link what they can now cover, or go and look at the purchase orders that
+          arrived. Dismissed by acting, never by a timer. */}
+      {uploadLanded && canAcknowledge ? (
         <Alert appearance="light">
           <AlertIcon>
             <Upload />
           </AlertIcon>
           <AlertContent>
-            <AlertTitle>The book is being read</AlertTitle>
+            <AlertTitle>{uploadFailed ? 'The book could not be read' : 'The book has been read'}</AlertTitle>
             <AlertDescription>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
@@ -594,20 +615,27 @@ export function OrderInquiriesClient() {
                   size="sm"
                   disabled={linkNow.isPending}
                   onClick={() =>
-                    linkNow.mutate({}, { onSuccess: () => setUploaded(false) })
+                    linkNow.mutate(
+                      // The products the upload wrote, so one book does not re-deal every
+                      // open instruction in the company. Empty means the job named none,
+                      // and then it IS every acknowledged row - the same rule the endpoint
+                      // states for an omitted list.
+                      uploadedProducts.length ? { product_ids: uploadedProducts } : {},
+                      { onSuccess: () => setUploadJobId(null) },
+                    )
                   }
                 >
                   <Link2 className="size-4" aria-hidden />
                   {linkNow.isPending ? 'Linking…' : 'Link now'}
                 </Button>
                 <Button asChild size="sm" variant="outline">
-                  <Link href="/scm/purchase-orders">Open purchase orders</Link>
+                  <Link href={purchaseOrdersHref}>Open purchase orders</Link>
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
-                  onClick={() => setUploaded(false)}
+                  onClick={() => setUploadJobId(null)}
                 >
                   Dismiss
                 </Button>
@@ -955,7 +983,9 @@ export function OrderInquiriesClient() {
                         the same two dialogs and the same worker jobs as the reorder and
                         purchase-order pages, so nothing is a second importer. */}
                     {canAcknowledge ? (
-                      <OrderInquiryUploadMenu onQueued={() => setUploaded(true)} />
+                      <OrderInquiryUploadMenu
+                        onQueued={(queued) => setUploadJobId(queued.job_id)}
+                      />
                     ) : null}
                     <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
                       <Download className="size-4" aria-hidden />
