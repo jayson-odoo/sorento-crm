@@ -221,6 +221,7 @@ def export_order_inquiry_worklist(
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -240,6 +241,7 @@ def export_order_inquiry_worklist(
                 project_id,
                 supplier_id,
                 raised_by,
+                linked,
             )
         )
         return Response(
@@ -469,10 +471,9 @@ async def place_order_inquiry_row_on_po(
             body = written[0]
         else:
             validate_uuid_path(payload.po_line_id, resource="Purchase order line")
-            written = service.place_on_po(
+            body = service.place_on_po(
                 row_id, payload.po_line_id, actor_user_id=current_user["id"]
             )
-            body = written[0]
         db.commit()
         return body
     except Exception as exc:

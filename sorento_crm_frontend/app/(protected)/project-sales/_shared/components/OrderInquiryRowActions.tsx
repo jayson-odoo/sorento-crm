@@ -23,23 +23,30 @@ export function OrderInquiryRowActions({
   state,
   itemCode,
   qty,
+  linkedQty,
+  linkCount = 0,
   poLabel,
-  hasOpenPoLine = true,
+  hasLinkCandidate = true,
 }: {
   rowId: string;
   verb: string;
   state: string;
   itemCode?: string | null;
   qty: string;
+  /** What is already on documents, so the dialog asks for the remainder. */
+  linkedQty?: string | null;
+  /** How many links the row holds, so the whole-row Unlink confirm can say. */
+  linkCount?: number;
   /** What to name in the Unlink confirm - the document this row is linked to. */
   poLabel?: string | null;
   /**
-   * Whether this row's own product still has an outstanding document line to link (the
-   * backend's `has_open_po_line`). Defaults true - an omitted flag never HIDES the offer,
-   * only an explicit false does; a "Link PO" that opens on nothing to link reads as a
-   * bug, not an empty state.
+   * Whether this row has anywhere to link to (the backend's `has_link_candidate`, which
+   * counts SPO allocations for an ORDER BACK row and purchase order lines for every
+   * linkable row). Defaults true - an omitted flag never HIDES the offer, only an
+   * explicit false does; a Link that opens on nothing to link reads as a bug, not an
+   * empty state.
    */
-  hasOpenPoLine?: boolean;
+  hasLinkCandidate?: boolean;
 }) {
   const [linking, setLinking] = React.useState(false);
   const [unlinking, setUnlinking] = React.useState(false);
@@ -47,7 +54,7 @@ export function OrderInquiryRowActions({
   const linkable =
     (state === 'raised' || state === 'partly_linked') &&
     PLACEABLE_VERBS.includes(verb) &&
-    hasOpenPoLine;
+    hasLinkCandidate;
   const unlinkable = state === 'placed' || state === 'partly_linked';
 
   if (!linkable && !unlinkable) return null;
@@ -71,6 +78,7 @@ export function OrderInquiryRowActions({
           rowId={rowId}
           itemCode={itemCode}
           qty={qty}
+          linkedQty={linkedQty}
           onDone={() => setLinking(false)}
         />
       )}
@@ -79,6 +87,7 @@ export function OrderInquiryRowActions({
         onOpenChange={setUnlinking}
         rowId={rowId}
         documentNumber={poLabel}
+        linkCount={linkCount}
       />
     </>
   );

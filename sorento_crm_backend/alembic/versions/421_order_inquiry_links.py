@@ -175,7 +175,7 @@ def merge_split_rows(bind) -> dict:
         members = bind.execute(
             sa.text(
                 f"""
-                SELECT id, qty, state
+                SELECT id, qty, state, redirected_to_pool
                 FROM {_rows(bind)}
                 WHERE so_line_id = :line AND verb = :verb AND {decision_clause}
                   AND state IN ({states})
@@ -204,9 +204,17 @@ def merge_split_rows(bind) -> dict:
             ),
             {"ids": [member[0] for member in members[1:]]},
         )
+        # A fragment a planning change REDIRECTED to replenish the pool carries a flag
+        # that stops it counting toward its own line's cover. Merging a redirected
+        # fragment into a survivor that is not marked would have quietly given the line
+        # back cover that is bound for the pool, so the flag survives the merge.
+        redirected = any(bool(member[3]) for member in members)
         bind.execute(
-            sa.text(f"UPDATE {_rows(bind)} SET qty = :qty WHERE id = :id"),
-            {"qty": total, "id": survivor_id},
+            sa.text(
+                f"UPDATE {_rows(bind)} SET qty = :qty, redirected_to_pool = :redirected "
+                "WHERE id = :id"
+            ),
+            {"qty": total, "redirected": redirected, "id": survivor_id},
         )
         merged_groups += 1
         rows_removed += len(members) - 1
@@ -228,10 +236,28 @@ def links_from_placed_rows(bind) -> int:
             INSERT INTO {_links(bind)}
                 (id, company_id, row_id, po_line_id, spo_allocation_id, document, qty,
                  linked_by, linked_at, auto, claim_id, created_at)
-            SELECT gen_random_uuid(), r.company_id, r.id, r.po_line_id, NULL, r.po_ref,
-                   r.qty, r.actioned_by, COALESCE(r.actioned_at, now()), false, NULL, now()
+            SELECT gen_random_uuid(), r.company_id, r.id, r.po_line_id, a.id,
+                   COALESCE(r.po_ref, r.spo_ref), r.qty, r.actioned_by,
+                   COALESCE(r.actioned_at, now()), false, NULL, now()
             FROM {_rows(bind)} r
-            WHERE r.po_line_id IS NOT NULL
+            -- An SPO link, the shape the downgrade leaves behind: no `po_line_id`, the
+            -- shipping order's number in `spo_ref`. The lowest line number wins where one
+            -- document states the item twice, the same rule `order_link_service` follows.
+            -- ONLY on an ORDER BACK row, and only a placed one. `spo_ref` is also the
+            -- coverage reference the netting engine writes on an ALREADY INBOUND /
+            -- PRE-ORDERED row, which is a note about what already covers the quantity and
+            -- never a placement: turning one of those into a link would have retired
+            -- demand nobody linked.
+            LEFT JOIN LATERAL (
+                SELECT s.id FROM spo_allocations s
+                WHERE r.po_line_id IS NULL
+                  AND r.verb = 'ORDER_BACK'
+                  AND r.state = 'placed'
+                  AND s.spo_number = r.spo_ref
+                ORDER BY s.spo_line_number NULLS LAST, s.id
+                LIMIT 1
+            ) a ON TRUE
+            WHERE (r.po_line_id IS NOT NULL OR a.id IS NOT NULL)
               AND r.state IN ({states})
               AND r.qty > 0
               AND NOT EXISTS (
@@ -243,7 +269,9 @@ def links_from_placed_rows(bind) -> int:
     written = result.rowcount or 0
     bind.execute(
         sa.text(
-            f"UPDATE {_rows(bind)} SET po_line_id = NULL "
+            f"UPDATE {_rows(bind)} SET po_line_id = NULL, spo_ref = CASE WHEN EXISTS ("
+            f"SELECT 1 FROM {_links(bind)} l WHERE l.row_id = {_rows(bind)}.id "
+            f"AND l.spo_allocation_id IS NOT NULL) THEN NULL ELSE spo_ref END "
             f"WHERE po_line_id IS NOT NULL AND EXISTS ("
             f"SELECT 1 FROM {_links(bind)} l WHERE l.row_id = {_rows(bind)}.id)"
         )
@@ -324,8 +352,8 @@ def split_rows_from_links(bind) -> int:
     for row in rows:
         links = bind.execute(
             sa.text(
-                f"SELECT id, po_line_id, document, qty, linked_by, linked_at "
-                f"FROM {_links(bind)} WHERE row_id = :row "
+                f"SELECT id, po_line_id, document, qty, linked_by, linked_at, "
+                f"spo_allocation_id FROM {_links(bind)} WHERE row_id = :row "
                 "ORDER BY linked_at ASC, id ASC"
             ),
             {"row": row[0]},
@@ -341,13 +369,19 @@ def split_rows_from_links(bind) -> int:
                 bind.execute(
                     sa.text(
                         f"UPDATE {_rows(bind)} SET qty = :qty, "
-                        "po_line_id = :po_line, po_ref = :document, state = 'placed', "
-                        "actioned_by = :by, actioned_at = :at WHERE id = :id"
+                        "po_line_id = :po_line, po_ref = :po_ref, spo_ref = :spo_ref, "
+                        "state = 'placed', actioned_by = :by, actioned_at = :at "
+                        "WHERE id = :id"
                     ),
                     {
                         "qty": link[3],
                         "po_line": link[1],
-                        "document": link[2],
+                        # An SPO link had no `po_line_id` to restore, so the pre-421 shape
+                        # for it is the row's own `spo_ref` - the only column that ever
+                        # named a shipping order. Restoring the document to `po_ref`
+                        # instead would have made a purchase order out of it.
+                        "po_ref": link[2] if link[6] is None else None,
+                        "spo_ref": link[2] if link[6] is not None else None,
                         "by": link[4],
                         "at": link[5],
                         "id": row[0],
@@ -360,13 +394,13 @@ def split_rows_from_links(bind) -> int:
                         INSERT INTO {_rows(bind)}
                             (id, company_id, order_inquiry_id, so_line_id, item_code, qty,
                              delivery_date, stock_location, verb, covered_by,
-                             supply_decision_id, note, po_ref, po_line_id,
+                             supply_decision_id, note, po_ref, spo_ref, po_line_id,
                              redirected_to_pool, state, actioned_by, actioned_at,
                              created_at)
                         VALUES
                             (gen_random_uuid(), :company, :inquiry, :line, :item, :qty,
                              :delivery, :location, :verb, :covered, :decision, :note,
-                             :document, :po_line, :redirected, 'placed', :by, :at,
+                             :po_ref, :spo_ref, :po_line, :redirected, 'placed', :by, :at,
                              :created)
                         """
                     ),
@@ -382,7 +416,8 @@ def split_rows_from_links(bind) -> int:
                         "covered": row[9],
                         "decision": row[10],
                         "note": row[11],
-                        "document": link[2],
+                        "po_ref": link[2] if link[6] is None else None,
+                        "spo_ref": link[2] if link[6] is not None else None,
                         "po_line": link[1],
                         "redirected": row[12],
                         "by": link[4],

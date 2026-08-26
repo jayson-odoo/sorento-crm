@@ -46,6 +46,8 @@ class OrderInquiryLinkOut(BaseModel):
     tier: Optional[int] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
+    #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
+    linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
 
 
@@ -87,11 +89,13 @@ class OrderInquiryRowOut(BaseModel):
     #: The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder
     #: planning, and is exactly what `scm.committed_v` now nets (migration 422).
     linked_qty: str = "0"
-    # Whether the row's OWN product still has an outstanding purchase-order line to link
-    # (the captain, 20 Aug: a "Link PO" offer with nothing behind it reads as a bug, not
-    # an empty state). Computed with the SAME predicate `po-candidates` answers, so the
-    # flag and the dialog can never disagree.
-    has_open_po_line: bool = False
+    # Whether this row has anywhere to link to at all (the captain, 20 Aug: a "Link PO"
+    # offer with nothing behind it reads as a bug, not an empty state). Verb AND product,
+    # not product alone: an ORDER BACK row may link to an `spo_allocations` row as well as
+    # to a purchase order line, so a flag that only looked at purchase orders hid the Link
+    # action on the one row the feature was built for. Computed with the SAME predicate
+    # `po-candidates` answers, so the flag and the dialog can never disagree.
+    has_link_candidate: bool = False
 
     state: str
     actioned_at: Optional[datetime] = None
@@ -171,10 +175,10 @@ class OrderInquiryWorklistRow(BaseModel):
     # real ORDER-sibling numbers, so nothing here needs to change to keep that true.
     taken_from_po: str = "0"
     remaining_open: str = "0"
-    # Same as `OrderInquiryRowOut.has_open_po_line` - whether this row's own product
-    # still has an outstanding PO line, computed the same way so the two listings that
-    # render "Place on PO" can never disagree with the dialog.
-    has_open_po_line: bool = False
+    # Same as `OrderInquiryRowOut.has_link_candidate` - whether this row has anywhere to
+    # link to, computed the same way so the two listings that render "Link PO" can never
+    # disagree with the dialog.
+    has_link_candidate: bool = False
     # Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), read off the same core
     # sales order the SO DATE / S/O NO columns already join to. Null on an authored row
     # that reaches no core order and on one whose core order carries no agent.

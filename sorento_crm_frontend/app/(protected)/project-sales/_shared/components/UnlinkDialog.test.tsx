@@ -60,7 +60,7 @@ describe('UnlinkDialog', () => {
 
     expect(
       screen.getByText(
-        'Remove this row\u2019s links? The quantity goes back to demand, and the next reorder suggestion counts it again.',
+        "Remove this row's links? The quantity goes back to demand, and the next reorder suggestion counts it again.",
       ),
     ).toBeInTheDocument();
   });
