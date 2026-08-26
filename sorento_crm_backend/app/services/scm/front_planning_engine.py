@@ -19,12 +19,16 @@ quantity".
 0. beyond the reserve window (``as_of + lead time + RESERVE_BUFFER_DAYS``) or beyond
    purchasing's reorder-coverage date -> rung 1 runs and NOTHING ELSE: incoming supply
    covering the whole line is proposed, and anything short of that is a whole-line ``Buy``;
-1. timely incoming (an SPO arriving by the required date) counts toward cover;
-2. the OWNERSHIP GROUP, this line's own location included, each location capped at
-   ``max(min(free, available), 0)`` - the caller hands them over in draw order;
-3. the shared pool, own site first then the other site pools, capped the same way, with
-   the dealer/project hot-selling gate of 3.3a retained;
-4. cross-group borrow: free stock outside the ownership group, offered by the caller only
+1. timely incoming (an SPO arriving by the required date) counts toward cover, and under
+   ladder v4 only as far as the group's own net allows - an SPO to ``BRW-IB`` is owed to
+   the IB backlog first (section 1d);
+2. the OWNERSHIP GROUP, this line's own location included: the caller hands over the
+   locations in draw order, already capped so that they total no more than
+   ``max(group_net, 0)`` - what the WHOLE group holds, never one warehouse's own reading
+   (ladder v4, section 1d). The rank queue no longer decides availability;
+3. the shared pool, own site first then the other site pools, all five netted as ONE pile
+   (``pools_net``), with the dealer/project hot-selling gate of 3.3a retained;
+4. cross-group borrow: what a DONOR GROUP nets as a whole, offered by the caller only
    within the small-quantity cap;
 5. the whole-line rule: if 1-4 together reach the whole of Q, that composition is proposed,
    in rung order; otherwise NONE of it is proposed and the whole line is a Buy - never a
@@ -253,19 +257,27 @@ def pool_reserve_capacity(
     is_dealer_hot_selling: bool,
     is_project_hot_selling: bool,
     pools: Sequence[Mapping[str, Any]],
+    pools_net: Optional[Decimal] = None,
 ) -> List[Tuple[str, Decimal, str]]:
     """Rung 3: the shared pool, own site first then the other site pools.
 
     `pools` is already in draw order - the caller's own site pool first, then the other
     site pools - each stating `location`, `free` and `available` (the pool's own SIGNED
-    position, `on hand - SO qty + SPO qty`). Every pool is capped the same way now,
-    `max(min(free, available), 0)`, whether the product is project hot-selling or neither -
-    a change from 3.3a's "neither: uncapped", made because ladder v2 can draw a SECOND and
-    THIRD pool that were never this line's own, and an uncapped draw on one of those would
-    ignore what its own book already owes. Dealer hot-selling still excludes the pool rung
-    entirely, exactly as 3.3a states.
+    position, `on hand - SO qty + SPO qty`). Every pool is capped the same way,
+    `max(min(free, available), 0)`: a pool cannot lend more than physically sits free at
+    it. Dealer hot-selling still excludes the pool rung entirely, exactly as 3.3a states.
+
+    LADDER V4 (section 1d): the five site pools are ONE pile, so the whole rung is capped
+    at `pools_net`, the pools' summed signed availability. `BRW -103` beside `DC1 +1` nets
+    -102 and offers NOTHING, where per-pool arithmetic alone would have offered the 1 -
+    which is stock the shared book already owes elsewhere. Stated by the caller, which is
+    the only party that knows which warehouses are pools; `None` means "no net stated" and
+    leaves the per-pool caps to stand on their own (the golden cases that predate v4).
     """
     if is_dealer_hot_selling:
+        return []
+    left = None if pools_net is None else max(_dec(pools_net), ZERO)
+    if left is not None and left <= ZERO:
         return []
     out: List[Tuple[str, Decimal, str]] = []
     for pool in pools:
@@ -275,27 +287,67 @@ def pool_reserve_capacity(
         free = max(_dec(pool.get("free")), ZERO)
         available = _dec(pool.get("available"))
         capacity = max(min(free, available), ZERO)
+        if left is not None:
+            capacity = min(capacity, left)
         if capacity <= ZERO:
             continue
-        out.append(
-            (
-                str(location),
-                capacity,
-                f"Pool {location} has {qty_text(capacity)} available",
-            )
-        )
+        out.append((str(location), capacity, _pool_reason(str(location), capacity, left)))
+        if left is not None:
+            left -= capacity
+            if left <= ZERO:
+                break
     return out
 
 
-def _group_take_reason(location: str, qty: Decimal, group_code: Optional[str]) -> str:
-    where = f" in the {group_code} group" if group_code else ""
-    return f"{location} has {qty_text(qty)} available{where}"
+def _pool_reason(location: str, qty: Decimal, pools_net: Optional[Decimal]) -> str:
+    """Why this pool may lend this much.
+
+    Under v4 the number is a share of the pools' own net, so the sentence names the net -
+    "Pool BRW has 30 available" beside a shared pile that nets 30 across five warehouses
+    reads as though BRW alone held it.
+    """
+    if pools_net is None:
+        return f"Pool {location} has {qty_text(qty)} available"
+    return (
+        f"Pool {location} lends {qty_text(qty)} of the {qty_text(pools_net)} the site "
+        "pools net between them"
+    )
+
+
+def group_take_reason(
+    location: str, qty: Decimal, group_code: Optional[str], group_net: Optional[Decimal]
+) -> str:
+    """Why this location may give this much (v4: it is the GROUP's number, not the
+    location's own).
+
+    Public for the same reason `spo_reason` is: the supply service builds this same sentence
+    when it reads a CONFIRMED component back off a snapshot, and two copies agreed only by
+    coincidence.
+
+    `BRW-BB has 40 available` was true while a location's own signed availability decided
+    what it could lend. Under section 1d the group is one pile - `MWH-IB` holding 7000
+    lends nothing while the IB group nets -15514 - so the quantity is a share of the
+    group's net and the sentence has to say whose number it is.
+    """
+    if group_net is None or not group_code:
+        where = f" in the {group_code} group" if group_code else ""
+        return f"{location} has {qty_text(qty)} available{where}"
+    return (
+        f"{location} gives {qty_text(qty)} of the {qty_text(group_net)} the {group_code} "
+        "group nets"
+    )
 
 
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
+    """v4: what the DONOR GROUP can lend, drawn at this location.
+
+    Never "`{location}` has N free": the offer is capped by the donor group's whole net
+    (section 1d rung 4), so a location holding far more than N would be described wrongly
+    by its own free balance.
+    """
     return (
-        f"{location} has {qty_text(qty)} free outside this group, within the cross-group "
-        "borrow limit"
+        f"{location} can lend {qty_text(qty)} from outside this group, within the "
+        "cross-group borrow limit"
     )
 
 
@@ -328,6 +380,8 @@ def propose_line(
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     outside_reserve_window: bool = False,
+    group_net: Optional[Decimal] = None,
+    pools_net: Optional[Decimal] = None,
 ) -> Tuple[Component, ...]:
     """The proposed composition for one line, ladder v3's own order (section 1b).
 
@@ -337,13 +391,15 @@ def propose_line(
        fired, never "incoming 40, buy 31" (that mix is what AC-L5 refuses at confirm). An
        UNDATED line (`required_date=None`) is never beyond either bound - both comparisons
        need two dates - so it falls straight through to the full walk;
-    1. timely incoming, for supply arriving on or before the required date;
-    2. the ownership group: `group_take_candidates`, already capped by the caller
-       (`max(min(free, available), 0)`) and already in draw order - this line's own
-       location first, then its siblings by site;
-    3. the shared pool(s), `pool_reserve_capacity`, own site first;
+    1. timely incoming, for supply arriving on or before the required date - `timely_spo_qty`
+       is already netted against the group's own position by the caller (v4, section 1d);
+    2. the ownership group: `group_take_candidates`, already capped by the caller to the
+       GROUP's net (`group_net`) and already in draw order - this line's own location
+       first, then its siblings by site;
+    3. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
+       capped at `pools_net`;
     4. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
-       donors within the small-quantity cap;
+       donors within the small-quantity cap, each donor group capped at its own net;
     5. the whole-line rule: if 1-4 reach the whole of `open_qty`, that composition is
        returned, in rung order; otherwise every partial component is DROPPED and the whole
        line is proposed as a single Buy - never "reserve 213, buy 145".
@@ -362,6 +418,13 @@ def propose_line(
     STOCK rung runs for such a line; rung 1 still does, because incoming supply is already
     bought. The CALLER decides which side of the window a line falls on, because only it
     knows the product's lead time.
+
+    `group_net` and `pools_net` are ladder v4's own numbers (section 1d): what the ownership
+    group and the five site pools respectively hold BETWEEN their locations, signed.
+    `pools_net` caps rung 3's whole draw; `group_net` is the bound the caller has already
+    applied to `group_take_candidates`, passed here so each component's reason can name the
+    number it is a share OF. Both are `None` for a caller that states no net, and the rungs
+    then stand on their per-location caps alone.
     """
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
@@ -418,18 +481,20 @@ def propose_line(
             Component(
                 kind=RESERVE,
                 qty=take,
-                reason=_group_take_reason(str(location), take, group_code),
+                reason=group_take_reason(str(location), take, group_code, group_net),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
             )
         )
         remaining -= take
 
-    # 3. the shared pool(s), own site first.
+    # 3. the shared pool(s), own site first, the whole rung capped at what the five pools
+    #    net BETWEEN them (v4, section 1d).
     for location, capacity, reason in pool_reserve_capacity(
         is_dealer_hot_selling=is_dealer_hot_selling,
         is_project_hot_selling=is_project_hot_selling,
         pools=pools or [],
+        pools_net=pools_net,
     ):
         if remaining <= ZERO:
             break
