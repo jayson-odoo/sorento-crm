@@ -279,6 +279,17 @@ function BoardCellButton({
     .flatMap((entry) => entry.lent_to ?? [])
     .map((row) => `${row.qty} lent to ${row.so_number ?? 'another order'}`)
     .join(' · ');
+  // What purchasing REFUSED, on the line it came back to (AC-H6). The row leaves netting
+  // and the decision is uncovered, so without this the cell simply goes back to undecided
+  // and CS is left to work out why - which is what the reason exists to stop.
+  const rejected = cell.contributions
+    .map((entry) => entry.order_inquiry)
+    .filter((inquiry) => inquiry?.ack_state === 'rejected')
+    .map((inquiry) =>
+      `Rejected by ${inquiry?.rejected_by_name ?? 'purchasing'}: ` +
+      `${(inquiry?.rejected_reason ?? '').trim() || 'no reason given'}`,
+    )
+    .join(' · ');
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
     orders === 1 ? '' : 's'
   }`;
@@ -319,6 +330,18 @@ function BoardCellButton({
           className={cn('block truncate text-[11px] font-medium', COLOURS[lead.kind].text)}
         >
           {dominantText(supply.segments)}
+        </span>
+      ) : null}
+
+      {/* Purchasing refused an instruction for one of these lines (AC-H6). The line is
+          undecided again, and this is why. */}
+      {rejected ? (
+        <span
+          data-testid="cell-rejected"
+          className="block truncate text-[11px] font-medium text-destructive"
+          title={rejected}
+        >
+          {rejected}
         </span>
       ) : null}
 

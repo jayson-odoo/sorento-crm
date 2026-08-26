@@ -87,7 +87,28 @@ export interface OrderInquiryLink {
   po_id?: string | null;
 }
 
-export interface OrderInquiryRow {
+/**
+ * The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with it:
+ * `state` says where the quantity sits, this says whether purchasing has taken the
+ * instruction on. Nothing links to a row before it is acknowledged.
+ */
+export type OrderInquiryAckState = 'awaiting' | 'acknowledged' | 'changed' | 'rejected';
+
+/** The four facts a row carries about its handshake, on every reader of a row. */
+export interface OrderInquiryAckFields {
+  ack_state?: OrderInquiryAckState | string;
+  /** Who took it on, by name. Never an id: the column prints this as it comes. */
+  acknowledged_by_name?: string | null;
+  acknowledged_at?: string | null;
+  /** Who refused it, and why. Both set only on a rejected row. */
+  rejected_by_name?: string | null;
+  rejected_at?: string | null;
+  rejected_reason?: string | null;
+  /** When CS last amended a row purchasing had already acknowledged. */
+  changed_at?: string | null;
+}
+
+export interface OrderInquiryRow extends OrderInquiryAckFields {
   id: string;
   order_inquiry_id: string;
   so_line_id?: string | null;
@@ -196,7 +217,7 @@ export interface OrderInquiryListEnvelope {
  * screen and the file can be read side by side.
  */
 
-export interface OrderInquiryWorklistRow {
+export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   id: string;
   /**
    * `OI-000123` - the number of the inquiry this row belongs to, off its own header.
@@ -303,6 +324,12 @@ export interface OrderInquiryWorklistParams {
    * A cancelled row carries no kind at all - its quantity is not owed any more.
    */
   kind?: OrderInquiryKind;
+  /**
+   * WHERE THE HANDSHAKE STANDS (AC-H4). A third question beside `state` and `linked`:
+   * purchasing's own worklist is "what have I not acknowledged yet", and CS reads the
+   * same list for "what has purchasing refused".
+   */
+  ack?: OrderInquiryAckState;
   page?: number;
   limit?: number;
   sort?: string;
@@ -378,6 +405,27 @@ export interface OrderInquiryWorklistSummary {
    * leaves the other two readable.
    */
   kinds: OrderInquiryKindTotals;
+  /**
+   * How many rows sit at each acknowledgement state (AC-H4) - the Acknowledgement
+   * filter's own counts, computed with that filter dropped like every other control
+   * here. Optional so a page rendered against an older answer still reads.
+   */
+  ack?: OrderInquiryAckCounts;
+}
+
+/** The four counts behind the Acknowledgement filter. */
+export interface OrderInquiryAckCounts {
+  awaiting: number;
+  acknowledged: number;
+  changed: number;
+  rejected: number;
+}
+
+/** What one Acknowledge press did: rows taken on, and what linked at that moment. */
+export interface AcknowledgeResult {
+  acknowledged: number;
+  linked_rows: number;
+  links: number;
 }
 
 /* --------------------------------------------------------- the schedule matrix

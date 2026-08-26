@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
+  AcknowledgeResult,
   AutoPlaceRequest,
   AutoPlaceResult,
   OrderInquiryDetail,
@@ -238,6 +239,61 @@ export async function autoPlaceOrderInquiryRows(
   return response.json();
 }
 
+/**
+ * Purchasing takes these instructions on (AC-H2), one row or a batch.
+ *
+ * One press does two things because they are one decision: the rows become purchasing's
+ * work, and the cascade runs for exactly them, so whatever open document can cover them
+ * is linked at that moment. Nothing links before this.
+ */
+export async function acknowledgeOrderInquiryRows(
+  rowIds: string[],
+): Promise<AcknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to acknowledge those rows'));
+  return response.json();
+}
+
+/**
+ * Purchasing refuses one row, with a reason (AC-H5). The row leaves netting and its
+ * sales-order line goes back to the board undecided carrying the refusal.
+ */
+export async function rejectOrderInquiryRow(
+  rowId: string,
+  reason: string,
+): Promise<OrderInquiryRow> {
+  const response = await apiFetch(`${BASE}/order-inquiries/${rowId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject this row'));
+  return response.json();
+}
+
+/**
+ * Run the cascade over ACKNOWLEDGED rows now (AC-H13) - what the buyer presses once an
+ * uploaded book has landed. `product_ids` narrows it to what the upload touched.
+ */
+export async function linkNowOrderInquiryRows(
+  params: AutoPlaceRequest = {},
+): Promise<AutoPlaceResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/link-now`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to link those rows'));
+  return response.json();
+}
+
 /** The same fields, however they are used - a query string for the preview GET, a
  * JSON body for the commit POST. No page/sort/limit: neither endpoint paginates. */
 function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
@@ -350,6 +406,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       raised_by: params.raised_by,
       linked: params.linked,
       kind: params.kind,
+      ack: params.ack,
     },
   );
 }

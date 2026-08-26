@@ -1066,6 +1066,17 @@ export interface BoardLineOrderInquiry {
   inquiry_no?: string | null;
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
+  /**
+   * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
+   * `rejected`. A different question from `state`, which says where the quantity sits.
+   */
+  ack_state?: string;
+  /**
+   * Why purchasing refused it, and who did. Set only on a rejected row - and that is the
+   * row whose LINE is undecided again, so the cell has to say why it came back.
+   */
+  rejected_reason?: string | null;
+  rejected_by_name?: string | null;
 }
 
 /**
