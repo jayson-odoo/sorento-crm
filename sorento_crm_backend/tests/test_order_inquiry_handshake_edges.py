@@ -28,9 +28,13 @@ from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     ACK_CHANGED,
+    ACK_REJECTED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
+    SOSupplyDecision,
 )
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.project_service import register_project
@@ -61,6 +65,24 @@ __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling t
 # ---------------------------------------------------------------------------
 # AC-H11: a REAL purchase-order confirm, not the `_open_po_line` shortcut
 # ---------------------------------------------------------------------------
+
+
+def _active_revision_no(world, order):
+    """The revision number of the order's ACTIVE decision, or None when it has none.
+
+    What a refusal MUST NOT move when it is refused: `reject_row` uncovers the line, and
+    uncovering writes a revision, so a rejection that got as far as that on a row it
+    should have turned away would leave the board re-deciding for no reason.
+    """
+    decision = (
+        world.db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == "active",
+        )
+        .one_or_none()
+    )
+    return decision.revision_no if decision else None
 
 
 def _draft_po_line(world, *, qty, product=None, warehouse=None):
@@ -159,25 +181,12 @@ def test_a_cs_user_is_refused_a_batch_acknowledge_and_a_populated_link_now(api):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "DEFECT, reported not fixed (tester's brief): acknowledge_rows() refuses only on "
-        "ack_state (ACK_ACKNOWLEDGEABLE) and never looks at row.state - "
-        "app/services/project_order_inquiry_service.py:1996-1998 - so a CANCELLED row "
-        "whose ack_state is still `awaiting` is happily acknowledged (200, not 422). "
-        "Plan section 7 ('what shipped') frames the fix as browser-only: 'The row "
-        "checkbox refuses a CANCELLED or ACTIONED row ... found in the browser, where "
-        "the first press took on three cancelled rows.' That leaves the SERVICE with no "
-        "defence of its own if the checkbox is ever bypassed (a second tab, a replayed "
-        "request, a future caller reaching acknowledge_rows() directly)."
-    ),
-    strict=True,
-)
 def test_acknowledging_a_cancelled_row_is_refused(api):
     """Plan section 7 (what shipped): 'The row checkbox refuses a CANCELLED or ACTIONED
     row as well as an acknowledged or rejected one ... found in the browser, where the
-    first press took on three cancelled rows.' That fix is described there as the
-    checkbox refusing the row - this pins whether the SERVICE it calls refuses it too.
+    first press took on three cancelled rows.' The SERVICE refuses it too - the checkbox
+    can be bypassed by a second tab, a replayed request or a future caller, and none of
+    those may take on work nobody is doing.
     """
     _client, world = api
     fixture = _raise_one_row(api)
@@ -188,10 +197,106 @@ def test_acknowledging_a_cancelled_row_is_refused(api):
     with _as_purchasing(world) as buyer:
         response = buyer.post(ACK_URL, json={"row_ids": [str(row.id)]})
 
-    assert response.status_code == 422, (
-        "acknowledge_rows() accepted a CANCELLED row - see the xfail reason above and "
-        "app/services/project_order_inquiry_service.py:1996"
+    assert response.status_code == 422, response.text
+    world.db.refresh(row)
+    assert row.ack_state == ACK_AWAITING, "and nothing was stamped on it"
+    assert row.acknowledged_by is None
+
+
+def test_one_cancelled_row_refuses_the_whole_batch_and_stamps_none_of_it(api):
+    """A batch is one press and one decision: half of it landing would leave the buyer
+    reading a toast for two rows and finding one."""
+    _client, world = api
+    live = _raise_one_row(api, qty="4")
+    dead = _raise_one_row(api, qty="6")
+    dead["row"].state = INQUIRY_CANCELLED
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL, json={"row_ids": [str(live["row"].id), str(dead["row"].id)]}
+        )
+
+    assert response.status_code == 422, response.text
+    world.db.refresh(live["row"])
+    assert live["row"].ack_state == ACK_AWAITING
+
+
+def test_rejecting_a_row_that_is_no_longer_open_is_refused_and_writes_nothing(api):
+    """A cancelled row is past refusing: nobody is buying it, and a rejection would
+    uncover its line - writing a revision for a refusal of work that had already stopped.
+    """
+    _client, world = api
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+    row.state = INQUIRY_CANCELLED
+    world.db.commit()
+    before = _active_revision_no(world, fixture["order"])
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            f"{LIST}/{row.id}/reject", json={"reason": "Factory closed until November"}
+        )
+
+    assert response.status_code == 422, response.text
+    world.db.refresh(row)
+    assert row.ack_state == ACK_AWAITING
+    assert row.rejected_reason is None
+    assert _active_revision_no(world, fixture["order"]) == before, (
+        "and the line's decision was left exactly as it stood"
     )
+
+
+def test_rejecting_a_fully_linked_row_is_refused(api):
+    """The goods are bought. "Purchasing rejected it" beside a purchase order that exists
+    is not a sentence CS can act on."""
+    _client, world = api
+    _open_po_line(world, qty=50)
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+        world.db.commit()
+        world.db.refresh(row)
+        assert row.state == INQUIRY_PLACED, "the cascade covered it whole"
+        response = buyer.post(f"{LIST}/{row.id}/reject", json={"reason": "Too late"})
+
+    assert response.status_code == 422, response.text
+    world.db.refresh(row)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+
+
+def test_rejecting_a_partly_linked_row_is_allowed(api):
+    """The other side of the same rule: half of it is still owed, so there is still
+    something to refuse - and refusing it must not take the buyer's own placement down."""
+    _client, world = api
+    _po, po_line = _open_po_line(world, qty=4)
+    fixture = _raise_one_row(api, qty="10")
+    row = fixture["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+        world.db.commit()
+        # 4 of the 10 put on the purchase order by hand, the way section G's own "Place on
+        # PO" does it: the cascade leaves a row it cannot cover whole alone.
+        ProjectOrderInquiryService(world.db).place_on_po_allocations(
+            str(row.id),
+            [{"po_line_id": str(po_line.id), "qty": Decimal("4")}],
+            actor_user_id=world.buyer,
+        )
+        world.db.commit()
+        world.db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED
+        response = buyer.post(
+            f"{LIST}/{row.id}/reject", json={"reason": "No supplier for the rest"}
+        )
+
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.refresh(row)
+    assert row.ack_state == ACK_REJECTED
+    assert _links_of(world, row), "what was already arranged stays arranged"
 
 
 # ---------------------------------------------------------------------------

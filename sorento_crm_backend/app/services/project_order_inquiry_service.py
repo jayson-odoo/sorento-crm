@@ -69,6 +69,7 @@ from app.models.project_so import (
     AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_LINK_STATES,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -2076,8 +2077,25 @@ class ProjectOrderInquiryService:
         and the name onto somebody who only pressed a button twice - and a rejected one is
         refused because taking it back is CS re-deciding the line, not purchasing changing
         its mind about a row that no longer counts.
+
+        The row's SUPPLY state is refused on too, and it is a different question from the
+        handshake: a CANCELLED row was called off and an ACTIONED one was answered
+        somewhere else, so taking either on is taking on work nobody is doing, and the
+        cascade behind the press would link nothing for it anyway. The checkbox already
+        refuses them (`orderInquiryAck.isAcknowledgeable`); this is the same rule where it
+        cannot be bypassed by a second tab, a replayed request or a future caller.
         """
         rows = self._rows_or_404(row_ids)
+        gone = [row for row in rows if row.state not in INQUIRY_LINK_STATES]
+        if gone:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{len(gone)} of those rows are no longer open: a cancelled or "
+                    "actioned row is nobody's work to take on."
+                ),
+                code="order_inquiry_row_not_open",
+            )
         refused = [row for row in rows if row.ack_state not in ACK_ACKNOWLEDGEABLE]
         if refused:
             raise AppException(
@@ -2122,6 +2140,13 @@ class ProjectOrderInquiryService:
 
         The reason is required at the schema. It is required again here because a service
         caller (a test, a script) reaches this without one.
+
+        Only a row that is still OWED may be refused - raised, or linked in part. A row
+        already wholly on documents is not a refusal to make: the goods are bought, and
+        "purchasing rejected it" beside a purchase order that exists is a sentence CS
+        cannot act on. A cancelled or actioned row is past refusing for the same reason
+        acknowledging one is: nobody is doing it. Refused before anything is written, so
+        such a row keeps its state AND gains no revision on its line.
         """
         text_reason = (reason or "").strip()
         if not text_reason:
@@ -2131,6 +2156,15 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_reject_reason_required",
             )
         row = self._row_or_404(row_id)
+        if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED):
+            raise AppException(
+                status_code=422,
+                message=(
+                    "This row cannot be rejected: it is already bought, called off or "
+                    "answered elsewhere."
+                ),
+                code="order_inquiry_row_not_rejectable",
+            )
         if row.ack_state == ACK_REJECTED:
             raise AppException(
                 status_code=422,

@@ -55,7 +55,7 @@ import {
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
 } from '../../_shared/hooks/useOrderInquiry';
-import { ACK_LABELS, ACK_STATES } from '../../_shared/lib/orderInquiryAck';
+import { ACK_LABELS, ACK_STATES, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
@@ -462,7 +462,12 @@ export function OrderInquiriesClient() {
     columns,
     getRowId: (row) => row.id,
     state: { pagination, sorting, rowSelection },
-    enableRowSelection: canAcknowledge,
+    // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
+    // a column-level `enableRowSelection` is silently ignored, and every row would tick
+    // (`FulfilmentPlanningClient` carries the same note over the same trap). As a plain
+    // boolean this let a cancelled or already-acknowledged row be ticked, and the press
+    // then failed on the whole batch.
+    enableRowSelection: (row) => canAcknowledge && isAcknowledgeable(row.original),
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
