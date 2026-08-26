@@ -5,7 +5,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useDataGrid } from '@/components/ui/data-grid';
 import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
-import { Cell, Column, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
+import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { cn } from '@/lib/utils';
@@ -134,6 +134,10 @@ function DataGridTableHeadRowCell<TData>({
     <th
       key={header.id}
       ref={dndRef}
+      // 1 for every flat listing, so this is a no-op there. A grid whose columns are
+      // grouped (the reports detail grid's "Expected year of delivery" ticks) needs the
+      // group header to span its leaves, or the two header rows do not line up.
+      colSpan={header.colSpan}
       style={{
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
@@ -308,6 +312,19 @@ function DataGridTableBodyRow<TData>({
  * a chip competing with the buttons, and nothing tells the reader WHICH column it totals; sitting
  * under its own column the number needs no label at all.
  */
+/**
+ * The footer rows worth drawing.
+ *
+ * A flat grid has exactly one, so this is `getFooterGroups()` unchanged. A grid with
+ * COLUMN GROUPS gets a second, mirror row for the group headers, and no group declares a
+ * `footer`, so it would render as an empty bordered strip under the totals.
+ */
+function footerGroupsWithContent<TData>(table: Table<TData>) {
+  return table
+    .getFooterGroups()
+    .filter((group) => group.headers.some((h) => !h.isPlaceholder && Boolean(h.column.columnDef.footer)));
+}
+
 function DataGridTableFoot({ children }: { children: ReactNode }) {
   const { props } = useDataGrid();
 
@@ -637,7 +654,7 @@ function DataGridTable<TData>() {
 
         {table.getVisibleFlatColumns().some((column) => Boolean(column.columnDef.footer)) && (
           <DataGridTableFoot>
-            {table.getFooterGroups().map((footerGroup) => (
+            {footerGroupsWithContent(table).map((footerGroup) => (
               <tr key={footerGroup.id}>
                 {footerGroup.headers.map((header) => (
                   <DataGridTableFootRowCell key={header.id} header={header}>
@@ -656,6 +673,7 @@ function DataGridTable<TData>() {
 }
 
 export {
+  footerGroupsWithContent,
   DataGridTable,
   DataGridTableBase,
   DataGridTableBody,

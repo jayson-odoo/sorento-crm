@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { BarChart3, ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -31,6 +31,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUsersForApproverSelect } from '../services/purchaseRequestService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
@@ -129,11 +130,18 @@ interface PurchaseRequestsListProps {
   requestType?: 'purchase_request' | 'sponsorship_form';
   /** Base path for list, new, and detail links. Defaults to purchase-requests path. */
   basePath?: string;
+  /**
+   * Permission slug that unlocks a Report action in the toolbar, linking to
+   * `<basePath>/report`. Omit and no Report button is rendered at all: a listing whose
+   * type has no registered report has nothing to link to (PLAN-reporting-foundation AC-E1).
+   */
+  reportPermission?: string;
 }
 
 export default function PurchaseRequestsList({
   requestType,
   basePath = DEFAULT_BASE_PATH,
+  reportPermission,
 }: PurchaseRequestsListProps = {}) {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
@@ -157,6 +165,7 @@ export default function PurchaseRequestsList({
     staleTime: 5 * 60_000,
   });
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const canViewReport = useHasPermission(reportPermission ?? '') && Boolean(reportPermission);
 
   const effectiveRequestType =
     requestType ?? (requestTypeFilter && requestTypeFilter !== 'all' ? requestTypeFilter : undefined);
@@ -536,6 +545,18 @@ export default function PurchaseRequestsList({
               ),
             }}
             exportConfig={{ filename: 'purchase_requests_export.xlsx' }}
+            secondaryActions={
+              canViewReport
+                ? [
+                    {
+                      key: 'report',
+                      label: 'Report',
+                      icon: BarChart3,
+                      href: `${basePath}/report`,
+                    },
+                  ]
+                : []
+            }
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={

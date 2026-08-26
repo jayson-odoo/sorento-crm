@@ -20,7 +20,10 @@ function DataGridColumnVisibility<TData>({ table, trigger }: { table: Table<TDat
       <DropdownMenuContent align="end" className="min-w-[150px] max-h-[60vh] overflow-y-auto">
         <DropdownMenuLabel className="font-medium">Toggle Columns</DropdownMenuLabel>
         {table
-          .getAllColumns()
+          // LEAF columns, not top-level ones: identical on a flat grid, but a grid with
+          // column groups (the reports detail grid) would otherwise offer only the group,
+          // which has no accessor, and so hide every column inside it from this panel.
+          .getAllLeafColumns()
           .filter((column) => typeof column.accessorFn !== 'undefined' && column.getCanHide())
           .map((column) => {
             return (

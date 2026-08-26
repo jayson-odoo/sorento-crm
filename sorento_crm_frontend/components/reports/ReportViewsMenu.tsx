@@ -1,0 +1,188 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { Check, ChevronDown, Share2, Star, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
+import { useReportViewMutations, useReportViews } from '@/hooks/useReports';
+import { REPORT_VIEWS_KEY, type ReportView, type ReportViewConfig } from '@/services/reportService';
+
+/**
+ * Saved views: personal by default, shared when published, one shared view the default
+ * for everyone.
+ *
+ * Publish and Set as default are ABSENT without `reports.views.publish`, not disabled
+ * (AC-C4): a greyed-out control the user can never earn is only an invitation to ask
+ * why it is greyed out.
+ */
+export function ReportViewsMenu({
+  reportKey,
+  canPublish,
+  currentViewId,
+  currentConfig,
+  onApply,
+}: {
+  reportKey: string;
+  canPublish: boolean;
+  currentViewId: string | null;
+  currentConfig: ReportViewConfig;
+  onApply: (view: ReportView | null) => void;
+}) {
+  const { data: views } = useReportViews(reportKey);
+  const { create, remove, publish, setDefault } = useReportViewMutations(reportKey);
+
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const mine = useMemo(() => views?.mine ?? [], [views]);
+  const shared = useMemo(() => views?.shared ?? [], [views]);
+  const current = useMemo(
+    () => [...mine, ...shared].find((v) => v.id === currentViewId) ?? null,
+    [mine, shared, currentViewId],
+  );
+  const currentIsMine = Boolean(current && mine.some((v) => v.id === current.id));
+
+  const save = (event: React.FormEvent) => {
+    event.preventDefault();
+    create.mutate(
+      { name, view: currentConfig },
+      {
+        onSuccess: (view) => {
+          setSaveOpen(false);
+          setName('');
+          onApply(view);
+        },
+      },
+    );
+  };
+
+  const renderItem = (view: ReportView) => (
+    <DropdownMenuItem key={view.id} onClick={() => onApply(view)} className="gap-2">
+      <Check className={view.id === currentViewId ? 'size-4 opacity-100' : 'size-4 opacity-0'} />
+      <span className="truncate" title={view.name}>
+        {view.name}
+      </span>
+      {view.is_default && (
+        <Badge variant="secondary" size="sm" className="ms-auto">
+          Default
+        </Badge>
+      )}
+    </DropdownMenuItem>
+  );
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" className="gap-1.5">
+            <span className="max-w-40 truncate" title={current?.name ?? 'Report default'}>
+              {current?.name ?? 'Report default'}
+            </span>
+            <ChevronDown className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuLabel>Mine</DropdownMenuLabel>
+          {mine.length > 0 ? (
+            mine.map(renderItem)
+          ) : (
+            <DropdownMenuItem disabled>No saved views yet</DropdownMenuItem>
+          )}
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Shared</DropdownMenuLabel>
+          {shared.length > 0 ? (
+            shared.map(renderItem)
+          ) : (
+            <DropdownMenuItem disabled>No shared views yet</DropdownMenuItem>
+          )}
+
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => onApply(null)} className="gap-2">
+            <Check className={currentViewId ? 'size-4 opacity-0' : 'size-4 opacity-100'} />
+            Report default
+          </DropdownMenuItem>
+
+          {current && canPublish && !current.is_shared && (
+            <DropdownMenuItem
+              onClick={() => publish.mutate({ id: current.id, isShared: true })}
+              className="gap-2"
+            >
+              <Share2 className="size-4" />
+              Publish as shared
+            </DropdownMenuItem>
+          )}
+          {current && canPublish && current.is_shared && !current.is_default && (
+            <DropdownMenuItem onClick={() => setDefault.mutate(current.id)} className="gap-2">
+              <Star className="size-4" />
+              Set as default for everyone
+            </DropdownMenuItem>
+          )}
+          {current && currentIsMine && (
+            <DropdownMenuItem
+              onClick={() => setDeleteOpen(true)}
+              className="gap-2 text-destructive"
+            >
+              <Trash2 className="size-4" />
+              Delete view
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Button variant="outline" onClick={() => setSaveOpen(true)}>
+        Save view
+      </Button>
+
+      <FormDialogScaffold
+        open={saveOpen}
+        onOpenChange={(open) => {
+          setSaveOpen(open);
+          if (!open) setName('');
+        }}
+        title="Save view"
+        submitLabel="Save"
+        onSubmit={save}
+        isPending={create.isPending}
+      >
+        <div>
+          <Label htmlFor="report-view-name">Name</Label>
+          <Input
+            id="report-view-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Management default"
+            className="mt-1"
+            autoFocus
+          />
+        </div>
+      </FormDialogScaffold>
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete view"
+        description={`Delete "${current?.name ?? ''}"? This cannot be undone.`}
+        successMessage="View deleted"
+        queryKeysToInvalidate={[[REPORT_VIEWS_KEY, reportKey]]}
+        onDelete={async () => {
+          if (current) await remove.mutateAsync(current.id);
+        }}
+        onSuccess={() => onApply(null)}
+      />
+    </>
+  );
+}

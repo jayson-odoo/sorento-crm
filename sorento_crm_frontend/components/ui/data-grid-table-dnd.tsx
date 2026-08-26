@@ -11,6 +11,7 @@ import {
   DataGridTableEmpty,
   DataGridTableFoot,
   DataGridTableFootRowCell,
+  footerGroupsWithContent,
   DataGridTableHead,
   DataGridTableHeadRow,
   DataGridTableHeadRowCell,
@@ -38,8 +39,15 @@ function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unkno
   const { props } = useDataGrid();
   const { column } = header;
 
+  // A GROUP header (and the placeholder that sits above an ungrouped column in the group
+  // row) is not draggable: it carries the same column id as its leaf, and registering the
+  // id twice would make dnd-kit resolve the drop to whichever node it saw last. Grids
+  // without column groups never take this branch.
+  const isGroupHeader = header.isPlaceholder || header.subHeaders.length > 0;
+
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: header.column.id,
+    disabled: isGroupHeader,
   });
 
   const style: CSSProperties = {
@@ -51,6 +59,18 @@ function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unkno
     width: header.column.getSize(),
     zIndex: isDragging ? 1 : 0,
   };
+
+  if (isGroupHeader) {
+    return (
+      <DataGridTableHeadRowCell header={header}>
+        {header.isPlaceholder ? null : (
+          <div className="flex w-full items-center justify-center text-center">
+            {flexRender(header.column.columnDef.header, header.getContext())}
+          </div>
+        )}
+      </DataGridTableHeadRowCell>
+    );
+  }
 
   return (
     <DataGridTableHeadRowCell header={header} dndStyle={style} dndRef={setNodeRef}>
@@ -197,7 +217,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
               only to the other branch would never appear. */}
           {table.getVisibleFlatColumns().some((column) => Boolean(column.columnDef.footer)) && (
             <DataGridTableFoot>
-              {table.getFooterGroups().map((footerGroup) => (
+              {footerGroupsWithContent(table).map((footerGroup) => (
                 <tr key={footerGroup.id}>
                   {footerGroup.headers.map((header) => (
                     <DataGridTableFootRowCell key={header.id} header={header}>
