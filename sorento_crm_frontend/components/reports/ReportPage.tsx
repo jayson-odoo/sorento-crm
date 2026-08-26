@@ -38,6 +38,7 @@ import {
   ReportCappedError,
   type ReportColumn,
   type ReportDetailLayout,
+  type ReportParamMeta,
   type ReportParamValue,
   type ReportParamValues,
   type ReportPeriod,
@@ -198,6 +199,28 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
 }
 
 /**
+ * The params as the screen holds them: the view's own, and the param's default for
+ * anything it does not name.
+ *
+ * The report default deliberately carries NO period (see `views_service.default_config`):
+ * a default view saved in 2026 would otherwise open every user on 2026 for the whole of
+ * 2027. Filling it in here from the param meta - which resolves to the current year on the
+ * server, per request - is what puts a concrete period on screen, in the run and in any
+ * view the user then saves.
+ */
+function withParamDefaults(
+  params: ReportParamValues,
+  metaParams: ReportParamMeta[],
+): ReportParamValues {
+  const filled: ReportParamValues = { ...params };
+  for (const param of metaParams) {
+    if (param.key in filled) continue;
+    filled[param.key] = (param.kind === 'select' ? param.default : param.default) as ReportParamValue;
+  }
+  return filled;
+}
+
+/**
  * Is this set of params a whole question?
  *
  * A custom range is picked in TWO clicks and cleared in one, so between them the period
@@ -258,7 +281,7 @@ export function ReportPage({
     const config = view?.view ?? fallback;
     setState((prev) => ({
       viewId: view?.id ?? null,
-      params: config.params,
+      params: withParamDefaults(config.params, meta?.params ?? []),
       detail: config.detail,
       pivot: config.pivot,
       token: (prev?.token ?? 0) + 1,
@@ -277,7 +300,7 @@ export function ReportPage({
     const config = fallback?.view ?? meta.default_view;
     setState({
       viewId: fallback?.id ?? null,
-      params: config.params,
+      params: withParamDefaults(config.params, meta.params),
       detail: config.detail,
       pivot: config.pivot,
       token: 0,
@@ -579,7 +602,20 @@ export function ReportPage({
                   table={table}
                   recordCount={result.row_count}
                   isLoading={isFetching}
-                  listingKey={reportLayoutListingKey(meta.permission, detailLayout.key)}
+                  /**
+                   * Column preferences are the REPORT DEFAULT's memory (AC-C1).
+                   *
+                   * The preferences row is one per layout, not one per view, so a saved
+                   * view's columns used to be written under the same key the default
+                   * reads: the next visit opened on that view's columns while the menu
+                   * named a different one, and Save and Export then recorded them under
+                   * that name. With a view applied the grid follows the VIEW alone and
+                   * writes nothing back; an empty listing key is how the shared hook is
+                   * told there is nothing to read or save.
+                   */
+                  listingKey={
+                    state.viewId ? '' : reportLayoutListingKey(meta.permission, detailLayout.key)
+                  }
                   tableLayout={{
                     width: 'fixed',
                     columnsResizable: true,

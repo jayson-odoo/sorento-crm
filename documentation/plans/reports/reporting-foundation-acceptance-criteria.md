@@ -87,6 +87,9 @@ up; the file has a SUMMARY sheet and one sheet per month of the chosen period.
 - **AC-C1.** Detail columns: any catalog column can be shown or hidden and dragged into
   order in the DataGrid; the choice persists per user under listing key
   `procurement.sponsorship_forms.report::detail` via the existing column-config endpoints.
+  That memory belongs to the report DEFAULT: while a saved view is applied the grid follows
+  the view's own columns (AC-C3) and writes nothing to the listing key, or the two would
+  overwrite each other under one row.
 - **AC-C2.** Configure summary offers every dimension for Rows and Columns and every measure
   (multi) for Measures, as SearchableSelects; Rows and Columns cannot be the same column.
 - **AC-C3.** Save view stores `{params, detail columns + order, pivot config}` under a name

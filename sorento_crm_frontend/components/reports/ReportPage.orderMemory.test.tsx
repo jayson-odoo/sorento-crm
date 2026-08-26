@@ -235,3 +235,50 @@ describe('ReportPage detail column order', () => {
     expect(payloads[0].columnOrder).toEqual(['project_value', 'sales_agent', 'request_number']);
   });
 });
+
+describe('ReportPage detail columns while a saved view is applied', () => {
+  /** The report opens on this: a published default view, which the menu names. */
+  const SHARED_DEFAULT = {
+    id: 'view-1',
+    name: 'Management',
+    is_shared: true,
+    is_default: true,
+    owner_name: 'Other Person',
+    view: DEFAULT_VIEW,
+  };
+
+  beforeEach(() => {
+    fetchReportViews.mockResolvedValue({ mine: [], shared: [SHARED_DEFAULT] });
+  });
+
+  it('follows the view, not the column preferences saved under the listing key', async () => {
+    // The preferences row is one per LAYOUT, not one per view, so applying view B wrote B's
+    // columns under the same key the report default reads. The next visit then opened on
+    // B's columns while the menu named the default view, and Save and Export recorded B's
+    // columns under that name.
+    render();
+    await screen.findByText('PSSF26-0310');
+    await settle();
+
+    expect(headerOrder()).toEqual(['PS No', 'Sales agent', 'Project value']);
+    expect(vi.mocked(prefsService.getUserListColumnConfig)).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing back when the columns are changed under a view', async () => {
+    render();
+    await screen.findByText('PSSF26-0310');
+    await settle();
+
+    act(() => {
+      mockDrag.end?.({
+        active: { id: 'project_value' },
+        over: { id: 'sales_agent' },
+      } as DragEndEvent);
+    });
+    await settle();
+
+    // Moved on screen (the view is what the grid follows), saved nowhere.
+    expect(headerOrder()).toEqual(['PS No', 'Project value', 'Sales agent']);
+    expect(savedPayloads()).toEqual([]);
+  });
+});

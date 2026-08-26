@@ -284,12 +284,17 @@ reads.
   flip `is_shared` on whatever id it was handed, so a holder of `reports.views.publish`
   could expose somebody else's PRIVATE view to everyone by id alone. The owner may still
   publish and default in one step, which is the screen's own flow; anyone else gets a 409.
-- **Listing column preferences vs saved views: last write wins, by design.** The DataGrid
-  persists whatever columns were last on screen under
-  `procurement.sponsorship_forms.report::detail`, and applying a saved view OVERWRITES them.
-  That is AC-C1 and AC-C3 together, not a conflict between them: AC-C1 is "my choice sticks
-  between visits", AC-C3 is "selecting a view applies it atomically", and a view that
-  politely left the previous columns alone would not have been applied at all.
+- **Listing column preferences are the REPORT DEFAULT's memory; a saved view carries its
+  own columns** (revised in the S6 review; it used to read "last write wins"). The
+  preferences row is one per LAYOUT, not one per view, so writing a view's columns into
+  `procurement.sponsorship_forms.report::detail` made the next visit open on THAT view's
+  columns while the Views menu named a different one, and Save and Export then recorded
+  them under that name. The grid now reads and writes the listing key only while no saved
+  view is applied; under a view it follows the view alone and persists nothing. AC-C1 ("my
+  choice sticks between visits") is about the report default, AC-C3 ("selecting a view
+  applies it atomically") about a view. Consequence, accepted: once a shared DEFAULT view
+  is published the report opens on it, so a user's own column memory applies from Reset to
+  report default onwards.
 - **Times are bucketed in MALAYSIA time.** `approved_at` / `submitted_at` are stored naive
   UTC, and the whole CRM reads MYT, so a form approved 31 Jul 17:30 UTC belongs to August.
   The shift (`AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kuala_Lumpur'`) is applied once, to the
@@ -480,6 +485,12 @@ Z..AA, `TOTAL SALES` on row 26 and two labelled year-total rows on 28 and 29.
 10. **The GRAND TOTAL label sits in the column immediately before the first measure.** The
     client types it in D (two columns before the money); "immediately before the first
     measure" is the rule that holds for any column set, including one the user reordered.
+
+**Pre-S6 saved column orders.** An order saved before the band was fixed names the old
+derived ids (`expected_delivery_year__2026`), which no current result holds, so the screen
+drops them and the four stable year columns fall in at the far RIGHT of that user's grid
+until they drag them back once (or reset the columns). One drag, once, per user who had
+saved an order.
 
 ### What changed (S6)
 
