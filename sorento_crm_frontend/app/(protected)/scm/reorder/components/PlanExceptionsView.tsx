@@ -8,6 +8,7 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { AlertCircle, ArrowLeft, Search, ShieldCheck, X } from 'lucide-react';
@@ -138,7 +139,10 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-8 w-40" /> },
       },
       {
-        accessorKey: 'exception_type',
+        id: 'exception_type',
+        // Sorts on the label the cell prints, not the code (AC-G02): the codes and the
+        // labels do not share an alphabetical order.
+        accessorFn: (r) => EXCEPTION_TYPE_LABELS[r.exception_type],
         header: ({ column }) => <DataGridColumnHeader title="What disagrees" column={column} />,
         cell: ({ row }) => (
           <span
@@ -185,7 +189,11 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
       },
       {
         id: 'reading',
-        accessorFn: (r) => r.reading.velocity.value ?? '',
+        // Sorts on the line the cell prints, not on one signal inside it.
+        accessorFn: (r) =>
+          [r.reading.lifecycle.value, r.reading.velocity.value, r.reading.business.value]
+            .filter(Boolean)
+            .join(' · '),
         header: ({ column }) => <DataGridColumnHeader title="Reads as" column={column} />,
         // The compact form. The sources live in the review panel (AC-D12) - putting four
         // field names in a grid cell would bury the values they qualify.
@@ -205,7 +213,8 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
       },
       {
         id: 'proposed',
-        accessorFn: (r) => r.actions[0]?.code ?? '',
+        // The label, not the code: the reader sorts on what the cell says.
+        accessorFn: (r) => (r.actions[0] ? ACTION_LABELS[r.actions[0].code] : ''),
         header: ({ column }) => <DataGridColumnHeader title="Proposed" column={column} />,
         cell: ({ row }) => {
           const first = row.original.actions[0];
@@ -265,6 +274,10 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
     onGlobalFilterChange: setSearchQuery,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    // Without this the header arrow moved and the rows did not (BL-027). The default
+    // sorting state is empty, so the server's ordering still stands until a header is
+    // clicked.
+    getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,

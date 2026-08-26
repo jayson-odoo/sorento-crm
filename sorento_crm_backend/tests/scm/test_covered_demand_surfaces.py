@@ -13,6 +13,12 @@ stock" on the planner's behalf.
 
 MWC7624-RL-S10 is the real case: 1 unit committed at BRW-IB, 5 sitting at BRW-BB in the same
 BRW pool, no row in the plan.
+
+The same sentence has to be said with pooled netting OFF, which is how every live policy is
+configured. With netting off each bin is planned on its own, so the bin short by 1 correctly
+gets a Buy row - and the 5 units standing in its sibling go unmentioned, which is the half
+of the quote ("we can suggest this") the plan still owed. The quantity does not change: the
+row names the stock so the planner can decide, exactly as the covered row does.
 """
 from __future__ import annotations
 
@@ -40,14 +46,20 @@ def _pool(db, member_id: str, root_id: str) -> None:
                {"root": root_id, "id": member_id})
 
 
-def _commit_demand(db, pid: str, wid: str, qty: float) -> None:
-    """An open sales-order line: committed demand at that location."""
+def _commit_demand(db, pid: str, wid: str, qty: float, *, demand_class=None) -> None:
+    """An open sales-order line: committed demand at that location.
+
+    ``demand_class`` decides what the engine may DO with it, which is why the sibling cases
+    below pass one. Unclassified demand is carried and shown and never sized (AC-E06), so a
+    bin holding only unclassified demand never triggers a buy however short it is; retail
+    demand is netted and sized, which is the ordinary shortage a plan acts on.
+    """
     soid = str(uuid.uuid4())
     db.execute(text(
-        "INSERT INTO sales_orders (id, so_number, status, source_system, source_ref, "
-        "created_at, updated_at) "
-        "VALUES (:id, :num, 'open', 'scm_order_inquiry', 'order_inquiry', now(), now())"
-    ), {"id": soid, "num": f"ZZTSO-{soid[:8]}"})
+        "INSERT INTO sales_orders (id, so_number, status, demand_class, source_system, "
+        "source_ref, created_at, updated_at) "
+        "VALUES (:id, :num, 'open', :cls, 'scm_order_inquiry', 'order_inquiry', now(), now())"
+    ), {"id": soid, "num": f"ZZTSO-{soid[:8]}", "cls": demand_class})
     db.execute(text(
         "INSERT INTO sales_order_lines (id, sales_order_id, product_id, warehouse_id, "
         "qty_ordered, qty_required, qty_delivered, line_status, purchasing_status, "
@@ -70,10 +82,21 @@ def covered_pool(scm_app):
 
     Shaped after the real case: the shortage is in the branch bin, the stock is in a sibling
     bin of the same pool, so pooled netting covers it and no purchase is triggered.
+
+    Two details are production's, not decoration. The root points at ITSELF, the way all
+    sixteen real pool roots do, so the fixture cannot pass on a COALESCE the live data never
+    exercises. And `pool_netting` is switched ON: it is off by default (buying less on the
+    strength of a transfer nobody agreed to under-buys), and with it off each bin is its own
+    singleton pool, so "available in this pool" would be the bin's own nothing and the case
+    below would be testing a shape that does not exist. The netting-OFF behaviour is a
+    separate contract, pinned further down.
     """
     _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
     root = _mk_warehouse(db, "ZZTW-ROOT")
     bin_ = _mk_warehouse(db, "ZZTW-BIN")
+    _pool(db, root, root)
     _pool(db, bin_, root)
     pid = _mk_product(db, f"ZZTP-COV-{uuid.uuid4().hex[:6]}")
     _mk_stock(db, pid, root, 500)          # plenty in the pool root
@@ -86,7 +109,6 @@ def covered_pool(scm_app):
     return db, pid, root, bin_
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): the _emit_pool path does not surface covered rows yet; red until that engine gap is fixed", strict=False)
 def test_a_covered_line_still_appears_in_the_plan(covered_pool):
     db, pid, root, _bin = covered_pool
     created = svc.create_run(db, ["ZZTW-ROOT", "ZZTW-BIN"], enqueue=False)
@@ -101,7 +123,6 @@ def test_a_covered_line_still_appears_in_the_plan(covered_pool):
     )
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): the _emit_pool path does not surface covered rows yet; red until that engine gap is fixed", strict=False)
 def test_the_row_states_both_numbers_the_choice_turns_on(covered_pool):
     db, pid, _root, _bin = covered_pool
     created = svc.create_run(db, ["ZZTW-ROOT", "ZZTW-BIN"], enqueue=False)
@@ -114,7 +135,6 @@ def test_the_row_states_both_numbers_the_choice_turns_on(covered_pool):
     assert "available in this pool" in (row["triggered_reason"] or "")
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): the _emit_pool path does not surface covered rows yet; red until that engine gap is fixed", strict=False)
 def test_buying_anyway_has_a_quantity_and_a_price(covered_pool):
     # Without both, the planner is asked to choose between using stock and buying while
     # only one side of the comparison is on screen.
@@ -129,7 +149,6 @@ def test_buying_anyway_has_a_quantity_and_a_price(covered_pool):
     assert float(row["cash_impact"]) == 40.0
 
 
-@pytest.mark.xfail(reason="TEST-FIRST contract (see module docstring): the _emit_pool path does not surface covered rows yet; red until that engine gap is fixed", strict=False)
 def test_a_covered_row_is_not_a_purchase_in_any_tally(covered_pool):
     # It is a decision nobody has taken. Counting it as a buy would report money as
     # committed that no one agreed to spend.
@@ -182,3 +201,175 @@ def test_a_real_shortage_is_still_a_buy_not_a_suggestion(scm_app):
     rows = _recs(db, created["run_id"], pid)
     assert [r for r in rows if r["rec_type"] == "buy"]
     assert not [r for r in rows if r["rec_type"] == "covered"]
+
+
+# =========================================================================== #
+# netting OFF - the live configuration
+# =========================================================================== #
+
+
+@pytest.fixture
+def sibling_stock_netting_off(scm_app):
+    """The same shape as ``covered_pool``, planned the way every live policy plans.
+
+    `pool_netting` is off, so the bin is sized on itself and genuinely needs its 1 unit
+    bought. The 5 units in its sibling are not netted and must not be: nobody has agreed to
+    move them. They are the thing the row has to SAY.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    root = _mk_warehouse(db, "ZZTW-SIBROOT")
+    bin_ = _mk_warehouse(db, "ZZTW-SIBBIN")
+    _pool(db, root, root)
+    _pool(db, bin_, root)
+    pid = _mk_product(db, f"ZZTP-SIB-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 5)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _commit_demand(db, pid, bin_, 1, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Sibling Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+    return db, pid, root, bin_
+
+
+def _row_at(rows: list[dict], wid: str) -> dict:
+    return next(r for r in rows if str(r["warehouse_id"]) == wid)
+
+
+def test_a_buy_under_netting_off_still_names_what_the_pool_holds(sibling_stock_netting_off):
+    """"BRW holds 5, it still requires buying, that's the gist" - both halves, one row.
+
+    Netting is off, so the engine is right to buy the 1: a transfer nobody has agreed to is
+    not supply. But a planner reading "Buy 1" with no mention of the 5 standing one bin away
+    has been given half the picture, and the choice the quote asks for (use the stock, or
+    buy anyway) cannot be made off this screen. The quantity is untouched; what is added is
+    the sentence.
+    """
+    db, pid, root, bin_ = sibling_stock_netting_off
+    created = svc.create_run(db, ["ZZTW-SIBROOT", "ZZTW-SIBBIN"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    rows = _recs(db, created["run_id"], pid)
+    buy = _row_at([r for r in rows if r["rec_type"] == "buy"], bin_)
+
+    assert float(buy["rounded_qty"]) == 1.0, "the hint changes no quantity"
+    assert float(buy["inputs"]["sibling_available"]) == 5.0
+    assert buy["inputs"]["sibling_pool_code"] == "ZZTW-SIBROOT"
+    assert "5 available at ZZTW-SIBROOT" in (buy["triggered_reason"] or "")
+
+
+def test_a_bin_with_no_pool_siblings_is_not_told_about_its_own_stock(scm_app):
+    """GUARD: the sibling total is what OTHER bins hold, never the row's own stock.
+
+    One warehouse, no pool, 5 on hand against 10 committed: the shortage is real, so the
+    only way a hint could appear is by counting the bin's own 5 as a sibling. Counting a
+    bin's own on-hand would put the hint on every short row in the plan, and a hint that
+    fires everywhere is read nowhere.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    lone = _mk_warehouse(db, "ZZTW-LONE")
+    pid = _mk_product(db, f"ZZTP-LONE-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, lone, 5)
+    _mk_demand(db, pid, lone, 0.0)
+    _commit_demand(db, pid, lone, 10, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Lone Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-LONE"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    buy = _row_at([r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"],
+                  lone)
+    assert buy["inputs"].get("sibling_available") is None
+    assert "available at" not in (buy["triggered_reason"] or "")
+
+
+def test_a_sibling_lends_only_what_it_has_not_promised(scm_app):
+    """A root holding 5 with 5 of its own committed has nothing to lend.
+
+    Naming its 5 on the short bin's row would contradict the Buy the same run emits for
+    the root itself: two rows, one screen, telling the planner the same 5 units are both
+    spoken for and available.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    root = _mk_warehouse(db, "ZZTW-BUSYROOT")
+    bin_ = _mk_warehouse(db, "ZZTW-BUSYBIN")
+    _pool(db, root, root)
+    _pool(db, bin_, root)
+    pid = _mk_product(db, f"ZZTP-BUSY-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 5)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _commit_demand(db, pid, root, 5, demand_class="retail")
+    _commit_demand(db, pid, bin_, 1, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Busy Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-BUSYROOT", "ZZTW-BUSYBIN"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    buy = _row_at([r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"],
+                  bin_)
+    assert buy["inputs"].get("sibling_available") is None
+    assert "available at" not in (buy["triggered_reason"] or "")
+
+
+def test_a_shortage_no_sibling_can_cover_says_nothing_extra(scm_app):
+    """GUARD: the hint fires only when the pool could actually answer the shortage.
+
+    A bin short 40 beside a sibling holding 2 is still short 38 after any transfer, so
+    naming the 2 would add a line of noise to a row whose decision it cannot change.
+    """
+    _, db, _, _ = scm_app
+    svc.eng.ensure_reorder_policy_defaults(db)
+    db.execute(text("UPDATE scm.reorder_policy SET pool_netting = false"))
+    root = _mk_warehouse(db, "ZZTW-THINROOT")
+    bin_ = _mk_warehouse(db, "ZZTW-THINBIN")
+    _pool(db, root, root)
+    _pool(db, bin_, root)
+    pid = _mk_product(db, f"ZZTP-THIN-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, root, 2)
+    _mk_stock(db, pid, bin_, 0)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _commit_demand(db, pid, bin_, 40, demand_class="retail")
+    _link(db, pid, _mk_supplier(db, "ZZT Thin Supplier"), moq=None, mult=None, cost=40)
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTW-THINROOT", "ZZTW-THINBIN"], enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    buy = _row_at([r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"],
+                  bin_)
+    assert float(buy["rounded_qty"]) == 40.0
+    assert buy["inputs"].get("sibling_available") is None
+    assert "available at" not in (buy["triggered_reason"] or "")
+
+
+def test_the_note_is_appended_whole_and_only_the_column_clips_it():
+    """The whole sentence is the row's record; the 100-character column is a display width.
+
+    Pure function: ``_with_sibling_note`` appends and never cuts. ``_build_rec`` freezes
+    that whole string in ``inputs.reason_label`` and clips only ``triggered_reason``, so a
+    long trigger loses wording in the column and nothing anywhere else - the sibling
+    figures are frozen on their own keys regardless.
+    """
+    cell = {
+        "reason_label": "periodic_review: net -1 < order-up-to 0 on review cadence "
+                        "for a location whose code is long",
+        "sibling_available": 5.0,
+        "sibling_pool_code": "ZZTW-SIBROOT",
+    }
+
+    label = svc._with_sibling_note(cell)
+
+    assert label == cell["reason_label"] + "; 5 available at ZZTW-SIBROOT (netting off)"
+    assert svc._with_sibling_note({"reason_label": None, "sibling_available": 5.0,
+                                   "sibling_pool_code": "P"}) == "5 available at P (netting off)"

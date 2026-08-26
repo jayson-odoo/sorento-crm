@@ -16,7 +16,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 const mockUsePlanExceptions = vi.fn();
 const mockMutate = vi.fn();
@@ -297,5 +297,102 @@ describe('PlanExceptionsView - onBack (this report has no row in the buy grid to
     render(<PlanExceptionsView onBack={onBack} />);
     screen.getByText('Back to plan').click();
     expect(onBack).toHaveBeenCalled();
+  });
+});
+
+describe('PlanExceptionsView - the sort arrow sorts (BL-027 / AC-G01, AC-G02)', () => {
+  /** The product code of every rendered row, top to bottom. */
+  function codeOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelector('td')?.textContent?.trim() ?? '',
+    );
+  }
+
+  it('reorders on quantity numerically, and the server order stands until it is clicked', () => {
+    ok(
+      report({
+        rows: [
+          exc({ exception_id: 'a', product_code: 'AAA-9', product_name: null, quantity: 9 }),
+          exc({ exception_id: 'b', product_code: 'BBB-10', product_name: null, quantity: 10 }),
+          exc({ exception_id: 'c', product_code: 'CCC-2', product_name: null, quantity: 2 }),
+        ],
+      }),
+    );
+    render(<PlanExceptionsView />);
+    // Untouched, the list is still the server's ordering (open first, then severity).
+    expect(codeOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quantity' }));
+    expect(codeOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quantity' }));
+    expect(codeOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+
+  it('sorts the proposed action on the label the row shows, not on its code (AC-G02)', () => {
+    // By code: accept, change_location, release_to_pool. By label: "Accept as is",
+    // "Release into the shared pool", "Send to a different location" - a different order.
+    ok(
+      report({
+        rows: [
+          exc({
+            exception_id: 'a',
+            product_code: 'AAA-SEND',
+            product_name: null,
+            actions: [action('change_location', 1)],
+          }),
+          exc({
+            exception_id: 'b',
+            product_code: 'BBB-RELEASE',
+            product_name: null,
+            actions: [action('release_to_pool', 1)],
+          }),
+          exc({
+            exception_id: 'c',
+            product_code: 'CCC-ACCEPT',
+            product_name: null,
+            actions: [action('accept', 1)],
+          }),
+        ],
+      }),
+    );
+    render(<PlanExceptionsView />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Proposed' }));
+
+    expect(codeOrder()).toEqual(['CCC-ACCEPT', 'BBB-RELEASE', 'AAA-SEND']);
+  });
+
+  it('sorts the reading on the whole line it prints, not on the velocity alone (AC-G02)', () => {
+    ok(
+      report({
+        rows: [
+          exc({
+            exception_id: 'a',
+            product_code: 'AAA-ZETA',
+            product_name: null,
+            reading: reading('Zeta', 'A / X', 'Retail'),
+          }),
+          exc({
+            exception_id: 'b',
+            product_code: 'BBB-MID',
+            product_name: null,
+            reading: reading('Mid', 'A / X', 'Retail'),
+          }),
+          exc({
+            exception_id: 'c',
+            product_code: 'CCC-ACTIVE',
+            product_name: null,
+            reading: reading('Active', 'A / X', 'Retail'),
+          }),
+        ],
+      }),
+    );
+    render(<PlanExceptionsView />);
+
+    // One shared velocity, so sorting on velocity alone leaves the order untouched.
+    fireEvent.click(screen.getByRole('button', { name: 'Reads as' }));
+
+    expect(codeOrder()).toEqual(['CCC-ACTIVE', 'BBB-MID', 'AAA-ZETA']);
   });
 });

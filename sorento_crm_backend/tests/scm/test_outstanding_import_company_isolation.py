@@ -39,7 +39,7 @@ from io import BytesIO
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import UniqueConstraint, text
 
 from app.models.access import MarketSegment
 from app.models.base import set_company_scope
@@ -180,30 +180,6 @@ class World:
 def _act_as(db: Session, company_id: str) -> None:
     """Run the next call as a single-company principal, exactly as a request would."""
     set_company_scope(db, frozenset({company_id}))
-
-
-def _schema_isolates_supplier_code(db: Session, probing_company: str, code: str) -> bool:
-    """Whether this schema enforces `supplier_code` uniqueness PER COMPANY.
-
-    True on the migrated (production) schema (migration 305, `uq_suppliers_company_
-    supplier_code`). False on a `create_all` schema (CI's `bootstrap_env`, and the blank
-    scratch schemas): `suppliers.supplier_code` still declares a bare `unique=True` on
-    the MODEL there, so a second supplier under a DIFFERENT company (`probing_company`)
-    but the SAME code, already held by another company, is rejected outright - which is
-    exactly what the back-create path this test exercises would attempt. Probed with a
-    savepoint that is always rolled back: this reads the constraint, it does not seed a
-    row, so it cannot affect the row counts the caller asserts afterwards.
-    """
-    savepoint = db.begin_nested()
-    try:
-        db.add(Supplier(id=_u(), supplier_code=code, supplier_name=f"{MARKER} probe",
-                        is_active=True, company_id=probing_company))
-        db.flush()
-    except IntegrityError:
-        savepoint.rollback()
-        return False
-    savepoint.rollback()
-    return True
 
 
 def _seed_duplicate_or_skip(db: Session, obj, why: str) -> None:
@@ -582,6 +558,28 @@ def _requires_po_aliases(db: Session) -> None:
         pytest.skip("no outstanding_po aliases seeded in this database")
 
 
+def test_the_model_scopes_supplier_code_to_the_company_the_way_production_does():
+    """BL-036: the MODEL carried a bare `unique=True` on `suppliers.supplier_code` while
+    production carries `uq_suppliers_company_supplier_code` (migration 305).
+
+    A `create_all` schema is built from the model, so CI was stricter than production: two
+    companies could not each hold a creditor code there, and the back-create test below had
+    to probe-and-skip rather than run. The name AND the kind are asserted: migration 305
+    emitted CREATE UNIQUE INDEX, so a model UniqueConstraint of the same name would still
+    read to `alembic revision --autogenerate` as drop-index plus add-constraint.
+    """
+    uniques = {
+        i.name: tuple(col.name for col in i.columns)
+        for i in Supplier.__table__.indexes
+        if i.unique
+    }
+    assert uniques == {
+        "uq_suppliers_company_supplier_code": ("company_id", "supplier_code")
+    }, "the same unique INDEX migration 305 created, so autogenerate sees no diff"
+    assert not [c for c in Supplier.__table__.constraints if isinstance(c, UniqueConstraint)]
+    assert Supplier.__table__.c.supplier_code.unique is not True
+
+
 def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_created(world):
     """Company A does not buy from this creditor - not company B's row, and never borrowed.
 
@@ -593,13 +591,10 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
     whatever the row order, and that row must never be the one this purchase order attaches
     to, nor may this creation touch it.
 
-    Only reachable on the schema that lets two companies each hold `supplier_code`
-    (`_schema_isolates_supplier_code`, same reason as `_seed_duplicate_or_skip` below): a
-    `create_all` schema still enforces the model's bare `unique=True` on the column, so
-    the back-create insert itself would collide with company B's row there, and `apply()`
-    correctly leaves the creditor unresolved rather than crash the upload (see the
-    `IntegrityError` handling in `outstanding_import_service.apply`) - a real, safe
-    behaviour on that schema, just not the one this test is about.
+    Runs on every schema since BL-036. It used to probe-and-skip: the model's bare
+    `unique=True` on `supplier_code` made a `create_all` database reject the back-create
+    insert outright, so the one assertion that matters never ran in CI. The model now
+    carries the per-company unique production has (see the test above).
     """
     db = world.db
     _requires_po_aliases(db)
@@ -607,9 +602,6 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
     creditor = _code("CRED")[:50]
     world.product(item, world.a)
     b_supplier_id = world.supplier(creditor, world.b)
-    if not _schema_isolates_supplier_code(db, world.a, creditor):
-        pytest.skip("this schema enforces a globally unique supplier_code, so company A "
-                    "cannot back-create its own row under a code company B already holds")
     po_number = _code("PO")
 
     _act_as(db, world.a)
@@ -637,21 +629,18 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
 
 
 def test_a_creditor_code_held_by_both_companies_resolves_to_the_active_one(world):
-    """The production duplicate, on the schema that permits it (see
-    `_seed_duplicate_or_skip`). Company A's upload must attach to company A's supplier."""
+    """The production duplicate, now legal on every schema (BL-036). Company A's upload
+    must attach to company A's supplier."""
     db = world.db
     _requires_po_aliases(db)
     item = _code("ITEM")
     creditor = _code("CRED")[:50]
     world.product(item, world.a)
     world.supplier(creditor, world.a, name=f"{MARKER} A supplier")     # inserted first
-    _seed_duplicate_or_skip(
-        db,
-        Supplier(id=_u(), supplier_code=creditor, supplier_name=f"{MARKER} B supplier",
-                 is_active=True, company_id=world.b),
-        "this schema enforces a globally unique supplier_code, so the two companies cannot "
-        "both hold the code",
-    )
+    # Seeded outright, not through `_seed_duplicate_or_skip`: since BL-036 the model scopes
+    # `supplier_code` to the company the way production does, so both rows are legal on
+    # every schema this suite runs on.
+    world.supplier(creditor, world.b, name=f"{MARKER} B supplier")
     po_number = _code("PO")
 
     _act_as(db, world.a)

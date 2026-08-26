@@ -858,6 +858,92 @@ def _pool_map(db: Session, rows: list[dict]) -> dict[str, str]:
     return out
 
 
+#: The width of ``scm.reorder_recommendation.triggered_reason``. A label longer than this
+#: is cut, so anything appended to one has to know the budget it is spending.
+_REASON_MAX_CHARS = 100
+
+
+def _pool_codes(db: Session, pool_ids: set) -> dict[str, str]:
+    """``{pool_id: warehouse_code}`` for the pools the plan touched.
+
+    Read once per run, not once per SKU: the hint below has to NAME the pool, and a verdict
+    that says "5 available at " is the same blank the coverage panel was fixed for.
+    """
+    ids = [str(p) for p in pool_ids if p]
+    if not ids:
+        return {}
+    found = db.execute(text(
+        "SELECT id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+    ), {"ids": ids}).fetchall()
+    return {str(r[0]): r[1] for r in found}
+
+
+def _note_sibling_cover(prows: list[dict], computed: list[dict],
+                        pool_of: dict, pool_codes: dict) -> None:
+    """With netting OFF, tell a short bin what its pool siblings are holding.
+
+    Netting off is the live configuration and it is the right default: buying less on the
+    strength of a transfer nobody has agreed to under-buys, and an under-buy is invisible
+    until the stock runs out. So the quantity stays exactly what this bin needs. What was
+    missing is the sentence - "BRW holds 5, it still requires buying, that is the gist" -
+    because a planner reading "Buy 1" with no mention of the 5 units one bin away cannot
+    make the choice the row exists to offer.
+
+    Only when a sibling could actually answer the shortage: a bin short 40 beside a sibling
+    holding 2 is still short 38 after any transfer, so naming the 2 is noise on a row whose
+    decision it cannot change. The shortage is measured the way ``_covered_rec`` measures
+    cover - committed against on hand plus what is already coming - and the sibling total is
+    on-hand only, because stock on the water at another bin cannot be fetched today. Each
+    sibling counts net of its OWN commitments: a root holding 5 with 5 promised has nothing
+    to lend, and naming it would contradict the Buy row the same run emits for it.
+
+    Scope-limited, the way the transfer flags are: siblings are read from the rows this run
+    planned, so a run scoped to the short bin alone sees no siblings and says nothing. The
+    pool's name still resolves (``_pool_codes`` reads ``warehouses`` directly).
+    """
+    on_hand = {str(r["warehouse_id"]): float(r["quantity_on_hand"] or 0.0) for r in prows}
+    # What a sibling could actually part with: its stock less what it has already promised.
+    lendable = {str(r["warehouse_id"]):
+                max(float(r["quantity_on_hand"] or 0.0) - float(r["committed"] or 0.0), 0.0)
+                for r in prows}
+    for r, c in zip(prows, computed):
+        wid = str(r["warehouse_id"])
+        pool_id = str(pool_of.get(wid, wid))
+        pool_code = pool_codes.get(pool_id)
+        if pool_code is None:
+            continue
+        shortage = float(r["committed"] or 0.0) - (
+            on_hand.get(wid, 0.0)
+            + float(r["on_order"] or 0.0)
+            + float(r["po_ordered"] or 0.0)
+        )
+        if shortage <= 0:
+            continue
+        siblings = sum(qty for other, qty in lendable.items()
+                       if other != wid and str(pool_of.get(other, other)) == pool_id)
+        if siblings < shortage:
+            continue
+        c["sibling_available"] = siblings
+        c["sibling_pool_code"] = pool_code
+
+
+def _with_sibling_note(c: dict) -> Optional[str]:
+    """This cell's reason label, with the sibling-stock sentence appended when there is one.
+
+    Returned whole. ``_build_rec`` freezes the whole sentence in ``inputs.reason_label`` and
+    cuts only the ``triggered_reason`` column to its 100 characters; the sibling figures
+    themselves live in ``inputs.sibling_available`` / ``inputs.sibling_pool_code``, so a
+    clipped column loses wording, never the fact.
+    """
+    available = c.get("sibling_available")
+    pool_code = c.get("sibling_pool_code")
+    label = c.get("reason_label")
+    if not available or not pool_code:
+        return label
+    note = f"{_qty_label(float(available))} available at {pool_code} (netting off)"
+    return f"{label}; {note}" if label else note
+
+
 def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: list[dict],
                         today: date, last_move: dict,
                         wh_meta: Optional[dict] = None,
@@ -884,6 +970,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     wh_meta = wh_meta or {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"])
                           for r in rows}
     pool_of = _pool_map(db, rows)
+    pool_codes = _pool_codes(db, set(pool_of.values()))
 
     # group by product so transfer flags can see all warehouses of a SKU
     by_product: dict[str, list[dict]] = {}
@@ -903,6 +990,10 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                               levels=levels, last_cost=last_cost)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
+        if not pooled:
+            # Each bin is planned on itself, so a sibling's stock changes no quantity - and
+            # goes unmentioned unless the row says it. See `_note_sibling_cover`.
+            _note_sibling_cover(prows, computed, pool_of, pool_codes)
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
         for r, c in zip(prows, computed):
@@ -1593,6 +1684,10 @@ def _emit_cell(run_id: str, row: dict, c: dict,
         if chosen:
             out.append(_build_rec(run_id, "buy", row, c, warehouse_id=wid,
                                   order_qty=c["recommended"], rounded=c["rounded"],
+                                  # The trigger's own sentence, plus the stock a pool
+                                  # sibling is holding when netting is off and nothing
+                                  # else on the row would say so.
+                                  reason_label=_with_sibling_note(c),
                                   # The degenerate group: one location, sized on itself,
                                   # taking its whole buy. Stated in the SAME shape a pool
                                   # or a network buy states, so the product freeze has
@@ -2047,6 +2142,11 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         # Only on a ``covered`` row: the two numbers the choice turns on.
         "covered_committed": _r(c.get("covered_committed")),
         "covered_available": _r(c.get("covered_available")),
+        # Only with pooled netting OFF: what a sibling bin of this row's pool is holding
+        # while this row buys anyway, and the pool it is held at. Frozen beside the buy so
+        # the grid states the trade-off without re-reading stock that has since moved.
+        "sibling_available": _r(c.get("sibling_available")),
+        "sibling_pool_code": c.get("sibling_pool_code"),
         # How much of this row's demand arrived with no stated location. A planner looking
         # at a buy against BRW deserves to know part of it is demand nobody located, since
         # that is the part most likely to be wrong.
@@ -2081,7 +2181,7 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         rate_to_base=rate,
         rate_as_of=rate_as_of,
         confidence_band=c.get("confidence"),
-        triggered_reason=(label[:100] if label else None),
+        triggered_reason=(label[:_REASON_MAX_CHARS] if label else None),
         allocation=allocation,
         inputs=inputs,
         status="proposed",

@@ -100,3 +100,38 @@ describe('NeedsLevelView', () => {
     expect(screen.getByText(/2 still to set of 2/i)).toBeInTheDocument();
   });
 });
+
+describe('NeedsLevelView - the sort arrow sorts (BL-027 / AC-G01)', () => {
+  /** The SKU of every rendered row, top to bottom. */
+  function skuOrder(): string[] {
+    return Array.from(document.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelector('td [title]')?.textContent?.trim() ?? '',
+    );
+  }
+
+  function threeSuggestions() {
+    renderView([
+      row({ id: 'r1', sku: 'AAA-9', suggested_level: 9 }),
+      row({ id: 'r2', sku: 'BBB-10', suggested_level: 10 }),
+      row({ id: 'r3', sku: 'CCC-2', suggested_level: 2 }),
+    ]);
+  }
+
+  it('reorders on the suggested level numerically (9 before 10)', () => {
+    threeSuggestions();
+    expect(skuOrder()).toEqual(['AAA-9', 'BBB-10', 'CCC-2']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suggested' }));
+
+    expect(skuOrder()).toEqual(['CCC-2', 'AAA-9', 'BBB-10']);
+  });
+
+  it('reverses on the second click', () => {
+    threeSuggestions();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suggested' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggested' }));
+
+    expect(skuOrder()).toEqual(['BBB-10', 'AAA-9', 'CCC-2']);
+  });
+});
