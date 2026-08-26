@@ -42,6 +42,7 @@ import {
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
 import { buildProformaBulkActions } from '../lib/proformaBulkActions';
 
@@ -72,6 +73,8 @@ export function ProformaInvoicesView() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteRow, setDeleteRow] = useState<ProformaInvoiceListRow | null>(null);
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
+  const [overCapacity, setOverCapacity] = useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -244,10 +247,15 @@ export function ProformaInvoicesView() {
 
   const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.id);
 
-  const runConvert = async () => {
+  const runConvert = async (reason?: string) => {
     if (!selectedIds.length) return;
     try {
-      const result = await convertToDraftShipment.mutateAsync(selectedIds);
+      const result = await convertToDraftShipment.mutateAsync({
+        invoiceIds: selectedIds,
+        overrideReason: reason,
+      });
+      setOverCapacity(null);
+      setOverrideReason('');
       table.resetRowSelection();
       const skippedMsg =
         result.lines_skipped > 0
@@ -263,7 +271,15 @@ export function ProformaInvoicesView() {
       // convert hand-off lands there, by id, rather than on `/scm/incoming`.
       router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to draft a shipment');
+      // An over-capacity refusal is a question, not a failure: it names the volume and the
+      // capacity and asks whether to load the box anyway (AC-E5).
+      const code = (e as { code?: string | null })?.code ?? null;
+      const message = e instanceof Error ? e.message : 'Failed to draft a shipment';
+      if (code === 'over_capacity') {
+        setOverCapacity(message);
+        return;
+      }
+      toast.error(message);
     }
   };
 
@@ -289,7 +305,7 @@ export function ProformaInvoicesView() {
 
   const bulkActions = buildProformaBulkActions(
     { selectedCount: selectedIds.length },
-    { onConvert: runConvert, onDelete: () => setBulkDeleteIds(selectedIds) },
+    { onConvert: () => void runConvert(), onDelete: () => setBulkDeleteIds(selectedIds) },
   ).filter((a) => {
     if (a.key === 'bulk-convert') return canConvert;
     if (a.key === 'bulk-delete') return canUpload;
@@ -375,6 +391,15 @@ export function ProformaInvoicesView() {
           user dismisses it themselves once they have read the result (footer flips
           Cancel -> Close, S8). */}
       <ProformaUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+
+      <OverCapacityDialog
+        message={overCapacity}
+        reason={overrideReason}
+        onReasonChange={setOverrideReason}
+        onCancel={() => setOverCapacity(null)}
+        onConfirm={() => void runConvert(overrideReason.trim())}
+        pending={convertToDraftShipment.isPending}
+      />
 
       <ConfirmDeleteDialog
         open={!!deleteRow}

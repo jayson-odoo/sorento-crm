@@ -297,3 +297,104 @@ def test_fetching_an_invoice_id_that_is_not_an_id_is_a_404(scm_app):
     r = client.get(f"{URL}/not-an-id")
 
     assert r.status_code == 404, r.text
+
+
+# --------------------------------------------------------------------------- #
+# F5 - adjusting the invoice to fit the container (AC-E1, AC-E2, AC-D4, AC-E4)
+# --------------------------------------------------------------------------- #
+
+
+def _applied_invoice(client, db) -> tuple[dict, str]:
+    """One Kailu invoice on file, and the id of its first line."""
+    supplier, product = _seed_supplier_and_product(db)
+    client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook({"SRTWT7443": product.product_code})),
+        data={"supplier_id": str(supplier.id)},
+    )
+    listed = client.get(URL, params={"supplier_id": str(supplier.id)}).json()
+    invoice_id = listed["data"][0]["id"]
+    detail = client.get(f"{URL}/{invoice_id}").json()
+    return detail, detail["lines"][0]["id"]
+
+
+def test_adjusting_a_line_without_the_upload_permission_is_403(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, line_id = _applied_invoice(client, db)
+    # Same app, a principal that holds only the read side: drop the upload override.
+    reader, _ = _client(scm_app, upload=False, view=True)
+
+    r = reader.patch(f"{URL}/{detail['id']}/lines/{line_id}", json={"qty": 5})
+
+    assert r.status_code == 403, r.text
+
+
+def test_adjusting_a_line_returns_the_whole_invoice_with_the_supplier_figure_kept(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, line_id = _applied_invoice(client, db)
+    before = detail["lines"][0]["qty"]
+
+    r = client.patch(f"{URL}/{detail['id']}/lines/{line_id}", json={"qty": before - 1})
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    line = next(ln for ln in body["lines"] if ln["id"] == line_id)
+    assert line["qty"] == before - 1
+    assert line["supplier_qty"] == before
+    assert body["is_adjusted"] is True
+    assert body["adjusted_by"]
+
+
+def test_a_negative_quantity_is_refused_by_the_route_as_a_422(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, line_id = _applied_invoice(client, db)
+
+    r = client.patch(f"{URL}/{detail['id']}/lines/{line_id}", json={"qty": -1})
+
+    assert r.status_code == 422, r.text
+
+
+def test_removing_a_line_drops_it_from_the_returned_invoice(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, line_id = _applied_invoice(client, db)
+    before = detail["line_count"]
+
+    r = client.delete(f"{URL}/{detail['id']}/lines/{line_id}")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["line_count"] == before - 1
+    assert all(ln["id"] != line_id for ln in body["lines"])
+
+
+def test_the_container_size_is_settable_and_clearable_on_the_route(scm_app):
+    from app.models.scm import ContainerSize
+
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+    size = ContainerSize(
+        id=_u(), code=unique_code("BOX")[:30], label="test box", cbm=30, is_active=True
+    )
+    db.add(size)
+    db.flush()
+
+    r = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": str(size.id)})
+    assert r.status_code == 200, r.text
+    assert r.json()["container_cbm"] == 30
+
+    cleared = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["container_size_id"] != str(size.id)
+
+
+def test_the_export_route_returns_a_workbook_named_after_the_invoice(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+
+    r = client.get(f"{URL}/{detail['id']}/export")
+
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == _XLSX
+    assert ".xlsx" in r.headers["content-disposition"]
+    assert detail["id"] not in r.headers["content-disposition"]
+    assert r.content[:2] == b"PK"

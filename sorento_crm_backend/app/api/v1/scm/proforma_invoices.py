@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -46,6 +46,22 @@ class ConvertToDraftShipmentRequest(BaseModel):
     proforma_invoice_ids: List[str] = Field(
         ..., min_length=1, description="One or more proforma invoices to draft into one shipment."
     )
+    override_capacity: bool = Field(
+        False, description="Load the container even though it is over its planned volume."
+    )
+    override_reason: Optional[str] = Field(
+        None, description="Why it is being loaded anyway. Required with `override_capacity`."
+    )
+
+
+class ProformaInvoiceUpdate(BaseModel):
+    container_size_id: Optional[str] = Field(
+        None, description="Which box this invoice is fitted into. Null = the tenant default."
+    )
+
+
+class ProformaLineUpdate(BaseModel):
+    qty: float = Field(..., ge=0, description="Sorento's own quantity. The supplier's is kept.")
 
 
 class BulkDeleteRequest(BaseModel):
@@ -133,7 +149,11 @@ def convert_proforma_invoices_to_draft_shipment(
     the existing `/scm/packing-lists/apply` path, unchanged by this action.
     """
     out = proforma_invoice_service.convert_to_draft_shipment(
-        db, payload.proforma_invoice_ids, created_by=(current_user or {}).get("id")
+        db,
+        payload.proforma_invoice_ids,
+        created_by=(current_user or {}).get("id"),
+        override_capacity=payload.override_capacity,
+        override_reason=payload.override_reason,
     )
     db.commit()
     return out
@@ -165,6 +185,75 @@ def list_proforma_invoices(
     return proforma_invoice_service.list_for_supplier(
         db, supplier_id=supplier_id, limit=limit, offset=offset
     )
+
+
+@router.get("/proforma-invoices/{invoice_id}/export")
+def export_proforma_invoice(
+    invoice_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The adjusted invoice as a workbook, in the supplier's own block layout (AC-E4)."""
+    payload = proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+    filename = proforma_invoice_service.export_filename(payload)
+    return Response(
+        content=proforma_invoice_service.to_xlsx(payload),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch("/proforma-invoices/{invoice_id}")
+def update_proforma_invoice(
+    invoice_id: str,
+    payload: ProformaInvoiceUpdate = Body(...),
+    _user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """Which container this invoice is being fitted into (AC-D4)."""
+    out = proforma_invoice_service.set_container_size(
+        db, invoice_id, payload.container_size_id
+    )
+    db.commit()
+    return out
+
+
+@router.patch("/proforma-invoices/{invoice_id}/lines/{line_id}")
+def adjust_proforma_invoice_line(
+    invoice_id: str,
+    line_id: str,
+    payload: ProformaLineUpdate = Body(...),
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """Sorento's own quantity for one line. `supplier_qty` is never touched (AC-E2).
+
+    Returns the WHOLE invoice, not the line: the fill bar, the totals and the was/now
+    figures all move together, and a caller re-reading them one at a time would paint a
+    document that briefly disagrees with itself.
+    """
+    out = proforma_invoice_service.adjust_line(
+        db, invoice_id, line_id, qty=payload.qty, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
+@router.delete("/proforma-invoices/{invoice_id}/lines/{line_id}")
+def remove_proforma_invoice_line(
+    invoice_id: str,
+    line_id: str,
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """Hard delete of one line - it is not going in this container. Returns the invoice."""
+    out = proforma_invoice_service.remove_line(
+        db, invoice_id, line_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
 
 
 @router.get("/proforma-invoices/{invoice_id}")

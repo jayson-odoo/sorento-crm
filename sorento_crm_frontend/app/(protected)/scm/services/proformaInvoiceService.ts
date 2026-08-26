@@ -22,11 +22,25 @@
  *       already converted (id, pi_number, shipment_number) - never a silent partial delete.
  *       Auth: `scm.proforma_invoice.upload` (same as single delete).
  *  POST /api/v1/scm/proforma-invoices/convert-to-draft-shipment -> 201
- *       ConvertToDraftShipmentResult. Body: { proforma_invoice_ids: string[] }. One or more
- *       PIs (any suppliers) become ONE draft inbound shipment, pre-filled with their lines -
- *       the packing-list amendment (PLAN-scm-proforma-to-spo.md). 409 when any given PI was
- *       already converted (names the shipment). Auth: `scm.reorder.run` (a shipment write,
- *       same permission the packing-list apply path uses - not the proforma upload one).
+ *       ConvertToDraftShipmentResult. Body: { proforma_invoice_ids: string[],
+ *       override_capacity?: boolean, override_reason?: string }. One or more PIs (any
+ *       suppliers) become ONE draft inbound shipment, pre-filled with their lines - the
+ *       packing-list amendment (PLAN-scm-proforma-to-spo.md). 409 when any given PI was
+ *       already converted (names the shipment), or when one is OVER its container's capacity
+ *       and no override was given (`detail: 'over_capacity'`, AC-E5). Auth: `scm.reorder.run`
+ *       (a shipment write, same permission the packing-list apply path uses).
+ *  PATCH /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
+ *       Body: { container_size_id: string | null }. Null means "the tenant's default size".
+ *  PATCH /api/v1/scm/proforma-invoices/{id}/lines/{lineId} -> 200 ProformaInvoiceDetail
+ *       Body: { qty: number }. Sorento's own figure; `supplier_qty` is never touched
+ *       (AC-E2). Returns the WHOLE invoice so the fill bar and totals refresh in one round
+ *       trip rather than being recomputed in the browser.
+ *  DELETE /api/v1/scm/proforma-invoices/{id}/lines/{lineId} -> 200 ProformaInvoiceDetail
+ *       Hard delete of one line, behind a confirmation dialog.
+ *       Both writes: `scm.proforma_invoice.upload`; both 409 on a superseded revision or an
+ *       invoice already converted to a shipment.
+ *  GET  /api/v1/scm/proforma-invoices/{id}/export    -> 200 .xlsx bytes, the pre-loading
+ *       block layout with the ADJUSTED quantities (AC-E4). Auth: `scm.dashboard.view`.
  *
  * The supplier travels WITH the file because the document never says reliably who wrote
  * it. Currency does NOT have to: the document usually states it and the supplier's price
@@ -36,6 +50,10 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  filenameFromContentDisposition,
+  saveBlobAs,
+} from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 /** Where a document's currency came from, in the order AC-P3.1 resolves it. */
@@ -117,7 +135,32 @@ export interface ProformaInvoiceListRow {
   uploaded_by: string | null;
   created_at: string | null;
   updated_at: string | null;
+  /** Which box this invoice is measured against - the tenant default when the operator
+   *  never chose one. `container_cbm` is that box's loadable volume (40HQ = 65). */
+  container_size_id: string | null;
+  container_size_code: string | null;
+  container_cbm: number | null;
+  /** Sum of the lines' total cbm. Null when NO line states a volume (Kailu's shape) -
+   *  distinct from 0, which would read as an empty container. */
+  total_cbm: number | null;
+  /** Lines carrying no volume at all, so a fill figure can say what it is missing. */
+  unmeasured_lines: number;
+  fill_pct: number | null;
+  /** Only when it is over: the cbm above capacity, so the copy never says "over by -3". */
+  over_by_cbm: number | null;
+  /** `current` or `superseded`. A superseded revision is read-only and never a cost. */
+  status: ProformaInvoiceStatus;
+  revision_no: number;
+  /** How many revisions the chain holds, so a header can read "Revision 2 of 3". */
+  revision_count: number;
+  adjusted_by: string | null;
+  adjusted_at: string | null;
+  /** True once any line's qty differs from what the supplier stated, or a line was removed. */
+  is_adjusted: boolean;
 }
+
+/** A revision is either the one in force or one the supplier has already replaced. */
+export type ProformaInvoiceStatus = 'current' | 'superseded';
 
 export interface ProformaInvoiceListResponse {
   data: ProformaInvoiceListRow[];
@@ -138,6 +181,15 @@ export interface ProformaInvoiceLine {
   amount: number | null;
   po_ref: string | null;
   remark: string | null;
+  /** How the supplier packs it. Null, never 0, on a document that states no volume - "not
+   *  measured" and "takes no room" are different answers to "will this fit" (AC-D1). */
+  cartons: number | null;
+  cbm_per_unit: number | null;
+  cbm_total: number | null;
+  /** What the SUPPLIER stated, frozen at import. `qty` / `unit_price` above are ours to
+   *  adjust; these two are theirs and are never written again (AC-E2). */
+  supplier_qty: number | null;
+  supplier_unit_price: number | null;
   /** The product we hold, by CODE - null when the line matched nothing (AC-P1.3). */
   product_code: string | null;
   matched: boolean;
@@ -202,6 +254,35 @@ export interface BulkDeleteProformaResult {
 async function readJson<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) throw new Error(await extractApiError(res, fallback));
   return (await res.json()) as T;
+}
+
+/** An API refusal the caller has to BRANCH on, not just show. */
+export interface CodedError extends Error {
+  /** `AppException`'s own `code` - e.g. `over_capacity`. Null when the body carries none. */
+  code: string | null;
+}
+
+/**
+ * The same message `extractApiError` produces, carrying the backend's machine-readable
+ * `code` alongside it.
+ *
+ * Used only where the caller must tell one refusal from another (an over-capacity convert
+ * asks a question; every other refusal is just reported). The response is cloned so the
+ * shared extractor still gets an unread body - this reads the code, it does not re-implement
+ * the message.
+ */
+async function codedError(res: Response, fallback: string): Promise<CodedError> {
+  const clone = res.clone();
+  const message = await extractApiError(res, fallback);
+  const error = new Error(message) as CodedError;
+  error.code = null;
+  try {
+    const body = (await clone.json()) as { code?: unknown };
+    if (typeof body?.code === 'string') error.code = body.code;
+  } catch {
+    // A refusal with no JSON body carries no code. The message above still stands.
+  }
+  return error;
 }
 
 function proformaForm(file: File, supplierId: string, currency?: string | null): FormData {
@@ -277,19 +358,89 @@ export async function deleteProformaInvoice(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the proforma invoice'));
 }
 
-/** Several invoices, one draft shipment - any suppliers, one container. */
+/**
+ * Several invoices, one draft shipment - any suppliers, one container.
+ *
+ * `override` carries the operator's "convert anyway" answer to an over-capacity refusal
+ * (AC-E5): the reason travels with it, because a container knowingly loaded past its
+ * planned volume is a decision somebody made, and the shipment records who and why.
+ */
 export async function convertProformaInvoicesToDraftShipment(
   invoiceIds: string[],
+  override?: { reason: string },
 ): Promise<ConvertToDraftShipmentResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/convert-to-draft-shipment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ proforma_invoice_ids: invoiceIds }),
+    body: JSON.stringify({
+      proforma_invoice_ids: invoiceIds,
+      ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
+    }),
   });
-  return readJson<ConvertToDraftShipmentResult>(
-    res,
-    'Failed to draft a shipment from the selected invoices',
+  if (!res.ok) {
+    throw await codedError(res, 'Failed to draft a shipment from the selected invoices');
+  }
+  return (await res.json()) as ConvertToDraftShipmentResult;
+}
+
+/** Sorento's own quantity for one line. The supplier's stays where it is (AC-E2). */
+export async function updateProformaInvoiceLine(
+  invoiceId: string,
+  lineId: string,
+  qty: number,
+): Promise<ProformaInvoiceDetail> {
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/${invoiceId}/lines/${lineId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qty }),
+    },
   );
+  return readJson<ProformaInvoiceDetail>(res, 'Failed to save the line');
+}
+
+/** Take a line off the invoice entirely - it is not going in this container. */
+export async function deleteProformaInvoiceLine(
+  invoiceId: string,
+  lineId: string,
+): Promise<ProformaInvoiceDetail> {
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/${invoiceId}/lines/${lineId}`,
+    { method: 'DELETE' },
+  );
+  return readJson<ProformaInvoiceDetail>(res, 'Failed to remove the line');
+}
+
+/** Which box this invoice is being fitted into. Null means the tenant's default size. */
+export async function updateProformaInvoice(
+  invoiceId: string,
+  body: { container_size_id: string | null },
+): Promise<ProformaInvoiceDetail> {
+  const res = await apiFetch(`/api/v1/scm/proforma-invoices/${invoiceId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return readJson<ProformaInvoiceDetail>(res, 'Failed to save the proforma invoice');
+}
+
+/**
+ * The adjusted invoice as a workbook, to send back to the supplier (AC-E4).
+ *
+ * The name comes from the server's `Content-Disposition` rather than being rebuilt here, so
+ * the download and the sheet inside it agree on which invoice this is.
+ */
+export async function downloadProformaInvoiceExport(
+  invoiceId: string,
+  fallbackName?: string | null,
+): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/proforma-invoices/${invoiceId}/export`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the proforma invoice'));
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `${fallbackName || 'proforma-invoice'}.xlsx`;
+  saveBlobAs(await res.blob(), filename);
 }
 
 export async function bulkDeleteProformaInvoices(

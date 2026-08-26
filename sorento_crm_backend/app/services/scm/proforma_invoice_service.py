@@ -19,16 +19,22 @@ What is particular to this channel:
 """
 from __future__ import annotations
 
+import re
 import uuid
-from datetime import date as _date
+from datetime import date as _date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
-from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
+from app.models.scm import (
+    ContainerSize,
+    ProformaInvoice,
+    ProformaInvoiceLine,
+    ProformaInvoiceShipmentLink,
+)
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -391,6 +397,14 @@ def apply(
                     amount=ln.amount,
                     po_ref=ln.po_ref[:100] if ln.po_ref else None,
                     remark=ln.remark,
+                    cartons=ln.cartons,
+                    cbm_per_unit=ln.cbm_per_unit,
+                    cbm_total=ln.cbm_total,
+                    # The supplier's own figures, frozen here and never written again: `qty`
+                    # and `unit_price` above are ours to trim to fit the container, and the
+                    # whole journey rests on the two never being confused (AC-E2).
+                    supplier_qty=ln.qty,
+                    supplier_unit_price=ln.unit_price,
                     product_id=product["id"] if product else None,
                 )
             )
@@ -448,8 +462,54 @@ def _product_base_uoms(db: Session, product_ids: set[str]) -> dict[str, Optional
     return {str(pid): (str(uom_id) if uom_id else None) for pid, uom_id in rows}
 
 
+def _over_capacity(db: Session, invoices: list[ProformaInvoice]) -> list[str]:
+    """One sentence per invoice that will not fit, naming both figures (AC-E5).
+
+    An invoice whose lines state NO volume is not over capacity - it is unmeasured, and
+    refusing it would break the Kailu shape that has converted since G3b (AC-H3). Silence
+    about a number nobody has is the honest answer; a guess is not.
+    """
+    sizes_by_id, default_size = _container_sizes(db)
+    volumes = _volumes(db, [str(inv.id) for inv in invoices])
+    out: list[str] = []
+    for invoice in invoices:
+        total_cbm, _ = volumes.get(str(invoice.id), (None, 0))
+        fit = _fit(invoice, total_cbm, sizes_by_id, default_size)
+        if fit["over_by_cbm"]:
+            out.append(
+                f"{invoice.pi_number} is {_num(fit['total_cbm'])} cbm and the "
+                f"{fit['container_size_code'] or 'container'} holds "
+                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
+            )
+    return out
+
+
+def _draft_notes(
+    pi_numbers: list[str], over: list[str], override_reason: Optional[str]
+) -> str:
+    """What this draft shipment is, and - when it was loaded past its planned volume - why.
+
+    The reason lands on the SHIPMENT rather than on the proforma invoice: the decision was
+    about this container, and the next person to open the packing list is the one who needs
+    to read it.
+    """
+    notes = "Draft from proforma invoice(s): " + ", ".join(pi_numbers)
+    if over and override_reason:
+        notes += (
+            " | Converted over planned capacity: "
+            + " ".join(over)
+            + f" Reason: {override_reason.strip()}"
+        )
+    return notes
+
+
 def convert_to_draft_shipment(
-    db: Session, invoice_ids: list[str], *, created_by: Optional[str] = None
+    db: Session,
+    invoice_ids: list[str],
+    *,
+    created_by: Optional[str] = None,
+    override_capacity: bool = False,
+    override_reason: Optional[str] = None,
 ) -> dict:
     """One or more proforma invoices become ONE draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -516,6 +576,30 @@ def convert_to_draft_shipment(
             409,
             "Already converted: " + "; ".join(sorted(named_parts)) + ".",
             detail="already_converted",
+        )
+
+    # A superseded revision is what the supplier sent on a day that has passed; converting
+    # it would load the container from a document already replaced (AC-E10).
+    superseded = [inv.pi_number for inv in invoices if (inv.status or "current") == "superseded"]
+    if superseded:
+        raise AppException(
+            409,
+            "Superseded by a newer revision: " + ", ".join(sorted(superseded)) + ".",
+            code="superseded",
+        )
+
+    over = _over_capacity(db, invoices)
+    if over and not override_capacity:
+        raise AppException(
+            409,
+            " ".join(over) + " Convert anyway to load it regardless.",
+            code="over_capacity",
+        )
+    if over and override_capacity and not (override_reason or "").strip():
+        raise AppException(
+            422,
+            "Say why this container is being loaded over its planned volume.",
+            detail="override_reason",
         )
 
     lines: list[ProformaInvoiceLine] = (
@@ -595,7 +679,7 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
-        notes="Draft from proforma invoice(s): " + ", ".join(pi_numbers),
+        notes=_draft_notes(pi_numbers, over, override_reason if over else None),
     )
     db.add(shipment)
     db.flush()
@@ -685,6 +769,134 @@ def convert_to_draft_shipment(
     }
 
 
+#: The pre-loading list's own column spellings, in its own order, for the sheet that goes
+#: BACK to the supplier (AC-E4). Their header, so the document they receive is recognisably
+#: the one they sent - a Sorento-worded sheet would have to be read before it can be acted
+#: on. Only the columns we actually hold: 规格 / 商标 are read from their file and never
+#: stored, so inventing empty ones here would suggest we lost them.
+_EXPORT_COLUMNS = (
+    "序号",
+    "产品型号",
+    "品名",
+    "数量",
+    "箱数",
+    "体积(cbm)",
+    "总体积(cbm)",
+    "单价",
+    "金额",
+    "备注",
+)
+_EXPORT_WIDTHS = (6, 24, 18, 10, 10, 12, 14, 12, 14, 34)
+
+
+def _num(value: Optional[float]) -> str:
+    """A number as a person writes it: `65`, `69.36`, never `65.0` or `4.359999999`."""
+    if value is None:
+        return "-"
+    text_value = f"{float(value):.4f}".rstrip("0").rstrip(".")
+    return text_value or "0"
+
+
+def to_xlsx(payload: dict) -> bytes:
+    """The adjusted invoice in the supplier's own block layout (AC-E4).
+
+    Quantities, volumes and amounts are OURS as adjusted; where a line's quantity differs
+    from what they sent, their own figure travels in 备注 - the remarks column their sheet
+    already has - so the difference is visible on the page rather than only in our database.
+    """
+    import openpyxl
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active or wb.create_sheet()
+    ws.title = "PROFORMA INVOICE"
+    bold = Font(bold=True)
+
+    for label, value in (
+        ("货单号 / PI No.", payload.get("pi_number")),
+        ("供应商 / Supplier", payload.get("supplier_name")),
+        ("日期 / Date", payload.get("invoice_date")),
+        ("货柜号 / Container No.", payload.get("container_no")),
+        ("提单号 / B/L No.", payload.get("bl_no")),
+    ):
+        ws.append([label, value])
+        ws.cell(row=ws.max_row, column=1).font = bold
+    ws.append([])
+
+    ws.append(list(_EXPORT_COLUMNS))
+    for col in range(1, len(_EXPORT_COLUMNS) + 1):
+        ws.cell(row=ws.max_row, column=col).font = bold
+
+    qty_total = 0.0
+    carton_total = 0.0
+    cbm_total = 0.0
+    amount_total = 0.0
+    for i, line in enumerate(payload.get("lines") or [], start=1):
+        qty = line.get("qty")
+        supplier_qty = line.get("supplier_qty")
+        remarks = [line.get("remark")] if line.get("remark") else []
+        if supplier_qty is not None and qty is not None and float(supplier_qty) != float(qty):
+            remarks.append(f"原数量 / Supplier qty: {_num(supplier_qty)}")
+        ws.append(
+            [
+                i,
+                line.get("item_code"),
+                line.get("description"),
+                qty,
+                line.get("cartons"),
+                line.get("cbm_per_unit"),
+                line.get("cbm_total"),
+                line.get("unit_price"),
+                line.get("amount"),
+                "; ".join(remarks) or None,
+            ]
+        )
+        qty_total += float(qty or 0)
+        carton_total += float(line.get("cartons") or 0)
+        cbm_total += float(line.get("cbm_total") or 0)
+        amount_total += float(line.get("amount") or 0)
+
+    ws.append(
+        [
+            "总计 / Total", None, None, qty_total, carton_total, None,
+            round(cbm_total, 4), None, round(amount_total, 2), None,
+        ]
+    )
+    for col in range(1, len(_EXPORT_COLUMNS) + 1):
+        ws.cell(row=ws.max_row, column=col).font = bold
+
+    capacity = payload.get("container_cbm")
+    if capacity:
+        over = payload.get("over_by_cbm")
+        ws.append(
+            [
+                f"货柜 / Container {payload.get('container_size_code') or ''}".strip(),
+                None, None, None, None, None, _num(capacity), None,
+                f"超出 / Over by {_num(over)} cbm" if over else None, None,
+            ]
+        )
+
+    for i, width in enumerate(_EXPORT_WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    from io import BytesIO
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def export_filename(payload: dict) -> str:
+    """`<PI number>-proforma.xlsx`, with anything a filesystem would argue about removed.
+
+    Named after the invoice, never after its id: a downloaded file called
+    `9f3a1c...xlsx` tells the supplier who opens it nothing at all.
+    """
+    stem = re.sub(r"[^A-Za-z0-9._-]", "", str(payload.get("pi_number") or "")) or "proforma"
+    return f"{stem}-proforma.xlsx"
+
+
 def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     """Hard delete several proforma invoices at once, same shape as the PO book's bulk
     delete (`PurchaseOrderService.bulk_delete`): ids not found (already deleted, or another
@@ -745,6 +957,226 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     return {"deleted": deleted, "blocked": blocked}
 
 
+def _container_sizes(db: Session) -> tuple[dict[str, Any], Optional[Any]]:
+    """Every active container size by id, and whichever one is the tenant's default.
+
+    Read once per serialization rather than per invoice: a page of 25 invoices asks the
+    same three-row question 25 times otherwise.
+    """
+    rows = db.query(ContainerSize).filter(ContainerSize.is_active.is_(True)).all()
+    return {str(r.id): r for r in rows}, next((r for r in rows if r.is_default), None)
+
+
+def _volumes(db: Session, invoice_ids: list[str]) -> dict[str, tuple[Optional[float], int]]:
+    """Per invoice, `(total cbm, lines with no volume)` in ONE query.
+
+    The total is NULL rather than 0 when no line states a volume: 0 cbm would read as an
+    empty container on a document that simply never measured itself (AC-D2).
+    """
+    ids = [i for i in set(invoice_ids) if i]
+    if not ids:
+        return {}
+    rows = (
+        db.query(
+            ProformaInvoiceLine.invoice_id,
+            func.sum(ProformaInvoiceLine.cbm_total),
+            func.count(1).filter(ProformaInvoiceLine.cbm_total.is_(None)),
+        )
+        .filter(ProformaInvoiceLine.invoice_id.in_(ids))
+        .group_by(ProformaInvoiceLine.invoice_id)
+        .all()
+    )
+    return {str(inv): (_f(total), int(unmeasured or 0)) for inv, total, unmeasured in rows}
+
+
+def _fit(
+    invoice: ProformaInvoice,
+    total_cbm: Optional[float],
+    sizes_by_id: dict[str, Any],
+    default_size: Optional[Any],
+) -> dict[str, Any]:
+    """How full this invoice's container is, and which container that is.
+
+    The size is RESOLVED at read time from the tenant's default when the invoice names none,
+    rather than copied onto the row at import: a PI uploaded before anybody thought about
+    capacity should follow the default, not freeze whatever it happened to be that day
+    (AC-D4). An invoice that DOES name one keeps it, which is what makes it changeable.
+    """
+    size = sizes_by_id.get(str(invoice.container_size_id)) if invoice.container_size_id else None
+    if size is None:
+        size = default_size
+    capacity = _f(size.cbm) if size is not None else None
+    fill = (
+        (total_cbm / capacity) * 100
+        if total_cbm is not None and capacity
+        else None
+    )
+    over = (
+        round(total_cbm - capacity, 4)
+        if total_cbm is not None and capacity and total_cbm > capacity
+        else None
+    )
+    return {
+        "container_size_id": str(size.id) if size is not None else None,
+        "container_size_code": size.code if size is not None else None,
+        "container_cbm": capacity,
+        "total_cbm": total_cbm,
+        "fill_pct": round(fill, 2) if fill is not None else None,
+        "over_by_cbm": over,
+    }
+
+
+def _editable_or_409(db: Session, invoice: ProformaInvoice) -> None:
+    """Refuse an adjustment that would make the document disagree with reality.
+
+    Two states are closed. A SUPERSEDED revision is what the supplier sent on a day that has
+    passed, and editing it would rewrite history nobody can see (AC-E7). A CONVERTED invoice
+    has already had its goods drafted onto a shipment, so trimming it afterwards leaves the
+    two documents disagreeing with nothing on screen saying which one the container was
+    loaded from.
+    """
+    if (invoice.status or "current") == "superseded":
+        raise AppException(
+            409,
+            f"'{invoice.pi_number}' has been superseded by a newer revision and is read-only.",
+            code="superseded",
+        )
+    link = (
+        db.query(InboundShipment.shipment_number)
+        .join(
+            ProformaInvoiceShipmentLink,
+            ProformaInvoiceShipmentLink.inbound_shipment_id == InboundShipment.id,
+        )
+        .filter(ProformaInvoiceShipmentLink.proforma_invoice_id == invoice.id)
+        .first()
+    )
+    if link:
+        raise AppException(
+            409,
+            f"'{invoice.pi_number}' is already in packing list '{link[0] or '?'}', so its "
+            "quantities can no longer be changed.",
+            code="already_converted",
+        )
+
+
+def _line_or_404(db: Session, invoice: ProformaInvoice, line_id: str) -> ProformaInvoiceLine:
+    """One line OF THIS INVOICE. A line id belonging to another invoice is a 404, never a
+    silent write against a document the caller was not looking at."""
+    if not _is_uuid(line_id):
+        raise AppException(404, "That line is not on this proforma invoice.", detail="line_id")
+    line = (
+        db.query(ProformaInvoiceLine)
+        .filter(
+            ProformaInvoiceLine.id == str(line_id),
+            ProformaInvoiceLine.invoice_id == invoice.id,
+        )
+        .first()
+    )
+    if line is None:
+        raise AppException(404, "That line is not on this proforma invoice.", detail="line_id")
+    return line
+
+
+def _restate(db: Session, invoice: ProformaInvoice, *, actor: Optional[str]) -> None:
+    """Re-derive what the invoice says about itself after a line changed, and stamp who did it.
+
+    `total_amount` follows the lines here even when the document stated its own total on
+    import: once Sorento has trimmed a line, the supplier's printed total describes an
+    invoice that no longer exists, and leaving it would put a figure on screen that agrees
+    with nothing under it.
+    """
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id == invoice.id)
+        .order_by(ProformaInvoiceLine.line_no)
+        .all()
+    )
+    total = Decimal("0")
+    for ln in lines:
+        if ln.amount is not None:
+            total += Decimal(str(ln.amount))
+        elif ln.unit_price is not None and ln.qty is not None:
+            total += Decimal(str(ln.unit_price)) * Decimal(str(ln.qty))
+    invoice.total_amount = total
+    invoice.line_count = len(lines)
+    invoice.adjusted_by = actor
+    invoice.adjusted_at = datetime.utcnow()
+    db.flush()
+
+
+def adjust_line(
+    db: Session, invoice_id: str, line_id: str, *, qty: float, actor: Optional[str] = None
+) -> dict:
+    """Sorento's own quantity for one line (AC-E1). Does not commit.
+
+    `supplier_qty` and `supplier_unit_price` are NOT touched - they are the supplier's
+    statement and this is ours (AC-E2). The volume and the money follow the new quantity,
+    because both are per-unit facts multiplied by it, and a fill bar computed from a stale
+    total is exactly the number that gets a container booked twice.
+    """
+    invoice = get_or_404(db, invoice_id)
+    _editable_or_409(db, invoice)
+    line = _line_or_404(db, invoice, line_id)
+
+    try:
+        new_qty = Decimal(str(qty))
+    except Exception:  # noqa: BLE001 - the message is for whoever typed it
+        raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
+    if new_qty < 0:
+        raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
+
+    line.qty = new_qty
+    per_unit = line.cbm_per_unit
+    if per_unit is not None:
+        line.cbm_total = Decimal(str(per_unit)) * new_qty
+    if line.unit_price is not None:
+        line.amount = Decimal(str(line.unit_price)) * new_qty
+    db.flush()
+
+    _restate(db, invoice, actor=actor)
+    return serialize(db, invoice)
+
+
+def remove_line(
+    db: Session, invoice_id: str, line_id: str, *, actor: Optional[str] = None
+) -> dict:
+    """Take one line off the invoice entirely - it is not going in this container.
+
+    A hard delete, per the CRUD standard, behind the caller's confirmation dialog. The
+    remaining lines are NOT renumbered: `line_no` is where the line sat on the document the
+    supplier sent, and re-flowing it would make our copy disagree with their paper.
+    """
+    invoice = get_or_404(db, invoice_id)
+    _editable_or_409(db, invoice)
+    line = _line_or_404(db, invoice, line_id)
+    db.delete(line)
+    db.flush()
+    _restate(db, invoice, actor=actor)
+    return serialize(db, invoice)
+
+
+def set_container_size(
+    db: Session, invoice_id: str, container_size_id: Optional[str]
+) -> dict:
+    """Which box this invoice is being fitted into. `None` means the tenant's default."""
+    invoice = get_or_404(db, invoice_id)
+    if container_size_id:
+        if not _is_uuid(container_size_id):
+            raise AppException(422, "That container size does not exist.", detail="container_size_id")
+        size = (
+            db.query(ContainerSize)
+            .filter(ContainerSize.id == str(container_size_id))
+            .first()
+        )
+        if size is None:
+            raise AppException(404, "That container size does not exist.", detail="container_size_id")
+        invoice.container_size_id = str(size.id)
+    else:
+        invoice.container_size_id = None
+    db.flush()
+    return serialize(db, invoice)
+
+
 def get_or_404(db: Session, invoice_id: str) -> ProformaInvoice:
     """One invoice, or a refusal. Never another company's.
 
@@ -791,9 +1223,19 @@ def list_for_supplier(
         .all()
     )
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
+    volumes = _volumes(db, [str(r.id) for r in rows])
+    sizes = _container_sizes(db)
     return {
         "data": [
-            serialize(db, r, with_lines=False, supplier_labels=labels) for r in rows
+            serialize(
+                db,
+                r,
+                with_lines=False,
+                supplier_labels=labels,
+                volumes=volumes,
+                container_sizes=sizes,
+            )
+            for r in rows
         ],
         "total": total,
         "limit": limit,
@@ -835,11 +1277,15 @@ def serialize(
     *,
     with_lines: bool = True,
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
+    volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
+    container_sizes: Optional[tuple[dict[str, Any], Optional[Any]]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
-    `supplier_labels` is the page's `{supplier_id: (code, name)}`, resolved once by the
-    caller listing several invoices; a single serialization resolves its own.
+    `supplier_labels`, `volumes` and `container_sizes` are the page's own lookups, resolved
+    once by a caller listing several invoices; a single serialization resolves its own. All
+    three are per-page rather than per-row because each is one query that would otherwise be
+    asked twenty-five times for the same answer.
     """
     if supplier_labels is not None:
         supplier_code, supplier_name = supplier_labels.get(
@@ -864,7 +1310,24 @@ def serialize(
         "uploaded_by": invoice.uploaded_by,
         "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
         "updated_at": invoice.updated_at.isoformat() if invoice.updated_at else None,
+        # Who trimmed this document to fit, and when. Null on one nobody has touched, which
+        # is what tells the screen to show the supplier's figures unqualified.
+        "adjusted_by": invoice.adjusted_by,
+        "adjusted_at": invoice.adjusted_at.isoformat() if invoice.adjusted_at else None,
+        "is_adjusted": invoice.adjusted_at is not None,
+        "status": invoice.status or "current",
+        "revision_no": int(invoice.revision_no or 1),
     }
+
+    sizes_by_id, default_size = (
+        container_sizes if container_sizes is not None else _container_sizes(db)
+    )
+    if volumes is None:
+        volumes = _volumes(db, [str(invoice.id)])
+    total_cbm, unmeasured = volumes.get(str(invoice.id), (None, 0))
+    out.update(_fit(invoice, total_cbm, sizes_by_id, default_size))
+    out["unmeasured_lines"] = unmeasured
+
     if not with_lines:
         return out
 
@@ -915,6 +1378,12 @@ def serialize(
             "amount": _f(ln.amount),
             "po_ref": ln.po_ref,
             "remark": ln.remark,
+            "cartons": _f(ln.cartons),
+            "cbm_per_unit": _f(ln.cbm_per_unit),
+            "cbm_total": _f(ln.cbm_total),
+            # What the SUPPLIER stated, frozen at import - the "was" beside our "now".
+            "supplier_qty": _f(ln.supplier_qty),
+            "supplier_unit_price": _f(ln.supplier_unit_price),
             # The product we hold, by CODE. A line that matched nothing says so rather than
             # carrying an id nobody can read.
             "product_code": codes.get(str(ln.product_id)) if ln.product_id else None,

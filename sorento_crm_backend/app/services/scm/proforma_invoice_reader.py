@@ -87,6 +87,12 @@ class ProformaLine:
     brand: Optional[str] = None
     cartons: Optional[float] = None
     spec: Optional[str] = None
+    #: How much room one unit takes, and how much the whole line takes. The pre-loading list
+    #: states both (体积(cbm) / 总体积(cbm)); Kailu's proforma states neither, and then both
+    #: stay None - "not measured" and "takes no room" are different answers to "will this
+    #: fit", and only one of them is honest (AC-D1).
+    cbm_per_unit: Optional[float] = None
+    cbm_total: Optional[float] = None
 
 
 @dataclass
@@ -219,6 +225,18 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
 
     unit_price = _number(vals.get("unit_price"))
     amount = _number(vals.get("amount"))
+
+    # Whichever volume the supplier stated, the other is derived from it, same as the
+    # packing-list reader does. The per-unit figure is what has to survive Sorento trimming
+    # the quantity to fit the box (AC-E3), and the total is what the fill bar sums - so a
+    # document stating only one of them still answers both questions. Neither is invented
+    # when the document states neither.
+    cbm_total = _number(vals.get("cbm_total"))
+    cbm_per_unit = _number(vals.get("cbm_per_unit"))
+    if cbm_per_unit is None and cbm_total is not None and qty:
+        cbm_per_unit = round(cbm_total / qty, 6)
+    elif cbm_total is None and cbm_per_unit is not None:
+        cbm_total = round(cbm_per_unit * qty, 4)
     # The supplier fills one of the two about as often as both. Neither is derived onto the
     # line here: the document of record says what it says, and the service sums whichever is
     # present. Deriving would make a wrong price look like a stated one.
@@ -235,6 +253,8 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
         brand=_text(vals.get("brand")),
         cartons=_number(vals.get("cartons")),
         spec=_text(vals.get("spec")),
+        cbm_per_unit=cbm_per_unit,
+        cbm_total=cbm_total,
     )
 
 

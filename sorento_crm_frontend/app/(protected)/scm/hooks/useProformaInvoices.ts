@@ -7,9 +7,13 @@ import {
   bulkDeleteProformaInvoices,
   convertProformaInvoicesToDraftShipment,
   deleteProformaInvoice,
+  deleteProformaInvoiceLine,
   getProformaInvoice,
   listProformaInvoices,
+  updateProformaInvoice,
+  updateProformaInvoiceLine,
   type ListProformaInvoicesOptions,
+  type ProformaInvoiceDetail,
 } from '../services/proformaInvoiceService';
 
 const KEY = ['scm', 'proforma-invoices'] as const;
@@ -75,6 +79,47 @@ export function useBulkDeleteProformaInvoices() {
   });
 }
 
+/**
+ * The three writes that adjust ONE invoice to fit the container (AC-E1, AC-E2, AC-D4).
+ *
+ * Each returns the whole invoice, so the detail cache is SEEDED with the server's answer
+ * rather than invalidated and re-fetched: the fill bar, the totals and the was/now figures
+ * all move together on save, and a refetch would repaint them one render later. The list is
+ * still invalidated, because the line count and the volume it shows have just changed.
+ */
+function useInvoiceWrite<TArgs>(
+  invoiceId: string,
+  fn: (args: TArgs) => Promise<ProformaInvoiceDetail>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (invoice) => {
+      qc.setQueryData([...KEY, 'detail', invoiceId], invoice);
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useUpdateProformaInvoiceLine(invoiceId: string) {
+  return useInvoiceWrite<{ lineId: string; qty: number }>(invoiceId, ({ lineId, qty }) =>
+    updateProformaInvoiceLine(invoiceId, lineId, qty),
+  );
+}
+
+export function useDeleteProformaInvoiceLine(invoiceId: string) {
+  return useInvoiceWrite<string>(invoiceId, (lineId) =>
+    deleteProformaInvoiceLine(invoiceId, lineId),
+  );
+}
+
+export function useUpdateProformaInvoice(invoiceId: string) {
+  return useInvoiceWrite<{ container_size_id: string | null }>(invoiceId, (body) =>
+    updateProformaInvoice(invoiceId, body),
+  );
+}
+
 /** Draft a shipment from one or more selected invoices. Invalidates both the proforma list
  *  (their trail now shows where they went) and the invoice detail (converted_shipments +
  *  per-line shipment_number) for every invoice just converted. The caller navigates to
@@ -82,7 +127,11 @@ export function useBulkDeleteProformaInvoices() {
 export function useConvertProformaInvoicesToDraftShipment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (invoiceIds: string[]) => convertProformaInvoicesToDraftShipment(invoiceIds),
+    mutationFn: (args: { invoiceIds: string[]; overrideReason?: string }) =>
+      convertProformaInvoicesToDraftShipment(
+        args.invoiceIds,
+        args.overrideReason ? { reason: args.overrideReason } : undefined,
+      ),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
       result.invoices.forEach((inv) => {

@@ -211,7 +211,8 @@ class ContainerSizeWrite(BaseModel):
     code: str = Field(..., min_length=1, max_length=30)
     label: Optional[str] = None
     #: Internal LOADABLE volume, not the nominal external size. A 40HQ is sold as 76 cbm and
-    #: packs about 68, and planning to the brochure figure is how a container arrives short.
+    #: is planned to 65 here (the captain's ruling, 26 Aug), and planning to the brochure
+    #: figure is how a container arrives short.
     cbm: float = Field(..., gt=0)
     is_default: bool = False
     is_active: bool = True
