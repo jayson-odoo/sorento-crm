@@ -634,7 +634,82 @@ All ruled. Go/no-go on the order in section 4.
 
 ## Part 3. A changed sales order (captain, 25 Aug: SO381895 forms (2) -> (3), SRTWCX7405-RL-S-PJ 10 + 10 + 5 on 25 Aug / 5 Sep / 10 Sep becomes 25 on 19 Aug)
 
-**Status:** UAC AC-P3-1..P3-13 written 26 Aug (acceptance criteria file, section Part 3); build started 26 Aug on `feat/scm-uat-so-change` stacked on I2 (#331). RELEASE ruling (26 Aug): kept for wholly-Buy lines; a linked ORDER row moves to the pool on a far delay with its links, an unlinked one gets DELAY.
+**Status:** **BUILT** on `feat/scm-uat-so-change` (stacked on I2, #331), 26 Aug. UAC
+AC-P3-1..P3-13 in the acceptance criteria file. **No migration**: every new fact is derived
+or rides an existing JSON column, so the lane head stays `427_sales_agents_class_backfill`.
+15 pytest in `tests/test_planning_change_apply_on_board.py` (red first, on the real database
+because `scm.committed_v` is a view the blank scratch schema has none of) plus vitest for the
+Was / Now cell, the pre-mark, Confirm carrying the batch and the retired page's entry points.
+
+What shipped, and where it differs from the paragraphs below:
+
+- **The board takes `?batch=` beside `?orders=`.** Every changed line's cell carries a Was /
+  Now table of three rows (Qty, Date, Decision) in board words through the same
+  `partsBreakdown` the Suggestion and Decision cards use, so the batch's own vocabulary never
+  reaches the screen. A line the book CLOSED has left the board, so it has no cell of its own:
+  it is annotated on the surviving cell of the same product on the same order and reads
+  `Closed` in the Now column. **Coder's call, captain to confirm:** AC-P3-13 says "three
+  annotated cells"; on a board whose closed instalments are the only lines of their product at
+  their own dates, the three tables land on ONE cell. Verified that way live.
+- **A changed line arrives UNCOVERED, carrying the batch's own proposal.** A covered line's
+  `sources` / `qty_proposed_*` are its frozen composition rebuilt, so a line the book has
+  moved offered to confirm the OLD quantity - measured live on SO381895: the board sent Buy 10
+  for a line open for 25 and the server refused after Confirm was pressed. The frozen
+  composition is not lost; it is the Was column.
+- **Confirm carries `batch_id` on the board's own confirm endpoint.** One press, one call, one
+  revision: the composed lines become the batch rows' compositions, the batch applies, and a
+  line the press decided that the batch does not carry rides along beside them. A second press
+  is refused 409 with the date it was applied on.
+- **`refresh_for_decision` gained a settle-in-place seam** (`settle_in_place_line_ids`,
+  threaded through `confirm`): on a line a planning change is applying, the existing row is
+  UPDATED - same id, new quantity, new date, links kept, the previous value on its note -
+  rather than superseded and re-raised. Only where the line has exactly ONE still-owed row;
+  with two, this build has no way to say which the book moved and the supersede stands.
+- **AC-P3-8 retires the `CANCEL_BALANCE` for a drop** the row absorbs, and only the EXCESS
+  goes back, latest-arriving document first (never a whole placement the line still wants).
+  `test_apply_qty_down_reduces_buy_and_raises_cancel_balance` was rewritten to say so.
+- **A closed line's LINKED row is cancelled too**, which reverses the old "a placed row is
+  real supply, leave it" rule: the supply does not vanish with the row, it moves to the line
+  that still needs it, and what no line needs is unlinked and free again. An `actioned` row
+  still keeps its state - that is a person's word.
+- **RELEASE ruling (26 Aug), and the dead path is alive:** a wholly-Buy line delayed beyond
+  the reserve window now suggests `release` (it was gated on a reserve-and-Buy mix AC-L5
+  abolished, so it suggested `keep` and told purchasing nothing). A row a buyer already put on
+  a document keeps its links and becomes a purchase for the POOL; a row with none hands
+  purchasing a DELAY carrying the previous date. No `RELEASE` verb row is raised at all.
+- **A line a settle wrote raises no separate DELAY / ADVANCE row** - the row itself carries
+  the new date and the previous value, and a second row beside it is the duplicate
+  instruction one-row-per-line exists to stop. The skip is keyed on what
+  `refresh_for_decision` actually settled, never on what the apply offered it.
+- **`late` is derived, not stored**: the link's own expected date against the row's required
+  date, read on the worklist's Linked to column and the sales-order detail's.
+- **`moved_transfer` rides `facts_json`** and is lifted to the wire by `row_out` - a phrase,
+  because nobody compares it against anything. Nothing reverses a movement.
+- **The batch page is retired** (route, client, `PlanningChangeDecisionControl`, `FactChip`,
+  `PlanningChangeReactionPill`). The list row and its new Plan action, the sales-order list's
+  Changed badge and the SO detail's Plan button all open the board on the batch; the
+  import-job card points at the list, because a book upload moves many orders at once.
+- **Two defects the browser found that the suite did not**, both now pinned: the covered-line
+  proposal above, and the link shift reading its own pending write (`SessionLocal` runs
+  `autoflush=False`, so the cancellations were invisible to the shift's query while an
+  autoflushing test session watched them move). The test session is built the way the
+  application's is now.
+
+**Browser evidence (AC-P3-13), lane :3080/:8080, 26 Aug.** The RQ worker is absent on this
+lane, so the SO-book re-upload could not run: the form (3) book change and `build_batch` were
+driven through the service directly, and everything after that is the real screen. Planning
+changes list -> the row for `SO381895 form (3) 19 Aug 17:23.xlsx`, Plan ->
+`?orders=SO381895&batch=<id>` -> three Was / Now tables on the SRTWCX7405-RL-S-PJ cell
+(line 24 `Qty 10 -> 25`, `Date 25/08/2026 -> 19/08/2026`, `Decision Buy 10 -> Use shared stock
+5 from BRW, 10 from WH3 . Borrow other location 10 from WH3-NTC`; lines 46 and 68 `Closed` in
+every Now cell), `1 approved` without a click, Confirm -> 200, revision 3, batch applied.
+**Where the dev copy differs from the fixture sheet:** SO381895's three instalments carried no
+order-inquiry rows at all (the fixture assumes form 2 applied with links on them), so they were
+planned first through the real confirm, which raised and auto-linked all three; and the fresh
+ladder meets the 25 from shared stock plus a cross-group borrow rather than buying it, so the
+Order Inquiries page shows the survivor's ORDER row WITHDRAWN and an ORDER BACK of 10 at the
+donor beside two cancelled rows - not the fixture's one raised row of 25. The Buy-only shape
+AC-P3-5/6/11 describe is pinned on the seeded pytest chain instead.
 
 **What exists:** `planning_change_service` + `/project-sales/planning-changes` (18-19 Aug). A batch is born when a re-uploaded SO book changes a PLANNED line: one row per line with what changed, what the decision holds, and a suggested reaction (Keep / Release / Replan / Reduce / Retire, rule table in `PLAN-so-book-diff-replanning.md` section 0). The planner accepts per row on a separate page and presses Apply; OI rows get DELAY / ADVANCE / CANCEL_BALANCE / RELEASE.
 
