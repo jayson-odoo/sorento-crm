@@ -545,3 +545,78 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     ]);
   });
 });
+
+/**
+ * Browser pass 3, finding 2 - a tick and an untick are the same recompute.
+ *
+ * Untick a take and everything follows: the cover, the SPO qty, the SO covered, the split.
+ * Re-tick it and the cell went back to 66 / "4 of 4 POs" while every figure downstream
+ * stayed at the unticked value until a reload.
+ */
+describe('F7 - unticking then re-ticking a take returns every figure', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  /** The drill closes on a tick, so each one is its own open-click-read. */
+  const tick = async (name: string) => {
+    fireEvent.click(await screen.findByTitle(/which po covers this/i));
+    fireEvent.click(screen.getByRole('checkbox', { name }));
+  };
+
+  it('puts the SPO quantity back when the take is ticked again', async () => {
+    renderTable();
+    await screen.findByTitle(/which po covers this/i);
+
+    expect(qtyInput()).toHaveValue(100);
+    await tick('Draw from 202605-S0060');
+    // The 150-open line covers the whole 100 on its own.
+    expect(qtyInput()).toHaveValue(100);
+    await tick('Draw from 202606-S0099');
+    expect(qtyInput()).toHaveValue(0);
+
+    await tick('Draw from 202606-S0099');
+
+    expect(qtyInput()).toHaveValue(100);
+    await tick('Draw from 202605-S0060');
+    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
+    expect(qtyInput()).toHaveValue(100);
+  });
+
+  it('puts the split and what is sent back with it', async () => {
+    renderTable();
+    await tick('Draw from 202606-S0099');
+    await tick('Draw from 202606-S0099');
+
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0].qty).toBe(100);
+    expect(lines[0].location_splits).toEqual([
+      { warehouse_id: 'wh-1', qty: 70 },
+      { warehouse_id: 'wh-2', qty: 30 },
+    ]);
+  });
+
+  it('keeps a quantity the operator typed themselves, clamped to what is ticked', async () => {
+    renderTable();
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.change(qtyInput(), { target: { value: '50' } });
+
+    await tick('Draw from 202605-S0060');
+    await tick('Draw from 202605-S0060');
+
+    // Their 50 survives the round trip - it was a decision, not a derived default.
+    expect(qtyInput()).toHaveValue(50);
+  });
+});

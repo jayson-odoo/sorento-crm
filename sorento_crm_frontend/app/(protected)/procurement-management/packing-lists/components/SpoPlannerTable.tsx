@@ -98,6 +98,10 @@ function fmtSigned(value: number): string {
 type SplitState = { warehouseId: string; qty: number };
 type LineState = {
   qty: number;
+  /** True once the operator typed a quantity themselves. Until then the quantity is a
+   *  DERIVED default and follows the ticked takes both ways - which is what re-ticking a
+   *  take could not do while the recompute only ever took `min(current, covered)`. */
+  qtyTouched: boolean;
   splits: SplitState[];
   /** Which PO takes this line draws from. Every one, until somebody unticks one (AC-G1). */
   poTakeIds: string[];
@@ -234,6 +238,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       const soKeys = defaultSoKeys(ln, ln.suggested_qty);
       next[ln.shipment_line_id] = {
         qty: ln.suggested_qty,
+        qtyTouched: false,
         poTakeIds,
         soKeys,
         splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
@@ -251,6 +256,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const soKeys = defaultSoKeys(ln, ln.suggested_qty);
     return {
       qty: ln.suggested_qty,
+      qtyTouched: false,
       poTakeIds: ln.po_takes.map((t) => t.po_line_id),
       soKeys,
       splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
@@ -272,20 +278,40 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // The split follows the quantity, because it is derived from the ticks against it -
     // leaving a stale split behind is how Create SPO refuses with "the split has to add up"
     // on a screen where nothing looks wrong.
-    patch(ln, { qty, splits: splitsFromTicks(ln, current.soKeys, qty) });
+    patch(ln, {
+      qty,
+      qtyTouched: true,
+      splits: splitsFromTicks(ln, current.soKeys, qty),
+    });
   };
 
   const setSplits = (ln: SpoSuggestionLine, splits: SplitState[]) => patch(ln, { splits });
 
-  /** Untick a take and the SPO falls to what the rest of them cover (AC-G2). */
+  /**
+   * Untick a take and the SPO falls to what the rest of them cover; tick it back and it
+   * returns (AC-G2).
+   *
+   * ONE recompute for both directions. It used to take `min(current qty, covered)`, which
+   * cannot go back up: unticking lowered the quantity, and re-ticking then held it at the
+   * lowered figure while the PO-covers cell alone recovered - so the SPO qty, the SO
+   * covered, the split and the Create gate all sat at the unticked values until a reload.
+   *
+   * A quantity the operator TYPED is theirs and survives, clamped to what is ticked. One
+   * they never touched is a derived default and follows the takes.
+   */
   const toggleTake = (ln: SpoSuggestionLine, poLineId: string, on: boolean) => {
     const current = stateFor(ln);
     const poTakeIds = on
       ? [...current.poTakeIds, poLineId]
       : current.poTakeIds.filter((id) => id !== poLineId);
     const covered = poCoveredFor(ln, poTakeIds);
-    const qty = Math.min(current.qty, covered);
-    patch(ln, { poTakeIds, qty, splits: splitsFromTicks(ln, current.soKeys, qty) });
+    const qty = current.qtyTouched ? Math.min(current.qty, covered) : covered;
+    patch(ln, {
+      poTakeIds,
+      qty,
+      soKeys: current.soKeys,
+      splits: splitsFromTicks(ln, current.soKeys, qty),
+    });
   };
 
   /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
