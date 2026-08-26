@@ -102,7 +102,6 @@ export function PredicateBuilder({
                   options={fieldOptions}
                   placeholder="Field"
                   disabled={disabled}
-                  triggerClassName="h-9"
                 />
               </div>
               <div className="w-full sm:w-40">
@@ -112,7 +111,6 @@ export function PredicateBuilder({
                   options={ops}
                   placeholder="Operator"
                   disabled={disabled}
-                  triggerClassName="h-9"
                 />
               </div>
               <div className="w-full sm:flex-1">
@@ -127,7 +125,6 @@ export function PredicateBuilder({
                     placeholder="Value"
                     emptyMessage="No options."
                     disabled={disabled}
-                    triggerClassName="h-9"
                   />
                 ) : (
                   <Input
