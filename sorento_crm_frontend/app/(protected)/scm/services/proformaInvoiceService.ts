@@ -351,6 +351,9 @@ export interface ConvertToDraftShipmentResult {
   lines_skipped: number;
   invoices: ConvertedInvoiceRef[];
   unmatched: UnmatchedConvertLine[];
+  /** Invoices in the selection that had nothing left to place - named, never silently
+   *  dropped from the count (AC-F7). */
+  skipped_invoices: { id: string; pi_number: string; reason: string }[];
 }
 
 export interface BulkDeleteProformaResult {

@@ -237,6 +237,15 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         result.lines_skipped > 0
           ? ` (${result.lines_skipped} line${result.lines_skipped === 1 ? '' : 's'} could not be matched to a product and were skipped)`
           : '';
+      // An invoice with nothing left to place is NAMED rather than quietly left out of the
+      // count, so the operator can see which of their selection did not move (AC-F7).
+      if (result.skipped_invoices?.length) {
+        toast.warning(
+          `Not converted: ${result.skipped_invoices
+            .map((i) => `${i.pi_number} - ${i.reason}`)
+            .join('; ')}`,
+        );
+      }
       toast.success(
         `Draft shipment ${result.shipment_number ?? ''} created with ${result.lines_created} line${
           result.lines_created === 1 ? '' : 's'
