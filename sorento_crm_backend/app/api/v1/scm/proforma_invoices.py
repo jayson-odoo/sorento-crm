@@ -79,6 +79,23 @@ class MarkAsRevisionRequest(BaseModel):
     previous_id: str = Field(..., description="The invoice this one is a revision of.")
 
 
+def _new_document_list(raw: Optional[str]) -> Optional[list]:
+    """`["1", "3"]` off the multipart form - the documents whose revision offer was
+    unticked. Sent as a string for the same reason `revision_of` is: the upload is
+    multipart, not JSON."""
+    if not raw or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        raise AppException(422, "Could not read which invoices to file as new.",
+                           detail="file_as_new")
+    if not isinstance(parsed, list):
+        raise AppException(422, "Could not read which invoices to file as new.",
+                           detail="file_as_new")
+    return [str(i) for i in parsed]
+
+
 def _revision_map(raw: Optional[str]) -> Optional[dict]:
     """`{"<document index>": "<invoice id>"}` off the multipart form, or nothing.
 
@@ -142,6 +159,12 @@ async def apply_proforma_invoice(
         description='{"<document index>": "<invoice id>"} - which documents in this file '
                     "supersede an invoice already on file (AC-E7).",
     ),
+    file_as_new: Optional[str] = Form(
+        None,
+        description="[\"<document index>\"] - documents whose revision offer the operator "
+                    "UNTICKED. They are filed as new documents under the next free number, "
+                    "never merged into the one they would otherwise land on.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -171,6 +194,7 @@ async def apply_proforma_invoice(
         source_ref=file.filename,
         actor=_actor(current_user),
         revision_of=_revision_map(revision_of),
+        file_as_new=_new_document_list(file_as_new),
     )
     db.commit()
     return out

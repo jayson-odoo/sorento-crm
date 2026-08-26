@@ -435,7 +435,7 @@ describe('ProformaUploadDialog - currency, the last resort (AC-P3.1)', () => {
     await waitFor(() =>
       // The fourth argument is the per-document revision selection - empty here, because
       // nothing on file matches this upload (F5b).
-      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD', {}),
+      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD', {}, []),
     );
   });
 });
@@ -492,9 +492,13 @@ describe('ProformaUploadDialog - filing a second send as a revision', () => {
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
-    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {
-      '0': 'pi-earlier',
-    });
+    expect(applyProformaInvoice).toHaveBeenCalledWith(
+      file,
+      'sup-1',
+      null,
+      { '0': 'pi-earlier' },
+      [],
+    );
   });
 
   it('files a new PI when the operator unticks it', async () => {
@@ -515,7 +519,9 @@ describe('ProformaUploadDialog - filing a second send as a revision', () => {
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
-    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {});
+    // Unticked, so the document is named as one to file NEW - an empty `revision_of`
+    // alone would have landed it on the invoice already there.
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {}, ['0']);
   });
 
   it('offers nothing when the preview names no candidate', async () => {
@@ -547,7 +553,7 @@ describe('ProformaUploadDialog - Test then Confirm', () => {
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
-    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {});
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {}, []);
     // The dry run is NOT re-sent: it writes nothing, and a Confirm that only re-tested
     // closed the dialog as if it had saved.
     expect(testProformaInvoice).toHaveBeenCalledTimes(1);
@@ -629,6 +635,74 @@ describe('ProformaUploadDialog - a Confirm that writes nothing new says so', () 
     expect(confirmButton()).toHaveAttribute(
       'title',
       expect.stringContaining('could not be read'),
+    );
+  });
+});
+
+describe('ProformaUploadDialog - unticking the offer files a new invoice', () => {
+  it('tells the backend which documents were unticked', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [
+        {
+          index: 0,
+          invoice_id: 'pi-new',
+          pi_number: 'PI-jinbaichuan_rev_next_overlap-1-2',
+          invoice_date: '2026-07-31',
+          currency: 'CNY',
+          currency_source: 'document',
+          lines: 5,
+          revision_no: 1,
+          revision_of_id: null,
+          total_amount: 1000,
+          unmatched_items: [],
+          created: true,
+        },
+      ],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: /Upload as a revision of/ }),
+    );
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    // Not just an empty `revision_of`: the SAME file derives the SAME number, so without
+    // saying "file this as new" the apply lands in place and creates nothing.
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {}, ['0']);
+    expect(
+      await screen.findByText(/Created PI-jinbaichuan_rev_next_overlap-1-2/),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about filing as new when the offer is left ticked', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+    await screen.findByRole('checkbox', { name: /Upload as a revision of/ });
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(
+      file,
+      'sup-1',
+      null,
+      { '0': 'pi-earlier' },
+      [],
     );
   });
 });

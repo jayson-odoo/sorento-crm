@@ -85,6 +85,10 @@ export function ProformaUploadDialog({
   // preview's own proposal (AC-E6) and unticked by anyone who disagrees - the pre-loading
   // list carries no invoice number, so the match is a suggestion and the operator decides.
   const [revisionOf, setRevisionOf] = useState<RevisionSelection>({});
+  // Which documents were OFFERED a revision, so an untick can be told from "there was
+  // nothing to untick". Held apart from the preview because the apply closure below reads
+  // it, and reading the preview there makes the upload hook's own type circular.
+  const [offered, setOffered] = useState<string[]>([]);
   const invalidateLists = useProformaInvoicesApplied();
 
   // Cleared on every open, like the file and the verdict: a supplier or currency left over
@@ -95,6 +99,7 @@ export function ProformaUploadDialog({
       setSupplierOption(null);
       setCurrency('');
       setRevisionOf({});
+      setOffered([]);
     }
   }, [open]);
 
@@ -102,7 +107,16 @@ export function ProformaUploadDialog({
     open,
     preview: (file) => previewProformaInvoice(file, supplierId as string, trimmedCurrency),
     apply: (file) =>
-      applyProformaInvoice(file, supplierId as string, trimmedCurrency, revisionOf),
+      applyProformaInvoice(
+        file,
+        supplierId as string,
+        trimmedCurrency,
+        revisionOf,
+        // The documents whose offer was UNTICKED, named explicitly: the same file derives
+        // the same number, so an absent `revision_of` alone would land the upload on the
+        // invoice already there and report "updated in place" with no new row.
+        offered.filter((index) => !revisionOf[index]),
+      ),
     test: (file) => testProformaInvoice(file, supplierId as string, trimmedCurrency),
     onApplied: (result) => {
       invalidateLists();
@@ -153,13 +167,17 @@ export function ProformaUploadDialog({
   useEffect(() => {
     if (!preview) {
       setRevisionOf({});
+      setOffered([]);
       return;
     }
+    const withCandidate = preview.documents.filter((doc) => doc.revision_candidate);
+    setOffered(withCandidate.map((doc) => String(doc.index)));
     setRevisionOf(
       Object.fromEntries(
-        preview.documents
-          .filter((doc) => doc.revision_candidate)
-          .map((doc) => [String(doc.index), doc.revision_candidate!.invoice_id]),
+        withCandidate.map((doc) => [
+          String(doc.index),
+          doc.revision_candidate!.invoice_id,
+        ]),
       ),
     );
   }, [preview]);

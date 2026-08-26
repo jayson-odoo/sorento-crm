@@ -14,6 +14,9 @@
  *       multipart: file + supplier_id [+ currency] [+ revision_of]
  *       `revision_of` is JSON `{"<document index>": "<invoice id>"}` - one file holds
  *       several documents, so whether each is a revision is answered per document (AC-E7).
+ *       `file_as_new` is JSON `["<document index>"]` - the documents whose offer was
+ *       UNTICKED. Needed on top of an absent `revision_of` because the same file derives
+ *       the same number: without it the apply lands in place and creates nothing.
  *  GET  /api/v1/scm/proforma-invoices?supplier_id&placement&limit&offset -> 200 ProformaInvoiceListResponse
  *       `placement` narrows to not_converted / converted / split (AC-F6). The API defaults
  *       to all of them; the LIST defaults its control to Not converted, which is the
@@ -407,6 +410,7 @@ function proformaForm(
   supplierId: string,
   currency?: string | null,
   revisionOf?: RevisionSelection | null,
+  fileAsNew?: string[] | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -416,6 +420,12 @@ function proformaForm(
   if (currency) body.append('currency', currency);
   if (revisionOf && Object.keys(revisionOf).length > 0) {
     body.append('revision_of', JSON.stringify(revisionOf));
+  }
+  // An explicit UNTICK. Absent `revision_of` alone cannot say it: a second upload of the
+  // same file derives the same document number and would land on the invoice already
+  // there, which is what "nothing was created" meant.
+  if (fileAsNew && fileAsNew.length > 0) {
+    body.append('file_as_new', JSON.stringify(fileAsNew));
   }
   return body;
 }
@@ -437,10 +447,11 @@ export async function applyProformaInvoice(
   supplierId: string,
   currency?: string | null,
   revisionOf?: RevisionSelection | null,
+  fileAsNew?: string[] | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, currency, revisionOf),
+    body: proformaForm(file, supplierId, currency, revisionOf, fileAsNew),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }

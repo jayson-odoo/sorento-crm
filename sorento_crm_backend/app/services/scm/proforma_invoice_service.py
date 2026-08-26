@@ -345,16 +345,19 @@ def _revision_targets(
     return found
 
 
-def _available_number(db: Session, supplier_id: str, base: str, revision_no: int) -> str:
+def _available_number(
+    db: Session, supplier_id: str, base: str, attempt: int, marker: str = "R"
+) -> str:
     """A document number free for THIS supplier, starting from what the file derived.
 
     Identity is (company, supplier, pi_number) and the pre-loading list derives its number
     positionally from the file, so a revision taken from the same file lands on the number it
     is revising. `-R2` is appended rather than a random suffix, because the number is read by
-    people and "PI-预装清单-1-R2" says what it is.
+    people and "PI-预装清单-1-R2" says what it is. `marker` is empty for a document filed as
+    NEW rather than as a revision: it is not revision 2 of anything, it is a second
+    document, and "-2" is what says so.
     """
     number = base
-    attempt = revision_no
     while (
         db.query(ProformaInvoice)
         .filter(
@@ -364,7 +367,7 @@ def _available_number(db: Session, supplier_id: str, base: str, revision_no: int
         .first()
         is not None
     ):
-        number = f"{base[:90]}-R{attempt}"
+        number = f"{base[:90]}-{marker}{attempt}"
         attempt += 1
     return number[:100]
 
@@ -673,6 +676,7 @@ def apply(
     source_ref: Optional[str] = None,
     actor: Optional[str] = None,
     revision_of: Optional[dict] = None,
+    file_as_new: Optional[list] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -696,6 +700,11 @@ def apply(
     # Checked before anything is written: a five-block file naming one bad revision target
     # fails whole rather than writing four revisions and then refusing.
     targets = _revision_targets(db, revision_of, supplier_id=supplier_id)
+    # Documents the operator explicitly UNTICKED the revision offer on. An untick is an
+    # instruction - file this as a new document - and without it the same file's derived
+    # number fell into the in-place replace below, so the upload reported "updated in
+    # place" and produced no new row at all.
+    filed_as_new = {str(i) for i in (file_as_new or [])}
 
     known = _products_by_code(
         db, {ln.item_code for d in parsed.documents for ln in d.lines}
@@ -730,6 +739,16 @@ def apply(
             )
             db.add(invoice)
             prior.status = "superseded"
+            existed = False
+        elif str(doc.index) in filed_as_new:
+            invoice = ProformaInvoice(
+                id=_uuid(),
+                supplier_id=supplier_id,
+                # The next free number for this supplier: `-2`, `-3`. Not `-R2` - it is a
+                # second document rather than a second version of one.
+                pi_number=_available_number(db, supplier_id, number, 2, marker=""),
+            )
+            db.add(invoice)
             existed = False
         else:
             invoice = (

@@ -439,3 +439,58 @@ def test_an_invoice_actually_on_a_container_is_still_not_offered():
         )
 
         assert preview["documents"][0]["revision_candidate"] is None
+
+
+# --------------------------------------------------------------------------------- #
+# Browser pass 3, finding 1 - an explicit untick files a NEW invoice
+# --------------------------------------------------------------------------------- #
+
+
+def test_unticking_the_revision_offer_creates_a_second_invoice_from_the_same_file():
+    """The identity a file derives is (supplier, pi_number), and the same file derives the
+    same number - so an untick fell straight into the idempotent in-place replace and the
+    upload reported "updated in place" with no new row. An explicit untick is an
+    instruction: file this as a NEW document, and give it the next free number."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w), source_ref="same.xlsx")
+        first = _invoices(db, w)[0]
+
+        out = _apply(db, w, _kailu(w), source_ref="same.xlsx", file_as_new=["1"])
+
+        assert out["documents_created"] == 1
+        assert out["documents_updated"] == 0
+        created = out["results"][0]
+        assert created["invoice_id"] != str(first.id)
+        assert created["pi_number"] != first.pi_number
+        assert created["pi_number"].startswith(first.pi_number)
+        assert len(_invoices(db, w)) == 2
+
+
+def test_the_new_invoice_is_not_a_revision_of_anything():
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w), source_ref="same.xlsx")
+        first = _invoices(db, w)[0]
+
+        out = _apply(db, w, _kailu(w), source_ref="same.xlsx", file_as_new=["1"])
+
+        new_id = out["results"][0]["invoice_id"]
+        new = db.query(ProformaInvoice).filter(ProformaInvoice.id == new_id).one()
+        assert new.revision_of_id is None
+        assert new.revision_no == 1
+        db.refresh(first)
+        assert first.status == "current"
+
+
+def test_without_the_untick_the_same_file_still_lands_in_place():
+    """AC-P1.4 - the idempotency a nervous second Confirm relies on is not narrowed."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w), source_ref="same.xlsx")
+
+        out = _apply(db, w, _kailu(w), source_ref="same.xlsx")
+
+        assert out["documents_created"] == 0
+        assert out["documents_updated"] == 1
+        assert len(_invoices(db, w)) == 1
