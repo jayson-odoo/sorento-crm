@@ -11,8 +11,10 @@ import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { BoardAmendDialog } from './BoardAmendDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
-import { SupplyBar } from './SupplyBar';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
+  COLOURS,
+  LABELS,
   contributionDecision,
   contributionSuggestion,
   contributionSupply,
@@ -193,6 +195,8 @@ export function FulfilmentBoardListView({
               <SupplyBar
                 segments={segmentsOf(parts, contribution.fulfilment_location)}
                 decided={false}
+                labels={LABELS}
+                colours={COLOURS}
               />
             </div>
           );
@@ -223,7 +227,12 @@ export function FulfilmentBoardListView({
               <span className="block truncate" title={text}>
                 {text}
               </span>
-              <SupplyBar segments={supply.segments} decided={supply.decided} />
+              <SupplyBar
+                segments={supply.segments}
+                decided={supply.decided}
+                labels={LABELS}
+                colours={COLOURS}
+              />
             </div>
           );
         },

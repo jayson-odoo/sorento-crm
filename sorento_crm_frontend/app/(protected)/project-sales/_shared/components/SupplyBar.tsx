@@ -2,16 +2,21 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
-import { COLOURS, LABELS } from '../../_shared/lib/supplyVocabulary';
-import { toMinor } from '../../_shared/lib/supplyComposition';
+import { toMinor } from '../lib/supplyComposition';
 
 /**
- * Anything with a kind and a quantity. The board's `SupplySegment` is one of these; the
- * order inquiry's three-kind segment (`orderInquiryKinds`) is the other, and it names its
- * own words and its own paint through `labels` / `colours` below.
+ * Anything with a kind and a quantity, where the kinds are ONE closed vocabulary. The
+ * board's `SupplySegment` is one of these (`SupplyKind`); the order inquiry's three-kind
+ * segment (`orderInquiryKinds`) is the other, and each names its own words and its own
+ * paint through `labels` / `colours` below.
+ *
+ * The kind is a TYPE PARAMETER rather than a bare `string` because `colours[kind]` is
+ * read without a guard: with `string` a caller could hand over a vocabulary its palette
+ * has no entry for, and the mismatch arrives as "Cannot read properties of undefined" in
+ * a cell rather than as a red squiggle on the call.
  */
-export interface BarSegment {
-  kind: string;
+export interface BarSegment<K extends string = string> {
+  kind: K;
   qty: string;
 }
 
@@ -29,21 +34,23 @@ export interface BarSegment {
  * Shared by the grid and the list so the two views cannot disagree about a colour - and
  * by the order inquiry's schedule and list (section 3.I2), which asks the same question
  * of a purchasing row with a three-word vocabulary of its own. The words and the paint
- * are props with the board's own as defaults, so there is ONE bar rather than a second
- * one that could drift from it by a pixel or a rounding.
+ * come in as props and there is no default vocabulary, so there is ONE bar rather than a
+ * second one that could drift from it by a pixel or a rounding, and the bar itself knows
+ * about neither vocabulary. Which is why it lives in `_shared` rather than under one of
+ * the two screens that draw it.
  */
-export function SupplyBar({
+export function SupplyBar<K extends string>({
   segments,
   decided,
   className,
-  labels = LABELS,
-  colours = COLOURS,
+  labels,
+  colours,
 }: {
-  segments: BarSegment[];
+  segments: BarSegment<K>[];
   decided: boolean;
   className?: string;
-  labels?: Record<string, string>;
-  colours?: Record<string, { bar: string }>;
+  labels: Record<K, string>;
+  colours: Record<K, { bar: string }>;
 }) {
   const total = segments.reduce((sum, segment) => sum + Math.abs(toMinor(segment.qty)), 0);
   if (segments.length === 0 || total === 0) return null;

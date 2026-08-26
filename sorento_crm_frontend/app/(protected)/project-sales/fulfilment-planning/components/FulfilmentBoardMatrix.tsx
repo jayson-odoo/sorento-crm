@@ -5,8 +5,14 @@ import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
-import { SupplyBar } from './SupplyBar';
-import { COLOURS, cellSupply, dominant, dominantText } from '../../_shared/lib/supplyVocabulary';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
+import {
+  COLOURS,
+  LABELS,
+  cellSupply,
+  dominant,
+  dominantText,
+} from '../../_shared/lib/supplyVocabulary';
 import type {
   BoardAxisRow,
   BoardCell,
@@ -280,7 +286,12 @@ function BoardCellButton({
 
       {/* The supply bar, and the dominant kind in words under it. The words are there because
           a colour alone is not a label, and short because the column is 150px wide. */}
-      <SupplyBar segments={supply.segments} decided={supply.decided} />
+      <SupplyBar
+        segments={supply.segments}
+        decided={supply.decided}
+        labels={LABELS}
+        colours={COLOURS}
+      />
       {lead ? (
         <span
           data-testid="cell-supply-lead"

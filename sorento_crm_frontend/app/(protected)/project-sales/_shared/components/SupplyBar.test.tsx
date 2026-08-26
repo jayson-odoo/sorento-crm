@@ -10,7 +10,12 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { SupplyBar } from './SupplyBar';
-import { COLOURS } from '../../_shared/lib/supplyVocabulary';
+import { COLOURS, LABELS } from '../lib/supplyVocabulary';
+
+/** The board's own vocabulary, named on every render the way a caller now has to name
+ *  one: the bar carries no default palette, so a screen cannot hand it a kind its own
+ *  colours have no entry for. */
+const vocabulary = { labels: LABELS, colours: COLOURS };
 
 function segments() {
   return screen.getByTestId('supply-bar').querySelectorAll('span[data-kind]');
@@ -18,7 +23,7 @@ function segments() {
 
 describe('SupplyBar', () => {
   it('draws one solid segment when a cell has one kind (AC-C1)', () => {
-    render(<SupplyBar segments={[{ kind: 'buy', qty: '71' }]} decided />);
+    render(<SupplyBar segments={[{ kind: 'buy', qty: '71' }]} decided {...vocabulary} />);
 
     const drawn = segments();
     expect(drawn).toHaveLength(1);
@@ -35,6 +40,7 @@ describe('SupplyBar', () => {
           { kind: 'shared', qty: '75' },
         ]}
         decided
+        {...vocabulary}
       />,
     );
 
@@ -46,27 +52,33 @@ describe('SupplyBar', () => {
   });
 
   it('names each segment in words, because a colour alone is not a label', () => {
-    render(<SupplyBar segments={[{ kind: 'own', qty: '454' }]} decided />);
+    render(<SupplyBar segments={[{ kind: 'own', qty: '454' }]} decided {...vocabulary} />);
 
     expect(segments()[0].getAttribute('title')).toBe('Use own location 454');
   });
 
   it('draws a decided bar solid and a suggested one faded (AC-C3)', () => {
     const { rerender } = render(
-      <SupplyBar segments={[{ kind: 'shared', qty: '71' }]} decided />,
+      <SupplyBar segments={[{ kind: 'shared', qty: '71' }]} decided {...vocabulary} />,
     );
     expect(screen.getByTestId('supply-bar').className).toContain('opacity-100');
 
-    rerender(<SupplyBar segments={[{ kind: 'shared', qty: '71' }]} decided={false} />);
+    rerender(
+      <SupplyBar segments={[{ kind: 'shared', qty: '71' }]} decided={false} {...vocabulary} />,
+    );
     expect(screen.getByTestId('supply-bar').className).toContain('opacity-50');
   });
 
   it('draws nothing at all when there is nothing to draw', () => {
-    const { rerender } = render(<SupplyBar segments={[]} decided={false} />);
+    const { rerender } = render(
+      <SupplyBar segments={[]} decided={false} {...vocabulary} />,
+    );
     expect(screen.queryByTestId('supply-bar')).not.toBeInTheDocument();
 
     // A composition that is entirely zero is not a bar of zero-width segments: it is no bar.
-    rerender(<SupplyBar segments={[{ kind: 'buy', qty: '0' }]} decided={false} />);
+    rerender(
+      <SupplyBar segments={[{ kind: 'buy', qty: '0' }]} decided={false} {...vocabulary} />,
+    );
     expect(screen.queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 });

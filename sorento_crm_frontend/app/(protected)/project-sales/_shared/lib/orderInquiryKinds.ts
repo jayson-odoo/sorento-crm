@@ -131,15 +131,6 @@ export function segmentsOfRow(row: OrderInquiryKindRow): OrderInquiryKindSegment
 }
 
 /**
- * Does this row carry that kind at all? What the cards filter on, and the reason the
- * filter is a ROW test rather than a quantity one: a row linked 5 of 8 is genuinely on a
- * purchase order AND genuinely still a buy, so it answers to either card.
- */
-export function rowCarriesKind(row: OrderInquiryKindRow, kind: OrderInquiryKind): boolean {
-  return segmentsOfRow(row).some((segment) => segment.kind === kind);
-}
-
-/**
  * A composition in the fewest words that still name it: "Buy 3", "PO 8", "PO 5 · Buy 3".
  *
  * Every kind with a quantity, not just the largest one: a cell that is half bought and

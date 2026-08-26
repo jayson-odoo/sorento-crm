@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { VERB_PALETTE_KEY } from '../../_shared/components/OrderInquiryVerbPill';
-import { SupplyBar } from '../../fulfilment-planning/components/SupplyBar';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   KIND_COLOURS,
   KIND_LABELS,
