@@ -48,11 +48,10 @@
  *                                                      (AC-F01 / AC-F09 / AC-F10).
  *
  *    Each recommendation row carries its frozen demand-channel split:
- *      project_need, retail_need, unclassified_need: number | null   (NULL on legacy)
- *          project_need is CONFIRMED unplaced Buy only - the leg that bypasses the
- *          reorder trigger. project_sheet_need: number | null carries the unconfirmed
- *          sheet-origin project leg, which was netted like any other commitment and is
- *          therefore already inside retail_need, never added to it.
+ *      project_need, retail_need: number | null      (NULL on legacy)
+ *          project_need is the un-linked remainder of raised Order Inquiry rows - the leg
+ *          that bypasses the reorder trigger, and since P3 the whole of project demand.
+ *          There is no third channel: a sales order with no class reads as retail.
  *      decisions_read_only: boolean                  true when the run is decided at
  *                                                    the other grain, so the location
  *                                                    row is a read and drill row

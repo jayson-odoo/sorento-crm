@@ -3,7 +3,7 @@
  *
  * The three things this drill exists to guarantee:
  *
- * - Demand is split by channel (Project / Retail / Unclassified), supply is NOT:
+ * - Demand is split by channel (Project / Retail), supply is NOT:
  *    stock, incoming SPO, PO and the reorder level are printed ONCE per location
  *    row, with no channel dimension (AC-F07).
  * - The once-rounded product figure ("Suggested once at the product") and the
@@ -148,17 +148,18 @@ describe('ProductLocationsPopover - data state (AC-F07 / AC-F08)', () => {
     expect(rows).toHaveTextContent('1.5/day');
   });
 
-  it('renders three per-channel demand columns', () => {
+  it('renders two per-channel demand columns, and never an Unclassified one', () => {
     renderPopover(state({ data: BLUE_LOCATIONS }));
     openPopover();
     const rows = screen.getByTestId('location-rows');
     expect(screen.getByRole('columnheader', { name: 'Project need' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Retail need' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Unclass. need' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('columnheader', { name: 'Unclass. need' }),
+    ).not.toBeInTheDocument();
     const brw = within(rows).getByText('BRW').closest('tr') as HTMLElement;
     expect(brw).toHaveTextContent('120'); // project_need
     expect(brw).toHaveTextContent('55'); // retail_need
-    expect(brw).toHaveTextContent('12'); // unclassified_need
   });
 
   it('prints the shared supply figures ONCE per location, with no channel dimension', () => {
@@ -237,7 +238,6 @@ describe('ProductLocationsPopover - legacy presentation (AC-F10)', () => {
         warehouse_name: 'Bandar Baru Warehouse',
         project_need: null,
         retail_need: null,
-        unclassified_need: null,
         on_hand: 60,
         incoming_spo: 200,
         on_order_po: 120,
@@ -261,7 +261,7 @@ describe('ProductLocationsPopover - legacy presentation (AC-F10)', () => {
     openPopover();
     const rows = screen.getByTestId('location-rows');
     const cells = within(rows).getAllByText('Unavailable');
-    expect(cells).toHaveLength(3); // Project, Retail, Unclass.
+    expect(cells).toHaveLength(2); // Project, Retail
   });
 
   it('does not render the legacy note on a front-planning run', () => {

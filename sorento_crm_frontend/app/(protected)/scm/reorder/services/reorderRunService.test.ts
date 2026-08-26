@@ -212,7 +212,7 @@ describe('reorderRunService - getRecommendations', () => {
     expect(u.searchParams.get('query')).toBeNull();
   });
 
-  it("returns each row's project_need / retail_need / unclassified_need / decisions_read_only UNTOUCHED (Stage 2)", async () => {
+  it("returns each row's project_need / retail_need / decisions_read_only UNTOUCHED (Stage 2)", async () => {
     apiFetch.mockResolvedValue(
       ok({
         data: [
@@ -220,8 +220,6 @@ describe('reorderRunService - getRecommendations', () => {
             id: 'rec-1',
             project_need: 120,
             retail_need: 55,
-            unclassified_need: 12,
-            project_sheet_need: 0,
             decisions_read_only: true,
           },
           {
@@ -229,7 +227,6 @@ describe('reorderRunService - getRecommendations', () => {
             // NULL on a legacy row - the service must not coerce this to 0.
             project_need: null,
             retail_need: null,
-            unclassified_need: null,
             decisions_read_only: false,
           },
         ],
@@ -240,13 +237,11 @@ describe('reorderRunService - getRecommendations', () => {
     expect(page.data[0]).toMatchObject({
       project_need: 120,
       retail_need: 55,
-      unclassified_need: 12,
       decisions_read_only: true,
     });
     expect(page.data[1]).toMatchObject({
       project_need: null,
       retail_need: null,
-      unclassified_need: null,
       decisions_read_only: false,
     });
   });

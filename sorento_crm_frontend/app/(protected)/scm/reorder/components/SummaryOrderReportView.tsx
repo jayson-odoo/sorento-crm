@@ -237,15 +237,18 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
                   />
                 </span>
               </Reading>
-              {/* Excluded from the actionable suggestion until somebody classifies
-                  it (AC-E06), and NOT a third demand class - an exception. */}
-              <Reading
-                label="Unclass."
-                value={r.unclassified_demand_qty}
-                dp={dp}
-                hint="Demand whose sales order carries no demand class"
-              >
-                {r.unclassified_demand_qty === null ? undefined : (
+              {/* An exception, never a third demand class, and since P4 an exception that
+                  should not occur: a sales order with no class reads as retail and the SO
+                  import refuses a file that would create one. Rendered ONLY where an OLD
+                  run still carries a figure, so a report of a clean run does not print a
+                  column of zeros for a state the system no longer has. */}
+              {r.unclassified_demand_qty ? (
+                <Reading
+                  label="Unclass."
+                  value={r.unclassified_demand_qty}
+                  dp={dp}
+                  hint="Demand whose sales order carries no demand class"
+                >
                   <DemandDrillPopover
                     productCode={r.product_code}
                     productName={r.product_name}
@@ -255,8 +258,8 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
                     runId={reportRunId}
                     decimalPlaces={dp}
                   />
-                )}
-              </Reading>
+                </Reading>
+              ) : null}
               {r.max_days_outstanding !== null ? (
                 <span
                   className={cn(
