@@ -447,6 +447,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const unassignedFor = (ln: SpoSuggestionLine) =>
     Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), qtyFor(ln)), 0);
 
+  /** Per warehouse, what the ticked demand accounts for - the same walk the cell reads. */
+  const claimedFor = (ln: SpoSuggestionLine) => {
+    const out = new Map<string, number>();
+    for (const { entry, take } of coverageTakes(ln, soKeysFor(ln), qtyFor(ln))) {
+      if (take <= 0) continue;
+      const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
+      if (!warehouse) continue;
+      out.set(warehouse, (out.get(warehouse) ?? 0) + take);
+    }
+    return out;
+  };
+
   const renderLocationCell = (ln: SpoSuggestionLine) => {
     const splits = splitsFor(ln);
     const qty = qtyFor(ln);
@@ -467,6 +479,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             line={ln}
             splits={splits}
             qty={qty}
+            claimed={claimedFor(ln)}
             disabled={disabled}
             triggerLabel={label}
             mismatch={mismatch}
@@ -1198,6 +1211,7 @@ function LocationSplitPopover({
   line,
   splits,
   qty,
+  claimed,
   disabled,
   triggerLabel,
   mismatch,
@@ -1206,6 +1220,11 @@ function LocationSplitPopover({
   line: SpoSuggestionLine;
   splits: SplitState[];
   qty: number;
+  /** What the ticked demand accounts for, per warehouse - the rest of the split is free
+   *  stock. Both parts land in the SAME warehouse whenever the unassigned share rides at a
+   *  warehouse an order also needs, and then no quantity on this popover can tell them
+   *  apart. */
+  claimed: Map<string, number>;
   disabled: boolean;
   triggerLabel: string;
   mismatch: boolean;
@@ -1252,6 +1271,36 @@ function LocationSplitPopover({
               {fmtInt(total)} / {fmtInt(qty)} split
             </span>
           </div>
+
+          {(() => {
+            const unassigned = Math.max(
+              qty - [...claimed.values()].reduce((sum, n) => sum + n, 0),
+              0,
+            );
+            if (unassigned <= 0 && claimed.size === 0) return null;
+            return (
+              <div className="space-y-1 rounded-md bg-muted/50 p-2 text-2xs">
+                <p className="font-medium">What this covers</p>
+                {[...claimed.entries()].map(([warehouseId, claimedQty]) => {
+                  const location = line.location_options.find(
+                    (o) => o.warehouse_id === warehouseId,
+                  );
+                  return (
+                    <p key={warehouseId} className="flex justify-between gap-2">
+                      <span>{location?.warehouse_code ?? 'Chosen location'}</span>
+                      <span className="tabular-nums">{fmtInt(claimedQty)}</span>
+                    </p>
+                  );
+                })}
+                {unassigned > 0 ? (
+                  <p className="flex justify-between gap-2 text-muted-foreground">
+                    <span>Unassigned</span>
+                    <span className="tabular-nums">{fmtInt(unassigned)}</span>
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
 
           <div className="space-y-2">
             {splits.map((split, i) => {

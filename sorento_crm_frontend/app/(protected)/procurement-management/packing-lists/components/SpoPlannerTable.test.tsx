@@ -736,3 +736,39 @@ describe('F7 - the quantity the operator typed is theirs', () => {
     expect(qtyInput()).toHaveValue(90);
   });
 });
+
+/**
+ * Browser pass 4, finding 3 - the destinations popover has to say the same thing the cell
+ * does. Untick an order whose warehouse is also the suggested one and the SPLIT does not
+ * move (both parts land in the same place); the cell says "16 + 127 unassigned" and the
+ * popover said "BRW 145" with no sign that 127 of it belongs to nobody.
+ */
+describe('F7 - the destinations popover names the unassigned share too', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('breaks the split into what is claimed and what is not', async () => {
+    renderTable();
+    // Untick the BRW order - BRW is also the suggested warehouse, so the split total there
+    // is unchanged and only this reading can tell the two apart.
+    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SI26-0100' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /BRW|locations/ }));
+
+    expect(await screen.findByText(/Unassigned/)).toBeInTheDocument();
+    expect(screen.getByText('70')).toBeInTheDocument();
+  });
+
+  it('says nothing about unassigned when every piece is claimed', async () => {
+    state.suggestion = suggestion({
+      lines: [plannerLine({ packed_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
+    });
+    renderTable();
+
+    fireEvent.click(await screen.findByRole('button', { name: /BRW|locations/ }));
+
+    expect(screen.queryByText(/Unassigned/)).not.toBeInTheDocument();
+  });
+});
