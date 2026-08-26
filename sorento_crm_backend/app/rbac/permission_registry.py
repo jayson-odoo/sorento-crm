@@ -538,6 +538,18 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "project_sales.order_inquiries.acknowledge",
+        "name": "Acknowledge Order Inquiry Rows",
+        "description": (
+            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
+            "documents are linked to it - reject one with a reason, run Link now, and "
+            "upload the purchase order and SPO books from the Order Inquiries page. "
+            "Separate from `projects.order_inquiry.action`, which is marking a row's "
+            "supply state: acknowledging is purchasing taking CS's instruction on, and "
+            "CS may not do it for them."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",

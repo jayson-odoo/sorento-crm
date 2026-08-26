@@ -107,6 +107,19 @@ class OrderInquiryRowOut(BaseModel):
     actioned_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
 
+    #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
+    #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns
+    #: below is declared here because `response_model` silently drops a field it has not
+    #: been told about, and the whole screen reads off them.
+    ack_state: str = "awaiting"
+    acknowledged_by_name: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+    rejected_by_name: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejected_reason: Optional[str] = None
+    #: When CS last amended a row purchasing had already acknowledged.
+    changed_at: Optional[datetime] = None
+
 
 class OrderInquiryDetail(BaseModel):
     id: str
@@ -218,6 +231,19 @@ class OrderInquiryWorklistRow(BaseModel):
     #: The document CS cited on an order back, so the screen can say the walk honoured it.
     cited_document: Optional[str] = None
 
+    #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with
+    #: it: `awaiting`, `acknowledged`, `changed` or `rejected`. Every one of the columns
+    #: below is declared here because `response_model` silently drops a field it has not
+    #: been told about, and the whole screen reads off them.
+    ack_state: str = "awaiting"
+    acknowledged_by_name: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+    rejected_by_name: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejected_reason: Optional[str] = None
+    #: When CS last amended a row purchasing had already acknowledged.
+    changed_at: Optional[datetime] = None
+
 
 class OrderInquiryMonthTotal(BaseModel):
     month: str
@@ -244,6 +270,22 @@ class OrderInquiryStateCounts(BaseModel):
     #: the service builds this dict off the rows themselves rather than off a fixed list.
     placed: int = 0
     total: int = 0
+
+
+class OrderInquiryAckCounts(BaseModel):
+    """The Acknowledgement filter's own four counts (`PLAN-scm-oi-handshake.md` section
+    4), computed with the `ack` filter itself DROPPED - the same rule the month, supplier,
+    project, raised-by and kind controls follow, so choosing one value leaves the other
+    three readable.
+
+    Declared field by field rather than left to the dict the service builds, because
+    `response_model` drops a key it has not been told about.
+    """
+
+    awaiting: int = 0
+    acknowledged: int = 0
+    changed: int = 0
+    rejected: int = 0
 
 
 class OrderInquiryKindTotals(BaseModel):
@@ -289,6 +331,54 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: Computed with the `kind` filter dropped, like every other control here, so
     #: pressing one card leaves the other two readable.
     kinds: OrderInquiryKindTotals = OrderInquiryKindTotals()
+    #: How many rows sit at each acknowledgement state (AC-H4), computed with the `ack`
+    #: filter dropped for the same reason `kinds` drops its own.
+    ack: OrderInquiryAckCounts = OrderInquiryAckCounts()
+
+
+class AcknowledgeRowsRequest(BaseModel):
+    """Purchasing takes on one row or a batch of them (AC-H2).
+
+    Ids only: what an acknowledgement means is fixed - the rows become purchasing's work
+    and the cascade runs for exactly them - so there is nothing else to say about it.
+    """
+
+    row_ids: List[str] = Field(..., min_length=1)
+
+
+class AcknowledgeResult(BaseModel):
+    """What one press did, in the two numbers the toast reports: how many rows were taken
+    on, and how much of them found a document at that moment."""
+
+    acknowledged: int = 0
+    #: Rows the cascade linked, and how many placements it made across them. `0` is an
+    #: ordinary answer: there may be nothing open to link to yet.
+    linked_rows: int = 0
+    links: int = 0
+
+
+class RejectRowRequest(BaseModel):
+    """Purchasing refuses a row, with a reason CS will read on the board cell.
+
+    The reason is REQUIRED (AC-H5). A refusal with no reason sends CS back to a person to
+    ask, which is the whole thing the board's "Rejected by X: Y" exists to stop.
+    """
+
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _reason_is_not_blank(self) -> "RejectRowRequest":
+        if not (self.reason or "").strip():
+            raise ValueError("Say why this row is being rejected.")
+        return self
+
+
+class LinkNowRequest(BaseModel):
+    """Run the cascade over acknowledged rows now (AC-H13), optionally narrowed to the
+    products an upload just touched. Omitted `product_ids` means every acknowledged or
+    changed row that still has something unlinked."""
+
+    product_ids: Optional[List[str]] = None
 
 
 class MarkInquiryRowsRequest(BaseModel):

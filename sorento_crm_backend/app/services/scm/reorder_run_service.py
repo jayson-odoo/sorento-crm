@@ -28,7 +28,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -540,21 +540,19 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         where.append("np.warehouse_id::text = ANY(:wids)")
         params["wids"] = [str(w) for w in warehouse_ids]
 
-    # Planning horizon: the committed JOIN and the committed figure read off it change
-    # ONLY when a horizon was asked for. `horizon is None` keeps the original `np.committed`
-    # column straight off the view - the exact SQL text every run before this feature ran -
-    # so an unhorizoned run cannot be affected by this branch existing at all.
-    if horizon is not None:
-        cv_join = (f"LEFT JOIN ({demand.horizon_committed_select_sql()}) cv "
-                   "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
-        committed_col = "COALESCE(cv.committed, 0) AS committed"
-        committed_expr = "COALESCE(cv.committed, 0)"
-        params["horizon"] = horizon
-    else:
-        cv_join = ("LEFT JOIN scm.committed_v cv "
-                   "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
-        committed_col = "np.committed"
-        committed_expr = "np.committed"
+    # The PLAN's own committed figure, on every run (`PLAN-scm-oi-handshake.md` section 3).
+    # It used to be read straight off `scm.committed_v` unless a horizon was asked for; the
+    # acknowledgement rule made that untrue, because a plan may only buy against an
+    # instruction purchasing has ACKNOWLEDGED, while the view goes on counting an awaiting
+    # one - it is still owed to the customer. `demand.horizon_committed_select_sql` is that
+    # narrower reading, with `:horizon` NULL on an unhorizoned run (every date comparison
+    # short-circuits true), so the two rules live in one SELECT rather than in a branch
+    # here that could answer differently.
+    cv_join = (f"LEFT JOIN ({demand.horizon_committed_select_sql()}) cv "
+               "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
+    committed_col = "COALESCE(cv.committed, 0) AS committed"
+    committed_expr = "COALESCE(cv.committed, 0)"
+    params["horizon"] = horizon
 
     # Captain, 20 Aug: "the on hand need to consider pool quantity only ... project on
     # hand quantity is not really an actual usable quantity." `w.segment` is the test
@@ -626,6 +624,40 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         ORDER BY p.product_code, w.warehouse_code
     """)
     return [dict(r) for r in db.execute(sql, params).mappings().all()]
+
+
+def awaiting_acknowledgement_rows(db: Session) -> int:
+    """How many order inquiry rows are waiting for purchasing to take them on.
+
+    The plan page's chip (`PLAN-scm-oi-handshake.md` section 4, AC-H10): the plan counts
+    acknowledged rows only, so the awaiting ones would otherwise be invisible on the very
+    screen that decides what to buy - a buyer would read a Project figure of nothing and
+    conclude there is nothing to do.
+
+    A COUNT of rows, live, not a figure frozen into the run log: it drops as the buyer
+    acknowledges, and a chip that still claimed six after they had cleared them would send
+    them looking for two that do not exist. Scoped to the rows that could ever BE demand -
+    a buy verb, still owed - so a cancelled instruction is not counted as work.
+    """
+    from app.models.project_so import (
+        ACK_AWAITING,
+        INQUIRY_PARTLY_LINKED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        IV_ORDER_BACK,
+        OrderInquiryRow,
+    )
+
+    return int(
+        db.query(func.count(OrderInquiryRow.id))
+        .filter(
+            OrderInquiryRow.ack_state == ACK_AWAITING,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+        )
+        .scalar()
+        or 0
+    )
 
 
 def _project_supply_reduction_map(db: Session, rows: list[dict],

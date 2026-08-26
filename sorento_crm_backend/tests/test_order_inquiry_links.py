@@ -336,15 +336,23 @@ class _World:
         return product
 
     def row(self, verb: str, qty, *, location="BRW-IB", cited=None, so_line=True,
-            item_code=None):
+            item_code=None, ack_state="acknowledged"):
+        """One instruction, ACKNOWLEDGED by default (`PLAN-scm-oi-handshake.md`).
+
+        Every test in this file is about where a row's quantity is LINKED, and since the
+        handshake a link is only ever made on a row purchasing has taken on - the cascade
+        and the Link dialog both refuse an awaiting one. Seeding these `awaiting` would
+        make the file exercise nothing at all; `ack_state` is a parameter so a test can
+        still ask for a row nobody has read.
+        """
         rid = _uid()
         self.db.execute(
             text(
                 "INSERT INTO " + P + ".order_inquiry_rows (id, company_id, "
                 "order_inquiry_id, so_line_id, item_code, qty, verb, stock_location, "
-                "cited_document, state, redirected_to_pool, created_at) "
-                "VALUES (:i, :c, :inq, :l, :code, :q, :v, :loc, :cd, 'raised', false, "
-                "now())"
+                "cited_document, state, ack_state, redirected_to_pool, created_at) "
+                "VALUES (:i, :c, :inq, :l, :code, :q, :v, :loc, :cd, 'raised', "
+                ":ack, false, now())"
             ),
             {
                 "i": rid,
@@ -356,6 +364,7 @@ class _World:
                 "v": verb,
                 "loc": location,
                 "cd": cited,
+                "ack": ack_state,
             },
         )
         self.db.flush()
