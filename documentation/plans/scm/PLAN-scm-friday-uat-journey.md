@@ -67,7 +67,7 @@ Walk in this order. Station 11 needs the links from station 6; station 12 runs l
 - Station 5: M310-CR-PJ at BRW-BB reads Project 0; MSK11B reads 26 at BRW-BB (the two confirmed OI rows) and nothing at BRW-IB.
 - Station 6: PO-2026/07-0029 style panel: outstanding 500, allocated 500, free 0, three placements, "location differs" against DC1.
 - Station 10: `on_order_v` for SRTWCY7405-PJ at BRW-IB reads 332 (SPO-2026/08-0061 lines 2 + 160 + 170).
-- Station 12 items 3 and 4: two real product codes to be chosen from the dev copy once I is in (one with open PO and nothing incoming; one in stock with outstanding SO).
+- Station 12 item 3: `SRTWC286-SH-PP` (dev copy 26 Aug: on hand 0, no SPO, open PO 72 on `202604-S0036` expected 2026-10-30, outstanding SO 180; alternate `MWT5506SS-DIY`, open PO 4 on `202607-S0080`). Item 4: `CSH2071` (on hand 4106, outstanding SO 2204 over 6 orders, available 1902, no SPO; alternate `SRTWT2214`, on hand 5274 / outstanding 4894 over 21 orders). Re-check both on the UAT box the day before: a stock or SO upload can move them.
 
 ## 6. Risks and prerequisites
 
@@ -81,6 +81,6 @@ Walk in this order. Station 11 needs the links from station 6; station 12 runs l
 ## 7. Open before the sheet is final
 
 1. Owner for applying the migrations on the UAT box.
-2. The two product codes for station 12 items 3 and 4.
+2. ~~The two product codes for station 12 items 3 and 4.~~ Chosen 26 Aug, see section 5.
 3. Station 9 multi-block behaviour.
 4. Whether Aiman signs off station 3 and 7 as observer.
