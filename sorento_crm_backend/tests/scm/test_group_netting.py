@@ -12,6 +12,7 @@ Postgres test (`tests/_pg_fixture.py::blank_session`, per PRINCIPLES.md - never 
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.services.scm.group_netting import (
@@ -214,3 +215,76 @@ def test_netting_for_products_reads_the_same_three_figures_off_postgres():
         "ZZTNETBRW-QQ",
         "ZZTNETMWH-QQ",
     }
+
+
+def test_an_spo_is_counted_once_however_many_shipments_are_in_the_book():
+    """The cartesian product this query was born with, pinned so it cannot come back.
+
+    `spo_supply.open_incoming_clauses()` names `InboundShipment.id`. Without an explicit
+    join SQLAlchemy adds `inbound_shipments` to the FROM list, and every allocation comes
+    back once per un-arrived shipment in the WHOLE table - fifteen times over on the dev
+    copy, and not at all on a schema with no shipments, which is every fresh CI one.
+
+    Two un-arrived shipments here and one allocation of 40 that belongs to neither: the
+    group must read 40, not 80 and not 0.
+    """
+    from tests.scm.test_project_supply_service_ladder import _shipment, _spo_line
+    from tests.test_so_supply_confirmation import _product, _sorento, _warehouse
+
+    with blank_session() as db:
+        _sorento(db)
+        product = _product(db)
+        own = _warehouse(db, "ZZTSPOBRW-QQ")
+        _shipment(db, eta=date.today() + timedelta(days=10))
+        _shipment(db, eta=date.today() + timedelta(days=20))
+        _spo_line(db, product, own, qty=40, arrives=date.today() + timedelta(days=5))
+        db.commit()
+
+        position = netting_for_products(db, [str(product.id)]).group_net(
+            str(product.id), "QQ"
+        )
+
+    assert position.net == Decimal("40")
+    assert [entry.spo_qty for entry in position.by_location] == [Decimal("40")]
+
+
+def test_the_db_constructor_and_the_ladders_own_pile_read_agree():
+    """One reader, two doors: `netting_for_products` (S12, no board) and
+    `ProjectSupplyService._pile_read` (the ladder's own) must answer the same three figures
+    for the same product, or the WhatsApp stock answer and the board would disagree in
+    public about what the group holds.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+    from tests.scm.test_project_supply_service_ladder import _spo_line
+    from tests.test_so_supply_confirmation import (
+        _core_line, _core_so, _product, _sorento, _stock, _warehouse,
+    )
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        own = _warehouse(db, "ZZTAGRBRW-QQ")
+        sibling = _warehouse(db, "ZZTAGRMWH-QQ")
+        _stock(db, product, own, on_hand=12)
+        _stock(db, product, sibling, on_hand=3)
+        core_so = _core_so(db, company_id)
+        _core_line(db, core_so, product, own, qty_ordered="50")
+        _spo_line(db, product, sibling, qty=7, arrives=date.today() + timedelta(days=5))
+        db.commit()
+
+        service = ProjectSupplyService(db)
+        pile = service._pile_read(
+            [str(product.id)],
+            [str(own.id), str(sibling.id)],
+        )
+        position = netting_for_products(db, [str(product.id)]).group_net(
+            str(product.id), "QQ"
+        )
+
+    by_id = {entry.warehouse_id: entry for entry in position.by_location}
+    for key, triple in pile.items():
+        entry = by_id[key[1]]
+        assert (entry.on_hand, entry.so_qty, entry.spo_qty) == (
+            triple["on_hand"], triple["so_qty"], triple["spo_qty"]
+        ), key
+    assert position.net == Decimal("-28")
