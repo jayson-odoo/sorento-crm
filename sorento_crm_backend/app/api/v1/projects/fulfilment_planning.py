@@ -45,7 +45,7 @@ from app.schemas.project_supply import (
     SupplyProposal,
 )
 from app.services import project_service as projects
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
@@ -471,12 +471,82 @@ def confirm_supply(
         service = ProjectSupplyService(db)
         order = service.get_order(pso_id)
         _assert_can_act_on(db, order, current_user)
-        body = service.confirm(order, payload, actor_user_id=current_user["id"])
+        if payload.batch_id:
+            body = _confirm_a_planning_change(db, order, payload, current_user["id"])
+        else:
+            body = service.confirm(order, payload, actor_user_id=current_user["id"])
         db.commit()
         return body
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
+    """The board's Confirm, pressed on a board opened at `?batch=<id>` (part 3, AC-P3-4).
+
+    ONE press, ONE call, ONE revision: the lines the planner composed become the batch
+    rows' own compositions, and the batch is applied - which is what writes the revision,
+    cancels the closed lines' rows, shifts their links and updates the surviving row in
+    place. Confirming the batch through some second endpoint would have meant two writes
+    and two chances for one of them to be the only one that landed.
+
+    A line the press decided that the batch does NOT carry still goes in, as an ordinary
+    confirmation beside the batch's rows: the planner pressed one button and is entitled
+    to have it mean what the screen said.
+
+    A second press is REFUSED (409), not answered with the first press's revision number.
+    """
+    from app.models.planning_change import PlanningChangeRow
+    from app.services import planning_change_service
+
+    batch_id = payload.batch_id
+    validate_uuid_path(batch_id, resource="Planning change batch")
+    rows = (
+        db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.batch_id == batch_id,
+            PlanningChangeRow.project_sales_order_id == str(order.id),
+        )
+        .all()
+    )
+    by_line = {str(row.project_line_id): row for row in rows if row.project_line_id}
+
+    extra: list[dict] = []
+    for line in payload.lines:
+        composition = line.model_dump()
+        row = by_line.get(str(line.project_line_id))
+        if row is None:
+            extra.append(composition)
+            continue
+        planning_change_service.set_row_decision(
+            db, batch_id, str(row.id), "amend", composition
+        )
+
+    result = planning_change_service.apply(
+        db,
+        batch_id,
+        actor_user_id,
+        extra_confirm_lines={str(order.id): extra},
+        refuse_if_applied=True,
+    )
+    failed = [
+        entry for entry in result["failed_orders"]
+        if entry.get("so_number")
+    ]
+    outcome = (result.get("outcomes") or {}).get(str(order.id))
+    confirmed = (outcome or {}).get("confirm_result")
+    if confirmed is None:
+        raise AppException(
+            status_code=422,
+            message=(
+                failed[0]["reason"]
+                if failed
+                else "Nothing on this planning change could be confirmed."
+            ),
+            code="planning_change_not_confirmed",
+        )
+    return confirmed
 
 
 @router.post("/sales-orders/{pso_id}/reconcile", response_model=ReconciliationSummary)

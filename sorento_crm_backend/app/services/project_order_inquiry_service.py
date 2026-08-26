@@ -371,6 +371,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         borrow_shortfalls: Sequence[Dict[str, Any]] = (),
+        settle_in_place_line_ids: Sequence[str] = (),
     ) -> Dict[str, Any]:
         """The Buy-only handoff, written INSIDE the atomic confirmation (PLAN section 4).
 
@@ -413,6 +414,17 @@ class ProjectOrderInquiryService:
         line (`carried: True`) has its still-raised row moved under this revision - a
         cancel and a re-raise, so `confirmed_unplaced_buy_rows` keeps seeing it under the
         ACTIVE decision - but purchasing already had that row, so it is not counted.
+
+        `settle_in_place_line_ids` names the lines a PLANNING CHANGE is applying (part 3,
+        AC-P3-5), and on those the supersede-and-re-raise above is the wrong shape: the
+        book moved the SAME instruction, so the row is UPDATED - same id, new quantity,
+        new date, every link kept, the previous value on its note - and no second raised
+        row is created for a line that already has one. `_settle_row_in_place` holds the
+        rule, including the over-cover unlink (AC-P3-8) that replaces the CANCEL_BALANCE
+        exception for a drop the row can simply absorb. Only where the line has exactly
+        ONE still-owed row: where it has two, this build has no way to say which of them
+        the book moved, and inventing an answer is worse than the supersede it already
+        does.
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
@@ -442,6 +454,11 @@ class ProjectOrderInquiryService:
         created = 0
         raised = 0
         exceptions: List[Dict[str, Any]] = []
+        settle_in_place = {str(line_id) for line_id in (settle_in_place_line_ids or [])}
+        # Which lines were ACTUALLY settled in place, not which were offered: the caller
+        # decides whether to raise a separate DELAY / ADVANCE row on that answer, and
+        # `_settle_row_in_place` declines a line whose rows it cannot read as one.
+        settled_in_place: List[str] = []
         for entry in buy_lines:
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
@@ -489,6 +506,11 @@ class ProjectOrderInquiryService:
             # shrunk to what is linked rather than cancelled. Cancelling it would have
             # taken the links down with it; leaving it whole would have counted the
             # unlinked half twice, once here and once on the row raised below.
+            if str(line.id) in settle_in_place and self._settle_row_in_place(
+                inquiry, entry, rows, need, decision
+            ):
+                settled_in_place.append(str(line.id))
+                continue
             linked = self._linked_qty_by_row([row.id for row in rows])
             placed = _ZERO
             for row in rows:
@@ -608,7 +630,128 @@ class ProjectOrderInquiryService:
         self.db.flush()
         if raised and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, raised)
-        return {"inquiry": inquiry, "created": created, "exceptions": exceptions}
+        return {
+            "inquiry": inquiry,
+            "created": created,
+            "exceptions": exceptions,
+            "settled_in_place": settled_in_place,
+        }
+
+    def _settle_row_in_place(
+        self,
+        inquiry: OrderInquiry,
+        entry: Dict[str, Any],
+        rows: Sequence[OrderInquiryRow],
+        need: Decimal,
+        decision: Any,
+    ) -> bool:
+        """A planning change moved THIS line: update its one row rather than replace it.
+
+        Part 3's own rule (AC-P3-5): the sales order book moved a line the plan already
+        told purchasing about, so what changed is the instruction's quantity and date -
+        not which instruction it is. Cancelling and re-raising would have handed the row's
+        links back with nothing said (a raised row carries none, but a linked one carries
+        everything the buyer has already arranged) and left the line reading as two
+        instructions on a screen whose whole point is one per line.
+
+        Three things this writes and the supersede path does not:
+
+        * the PREVIOUS value, on the row's own note - "Was 10 on 2026-08-25". A DELAY that
+          does not say what it was is not actionable, and the same is true of a quantity;
+        * the OVER-COVER unlink (AC-P3-8): more linked than the new quantity gives the
+          excess back, LATEST-dated document first, because the earliest arrival is the one
+          the line still needs. No `CANCEL_BALANCE` exception is written for a drop the row
+          absorbs in place - the exception exists for quantity already bought that this
+          line no longer wants, and the unlink is exactly how it stops wanting it;
+        * a need of nothing cancels the row outright, which is the honest end of a line the
+          book reduced to zero.
+
+        Returns False, changing nothing, when the line has no still-owed row or has more
+        than one: with two the caller's supersede is the only answer that does not guess.
+        """
+        live = [
+            row
+            for row in rows
+            if row.state
+            in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            and row.verb in (IV_ORDER, IV_ORDER_BACK)
+            and not row.redirected_to_pool
+        ]
+        if len(live) != 1:
+            return False
+        row = live[0]
+        previous_qty = _dec(row.qty)
+        previous_date = row.delivery_date
+        moved = (
+            f"Was {_qty_str(previous_qty)} on {previous_date.isoformat()}"
+            if previous_date
+            else f"Was {_qty_str(previous_qty)}, no previous delivery date"
+        )
+
+        if need <= _ZERO:
+            row.state = INQUIRY_CANCELLED
+            row.note = (
+                f"{row.note}; {moved}; the book left nothing to buy"
+                if row.note
+                else f"{moved}; the book left nothing to buy"
+            )
+            return True
+
+        links = self._links_of(row.id)
+        linked = sum((_dec(link.qty) for link in links), _ZERO)
+        if linked > need:
+            # Latest arrival first: the row keeps the cover that lands soonest.
+            by_arrival = sorted(
+                links,
+                key=lambda link: (
+                    self._link_expected_date(link) or date.max,
+                    link.linked_at or datetime.min,
+                ),
+                reverse=True,
+            )
+            giving_back: List[OrderInquiryLink] = []
+            for link in by_arrival:
+                excess = linked - need
+                if excess <= _ZERO:
+                    break
+                qty = _dec(link.qty)
+                if excess >= qty:
+                    giving_back.append(link)
+                    linked -= qty
+                    continue
+                # Only the EXCESS goes back, not the whole placement: the buyer arranged
+                # that quantity on that document and the line still wants most of it.
+                link.qty = qty - excess
+                linked = need
+            if giving_back:
+                self._remove_links(row, giving_back)
+
+        row.qty = need
+        row.delivery_date = entry.get("required_date")
+        if entry.get("stock_location"):
+            row.stock_location = entry.get("stock_location")
+        row.supply_decision_id = decision.id
+        row.order_inquiry_id = inquiry.id
+        row.note = f"{row.note}; {moved}" if row.note else moved
+        self._refresh_link_state([row])
+        self.db.flush()
+        return True
+
+    def _link_expected_date(self, link: OrderInquiryLink):
+        """When the document behind this link arrives, whichever family it names."""
+        if link.spo_allocation_id:
+            return (
+                self.db.query(SPOAllocation.expected_date)
+                .filter(SPOAllocation.id == link.spo_allocation_id)
+                .scalar()
+            )
+        if link.po_line_id:
+            return (
+                self.db.query(PurchaseOrderLine.expected_date)
+                .filter(PurchaseOrderLine.id == link.po_line_id)
+                .scalar()
+            )
+        return None
 
     def _raise_borrow_shortfalls(
         self,
@@ -1446,6 +1589,7 @@ class ProjectOrderInquiryService:
             self.db.query(
                 OrderInquiryLink,
                 OrderInquiryRow.stock_location,
+                OrderInquiryRow.delivery_date,
                 PurchaseOrder.id,
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
@@ -1494,6 +1638,7 @@ class ProjectOrderInquiryService:
         for (
             link,
             stock_location,
+            row_needed_by,
             po_id,
             po_number,
             po_issue_date,
@@ -1509,6 +1654,12 @@ class ProjectOrderInquiryService:
             is_spo = link.spo_allocation_id is not None
             location = warehouse_code or (spo_location_code if is_spo else None)
             tier, _sub = link_location_tier(stock_location, location, pools)
+            arrives = spo_expected_date if is_spo else po_expected_date
+            # AC-P3-7: the document lands after the row needs it. A fact about two dates,
+            # derived here rather than stored, so it cannot go stale against either - and
+            # never a reason to unlink: the quantity is still on that document, and taking
+            # it off would leave the row with nothing rather than with something late.
+            late = bool(arrives and row_needed_by and arrives > row_needed_by)
             out.setdefault(link.row_id, []).append(
                 {
                     "id": link.id,
@@ -1524,6 +1675,7 @@ class ProjectOrderInquiryService:
                     "issue_date": spo_issue_date if is_spo else po_issue_date,
                     "expected_date": spo_expected_date if is_spo else po_expected_date,
                     "tier": tier,
+                    "late": late,
                     "auto": bool(link.auto),
                     "linked_at": link.linked_at,
                     # WHO linked it, by name. Null on a cascade link, which nobody did.

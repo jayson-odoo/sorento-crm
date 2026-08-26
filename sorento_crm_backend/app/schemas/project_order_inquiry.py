@@ -44,6 +44,11 @@ class OrderInquiryLinkOut(BaseModel):
     #: Q5's location fit, 1 to 5. Never a filter, only a rank - a link outside tier 1 is
     #: the split instruction the buyer keys into AutoCount, not a mistake.
     tier: Optional[int] = None
+    #: The document arrives AFTER the row's own required date (AC-P3-7). Stated, never
+    #: acted on: purchasing decides whether a late document is still the answer, and
+    #: unlinking it here would take away the only cover the row has. Derived from the two
+    #: dates rather than stored, so it can never go stale against either of them.
+    late: bool = False
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.

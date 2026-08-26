@@ -20,6 +20,7 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -740,7 +741,12 @@ def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing
     ] == Decimal("150")
 
 
-def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
+def test_apply_qty_down_reduces_the_row_in_place_and_writes_no_cancel_balance(api):
+    """AC-P3-8 (26 August 2026), replacing the CANCEL_BALANCE this test used to pin.
+
+    The drop is not a second instruction: the row purchasing already holds is REDUCED, and
+    its own note carries what it was. An exception row beside it said the same thing twice,
+    on a screen whose whole rule is one row per sales-order line."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=50)
@@ -798,8 +804,18 @@ def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == "CANCEL_BALANCE")
         .all()
     )
-    assert len(cancel_rows) == 1
-    assert cancel_rows[0].qty == Decimal("16")
+    assert cancel_rows == [], "the row absorbed the drop; nothing is raised beside it"
+
+    db.expire_all()
+    live = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    )
+    assert len(live) == 1, "one order inquiry row per sales-order line, always"
+    assert live[0].qty == Decimal("50")
+    assert "66" in (live[0].note or ""), "and it says what it was"
 
 
 def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
@@ -2222,15 +2238,18 @@ def test_apply_qty_up_after_a_real_place_on_po_raises_only_the_delta(api):
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
         .all()
     )
-    assert len(live_rows) == 2, "the placed row untouched, plus one new row for the delta"
-    still_placed = [r for r in live_rows if r.state == INQUIRY_PLACED]
-    raised = [r for r in live_rows if r.state == "raised"]
-    assert len(still_placed) == 1
-    assert still_placed[0].id == placed_row.id
-    assert still_placed[0].qty == Decimal("5")
-    assert still_placed[0].po_ref == po.po_number  # untouched, PO link intact
-    assert len(raised) == 1
-    assert raised[0].qty == Decimal("5")  # the delta only, not the full 10
+    # AC-P3-5 (26 August 2026): ONE row, updated. The 5 already on the purchase order
+    # stays on it - the link is untouched - and the row now asks for the 10 the book says,
+    # of which 5 is covered. It used to be two rows, the placed 5 and a fresh 5, which is
+    # the same line reading as two instructions on purchasing's list.
+    assert len(live_rows) == 1, "one order inquiry row per sales-order line, always"
+    survivor = live_rows[0]
+    assert survivor.id == placed_row.id
+    assert survivor.qty == Decimal("10")
+    assert survivor.state == INQUIRY_PARTLY_LINKED
+    assert survivor.po_ref == po.po_number  # the placement is intact
+    links = ProjectOrderInquiryService(db)._links_of(survivor.id)
+    assert [str(link.qty) for link in links] == ["5.0000"]
 
 
 def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the_pool(api):
@@ -2553,19 +2572,15 @@ def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):
     assert po.po_number in row["why"]
 
 
-def test_a_wholly_bought_line_delayed_beyond_the_window_keeps_its_purchase(api):
-    """The other half of a release, and the ONLY half a v3 decision can reach.
+def test_a_wholly_bought_line_delayed_beyond_the_window_buys_for_the_pool(api):
+    """The captain's ruling of 26 August 2026 (AC-P3-10), reviving the dead release path.
 
-    `release` is gated on the held composition carrying a RESERVE
-    (`planning_change_service._suggestion`: `has_reserve = bool(held["reserve"])`), and
-    `_release_rows` then needs `buy_qty > 0` on that SAME composition. Under AC-L5 a line
-    is met wholly from stock or wholly bought, so those two conditions cannot both hold on
-    anything `confirm` will write - a RELEASE row with an inquiry row to move is reachable
-    only on a revision frozen before that rule.
-
-    What a wholly bought line does instead is pinned here, because it is what CS will
-    actually see: the Buy stands, its ORDER row survives the delay rather than being moved
-    to the pool, and a DELAY change row carries the old date.
+    `release` used to be gated on the held composition carrying a RESERVE, and the whole-
+    line rule (AC-L5) had already made a reserve-and-Buy mix impossible - so a wholly
+    bought line delayed most of a year suggested `keep` and purchasing was told nothing
+    worth acting on. It releases now: the purchase is for the POOL, so the row moves
+    there, and because nobody has put it on a document yet purchasing also gets a DELAY
+    carrying the date it moved from.
     """
     client, world = api
     db = world.db
@@ -2603,8 +2618,8 @@ def test_a_wholly_bought_line_delayed_beyond_the_window_keeps_its_purchase(api):
     out = planning_change_service.get_batch(db, str(batch.id))
     row = out["orders"][0]["rows"][0]
     assert row["held"]["reserve"] == [], "wholly bought, so there is no reserve to release"
-    assert row["suggested"] == "keep"
-    assert row["why"].startswith("Only a Buy is held")
+    assert row["suggested"] == "release"
+    assert "beyond the 60-day reserve window" in row["why"]
 
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
@@ -2630,11 +2645,12 @@ def test_a_wholly_bought_line_delayed_beyond_the_window_keeps_its_purchase(api):
         )
         .all()
     )
-    # The purchase is not lost and not moved: an ORDER row for the whole 150, still at the
-    # line's own location, with a DELAY row beside it naming the date it moved from.
+    # The purchase is not lost: an ORDER row for the whole 150, now for the POOL rather
+    # than for a line that has moved most of a year out, with a DELAY row beside it
+    # naming the date it moved from.
     orders = [r for r in live if r.verb == IV_ORDER]
     assert [str(r.qty) for r in orders] == ["150.0000"]
-    assert orders[0].stock_location == world.own_wh.warehouse_code
+    assert orders[0].stock_location == world.pool_wh.warehouse_code
     delays = [r for r in live if r.verb == "DELAY"]
     assert len(delays) == 1
     assert "2026-08-25" in (delays[0].note or "")

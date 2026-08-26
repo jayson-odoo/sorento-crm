@@ -2066,6 +2066,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         uncover_line_ids: Sequence[str] = (),
+        settle_in_place_line_ids: Sequence[str] = (),
     ) -> Dict[str, Any]:
         """One transaction, every CHOSEN line, or nothing (PLAN 3.1, AC-C01 as amended
         by PLAN-fulfilment-planning-from-autocount-so.md 13.4).
@@ -2101,6 +2102,12 @@ class ProjectSupplyService:
         remains a material change superseding the whole revision
         (`supersede_for_material_change`, which carries nothing at all) or a drift
         challenging it.
+
+        **The settle-in-place seam** (`PLAN-scm-cs-planning-uat.md` part 3, AC-P3-5): a
+        line named in `settle_in_place_line_ids` has its existing order inquiry row
+        UPDATED - same id, new quantity, new date, links kept - instead of superseded and
+        re-raised. Only a planning change sets it: it is the one caller that knows the
+        book moved the same instruction rather than issuing a new one.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -2226,6 +2233,9 @@ class ProjectSupplyService:
             checked,
             carried=carried,
             actor_user_id=actor_user_id,
+            # Part 3 (AC-P3-5): the lines a planning change is applying, whose order
+            # inquiry row is UPDATED rather than superseded and re-raised.
+            settle_in_place_line_ids=settle_in_place_line_ids,
             # The day the planner was deciding on (the board's own dial), so the proposal
             # frozen beside the decision is the one they were shown. Absent means today.
             as_of=getattr(payload, "as_of", None),
@@ -2900,6 +2910,7 @@ class ProjectSupplyService:
         carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
         as_of: Optional[date] = None,
+        settle_in_place_line_ids: Sequence[str] = (),
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
         if previous is not None:
@@ -3020,6 +3031,7 @@ class ProjectSupplyService:
                 order,
                 list(checked) + [(entry.line, entry, entry.fact) for entry in carried],
             ),
+            settle_in_place_line_ids=settle_in_place_line_ids,
         )
         self._auto_place_after_confirm(buy_lines, actor_user_id=actor_user_id)
         decided = len(checked) + len(carried)
@@ -3038,6 +3050,11 @@ class ProjectSupplyService:
             # only sign a planner gets that a movement is missing, so it reaches the screen.
             "transfers_written": transfers_written,
             "transfers_failed": transfers_failed,
+            # The lines whose order inquiry row this confirmation UPDATED rather than
+            # superseded (AC-P3-5). In-process only - `ConfirmResult` does not declare it,
+            # so the HTTP boundary drops it, and the only reader is the planning change
+            # that asked for the settle in the first place.
+            "settled_in_place": handoff.get("settled_in_place", []),
         }
 
     def _auto_place_after_confirm(

@@ -313,6 +313,14 @@ class ConfirmSupplyBody(BaseModel):
     #: back-dated confirmation of stock that has since gone would be a promise nobody can keep.
     #: Absent means today, which is what every caller sends today.
     as_of: Optional[date] = None
+    #: The planning-change batch this Confirm is ANSWERING (part 3, AC-P3-4).
+    #:
+    #: Set when the board was opened at `?orders=...&batch=<id>`: the lines above become
+    #: those batch rows' own compositions, the batch is applied, and exactly one revision
+    #: is written - one press, one call. Absent on every ordinary board Confirm. A second
+    #: Confirm naming a batch already applied is refused with a message rather than
+    #: writing a second revision.
+    batch_id: Optional[str] = None
 
 
 class ConfirmException(BaseModel):
