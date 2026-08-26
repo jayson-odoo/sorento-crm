@@ -28,7 +28,7 @@ delivery date is offerable as a column of its own, the reload skeleton is clampe
 chips and the period selects agree, a custom period reads DD/MM/YYYY, the GRAND TOTAL label
 stays inside the table, a saved view is validated before it is stored or published, a default
 view no longer freezes its year, column memory belongs to the report default, and the shared
-DataGrid keeps a column group whole through a drag. 220 pytest across the reporting suite,
+DataGrid keeps a column group whole through a drag. 221 pytest across the reporting suite,
 109 vitest (reports + shared DataGrid + listing column preferences).
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
