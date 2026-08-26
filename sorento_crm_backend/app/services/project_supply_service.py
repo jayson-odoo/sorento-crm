@@ -2067,6 +2067,7 @@ class ProjectSupplyService:
         actor_user_id: str,
         uncover_line_ids: Sequence[str] = (),
         settle_in_place_line_ids: Sequence[str] = (),
+        defer_auto_place: bool = False,
     ) -> Dict[str, Any]:
         """One transaction, every CHOSEN line, or nothing (PLAN 3.1, AC-C01 as amended
         by PLAN-fulfilment-planning-from-autocount-so.md 13.4).
@@ -2108,6 +2109,15 @@ class ProjectSupplyService:
         UPDATED - same id, new quantity, new date, links kept - instead of superseded and
         re-raised. Only a planning change sets it: it is the one caller that knows the
         book moved the same instruction rather than issuing a new one.
+
+        **`defer_auto_place`** hands the cascade back to the caller instead of running it
+        here, and only a planning change asks for it. The order matters: a planning change
+        cancels the CLOSED lines' rows and shifts their documents to the survivor AFTER
+        this call returns, so a cascade run here fills the survivor's headroom from any
+        free purchase-order line it can find first, and the closed lines' own documents
+        arrive to a row with nothing left to give them - re-dealt to a stranger instead of
+        following the line that still needs them. The product ids come back on
+        `auto_place_products`; `auto_place_for_confirmed_products` is the run.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -2236,6 +2246,7 @@ class ProjectSupplyService:
             # Part 3 (AC-P3-5): the lines a planning change is applying, whose order
             # inquiry row is UPDATED rather than superseded and re-raised.
             settle_in_place_line_ids=settle_in_place_line_ids,
+            defer_auto_place=defer_auto_place,
             # The day the planner was deciding on (the board's own dial), so the proposal
             # frozen beside the decision is the one they were shown. Absent means today.
             as_of=getattr(payload, "as_of", None),
@@ -2911,6 +2922,7 @@ class ProjectSupplyService:
         actor_user_id: str,
         as_of: Optional[date] = None,
         settle_in_place_line_ids: Sequence[str] = (),
+        defer_auto_place: bool = False,
     ) -> Dict[str, Any]:
         previous = self.active_decision(str(order.id))
         if previous is not None:
@@ -3033,7 +3045,17 @@ class ProjectSupplyService:
             ),
             settle_in_place_line_ids=settle_in_place_line_ids,
         )
-        self._auto_place_after_confirm(buy_lines, actor_user_id=actor_user_id)
+        auto_place_products = sorted(
+            {
+                str(entry["line"].product_id)
+                for entry in buy_lines
+                if entry["line"].product_id
+            }
+        )
+        if not defer_auto_place:
+            self.auto_place_for_confirmed_products(
+                auto_place_products, actor_user_id=actor_user_id
+            )
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -3055,10 +3077,14 @@ class ProjectSupplyService:
             # so the HTTP boundary drops it, and the only reader is the planning change
             # that asked for the settle in the first place.
             "settled_in_place": handoff.get("settled_in_place", []),
+            # The products whose cascade this confirmation OWES, when the caller asked to
+            # run it itself (`defer_auto_place`). Empty on every ordinary confirm, which
+            # has already run it by the time this returns. In-process only, like the above.
+            "auto_place_products": auto_place_products if defer_auto_place else [],
         }
 
-    def _auto_place_after_confirm(
-        self, buy_lines: Sequence[Dict[str, Any]], *, actor_user_id: str
+    def auto_place_for_confirmed_products(
+        self, product_ids: Sequence[str], *, actor_user_id: str
     ) -> None:
         """G2 rule 4: a decision confirm is one of the three moments the cascade runs -
         the rows `refresh_for_decision` just raised may already have an outstanding PO
@@ -3072,10 +3098,8 @@ class ProjectSupplyService:
         it would only repeat the placement, since re-running finds nothing left to place
         for a row already tagged.
         """
-        product_ids = {
-            entry["line"].product_id for entry in buy_lines if entry["line"].product_id
-        }
-        if not product_ids:
+        wanted = [str(product_id) for product_id in product_ids if product_id]
+        if not wanted:
             return
         try:
             with self.db.begin_nested():
@@ -3084,7 +3108,7 @@ class ProjectSupplyService:
                 )
 
                 ProjectOrderInquiryService(self.db).auto_place_for_products(
-                    list(product_ids),
+                    wanted,
                     actor_user_id=actor_user_id,
                     trigger="decision_confirm",
                 )
@@ -3522,7 +3546,7 @@ class ProjectSupplyService:
         that revision, and it therefore needs fresh ones or the movement it still implies
         would vanish because an unrelated line was reconfirmed.
 
-        Best-effort in a SAVEPOINT, mirroring `_auto_place_after_confirm` and for its
+        Best-effort in a SAVEPOINT, mirroring `auto_place_for_confirmed_products` and for its
         reason: the decision and the holds are already written by the time this runs, so a
         failure here must not turn a confirmation the planner was told succeeded into a
         500 - and without the savepoint the failed statement would poison the transaction

@@ -1900,7 +1900,9 @@ def _oi_demand_rows(
     return out, counts
 
 
-def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: str) -> int:
+def _retire_inquiry_rows(
+    db: Session, project_line_id: Optional[str], reason: str
+) -> List[str]:
     """`closed` (AC-R06, amended by AC-P3-6): the line is gone from the book, so what it
     asked purchasing for is cancelled - never deleted, because a cancelled row is still
     what purchasing was told.
@@ -1914,9 +1916,12 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
 
     An `actioned` row is still left alone bar the note. That state is a PERSON's word that
     purchasing dealt with it (`mark_rows` is its only writer), and a plan does not get to
-    overrule it."""
+    overrule it.
+
+    Returns THE ROWS IT CANCELLED, by id, and the shift below takes exactly those: a row
+    somebody cancelled last month is not this apply's to move documents off."""
     if not project_line_id:
-        return 0
+        return []
     rows = (
         db.query(OrderInquiryRow)
         .filter(
@@ -1925,7 +1930,7 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
         )
         .all()
     )
-    count = 0
+    cancelled: List[str] = []
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
         if row.state == INQUIRY_ACTIONED:
@@ -1933,14 +1938,27 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
         else:
             row.state = INQUIRY_CANCELLED
             row.note = note
-            count += 1
-    return count
+            cancelled.append(str(row.id))
+    return cancelled
+
+
+def _took_note(
+    note: Optional[str], qty: Decimal, document: Optional[str], who: Optional[str]
+) -> str:
+    """What a survivor's row says about a placement it inherited, and who applied it."""
+    stamp = (
+        f"Took {qty_text(qty)} on {document or 'an unnamed document'} from a line the "
+        "book closed"
+    )
+    if who:
+        stamp = f"{stamp} ({who})"
+    return f"{note}; {stamp}" if note else stamp
 
 
 def _shift_links_off_retired_lines(
     db: Session,
     order: ProjectSalesOrder,
-    retired_line_ids: Sequence[str],
+    cancelled_row_ids: Sequence[str],
     actor: Optional[str],
 ) -> int:
     """A closed line's placements move to the row that still needs them (AC-P3-6).
@@ -1952,25 +1970,36 @@ def _shift_links_off_retired_lines(
 
     THE SURVIVOR IS THE SAME PRODUCT ON THE SAME SALES ORDER, and only as much as it can
     hold: the sum of a row's links may never exceed its own quantity (`order_inquiry_links`
-    says so in a CHECK, and `committed_v` nets on it). What the survivor cannot take is
-    UNLINKED rather than left where it is - which is what "goes back through the cascade"
-    means: the purchase-order line becomes free again and the next raised row waiting for
-    that product can claim it. Nothing is dropped in silence; the removal writes its own
-    "Unlinked from ..." stamp on the cancelled row, exactly as a person's Unlink does.
+    says so in a CHECK, and `committed_v` nets on it).
 
-    Returns how many links moved.
+    **AS MUCH AS IT CAN HOLD IS A SPLIT, not a choice between all and nothing.** A survivor
+    short of the whole placement used to be offered none of it and the entire link went
+    back to the cascade - so a survivor with 6 of headroom against a 10-unit link ended up
+    holding nothing, and a stranger's row took the lot. It now takes its 6 on a link of its
+    own (the same document, the same purchase-order line, the same claim) and only the
+    remaining 4 goes back, which is what "whatever that row cannot take goes back through
+    the cascade" says. Going back means UNLINKED: the purchase-order line is free again and
+    the next raised row waiting for that product can claim it. Nothing is dropped in
+    silence - the removal writes its own "Unlinked from ..." stamp on the cancelled row,
+    exactly as a person's Unlink does.
+
+    `cancelled_row_ids` are the rows THIS apply just cancelled (`_retire_inquiry_rows`
+    returns them). Read off the line instead, an old cancelled row that still carried links
+    would have its documents re-dealt by a change that was never about it.
+
+    Returns how many placements moved.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     service = ProjectOrderInquiryService(db)
-    line_ids = [str(line_id) for line_id in retired_line_ids if line_id]
-    if not line_ids:
+    row_ids = [str(row_id) for row_id in cancelled_row_ids if row_id]
+    if not row_ids:
         return 0
 
     cancelled_rows = (
         db.query(OrderInquiryRow)
         .filter(
-            OrderInquiryRow.so_line_id.in_(line_ids),
+            OrderInquiryRow.id.in_(row_ids),
             OrderInquiryRow.state == INQUIRY_CANCELLED,
         )
         .all()
@@ -1995,7 +2024,10 @@ def _shift_links_off_retired_lines(
         .filter(
             OrderInquiryRow.so_line_id.in_([str(line.id) for line in order_lines]),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
-            OrderInquiryRow.verb.in_((IV_ORDER, IV_RESERVE_AND_ORDER)),
+            # The same verbs `_settle_row_in_place` reads as "a row that still owes this
+            # line something". An ORDER BACK is a Buy said differently (part 2 section 4b),
+            # so a survivor carrying one has headroom a shifted placement can fill.
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)),
         )
         .order_by(OrderInquiryRow.delivery_date.asc().nullslast(),
                   OrderInquiryRow.created_at.asc())
@@ -2007,6 +2039,7 @@ def _shift_links_off_retired_lines(
             survivors_by_product[product_id].append(row)
 
     moved = 0
+    who = _user_name(db, actor)
     touched: List[OrderInquiryRow] = []
     for cancelled in cancelled_rows:
         links = service._links_of(cancelled.id)
@@ -2014,33 +2047,52 @@ def _shift_links_off_retired_lines(
             continue
         product_id = product_by_line.get(str(cancelled.so_line_id))
         candidates = survivors_by_product.get(product_id or "", [])
-        leftover: List[Any] = []
         for link in links:
-            taker = next(
-                (row for row in candidates if service._unlinked_need(row) >= _dec(link.qty)),
-                None,
-            )
-            if taker is None:
-                leftover.append(link)
-                continue
-            link.row_id = taker.id
-            db.flush()
-            service._invalidate_link_cache()
-            taker.note = (
-                f"{taker.note}; Took {qty_text(_dec(link.qty))} on "
-                f"{link.document or 'an unnamed document'} from a line the book closed"
-                if taker.note
-                else (
-                    f"Took {qty_text(_dec(link.qty))} on "
-                    f"{link.document or 'an unnamed document'} from a line the book closed"
-                )
-            )
-            if taker not in touched:
-                touched.append(taker)
-            moved += 1
-        if leftover:
-            # Back to the cascade: the document is free again for whoever needs it next.
-            service._remove_links(cancelled, leftover)
+            whole = _dec(link.qty)
+            remaining = whole
+            repointed = False
+            for taker in candidates:
+                if remaining <= _ZERO:
+                    break
+                headroom = service._unlinked_need(taker)
+                if headroom <= _ZERO:
+                    continue
+                take = min(headroom, remaining)
+                if take == whole:
+                    # One survivor holds the whole placement: the link itself moves, id,
+                    # claim and linking history intact. Nothing is split, so nothing is
+                    # rewritten.
+                    link.row_id = taker.id
+                    repointed = True
+                else:
+                    db.add(
+                        OrderInquiryLink(
+                            company_id=link.company_id,
+                            row_id=taker.id,
+                            po_line_id=link.po_line_id,
+                            spo_allocation_id=link.spo_allocation_id,
+                            document=link.document,
+                            qty=take,
+                            linked_by=actor,
+                            linked_at=datetime.utcnow(),
+                            auto=bool(link.auto),
+                            # The SAME claim: it is the document's, not the row's, and two
+                            # links on one document already share one.
+                            claim_id=link.claim_id,
+                        )
+                    )
+                remaining -= take
+                db.flush()
+                service._invalidate_link_cache()
+                taker.note = _took_note(taker.note, take, link.document, who)
+                if taker not in touched:
+                    touched.append(taker)
+                moved += 1
+            if not repointed:
+                # Whatever the survivors did not take goes back to the cascade, and the
+                # part they DID take now lives on links of their own - so the original is
+                # removed either way, and the purchase-order line is free for its balance.
+                service._remove_links(cancelled, [link])
         if cancelled not in touched:
             touched.append(cancelled)
 
@@ -2309,15 +2361,23 @@ def _apply_one_order(
     revision_no = current_revision
     confirm_result: Optional[dict] = None
     settled_in_place: List[str] = []
+    auto_place_products: List[str] = []
     if confirm_lines:
         body = ConfirmSupplyBody(lines=[_to_confirm_line(p) for p in confirm_lines])
         result = supply.confirm(
             order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids,
             settle_in_place_line_ids=settle_line_ids,
+            # The cascade waits for the shift below. Run inside `confirm`, it filled the
+            # survivor's headroom from ANY free purchase-order line first, so the closed
+            # lines' own documents arrived a moment later to a row with nothing left to
+            # give them and were re-dealt to a stranger - the opposite of AC-P3-6, which
+            # sends a closed line's placements to the line that still needs them.
+            defer_auto_place=True,
         )
         revision_no = result["revision_no"]
         confirm_result = result
         settled_in_place = list(result.get("settled_in_place") or [])
+        auto_place_products = list(result.get("auto_place_products") or [])
         revised = True
     elif active_decision is not None and (replanned or retired):
         supply.supersede_for_material_change(
@@ -2330,18 +2390,47 @@ def _apply_one_order(
     # purchasing was told - and their links move to the surviving row of the same product
     # on the same order first (AC-P3-6). After the confirm, so the survivor already carries
     # its new quantity and has the headroom to take them.
+    cancelled_row_ids: List[str] = []
     for line_id in retired_line_ids:
-        _retire_inquiry_rows(
-            db, line_id, "The line was closed by a planning change batch."
+        cancelled_row_ids.extend(
+            _retire_inquiry_rows(
+                db, line_id, "The line was closed by a planning change batch."
+            )
         )
-    if retired_line_ids:
+    if cancelled_row_ids:
         # FLUSH FIRST. The application's session runs `autoflush=False`
         # (`app.database.SessionLocal`), so the cancellations above are pending ORM state
         # and the shift's own query would come back empty - which is exactly what happened
         # live on SO381895 (26 August 2026): both closed rows kept their links while the
         # test suite, on an autoflushing session, saw them move.
         db.flush()
-        _shift_links_off_retired_lines(db, order, retired_line_ids, actor)
+        _shift_links_off_retired_lines(db, order, cancelled_row_ids, actor)
+
+    # NOW the cascade, once every document this order already owns has found its own row.
+    # Whatever headroom is still open after the shift is what genuinely needs a stranger's
+    # purchase order, and that is what this fills.
+    if auto_place_products:
+        supply.auto_place_for_confirmed_products(
+            auto_place_products, actor_user_id=actor
+        )
+
+    # A press whose batch rows were only `release` / `retire` composes nothing: those lines
+    # LEAVE the revision (`supersede_for_material_change`) rather than being confirmed into
+    # one. It still applied - rows moved to the pool, rows were cancelled, links shifted -
+    # so the board's Confirm answers with what happened rather than refusing 422 over work
+    # that was written.
+    if confirm_result is None and revised:
+        confirm_result = {
+            "revision_no": revision_no,
+            "confirmed_at": datetime.utcnow(),
+            "review_state": supply._review_state(order) or "needs_cs_review",
+            "inquiry_rows_created": 0,
+            "exceptions": [],
+            "lines_decided": 0,
+            "lines_undecided": replanned + retired,
+            "transfers_written": 0,
+            "transfers_failed": 0,
+        }
 
     # Read the previous revision's OWN reason back by id, now that `confirm()`/
     # `supersede_for_material_change()` have run: the genuine drift reason

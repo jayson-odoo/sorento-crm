@@ -668,6 +668,12 @@ class ProjectOrderInquiryService:
 
         Returns False, changing nothing, when the line has no still-owed row or has more
         than one: with two the caller's supersede is the only answer that does not guess.
+        It also declines a lone PLACED (or actioned) row that carries NO link, and that is
+        the SO349754 WESERP10B shape: purchasing put 5 on a purchase order through a path
+        that writes no link row, so there is nothing here to keep whole - restating the
+        row at the new need would silently demote real placed supply back to raised and
+        lose the netting that says 5 of it is already bought. The caller's own path nets
+        `placed` off the need and raises only the difference, which is the right answer.
         """
         live = [
             row
@@ -680,6 +686,8 @@ class ProjectOrderInquiryService:
         if len(live) != 1:
             return False
         row = live[0]
+        if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not self._links_of(row.id):
+            return False
         previous_qty = _dec(row.qty)
         previous_date = row.delivery_date
         moved = (
@@ -702,6 +710,7 @@ class ProjectOrderInquiryService:
                 if row.note
                 else f"{moved}; the book left nothing to buy"
             )
+            self._retire_settled_cancel_balance(rows, decision)
             self.db.flush()
             return True
 
@@ -735,15 +744,36 @@ class ProjectOrderInquiryService:
                 self._remove_links(row, giving_back)
 
         row.qty = need
-        row.delivery_date = entry.get("required_date")
+        # Only when the confirmation states one. A line whose new composition carries no
+        # required date must not have the date purchasing is working to erased.
+        if entry.get("required_date"):
+            row.delivery_date = entry.get("required_date")
         if entry.get("stock_location"):
             row.stock_location = entry.get("stock_location")
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
         row.note = f"{row.note}; {moved}" if row.note else moved
+        self._retire_settled_cancel_balance(rows, decision)
         self._refresh_link_state([row])
         self.db.flush()
         return True
+
+    def _retire_settled_cancel_balance(
+        self, rows: Sequence[OrderInquiryRow], decision: Any
+    ) -> None:
+        """A settle answers the exception an earlier revision raised for the same line.
+
+        A still-raised `CANCEL_BALANCE` says "placed X, new need Y" against a quantity
+        this settle has just restated in place - so left standing it asks purchasing to
+        answer a question about a figure that no longer exists, beside the very row that
+        now carries the true one. The supersede path cancels it on every reconfirm
+        (`refresh_for_decision`, the loop below); the settle path skipped it because it
+        only ever looks at the row it is updating.
+        """
+        for row in rows:
+            if row.verb == IV_CANCEL_BALANCE and row.state == INQUIRY_RAISED:
+                row.state = INQUIRY_CANCELLED
+                row.note = f"Superseded by revision {decision.revision_no}"
 
     def _link_expected_date(self, link: OrderInquiryLink):
         """When the document behind this link arrives, whichever family it names."""
