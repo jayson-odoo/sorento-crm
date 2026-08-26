@@ -124,7 +124,6 @@ REPORT = reg.register(
                 "sample_price": 23.3,
                 "expected_delivery_year": 9.5,
                 "purpose": 11.7,
-                "month": 12.0,
             },
             summary_row_total_label="TOTAL VALUE (BY SALESMAN)",
             summary_total_row_label="TOTAL SALES",

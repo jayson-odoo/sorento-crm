@@ -330,6 +330,19 @@ describe('ReportPage', () => {
     expect(container.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
   });
 
+  it('labels the totals row beside the money, as the workbook does (N3/AC-G9)', async () => {
+    const { container } = render();
+    await screen.findByText('PSSF26-0310');
+
+    const footer = container.querySelector('tfoot tr') as HTMLTableRowElement;
+    const cells = Array.from(footer.querySelectorAll('td'));
+    const label = cells.findIndex((cell) => cell.textContent?.trim() === 'Total');
+    const money = cells.findIndex((cell) => cell.textContent?.includes('1,166,830.70'));
+
+    expect(label).toBeGreaterThanOrEqual(0);
+    expect(label).toBe(money - 1);
+  });
+
   it('names both tabs, with the row count on the detail one', async () => {
     render();
 

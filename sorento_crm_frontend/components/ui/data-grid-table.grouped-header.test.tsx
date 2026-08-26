@@ -16,7 +16,7 @@ import { render, screen } from '@testing-library/react';
 import { useReactTable, getCoreRowModel, type ColumnDef } from '@tanstack/react-table';
 
 import { DataGrid } from './data-grid';
-import { DataGridTable } from './data-grid-table';
+import { DataGridTable, moveColumnKeepingGroups } from './data-grid-table';
 
 class ResizeObserverStub {
   observe() {}
@@ -55,7 +55,15 @@ const FLAT: ColumnDef<Row>[] = [
   { accessorKey: 'agent', id: 'agent', header: 'Sales agent', size: 140 },
 ];
 
-function Harness({ columns, draggable }: { columns: ColumnDef<Row>[]; draggable: boolean }) {
+function Harness({
+  columns,
+  draggable,
+  loading = false,
+}: {
+  columns: ColumnDef<Row>[];
+  draggable: boolean;
+  loading?: boolean;
+}) {
   const table = useReactTable({
     data: ROWS,
     columns,
@@ -66,7 +74,7 @@ function Harness({ columns, draggable }: { columns: ColumnDef<Row>[]; draggable:
     <DataGrid
       table={table}
       recordCount={ROWS.length}
-      isLoading={false}
+      isLoading={loading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsDraggable: draggable }}
     >
       <DataGridTable />
@@ -115,5 +123,55 @@ describe.each([
     const agent = screen.getByText('Sales agent').closest('th') as HTMLTableCellElement;
     expect(agent.rowSpan).toBe(1);
     expect(agent.colSpan).toBe(1);
+  });
+
+  it('gives a skeleton row one cell per LEAF column, never one for the group', () => {
+    // The skeleton iterated the FLAT columns, which include the group parent, so every
+    // skeleton row had one cell more than the table it stands in for and the widths under
+    // it went out by a column.
+    render(<Harness columns={GROUPED} draggable={draggable} loading />);
+
+    const body = document.querySelector('tbody') as HTMLElement;
+    const firstRow = body.querySelector('tr') as HTMLTableRowElement;
+    expect(firstRow.querySelectorAll('td').length).toBe(3);
+  });
+});
+
+describe('moveColumnKeepingGroups', () => {
+  /**
+   * A group's members must stay contiguous. TanStack renders the group header once per RUN
+   * of its members, so a foreign column dropped into the middle of one draws the header
+   * twice - and the split order is then persisted as the user's preference.
+   */
+  const ORDER = ['ps_no', 'agent', 'y1', 'y2', 'value'];
+  const GROUPS = [['y1', 'y2']];
+
+  it('moves a plain column exactly as before on a grid with no groups', () => {
+    expect(moveColumnKeepingGroups(['a', 'b', 'c'], 'c', 'a', [])).toEqual(['c', 'a', 'b']);
+    expect(moveColumnKeepingGroups(['a', 'b', 'c'], 'a', 'c', [])).toEqual(['b', 'c', 'a']);
+  });
+
+  it('lands a foreign column at the near edge of the group it was dropped into', () => {
+    // Dropped on the group's first member, coming from the left: before the group.
+    expect(moveColumnKeepingGroups(ORDER, 'ps_no', 'y1', GROUPS)).toEqual([
+      'agent', 'ps_no', 'y1', 'y2', 'value',
+    ]);
+    // Dropped on the group's last member, coming from the left: after the group.
+    expect(moveColumnKeepingGroups(ORDER, 'ps_no', 'y2', GROUPS)).toEqual([
+      'agent', 'y1', 'y2', 'ps_no', 'value',
+    ]);
+    // Coming from the right, onto the first member: before the group.
+    expect(moveColumnKeepingGroups(ORDER, 'value', 'y1', GROUPS)).toEqual([
+      'ps_no', 'agent', 'value', 'y1', 'y2',
+    ]);
+  });
+
+  it('keeps a member inside its own group', () => {
+    // Reordering the years among themselves is fine.
+    expect(moveColumnKeepingGroups(ORDER, 'y2', 'y1', GROUPS)).toEqual([
+      'ps_no', 'agent', 'y2', 'y1', 'value',
+    ]);
+    // Dragging one out of the group is not: the group is one choice (AC-G3).
+    expect(moveColumnKeepingGroups(ORDER, 'y1', 'ps_no', GROUPS)).toEqual(ORDER);
   });
 });

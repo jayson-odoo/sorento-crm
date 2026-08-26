@@ -46,7 +46,6 @@
  *
  *   GET    /api/v1/reports/{key}/views          -> { "mine": ReportView[], "shared": ReportView[] }
  *   POST   /api/v1/reports/{key}/views          body { "name", "view": ReportViewConfig } -> ReportView
- *   PUT    /api/v1/reports/{key}/views/{id}     body { "name"?, "view"? }                 -> ReportView
  *   DELETE /api/v1/reports/{key}/views/{id}     -> 204
  *   POST   /api/v1/reports/{key}/views/{id}/publish     body { "is_shared": bool }  -> ReportView
  *   POST   /api/v1/reports/{key}/views/{id}/set-default                             -> ReportView

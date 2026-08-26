@@ -561,6 +561,50 @@ function DataGridTableRowSelectAll({ size }: { size?: 'sm' | 'md' | 'lg' }) {
   );
 }
 
+/**
+ * A drag, with a column GROUP's members kept contiguous.
+ *
+ * TanStack draws a group header once per RUN of its members, so a foreign column dropped
+ * into the middle of a group renders that header twice - and the split order is then saved
+ * as the user's own preference. Two rules keep the group whole: a column from outside lands
+ * at the group's nearest EDGE, and a member cannot be dragged out of its group (the group
+ * is one choice, the same reason a saved view names the group and not its columns).
+ *
+ * `groups` is empty on every flat listing, where this is a plain `arrayMove` as before.
+ */
+export function moveColumnKeepingGroups(
+  order: string[],
+  activeId: string,
+  overId: string,
+  groups: string[][],
+): string[] {
+  const oldIndex = order.indexOf(activeId);
+  const overIndex = order.indexOf(overId);
+  if (oldIndex === -1 || overIndex === -1 || activeId === overId) return order;
+
+  const groupOf = (id: string) => groups.find((members) => members.includes(id));
+  const activeGroup = groupOf(activeId);
+  const overGroup = groupOf(overId);
+
+  if (activeGroup) {
+    // Inside its own group it reorders; anywhere else the drop is a no-op.
+    return overGroup === activeGroup ? arrayMove(order, oldIndex, overIndex) : order;
+  }
+
+  if (overGroup) {
+    const without = order.filter((id) => id !== activeId);
+    const indexes = overGroup.map((id) => without.indexOf(id)).filter((index) => index >= 0);
+    if (!indexes.length) return arrayMove(order, oldIndex, overIndex);
+    const first = Math.min(...indexes);
+    const last = Math.max(...indexes);
+    const dropped = without.indexOf(overId);
+    const insertAt = dropped - first <= last - dropped ? first : last + 1;
+    return [...without.slice(0, insertAt), activeId, ...without.slice(insertAt)];
+  }
+
+  return arrayMove(order, oldIndex, overIndex);
+}
+
 function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
@@ -577,15 +621,19 @@ function DataGridTable<TData>() {
       const effectiveOrder = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
       if (!Array.isArray(effectiveOrder) || effectiveOrder.length === 0) return;
 
-      const activeId = String(active.id);
-      const overId = String(over.id);
-      if (activeId === overId) return;
+      const groups = table
+        .getAllColumns()
+        .filter((column) => column.columns?.length)
+        .map((column) => column.getLeafColumns().map((leaf) => leaf.id));
 
-      const oldIndex = effectiveOrder.indexOf(activeId);
-      const newIndex = effectiveOrder.indexOf(overId);
-      if (oldIndex === -1 || newIndex === -1) return;
-
-      table.setColumnOrder(arrayMove(effectiveOrder, oldIndex, newIndex));
+      const next = moveColumnKeepingGroups(
+        effectiveOrder,
+        String(active.id),
+        String(over.id),
+        groups,
+      );
+      if (next === effectiveOrder) return;
+      table.setColumnOrder(next);
     };
 
     return (
@@ -632,7 +680,9 @@ function DataGridTable<TData>() {
           {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
-                {table.getVisibleFlatColumns().map((column, colIndex) => {
+                {/* LEAF columns: the flat list includes a group PARENT, which is not a
+                    cell, so every skeleton row came out one td wider than the table. */}
+                {table.getVisibleLeafColumns().map((column, colIndex) => {
                   return (
                     <DataGridTableBodyRowSkeletonCell column={column} key={colIndex}>
                       {column.columnDef.meta?.skeleton}

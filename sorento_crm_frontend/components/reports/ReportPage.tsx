@@ -144,9 +144,28 @@ function cellFor(column: ReportColumn) {
   };
 }
 
+/**
+ * Which visible column carries the "Total" label, by the SAME rule the workbook uses
+ * (AC-G9): the column immediately before the first one carrying a total, else the first
+ * column that carries none. The screen and the file are read side by side, so the word
+ * cannot sit in a different place in each.
+ */
+function isTotalLabelColumn(
+  leafIds: string[],
+  columnId: string,
+  totalled: Set<string>,
+): boolean {
+  const free = leafIds.filter((id) => !totalled.has(id));
+  if (!free.length) return false;
+  const firstTotal = leafIds.findIndex((id) => totalled.has(id));
+  const preferred = firstTotal > 0 ? leafIds[firstTotal - 1] : null;
+  return columnId === (preferred && !totalled.has(preferred) ? preferred : free[0]);
+}
+
 function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
   const byKey = new Map(layout.columns.map((c) => [c.key, c]));
   const grouped = new Set(layout.column_groups.flatMap((g) => g.keys));
+  const totalled = new Set(Object.keys(layout.totals));
 
   const leaf = (column: ReportColumn): ColumnDef<ReportRow> => ({
     accessorKey: column.key,
@@ -165,7 +184,7 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
      * column the user dragged to the front: pinning it to the column that happened to be
      * first when the run came back leaves the word stranded mid-row after a reorder.
      */
-    footer: ({ column: tableColumn }) => {
+    footer: ({ table: tableInstance }) => {
       if (column.type === 'money') {
         return (
           <span className="block text-end tabular-nums">
@@ -173,7 +192,8 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
           </span>
         );
       }
-      return tableColumn.getIndex() === 0 ? 'Total' : null;
+      const leafIds = tableInstance.getVisibleLeafColumns().map((c) => c.id);
+      return isTotalLabelColumn(leafIds, column.key, totalled) ? 'Total' : null;
     },
     meta: { headerTitle: column.label, skeleton: <Skeleton className="h-4 w-24" /> },
   });
