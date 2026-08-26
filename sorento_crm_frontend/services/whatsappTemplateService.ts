@@ -77,7 +77,8 @@ export type UseCase =
   | 'sla_handling_released'
   | 'form_action_voided'
   | 'form_action_reopened'
-  | 'product_discontinued';
+  | 'product_discontinued'
+  | 'ticket_resolved';
 
 export type ParamVariable =
   | 'contact_name'
@@ -317,6 +318,12 @@ export const USE_CASES: {
     label: 'Product Discontinued',
     description:
       'Batch alert sent to subscribed staff when products are newly discontinued. Map params to "Discontinued count" and "Discontinued link" (the deep link to the filtered product list).',
+  },
+  {
+    key: 'ticket_resolved',
+    label: 'Ticket Resolved (closing message)',
+    description:
+      'Sent to the CONTACT each time one of their enquiries is resolved. Map params to "Contact name" and "Full update message" (the enquiry excerpt) at minimum.',
   },
 ];
 

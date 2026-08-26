@@ -89,6 +89,10 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
+    # One closing message per resolved conversation ticket
+    # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
+    # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.
+    "ticket_resolved",
     # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
     # an admin types a free message in an entity's chat composer while the contact's
     # 24h window is CLOSED — the typed text is wrapped into these per-form templates
