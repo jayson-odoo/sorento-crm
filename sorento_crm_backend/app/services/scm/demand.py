@@ -334,14 +334,22 @@ WITH legs AS (
     -- matches nowhere. Counted at no location rather than invented at one, and visible in
     -- the view rather than dropped from it.
     --
-    -- `supply_decision_id IS NULL` is the whole guard, and it is what keeps this leg
-    -- disjoint from the confirmed leg above: a row a CS decision points at is counted
-    -- there, at the core line's product and location, and every OTHER raised row is
-    -- counted here at its own. The leg used to demand `so_line_id IS NULL` as well,
-    -- because a row naming a book line was already counted by the SHEET leg. P3 retired
-    -- that leg, so the extra condition would now DELETE such a row from planning instead
-    -- of de-duplicating it - the form raises ORDER BACK rows carrying an `so_line_id`
-    -- (`project_order_inquiry_import_service`), and they are demand like any other.
+    -- `supply_decision_id IS NULL` keeps this leg disjoint from the CONFIRMED leg above:
+    -- a row a CS decision points at is counted there, at the core line's product and
+    -- location, and every OTHER raised row is counted here at its own. The leg used to
+    -- demand `so_line_id IS NULL` as well, because a row naming a book line was already
+    -- counted by the SHEET leg; P3 retired that leg, and the condition would now DELETE
+    -- such a row from planning instead of de-duplicating it - the form raises ORDER BACK
+    -- rows carrying an `so_line_id` (`project_order_inquiry_import_service`), and they are
+    -- demand like any other.
+    --
+    -- The `NOT EXISTS` below keeps it disjoint from the BOOK leg, which is the other half
+    -- of the same worry and the half P3 opened: the book still speaks for retail, so a
+    -- decision-less row naming a RETAIL line would be counted twice, once as the line and
+    -- once as the row. Stated as "the book leg does not count this line" - the same four
+    -- openness conditions the book leg applies, plus its class test - rather than as "the
+    -- line is project": a row whose line is unreconciled, closed or fully delivered is
+    -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
@@ -361,6 +369,18 @@ WITH legs AS (
         WHERE l.row_id = oir.id
     ) flk ON TRUE
     WHERE oir.supply_decision_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM projects.sales_order_lines fpsl
+          JOIN sales_order_lines fsol ON fsol.id = fpsl.core_sales_order_line_id
+          JOIN sales_orders fso ON fso.id = fsol.sales_order_id
+          WHERE fpsl.id = oir.so_line_id
+            AND fso.demand_class IS DISTINCT FROM 'project'
+            AND fso.status = 'open'
+            AND fsol.line_status = 'open'
+            AND fsol.purchasing_status <> 'covered'
+            AND GREATEST(COALESCE(fsol.qty_required, fsol.qty_ordered)
+                       - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
@@ -476,14 +496,22 @@ WITH legs AS (
     -- matches nowhere. Counted at no location rather than invented at one, and visible in
     -- the view rather than dropped from it.
     --
-    -- `supply_decision_id IS NULL` is the whole guard, and it is what keeps this leg
-    -- disjoint from the confirmed leg above: a row a CS decision points at is counted
-    -- there, at the core line's product and location, and every OTHER raised row is
-    -- counted here at its own. The leg used to demand `so_line_id IS NULL` as well,
-    -- because a row naming a book line was already counted by the SHEET leg. P3 retired
-    -- that leg, so the extra condition would now DELETE such a row from planning instead
-    -- of de-duplicating it - the form raises ORDER BACK rows carrying an `so_line_id`
-    -- (`project_order_inquiry_import_service`), and they are demand like any other.
+    -- `supply_decision_id IS NULL` keeps this leg disjoint from the CONFIRMED leg above:
+    -- a row a CS decision points at is counted there, at the core line's product and
+    -- location, and every OTHER raised row is counted here at its own. The leg used to
+    -- demand `so_line_id IS NULL` as well, because a row naming a book line was already
+    -- counted by the SHEET leg; P3 retired that leg, and the condition would now DELETE
+    -- such a row from planning instead of de-duplicating it - the form raises ORDER BACK
+    -- rows carrying an `so_line_id` (`project_order_inquiry_import_service`), and they are
+    -- demand like any other.
+    --
+    -- The `NOT EXISTS` below keeps it disjoint from the BOOK leg, which is the other half
+    -- of the same worry and the half P3 opened: the book still speaks for retail, so a
+    -- decision-less row naming a RETAIL line would be counted twice, once as the line and
+    -- once as the row. Stated as "the book leg does not count this line" - the same four
+    -- openness conditions the book leg applies, plus its class test - rather than as "the
+    -- line is project": a row whose line is unreconciled, closed or fully delivered is
+    -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
@@ -503,6 +531,18 @@ WITH legs AS (
         WHERE l.row_id = oir.id
     ) flk ON TRUE
     WHERE oir.supply_decision_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM projects.sales_order_lines fpsl
+          JOIN sales_order_lines fsol ON fsol.id = fpsl.core_sales_order_line_id
+          JOIN sales_orders fso ON fso.id = fsol.sales_order_id
+          WHERE fpsl.id = oir.so_line_id
+            AND fso.demand_class IS DISTINCT FROM 'project'
+            AND fso.status = 'open'
+            AND fsol.line_status = 'open'
+            AND fsol.purchasing_status <> 'covered'
+            AND GREATEST(COALESCE(fsol.qty_required, fsol.qty_ordered)
+                       - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
