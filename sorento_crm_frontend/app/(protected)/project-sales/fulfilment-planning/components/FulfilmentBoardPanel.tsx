@@ -605,17 +605,41 @@ export function FulfilmentBoardPanel({
   }, [allContributions, draft]);
 
   /**
-   * Why Confirm is off, when it is (AC-P3-4): the batch this board was opened on has already
-   * been applied, so a second press would be asking for a second revision of the same change.
-   * Stated rather than left as a dead button - and the server refuses it too, so the two
-   * cannot disagree.
+   * Why an order's Confirm is off, when it is (AC-P3-4).
+   *
+   * PER ORDER, not per batch. One upload moves many orders and Confirm is pressed once per
+   * order, so a batch-wide block turned the first press into a wall in front of every other
+   * order on the same board - each of which still had a change nobody had decided. An order
+   * is blocked once ITS OWN rows read applied; the whole board is blocked only once the
+   * batch itself does, which is the last press.
+   *
+   * Stated rather than left as a dead button, and the server refuses the same two cases, so
+   * the screen and the write cannot disagree.
    */
   const batchApplied = changeBatch.data?.applied_at ?? null;
-  const confirmBlocked = batchApplied
-    ? `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
-        changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
-      }.`
-    : null;
+  const appliedSoNumbers = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const order of changeBatchData?.orders ?? []) {
+      if (order.rows.length > 0 && order.rows.every((row) => row.applied_state === 'applied')) {
+        out.add(order.so_number);
+      }
+    }
+    return out;
+  }, [changeBatchData]);
+  const confirmBlockedFor = React.useCallback(
+    (soNumber: string): string | null => {
+      if (batchApplied) {
+        return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
+          changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
+        }.`;
+      }
+      if (appliedSoNumbers.has(soNumber)) {
+        return 'This planning change was already applied to this sales order.';
+      }
+      return null;
+    },
+    [batchApplied, changeBatch.data?.applied_by_name, appliedSoNumbers],
+  );
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -1208,7 +1232,7 @@ export function FulfilmentBoardPanel({
                   busy={confirming === standing.sales_order_id}
                   refused={refusals[standing.sales_order_id] ?? []}
                   unpostable={unpostable[standing.sales_order_id] ?? []}
-                  blockedReason={confirmBlocked}
+                  blockedReason={confirmBlockedFor(standing.so_number)}
                   onConfirm={() => void confirmOrder(standing)}
                 />
               ))}
@@ -1281,7 +1305,10 @@ function OrderCommitRow({
   const leaving = preview?.leaving_undecided ?? 0;
   const blocked = preview?.blocked ?? 0;
   return (
-    <div className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+    <div
+      data-testid={`commit-row-${standing.so_number}`}
+      className="space-y-2 rounded-lg border border-border px-3 py-2.5"
+    >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium tabular-nums">{standing.so_number}</div>
