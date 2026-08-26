@@ -1377,6 +1377,34 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     block_index = Column(Integer, nullable=True)
     uploaded_by = Column(String, nullable=True)
 
+    #: Which box this invoice is being fitted into. NULL means the tenant's default size,
+    #: resolved on read rather than copied in - a PI uploaded before anybody thought about
+    #: capacity should follow the default, not freeze whatever it happened to be that day.
+    container_size_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.container_size.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    #: Who trimmed this document to fit, and when. NULL on an invoice nobody has touched,
+    #: which is what tells the screen to show the supplier's figures unqualified.
+    adjusted_by = Column(String(200), nullable=True)
+    adjusted_at = Column(DateTime(timezone=False), nullable=True)
+
+    #: The revision chain (AC-E7). A supplier resending the same container with new prices
+    #: is a REVISION of one document, not a second document sitting beside it: the two would
+    #: otherwise both answer "what is this container costing", and only one of them is true.
+    #: `revision_of_id` points at the immediately-previous revision, so the chain reads
+    #: backwards from the current one; `revision_no` is its position, 1 for an original.
+    revision_of_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    revision_no = Column(Integer, nullable=False, server_default=text("1"))
+    #: `current` or `superseded`. A superseded revision is KEPT and read-only: it is what the
+    #: supplier actually sent on the day, and the diff against it is the reason anybody looks
+    #: at the new one. It is never a cost and never converts (AC-E9, AC-E10).
+    status = Column(String(20), nullable=False, server_default=text("'current'"))
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1389,6 +1417,10 @@ class ProformaInvoice(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
+        Index("ix_scm_proforma_invoice_revision_of", "revision_of_id"),
+        CheckConstraint(
+            "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
+        ),
         # Declared on the MODEL as well as in migration 375, because a CI database is built
         # with `create_all` and never runs a migration body: without it the guard against a
         # doubled invoice exists in production and nowhere else (the supplier_inventory
@@ -1437,6 +1469,19 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     amount = Column(Numeric, nullable=True)
     po_ref = Column(String(100), nullable=True)
     remark = Column(Text, nullable=True)
+
+    #: How the supplier packs it, and how much room it takes. All three are NULL rather than
+    #: 0 on a document that states no volume (Kailu's), because 0 cbm and "not measured" are
+    #: different answers to "will this fit" and only one of them is honest (AC-D1).
+    cartons = Column(Numeric, nullable=True)
+    cbm_per_unit = Column(Numeric, nullable=True)
+    cbm_total = Column(Numeric, nullable=True)
+
+    #: What the supplier said, frozen at import and never written again. `qty` and
+    #: `unit_price` above are OURS to adjust to fit the container; these two are theirs, and
+    #: the whole fulfilment journey rests on the two never being confused (AC-E2).
+    supplier_qty = Column(Numeric, nullable=True)
+    supplier_unit_price = Column(Numeric, nullable=True)
 
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True

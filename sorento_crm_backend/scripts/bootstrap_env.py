@@ -396,6 +396,17 @@ def seed_scm_module_data() -> None:
     module_415 = importlib.util.module_from_spec(spec_415)
     spec_415.loader.exec_module(module_415)
 
+    # 428 adds the volume spellings to the `proforma_invoice` doc type (`体积(cbm)` /
+    # `总体积(cbm)`). Same create_all gap as every one above: migration 428's `cbm_per_unit`
+    # / `cbm_total` columns ARE ORM columns, so create_all produces them, but no header
+    # resolves to either without the alias row - the container fill would read "unmeasured"
+    # on a document that states the volume on every line.
+    spec_428 = importlib.util.spec_from_file_location(
+        "_scm_seed_428", versions / "428_scm_pi_cbm_adjust_revision.py"
+    )
+    module_428 = importlib.util.module_from_spec(spec_428)
+    spec_428.loader.exec_module(module_428)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -405,6 +416,7 @@ def seed_scm_module_data() -> None:
         aliases += module_proforma.seed(conn)
         aliases += module_kailu.seed(conn)
         aliases += module_415.seed(conn)
+        aliases += module_428.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

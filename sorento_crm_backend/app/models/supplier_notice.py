@@ -74,6 +74,14 @@ class SupplierNotice(Base, CompanyScopedMixin):
     line_count = Column(Integer, nullable=False, server_default=text("0"))
     production_line_count = Column(Integer, nullable=False, server_default=text("0"))
 
+    #: The read-only link the supplier opens instead of hunting for the attachment (F8).
+    #: Random, single-purpose and expiring, exactly like the quotation counter-sign token
+    #: (`ProjectQuotationIssue.sign_token`): it identifies THIS notice, never a user, so a
+    #: leaked URL exposes one request's lines and stops working after 30 days. Re-sending a
+    #: request issues a new token, which is what retires the old one.
+    public_token = Column(String(255), nullable=True, unique=True)
+    public_token_expires_at = Column(DateTime(timezone=False), nullable=True)
+
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
