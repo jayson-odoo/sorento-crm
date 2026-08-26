@@ -4842,6 +4842,11 @@ class ConversationSLATrackingService:
         if resolved_in_this_request and (
             getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
         ):
+            # One closing message per ticket, on every lane (user or api-key),
+            # BEFORE the sibling gate: the contact hears about THIS enquiry
+            # whether or not others are still open. The CRM is the only
+            # sender; n8n's respond-close-convo no longer messages.
+            self._enqueue_ticket_resolved_message_best_effort(tracking)
             if not self._has_other_open_conversation_siblings(tracking):
                 self._close_respond_conversation_best_effort(tracking)
                 # AC-M3: and tell n8n directly, so respond-close-convo runs with
@@ -4899,6 +4904,32 @@ class ConversationSLATrackingService:
             .first()
             is not None
         )
+
+    def _enqueue_ticket_resolved_message_best_effort(
+        self, tracking: ConversationSLATracking
+    ) -> None:
+        """Queue the contact's per-ticket closing message
+        (PLAN-ticket-resolved-closing-message). Post-commit, best-effort: the
+        resolve already succeeded, so a queue that is away is logged, not raised."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.queue_service import enqueue_job
+            from app.tasks.respond_io_tasks import send_ticket_resolved_message
+
+            enqueue_job(
+                send_ticket_resolved_message,
+                str(tracking.id),
+                queue_name="respond_io",
+                job_timeout=120,
+            )
+        except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
+            logger.warning(
+                "ticket-resolved message enqueue failed for %s: %s",
+                getattr(tracking, "id", "?"),
+                exc,
+            )
 
     def _notify_close_convo_webhook_best_effort(
         self, tracking: ConversationSLATracking, team_name: Optional[str] = None
@@ -6598,6 +6629,9 @@ class ConversationSLATrackingService:
             upload_chat_attachment,
         )
         from app.services.respond_messaging_service import get_window_state
+        from app.services.conversation_thread_service import (
+            mirror_outgoing_send as _mirror_outgoing_send,
+        )
 
         clean_text = (text or "").strip()
         if not clean_text and not files:
@@ -6635,6 +6669,13 @@ class ConversationSLATrackingService:
                 )
                 first_respond_response = caption_result.get("response")
                 anything_delivered = True
+                _mirror_outgoing_send(
+                    self.db,
+                    identifier=identifier,
+                    respond_contact_id=respond_contact_id,
+                    response=caption_result.get("response"),
+                    message={"type": "text", "text": caption_result.get("rendered_text") or clean_text},
+                )
 
             # Sequential, never all-or-nothing: a failure on file N must not
             # undo files 1..N-1, which already reached the contact. Stop at
@@ -6668,6 +6709,20 @@ class ConversationSLATrackingService:
                         first_respond_response = (
                             response if isinstance(response, dict) else None
                         )
+                    _mirror_outgoing_send(
+                        self.db,
+                        identifier=identifier,
+                        respond_contact_id=respond_contact_id,
+                        response=sent.get("response"),
+                        message={
+                            "type": "attachment",
+                            "attachment": {
+                                "type": uploaded["kind"],
+                                "url": uploaded["url"],
+                                "fileName": filename,
+                            },
+                        },
+                    )
                 except AppException as e:
                     # AppException.detail is always the {message, detail, code}
                     # dict (see error_handler.AppException.__init__) - prefer
@@ -6719,6 +6774,13 @@ class ConversationSLATrackingService:
             window_state = result["window_state"]
             first_respond_response = result.get("response")
             anything_delivered = True
+            _mirror_outgoing_send(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                response=result.get("response"),
+                message={"type": "text", "text": rendered_text or clean_text},
+            )
 
         return {
             "sent_as": sent_as,

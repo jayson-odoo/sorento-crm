@@ -540,3 +540,69 @@ describe('RespondChatList scroll-to-latest', () => {
     expect(screen.getByTestId('chat-jump-to-latest')).toHaveTextContent('4 new');
   });
 });
+
+describe('RespondChatList pin to the tail', () => {
+  beforeEach(withoutScrollIntoView);
+
+  const pending = (text: string) =>
+    ({
+      traffic: 'outgoing',
+      message: { type: 'text', text },
+      status: [{ value: 'pending', timestamp: Date.now() }],
+      source: 'pending',
+    }) as RespondMessageRenderable;
+
+  it('lands on the newest message the first time a long thread renders', () => {
+    const scrollIntoView = withScrollIntoView();
+    const { rerender } = render(<RespondChatList items={[]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    // A fresh scroll container starts at the top of a long thread; that is not
+    // a reader who scrolled up to read history.
+    stubScrollHeight(container, 5000);
+    container.scrollTop = 0;
+
+    rerender(<RespondChatList items={[msg(1), msg(2)]} />);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' });
+  });
+
+  it('leaves a reader who scrolled up alone when the contact writes', () => {
+    const scrollIntoView = withScrollIntoView();
+    const { rerender } = render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    scrollIntoView.mockClear();
+    stubScrollHeight(container, 5000);
+    container.scrollTop = 0;
+
+    rerender(<RespondChatList items={[msg(1), msg(2), msg(3)]} />);
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('always shows the reader their own send, wherever they were scrolled (AC-B1)', () => {
+    const scrollIntoView = withScrollIntoView();
+    const { rerender } = render(<RespondChatList items={[msg(1), msg(2)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    scrollIntoView.mockClear();
+    stubScrollHeight(container, 5000);
+    container.scrollTop = 0;
+
+    rerender(<RespondChatList items={[msg(1), msg(2), pending('on my way')]} />);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+  });
+
+  it('re-pins when a different conversation loads into the same list', () => {
+    const scrollIntoView = withScrollIntoView();
+    const { rerender } = render(<RespondChatList items={[msg(1)]} />);
+    const container = screen.getByTestId('chat-scroll-container');
+    rerender(<RespondChatList items={[]} />);
+    scrollIntoView.mockClear();
+    stubScrollHeight(container, 5000);
+    container.scrollTop = 0;
+
+    rerender(<RespondChatList items={[msg(7), msg(8)]} />);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' });
+  });
+});
