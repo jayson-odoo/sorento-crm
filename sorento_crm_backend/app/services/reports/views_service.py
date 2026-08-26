@@ -75,10 +75,26 @@ class ReportViewsService:
             update={"params": {k: v for k, v in config.params.items() if k != "period"}}
         )
 
-    def config_of(self, report_key: str, view_id: str) -> Optional[ReportViewConfig]:
-        """A stored view as it stands, for a caller that has to check it before acting."""
+    def actionable_config(
+        self, report_key: str, view_id: str, user_id: str, *, owner_only: bool
+    ) -> Optional[ReportViewConfig]:
+        """A stored view as it stands, but ONLY one this caller may already act on.
+
+        The check that follows it (is this view still runnable?) must not answer for a view
+        the caller has no business knowing exists: a view id in someone else's hand is not a
+        licence to learn that it is there, which is why publish answers 404 and not 403.
+        Anything the caller may not touch comes back None, and the write path below gives
+        the 404 or the 409 it always gave.
+        """
         row = self._row(report_key, view_id)
-        return ReportViewConfig.model_validate(row.view) if row else None
+        if row is None:
+            return None
+        mine = row.owner_user_id == str(user_id)
+        if owner_only and not mine:
+            return None
+        if not owner_only and not mine and not row.is_shared:
+            return None
+        return ReportViewConfig.model_validate(row.view)
 
     # ----------------------------------------------------------------- writes
 

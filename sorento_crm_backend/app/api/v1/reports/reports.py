@@ -275,16 +275,24 @@ def list_report_views(
 
 
 def _validate_stored(
-    db: Session, definition: reg.ReportDefinition, view_id: str
+    db: Session,
+    definition: reg.ReportDefinition,
+    view_id: str,
+    user_id: str,
+    *,
+    owner_only: bool,
 ) -> None:
     """A stored view, checked before it is handed to anybody else.
 
     Save validates what the screen sent, but a view saved last year can name a column the
     catalog has since lost. Publishing or defaulting one hands every user a report that
     answers 422 on open, so the fault belongs to the person doing the publishing. A view
-    that does not exist is left to the service, which answers 404.
+    the caller may not act on - or one that does not exist - is left to the service, which
+    answers the 404 or the 409 it always did.
     """
-    stored = ReportViewsService(db).config_of(definition.key, view_id)
+    stored = ReportViewsService(db).actionable_config(
+        definition.key, view_id, user_id, owner_only=owner_only
+    )
     if stored is not None:
         engine.validate_view(definition, stored)
 
@@ -328,7 +336,7 @@ def publish_report_view(
     _require_publish(db, current_user)
     validate_uuid_path(view_id, resource="View")
     if body.is_shared:
-        _validate_stored(db, definition, view_id)
+        _validate_stored(db, definition, view_id, str(current_user["id"]), owner_only=True)
     return ReportViewsService(db).publish(key, view_id, str(current_user["id"]), body.is_shared)
 
 
@@ -343,5 +351,5 @@ def set_default_report_view(
     definition = _authorised(db, current_user, key)
     _require_publish(db, current_user)
     validate_uuid_path(view_id, resource="View")
-    _validate_stored(db, definition, view_id)
+    _validate_stored(db, definition, view_id, str(current_user["id"]), owner_only=False)
     return ReportViewsService(db).set_default(key, view_id, str(current_user["id"]))

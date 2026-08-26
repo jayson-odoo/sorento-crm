@@ -636,6 +636,20 @@ def test_a_stale_view_cannot_be_published_or_made_the_default(api, db):
     assert client.post(f"{BASE}/views/{theirs}/set-default").status_code == 422
 
 
+def test_validating_a_stored_view_does_not_reveal_someone_elses(api, db):
+    """A view id in another person's hand is not a licence to learn that it exists, which is
+    why publish answers 404 rather than 403. The stale-view check must not answer 422 there
+    and give the id away."""
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    stale = _config(pivot={"rows": "agent", "cols": "month", "measures": ["no_such_measure"]})
+    theirs = _seed_other_view(db, name="Stale and private", is_shared=False, config=stale)
+
+    assert client.post(f"{BASE}/views/{theirs}/publish", json={"is_shared": True}).status_code == 404
+    # Not shared and not the caller's: still the conflict it always was, not a 422.
+    assert client.post(f"{BASE}/views/{theirs}/set-default").status_code == 409
+
+
 def test_the_shared_default_does_not_freeze_the_year_it_was_saved_in(api, db, monkeypatch):
     """A default view saved in 2026 carried `period: 2026` in its params, so in 2027 every
     user still opened the report on 2026 until somebody re-saved the view. A DEFAULT view
