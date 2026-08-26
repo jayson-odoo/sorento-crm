@@ -68,6 +68,7 @@ from app.services.scm.demand import (
     PLAN_DEMAND_ORDER_SQL,
     demand_qty,
     horizon_committed_select_sql,
+    horizon_project_need_dates_sql,
     is_open_demand,
     is_plan_demand_line,
     is_plan_demand_order,
@@ -85,10 +86,6 @@ def _pool_predicate(alias: str = "w") -> str:
     a second spelling of it existing anywhere.
     """
     return f"(COALESCE({alias}.segment, 'dealer') <> 'project')"
-
-
-def _f(v) -> Optional[float]:
-    return None if v is None else float(v)
 
 
 def _supplier(db: Session, supplier_id: str) -> dict:
@@ -266,62 +263,39 @@ def _project_open_need(
     return {r["product_id"]: float(r["qty"] or 0) for r in rows}
 
 
-def _project_need_dates(db: Session, product_ids: list[str]) -> dict[str, Any]:
-    """When project need on each product is owed - the two Order Inquiry legs, earliest wins.
+def _project_need_dates(
+    db: Session, product_ids: list[str], *, horizon: Optional[date] = None
+) -> dict[str, Any]:
+    """When the project need on each product is owed, off the SAME rows as its quantity.
 
-    The CONFIRMED leg is `summary_order_service._earliest_project_need_dates` unchanged,
-    because the Order Summary already answers exactly this question through the section-4
-    join path and a second spelling of it would let two screens disagree about when a
-    container is late.
+    `demand.horizon_project_need_dates_sql()` is the date companion of the two project legs
+    `_project_open_need` sums, condition for condition and with the same `:horizon` bind, so
+    a row the quantity leg excludes - already placed on a purchase order, or due past the
+    cutoff - cannot date the plan either. It used to: the date came off
+    `summary_order_service._earliest_project_need_dates`, which answers the Order Summary's
+    question under the Order Summary's rules (`state = 'raised'` alone, no remainder test, no
+    horizon), and a product could therefore rank as urgent on the strength of need somebody
+    had already bought.
 
-    The FORM leg is read here, and it has to be: a CS Order Inquiry Form row states its own
-    delivery date and belongs to no decision, so that helper cannot see it - and the loading
-    plan RANKS on this date. Reading only the confirmed leg would make every form-raised
-    project row look undated, which the priority policy scores as no urgency at all. Only the
-    date is read; the quantity stays `_project_open_need`'s, off `committed_v`'s own body.
+    The plan RANKS on this date, which is why it is read at all: a form-raised project row
+    that looks undated scores as no urgency under every priority policy.
 
-    "A Buy nobody has dated contributes no date at all" still holds - `MIN` over NULLs is
-    NULL and the row simply carries no need-by.
+    No company predicate of its own, for the reason `_project_open_need` states: the ids were
+    resolved company-scoped upstream and a product id belongs to exactly one company.
     """
-    from app.services.scm.demand import BUY_VERB, UNLINKED_INQUIRY_STATES
-    from app.services.scm.summary_order_service import _earliest_project_need_dates
-
     if not product_ids:
         return {}
-    dates = dict(_earliest_project_need_dates(db, list(product_ids)))
-
-    scope, params = company_sql_predicate(db, "oir.company_id", param_prefix="pnd")
     rows = db.execute(
         text(
             f"""
-            SELECT fp.id::text AS pid, MIN(oir.delivery_date) AS needed
-            FROM projects.order_inquiry_rows oir
-            JOIN products fp
-              ON fp.product_code = oir.item_code
-             AND fp.company_id = oir.company_id
-            WHERE oir.supply_decision_id IS NULL
-              AND oir.verb IN ('ORDER', 'ORDER_BACK')
-              AND oir.state = ANY(:states)
-              AND oir.qty > 0
-              AND fp.id::text = ANY(:pids)
-              {("AND " + scope) if scope else ""}
-            GROUP BY 1
+            SELECT product_id::text AS pid, needed
+            FROM ({horizon_project_need_dates_sql()}) d
+            WHERE product_id = ANY(CAST(:pids AS uuid[]))
             """
         ),
-        {
-            "pids": list(product_ids),
-            "states": list(UNLINKED_INQUIRY_STATES),
-            "verb": BUY_VERB,
-            **params,
-        },
+        {"pids": [str(p) for p in product_ids], "horizon": horizon},
     ).mappings().all()
-    for r in rows:
-        if r["needed"] is None:
-            continue
-        current = dates.get(r["pid"])
-        if current is None or r["needed"] < current:
-            dates[r["pid"]] = r["needed"]
-    return dates
+    return {r["pid"]: r["needed"] for r in rows if r["needed"] is not None}
 
 
 def _earliest_need_by(need_row: Any, project_date: Any) -> Any:
@@ -333,6 +307,22 @@ def _earliest_need_by(need_row: Any, project_date: Any) -> Any:
         if d is not None
     ]
     return min(dates) if dates else None
+
+
+def _is_held(holding: dict) -> bool:
+    """Whether the supplier's statement says they have ANYTHING of this product.
+
+    Packed OR unfinished on a stock-list row - both, because they are two different asks and
+    only one of them is loadable today. A supplier holding 500 unfired bodies and nothing
+    packed is the whole reason the production ask exists, and testing the packed figure alone
+    dropped that row from the grid, from the xlsx we send them and from their own page.
+    A proforma row has one quantity and that is the test.
+    """
+    return bool(
+        holding.get("qty_packed")
+        or holding.get("qty_unfinished")
+        or holding.get("holding_qty")
+    )
 
 
 def _empty_holding() -> dict:
@@ -970,7 +960,7 @@ def build(
     no_demand_ids = sorted(
         pid
         for pid in holdings
-        if pid not in need and pid not in project and holdings[pid]["holding_qty"]
+        if pid not in need and pid not in project and _is_held(holdings[pid])
     )
     catalogue = _product_catalogue(db, demand_ids + no_demand_ids)
     stock_context = _stock_context(db, demand_ids + no_demand_ids)
@@ -980,7 +970,9 @@ def build(
     project_dates = (
         {
             pid: d
-            for pid, d in _project_need_dates(db, sorted(project)).items()
+            for pid, d in _project_need_dates(
+                db, sorted(project), horizon=plan_horizon_date
+            ).items()
             if pid in project
         }
         if project

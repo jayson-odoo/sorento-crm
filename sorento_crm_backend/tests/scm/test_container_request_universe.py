@@ -442,3 +442,93 @@ def test_the_open_so_lines_foot_to_the_retail_half_of_the_need():
         row = _row(out, w, "A")
         listed = sum(ln["qty"] for ln in out["lines"] if ln["product_id"] == row["product_id"])
         assert listed == row["retail_qty"] == 40
+
+
+def _fully_linked(db, w: World, row: OrderInquiryRow) -> None:
+    """Place the whole of an inquiry row on a purchase-order line.
+
+    A row netted to nothing by its links is no longer demand - `committed_v` states it as
+    `oir.qty > COALESCE(linked, 0)` - so neither its quantity NOR its date may reach the plan.
+    """
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+    from app.models.project_so import OrderInquiryLink
+
+    po = PurchaseOrder(
+        id=_uid(),
+        po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
+        supplier_id=w.supplier.id,
+        issue_date=date(2026, 1, 1),
+        status="active",
+    )
+    db.add(po)
+    db.flush()
+    line = PurchaseOrderLine(
+        id=_uid(),
+        purchase_order_id=po.id,
+        product_id=w.product("A").id,
+        qty_ordered=row.qty,
+        qty_received=0,
+        line_status="open",
+    )
+    db.add(line)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=row.company_id,
+            row_id=row.id,
+            po_line_id=line.id,
+            document=po.po_number,
+            qty=row.qty,
+        )
+    )
+    db.flush()
+
+
+def test_a_row_with_packed_zero_but_unfinished_stock_is_still_a_row():
+    # The base rule, restored: "held" is packed OR unfinished. A supplier holding 500 unfired
+    # bodies and nothing packed is the case the production ask exists for, and it used to
+    # vanish from the grid, the xlsx and the supplier's own page.
+    with pg_session() as db:
+        w = World(db)
+        w.stock("A", packed=0, unfinished=500)
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["has_demand"] is False
+        assert row["qty_unfinished"] == 500
+        assert row["holding_source"] == "stock_list"
+
+
+def test_a_fully_linked_inquiry_row_gives_the_plan_neither_quantity_nor_date():
+    # The date and the quantity must come off the SAME rows. A row already placed on a
+    # purchase order is not demand, and dating the plan from it would rank a product as
+    # urgent on the strength of need somebody has already bought.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        placed = _project_need(db, w, "A", 7, delivery=date(2026, 1, 5))
+        _fully_linked(db, w, placed)
+        _project_need(db, w, "A", 10)
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["project_qty"] == 10
+        assert row["earliest_required_date"] is None
+
+
+def test_a_dated_inquiry_row_past_the_horizon_dates_nothing_either():
+    # Same rule through the other predicate the quantity leg applies.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        _project_need(db, w, "A", 25, delivery=date(2027, 6, 1))
+        _project_need(db, w, "A", 10)
+
+        out = svc.build(
+            db, supplier_id=str(w.supplier.id), plan_horizon_date=date(2026, 12, 31)
+        )
+
+        row = _row(out, w, "A")
+        assert row["project_qty"] == 10
+        assert row["earliest_required_date"] is None
