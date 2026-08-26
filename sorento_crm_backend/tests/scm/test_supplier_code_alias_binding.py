@@ -274,6 +274,58 @@ def test_forgetting_an_alias_puts_the_rows_back_to_what_the_ladder_says():
         assert [r.product_id for r in _held(db, str(w.supplier.id))] == [None]
 
 
+def test_forgetting_an_alias_unbinds_the_proforma_lines_it_bound():
+    """The other reader. A ruling reaches the stock list AND the invoice lines, so forgetting
+    it has to reach both - a line still pointing at a product whose reason has been deleted is
+    a binding nobody can account for, and the convert would carry it onto a container."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC286-SH")
+        code = w.supplier_code("SRTWC286-SH-250UF")
+        pi_svc.apply(db, _pi_workbook(code), supplier_id=str(w.supplier.id),
+                     currency="CNY", source_ref="jinbaichuan.xlsx", actor="Ms Tee")
+        created = alias_svc.create(
+            db, supplier_id=str(w.supplier.id), supplier_code=code,
+            product_id=str(product.id), actor="Ms Tee",
+        )
+        assert [str(l.product_id) for l in _pi_lines(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+        out = alias_svc.delete(db, created["id"])
+
+        assert out["deleted"] == 1
+        assert out["rebound_invoice_lines"] == 1
+        assert [l.product_id for l in _pi_lines(db, str(w.supplier.id))] == [None]
+
+
+def test_forgetting_an_alias_the_ladder_can_still_answer_leaves_the_row_bound():
+    """Forgetting a MANUAL agreement with the exact code is not the same as unbinding it: the
+    ladder answers that code on its own, so the row keeps the product and only the recorded
+    ruling goes."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC8357-300-RL")
+        code = w.supplier_code("SRTWC8357-RL-300")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        alias = db.query(SupplierProductCodeAlias).filter(
+            SupplierProductCodeAlias.supplier_id == w.supplier.id
+        ).one()
+
+        alias_svc.delete(db, str(alias.id))
+
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+
 def test_a_product_that_does_not_exist_is_refused():
     from app.services.scm import supplier_code_alias_service as alias_svc
 

@@ -27,6 +27,9 @@ export interface ConfirmDeleteDialogProps {
   onDelete: () => Promise<void>;
   queryKeysToInvalidate?: unknown[][];
   successMessage?: string;
+  /** The confirm button's own word. Defaults to Delete; a detach or a forget says what it
+   *  actually does, so the button and the question in the description agree. */
+  confirmLabel?: string;
   /** Called after successful delete (before closing) */
   onSuccess?: () => void;
 }
@@ -39,6 +42,7 @@ export function ConfirmDeleteDialog({
   onDelete,
   queryKeysToInvalidate = [],
   successMessage = 'Deleted successfully',
+  confirmLabel = 'Delete',
   onSuccess,
 }: ConfirmDeleteDialogProps) {
   const queryClient = useQueryClient();
@@ -99,7 +103,7 @@ export function ConfirmDeleteDialog({
             disabled={mutation.isPending}
           >
             {mutation.isPending && <LoaderCircleIcon className="animate-spin me-2 size-4" />}
-            Delete
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

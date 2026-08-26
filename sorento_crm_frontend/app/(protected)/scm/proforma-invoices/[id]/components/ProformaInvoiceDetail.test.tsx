@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
 
@@ -65,6 +65,7 @@ const state = {
 /** The three adjust writes, so a test can assert what the page ASKED the backend for. */
 const writes = {
   matchCode: vi.fn(),
+  forgetMatch: vi.fn(),
   updateLine: vi.fn(),
   removeLine: vi.fn(),
   updateInvoice: vi.fn(),
@@ -193,11 +194,16 @@ function renderDetail() {
   // ConfirmDeleteDialog (the line-removal confirmation) runs its own mutation, so the page
   // needs a client even though every data hook here is mocked.
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const tree = () => (
     <QueryClientProvider client={qc}>
       <ProformaInvoiceDetail id="pi-1" />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree());
+  // The detail hook is mocked, so a write's invalidation cannot be observed the usual way.
+  // `refresh` replays what the refetch would do: change `state.data`, render the tree again
+  // (a NEW element, or React bails out on the identical one) and read the row.
+  return { ...view, refresh: () => view.rerender(tree()) };
 }
 
 beforeEach(() => {
@@ -205,6 +211,8 @@ beforeEach(() => {
   state.isLoading = false;
   state.isError = false;
   writes.updateLine.mockReset();
+  writes.forgetMatch.mockReset();
+  writes.forgetMatch.mockResolvedValue(undefined);
   writes.removeLine.mockReset();
   writes.updateInvoice.mockReset();
   writes.markAsRevision.mockReset();
@@ -656,7 +664,24 @@ describe('A line nothing could carry is not a line already placed', () => {
 
 vi.mock('../../../hooks/useSupplierCodeAliases', () => ({
   useMatchSupplierCode: () => ({ mutateAsync: writes.matchCode, isPending: false }),
+  useForgetSupplierCodeMatch: () => ({ mutateAsync: writes.forgetMatch, isPending: false }),
 }));
+
+/** A code the ladder worked out and wrote down - the only line with a ruling to forget. */
+function boundByLadder(): ProformaInvoiceDetailData {
+  return detail({
+    lines: [
+      {
+        ...detail().lines[0],
+        item_code: 'SRTWC8357-RL-300',
+        product_code: 'SRTWC8357-300-RL',
+        match_source: 'auto',
+        matched_by: 'token_set',
+        match_id: 'alias-1',
+      },
+    ],
+  });
+}
 
 describe('F11 - answering a supplier code by hand', () => {
   it('offers Match to product on a line that binds to nothing', () => {
@@ -695,6 +720,61 @@ describe('F11 - answering a supplier code by hand', () => {
 
     expect(screen.queryByText('auto')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
+  });
+
+  it('asks before forgetting a recorded match, and quotes both codes', () => {
+    state.data = boundByLadder();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+
+    expect(
+      screen.getByText(
+        /Forget that SRTWC8357-RL-300 means SRTWC8357-300-RL\? Next upload will match it again by the ladder\./,
+      ),
+    ).toBeInTheDocument();
+    expect(writes.forgetMatch).not.toHaveBeenCalled();
+  });
+
+  it('forgets nothing when the question is answered no', async () => {
+    state.data = boundByLadder();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Forget that SRTWC8357-RL-300/)).not.toBeInTheDocument(),
+    );
+    expect(writes.forgetMatch).not.toHaveBeenCalled();
+  });
+
+  it('forgets the recorded match on confirm, and the line reads Not in catalogue again', async () => {
+    state.data = boundByLadder();
+    const view = renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^forget$/i }));
+
+    // The ruling is named by the match that was recorded, never by the line's own id.
+    await waitFor(() => expect(writes.forgetMatch).toHaveBeenCalledWith('alias-1'));
+
+    state.data = detail({
+      lines: [
+        {
+          ...boundByLadder().lines[0],
+          matched: false,
+          product_code: null,
+          matched_by: null,
+          match_source: null,
+          match_id: null,
+        },
+      ],
+    });
+    view.refresh();
+
+    expect(screen.getByText('Not in catalogue')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^forget$/i })).not.toBeInTheDocument();
   });
 
   it('opens the picker on the line it was pressed for', () => {

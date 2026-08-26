@@ -25,6 +25,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContainerSizes } from '../../../hooks/useFulfilment';
+import { useForgetSupplierCodeMatch } from '../../../hooks/useSupplierCodeAliases';
 import {
   useConvertProformaInvoicesToDraftShipment,
   useDeleteProformaInvoiceLine,
@@ -98,6 +99,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
   const [codeToMatch, setCodeToMatch] = useState<ProformaInvoiceLine | null>(null);
+  const [matchToForget, setMatchToForget] = useState<ProformaInvoiceLine | null>(null);
+  const forgetMatch = useForgetSupplierCodeMatch();
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
   const superseded = data?.status === 'superseded';
@@ -346,14 +349,26 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 <span className="text-xs text-muted-foreground">{line.product_code}</span>
               ) : null}
               {canAdjust && line.match_source ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 text-2xs"
-                  onClick={() => setCodeToMatch(line)}
-                >
-                  Change
-                </Button>
+                <span className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-2xs"
+                    onClick={() => setCodeToMatch(line)}
+                  >
+                    Change
+                  </Button>
+                  {/* Withdrawing the ruling, not correcting it - the code goes back to
+                      whatever the ladder can work out on its own. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-2xs"
+                    onClick={() => setMatchToForget(line)}
+                  >
+                    Forget
+                  </Button>
+                </span>
               ) : null}
             </div>
           );
@@ -824,6 +839,26 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         supplierCode={codeToMatch?.item_code ?? null}
         supplierLabel={codeToMatch?.description ?? null}
         onMatched={() => setCodeToMatch(null)}
+      />
+
+      {/* Forgetting a ruling is destructive - the rows bound by it are un-bound in the same
+          write - so it is asked before it is done, like every other delete here. */}
+      <ConfirmDeleteDialog
+        open={!!matchToForget}
+        onOpenChange={(o) => !o && setMatchToForget(null)}
+        title="Forget this match?"
+        description={
+          matchToForget
+            ? `Forget that ${matchToForget.item_code} means ${
+                matchToForget.product_code ?? 'this product'
+              }? Next upload will match it again by the ladder.`
+            : ''
+        }
+        confirmLabel="Forget"
+        onDelete={async () => {
+          if (matchToForget?.match_id) await forgetMatch.mutateAsync(matchToForget.match_id);
+        }}
+        successMessage="Match forgotten."
       />
 
       <OverCapacityDialog
