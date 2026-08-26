@@ -1,6 +1,6 @@
 # PLAN - Purchasing side: the journey from order inquiry to confirmed PO, and the UAT fixes on the reorder plan
 
-Status: IN PROGRESS r4, 2026-08-26. P1, P5 and P6 are BUILT on branch `feat/scm-uat-plan-page-p1-p5-p6` (stacked on `feat/scm-uat-popover-locations`, PR #310) and verified in the browser on :3080. P2, P3, P4, P7 and P8 still await go. Part 2 of `PLAN-scm-cs-planning-uat.md` (part 1 = CS). Captain: "I need the user journey crafted out and aligned before we execute anything." Nothing here is built until the journey below is agreed.
+Status: IN PROGRESS r5, 2026-08-26. P1, P5 and P6 are BUILT on branch `feat/scm-uat-plan-page-p1-p5-p6` (stacked on `feat/scm-uat-popover-locations`, PR #310) and verified in the browser on :3080. P3, P4, P7 and P8 are BUILT on `feat/scm-uat-plan-p3-p4-p7-p8` (stacked on `feat/scm-uat-po-occupancy`, PR #325): migrations 424 (committed_v loses the sheet leg) and 425 (every NULL demand_class stamped retail, reversible through `scm.demand_class_backfill_425`) are written and NOT yet applied to the dev copy, so five engine tests that read the real `scm.committed_v` stay red until they are. P2 still awaits go. Part 2 of `PLAN-scm-cs-planning-uat.md` (part 1 = CS). Captain: "I need the user journey crafted out and aligned before we execute anything." Nothing here is built until the journey below is agreed.
 Lane: `.claude/worktrees/scm-uat`, FE :3080, BE :8080.
 
 ## 1. The journey (target state, one line per hand-off)
