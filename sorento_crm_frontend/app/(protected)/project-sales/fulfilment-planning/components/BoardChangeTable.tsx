@@ -22,10 +22,17 @@ import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotat
 export function BoardChangeTable({
   annotation,
   compact = false,
+  omitDecision = false,
 }: {
   annotation: BoardChangeAnnotation;
   /** Inside a board cell, where every character costs width. */
   compact?: boolean;
+  /**
+   * Drop the Decision row (`PLAN-scm-oi-handshake.md`, the Order Inquiries list). An
+   * order inquiry row carries a quantity and a date and no decision of its own, and a
+   * Decision row reading "Not decided" on both sides would be a fact about nothing.
+   */
+  omitDecision?: boolean;
 }) {
   const text = compact ? 'text-[10px]' : 'text-xs';
   return (
@@ -37,8 +44,10 @@ export function BoardChangeTable({
       )}
     >
       <div className="flex items-center justify-between gap-1">
+        {/* `lineNo` 0 means the caller has no line number to print - the order inquiry
+            list, whose row IS the line - so the item code stands in its place. */}
         <span className="truncate font-medium text-amber-900" title={annotation.itemCode}>
-          {`Line ${annotation.lineNo}`}
+          {annotation.lineNo ? `Line ${annotation.lineNo}` : annotation.itemCode}
         </span>
         <span className="truncate text-amber-800" title={annotation.soNumber}>
           {annotation.soNumber}
@@ -83,7 +92,7 @@ export function BoardChangeTable({
                   : '-'}
             </td>
           </tr>
-          <tr>
+          <tr className={omitDecision ? 'hidden' : undefined}>
             <th scope="row" className="text-start font-normal align-top text-amber-800">
               Decision
             </th>

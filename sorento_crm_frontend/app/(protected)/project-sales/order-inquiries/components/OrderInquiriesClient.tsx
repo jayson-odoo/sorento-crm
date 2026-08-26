@@ -12,12 +12,15 @@ import {
 } from '@tanstack/react-table';
 import {
   AlertTriangle,
+  CheckCheck,
   Download,
   LayoutGrid,
+  Link2,
   List,
   PackageSearch,
   Search,
   Undo2,
+  Upload,
   Wand2,
   X,
 } from 'lucide-react';
@@ -41,15 +44,19 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import {
+  useOrderInquiryHandshake,
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
 } from '../../_shared/hooks/useOrderInquiry';
+import { ACK_LABELS, ACK_STATES } from '../../_shared/lib/orderInquiryAck';
+import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
@@ -136,6 +143,19 @@ const MATRIX_FETCH_LIMIT = 1000;
 const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
 
 /**
+ * The handshake's own grant (`PLAN-scm-oi-handshake.md`): Acknowledge, Reject, Link now
+ * and the book uploads. CS holds the read and sees the column and the filter; taking an
+ * instruction on is purchasing's, and they may not do it for themselves.
+ */
+const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'project_sales.order_inquiries.acknowledge';
+
+/** Where the handshake stands (AC-H4), in the four words the column prints. */
+const ACK_OPTIONS = ACK_STATES.map((state) => ({
+  value: state,
+  label: ACK_LABELS[state],
+}));
+
+/**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
  *
  * The per-project screen answers "what did this project raise". This one answers "what do
@@ -165,6 +185,8 @@ export function OrderInquiriesClient() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const canActOnOrderInquiry = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
+  const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
+  const { acknowledge, linkNow } = useOrderInquiryHandshake();
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -183,6 +205,17 @@ export function OrderInquiriesClient() {
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
+  // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
+  // page's "N awaiting acknowledgement" chip links straight into this list narrowed to
+  // them, and a chip that landed on an unfiltered list would leave the buyer to find them.
+  const [ackFilter, setAckFilter] = React.useState(() => searchParams.get('ack') ?? '');
+  // Which rows are ticked for the bulk Acknowledge (AC-H2). react-table's own selection
+  // state through `buildSelectColumn`, never a hand-rolled Set: the canonical toolbar
+  // reads exactly this for its bulk strip.
+  const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  // The last upload this page queued, so the completion state can offer Link now and the
+  // purchase orders it just wrote (AC-H13). Null until somebody uploads a book here.
+  const [uploaded, setUploaded] = React.useState(false);
   // Which card is pressed (AC-I11). Not one of the toolbar's filters: it lives on the
   // strip above BOTH views, so the same press narrows the matrix and the list. It IS
   // sent with the summary's own request all the same - only the `kinds` facet inside it
@@ -220,10 +253,21 @@ export function OrderInquiriesClient() {
     else next.set('granularity', matrixGranularity);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
+    if (ackFilter) next.set('ack', ackFilter);
+    else next.delete('ack');
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  }, [view, matrixAxis, matrixGranularity, debounced, pathname, router, searchParams]);
+  }, [
+    view,
+    matrixAxis,
+    matrixGranularity,
+    debounced,
+    ackFilter,
+    pathname,
+    router,
+    searchParams,
+  ]);
 
   // A cell drawn from one axis/granularity is not a selection under a different one.
   React.useEffect(() => {
@@ -248,6 +292,7 @@ export function OrderInquiriesClient() {
     raisedDate,
     raisedByFilter,
     linkedFilter,
+    ackFilter,
     kindFilter,
   ]);
 
@@ -261,6 +306,12 @@ export function OrderInquiriesClient() {
       project_id: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
+      ack: (ackFilter || undefined) as
+        | 'awaiting'
+        | 'acknowledged'
+        | 'changed'
+        | 'rejected'
+        | undefined,
     }),
     [
       debounced,
@@ -271,6 +322,7 @@ export function OrderInquiriesClient() {
       projectFilter,
       raisedByFilter,
       linkedFilter,
+      ackFilter,
     ],
   );
 
@@ -346,6 +398,7 @@ export function OrderInquiriesClient() {
       raisedDate ||
       raisedByFilter ||
       linkedFilter ||
+      ackFilter ||
       kindFilter,
   );
 
@@ -399,13 +452,18 @@ export function OrderInquiriesClient() {
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
-  const columns = useOrderInquiryWorklistColumns();
+  const columns = useOrderInquiryWorklistColumns({
+    selectable: canAcknowledge,
+    canAcknowledge,
+  });
 
   const table = useReactTable({
     data: rows,
     columns,
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: canAcknowledge,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
@@ -442,6 +500,7 @@ export function OrderInquiriesClient() {
     (raisedDate ? 1 : 0) +
     (raisedByFilter ? 1 : 0) +
     (linkedFilter ? 1 : 0) +
+    (ackFilter ? 1 : 0) +
     (kindFilter ? 1 : 0);
 
   const openCellRow = openCell
@@ -512,6 +571,46 @@ export function OrderInquiriesClient() {
         active={kindFilter}
         onToggle={(kind) => setKindFilter((current) => (current === kind ? null : kind))}
       />
+
+      {/* An upload this page queued has landed on the worker (AC-H13). Two next steps and
+          no third: link what the new documents can now cover, or go and look at the
+          purchase orders that arrived. Dismissed by acting, never by a timer. */}
+      {uploaded && canAcknowledge ? (
+        <Alert appearance="light">
+          <AlertIcon>
+            <Upload />
+          </AlertIcon>
+          <AlertContent>
+            <AlertTitle>The book is being read</AlertTitle>
+            <AlertDescription>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={linkNow.isPending}
+                  onClick={() =>
+                    linkNow.mutate({}, { onSuccess: () => setUploaded(false) })
+                  }
+                >
+                  <Link2 className="size-4" aria-hidden />
+                  {linkNow.isPending ? 'Linking…' : 'Link now'}
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/scm/purchase-orders">Open purchase orders</Link>
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setUploaded(false)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            </AlertDescription>
+          </AlertContent>
+        </Alert>
+      ) : null}
 
       {view === 'schedule' ? (
         <div className="space-y-4">
@@ -698,6 +797,29 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">
+                          Acknowledgement
+                        </Label>
+                        <SearchableSelect
+                          value={ackFilter}
+                          onChange={setAckFilter}
+                          clearable
+                          options={ACK_OPTIONS.map((option) => {
+                            const count = summary.data?.ack?.[
+                              option.value as keyof NonNullable<typeof summary.data.ack>
+                            ];
+                            return {
+                              value: option.value,
+                              label:
+                                count === undefined
+                                  ? option.label
+                                  : `${option.label} (${count})`,
+                            };
+                          })}
+                          placeholder="Any"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">Supplier</Label>
                         <SearchableSelect
                           value={supplierFilter}
@@ -760,6 +882,7 @@ export function OrderInquiriesClient() {
                             setRaisedDate('');
                             setRaisedByFilter('');
                             setLinkedFilter('');
+                            setAckFilter('');
                             // Counted above, so it is cleared here: "Clear filters" that
                             // left a card pressed would leave the screen still narrowed.
                             setKindFilter(null);
@@ -775,6 +898,26 @@ export function OrderInquiriesClient() {
                 // month, is the file anyone outside the system reads - so the generic
                 // selection-scoped export is replaced rather than offered beside it.
                 exportConfig={false}
+                // The press purchasing works this page with (AC-H2): tick the rows,
+                // take them on, and whatever open document can cover them is linked at
+                // that moment. Count-bearing, because a bulk action that does not say how
+                // many it is about is one nobody presses twice.
+                bulkActions={
+                  canAcknowledge
+                    ? [
+                        {
+                          key: 'acknowledge',
+                          label: `Acknowledge (${selectedRowIds(table).length})`,
+                          icon: CheckCheck,
+                          disabled: acknowledge.isPending,
+                          onClick: () =>
+                            acknowledge.mutate(selectedRowIds(table), {
+                              onSuccess: () => setRowSelection({}),
+                            }),
+                        },
+                      ]
+                    : []
+                }
                 secondaryActions={[
                   {
                     key: 'auto-place',
@@ -802,10 +945,18 @@ export function OrderInquiriesClient() {
                   },
                 ]}
                 primaryAction={
-                  <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
-                    <Download className="size-4" aria-hidden />
-                    {exporting ? 'Preparing…' : 'Export Excel'}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {/* The books purchasing works from, uploaded from THEIR page (AC-H12):
+                        the same two dialogs and the same worker jobs as the reorder and
+                        purchase-order pages, so nothing is a second importer. */}
+                    {canAcknowledge ? (
+                      <OrderInquiryUploadMenu onQueued={() => setUploaded(true)} />
+                    ) : null}
+                    <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
+                      <Download className="size-4" aria-hidden />
+                      {exporting ? 'Preparing…' : 'Export Excel'}
+                    </Button>
+                  </div>
                 }
                 onRefresh={() => {
                   void list.refetch();

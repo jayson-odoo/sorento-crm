@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  acknowledgeOrderInquiryRows,
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
   getOrderInquiryPoDetail,
@@ -11,13 +12,16 @@ import {
   getSalesOrderInquiry,
   getUnplaceAllPreview,
   listOrderInquiryRows,
+  linkNowOrderInquiryRows,
   listOrderInquiryWorklist,
   markOrderInquiryRows,
+  rejectOrderInquiryRow,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
+import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type {
   AutoPlaceRequest,
   OrderInquiryListParams,
@@ -301,4 +305,68 @@ export function useUnplaceAllOrderInquiryRows() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+/**
+ * The handshake (`PLAN-scm-oi-handshake.md`): Acknowledge, Reject, Link now.
+ *
+ * All three invalidate the same families a link does, because all three MOVE links:
+ * acknowledging runs the cascade for the rows it takes on, rejecting takes a row out of
+ * netting (and its line back to the board), and Link now is the cascade itself.
+ */
+export function useOrderInquiryHandshake() {
+  const queryClient = useQueryClient();
+
+  function invalidate() {
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+  }
+
+  const acknowledge = useMutation({
+    mutationFn: (rowIds: string[]) => acknowledgeOrderInquiryRows(rowIds),
+    onSuccess: (result) => {
+      invalidate();
+      const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
+      toast.success(
+        result.linked_rows > 0
+          ? `${rows} acknowledged, ${result.linked_rows} linked across ` +
+              `${result.links} document line${result.links === 1 ? '' : 's'}`
+          : `${rows} acknowledged`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reject = useMutation({
+    mutationFn: ({ rowId, reason }: { rowId: string; reason: string }) =>
+      rejectOrderInquiryRow(rowId, reason),
+    onSuccess: () => {
+      invalidate();
+      // The board is where the line went back to, so its own reads are stale now.
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      toast.success('Rejected. The line is back with CS.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const linkNow = useMutation({
+    mutationFn: (params: AutoPlaceRequest = {}) => linkNowOrderInquiryRows(params),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success(
+        result.placed_rows > 0
+          ? `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
+              `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`
+          : 'Nothing new to link yet',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { acknowledge, reject, linkNow };
 }

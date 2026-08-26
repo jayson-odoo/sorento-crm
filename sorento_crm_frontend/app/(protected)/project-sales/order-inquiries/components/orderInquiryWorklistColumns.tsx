@@ -6,10 +6,14 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { OrderInquiryRowActions } from '../../_shared/components/OrderInquiryRowActions';
+import { ackStateOf, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
+import { OrderInquiryAckCell } from './OrderInquiryAckCell';
+import { OrderInquiryRejectAction } from './OrderInquiryRejectAction';
 import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
@@ -41,9 +45,41 @@ function Muted({ children }: { children: React.ReactNode }) {
  * either sees the same columns in the same order rather than a second, looser table
  * invented for the calendar.
  */
-export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklistRow>[] {
+export function useOrderInquiryWorklistColumns({
+  selectable = false,
+  canAcknowledge = false,
+}: {
+  /**
+   * Draw the row checkboxes (AC-H2). Only where a bulk bar can act on them: the calendar
+   * drilldown reuses these columns and has no Acknowledge press, so a tick there would
+   * select rows nothing could be done with.
+   */
+  selectable?: boolean;
+  /**
+   * Whether this person may acknowledge or reject (`project_sales.order_inquiries.acknowledge`).
+   * CS sees the column and the filter; the actions are purchasing's.
+   */
+  canAcknowledge?: boolean;
+} = {}): ColumnDef<OrderInquiryWorklistRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
     () => [
+      ...(selectable
+        ? [
+            buildSelectColumn<OrderInquiryWorklistRow>({
+              // Only a row that CAN be acknowledged is tickable: the bulk press takes on
+              // awaiting and changed rows, and the server refuses the rest - so a box
+              // that could be ticked on an acknowledged row would build a selection the
+              // press then failed on whole.
+              enableRow: (row) => isAcknowledgeable(row.original),
+              disabledReason: (row) =>
+                ackStateOf(row.original) === 'rejected'
+                  ? 'Rejected rows go back to CS, not to purchasing'
+                  : 'Already acknowledged',
+              rowLabel: (row) =>
+                `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
+            }),
+          ]
+        : []),
       {
         accessorKey: 'so_date',
         header: ({ column }) => <DataGridColumnHeader title="SO date" column={column} />,
@@ -452,12 +488,26 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           ),
       },
       {
+        // The handshake, beside the supply state (AC-H2/AC-H5/AC-H8). Not sortable: the
+        // server sorts a closed set of columns and this is not one of them, and a grid
+        // drawing an arrow on a column the server ignored is a screen telling a lie.
+        accessorKey: 'ack_state',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Acknowledged" column={column} />
+        ),
+        size: 210,
+        enableSorting: false,
+        meta: { headerTitle: 'Acknowledged', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <OrderInquiryAckCell row={row.original} />,
+      },
+      {
         id: 'actions',
         header: 'Actions',
-        size: 150,
+        size: 190,
         enableSorting: false,
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
+          <div className="flex min-w-0 items-center gap-1">
           <OrderInquiryRowActions
             rowId={row.original.id}
             verb={row.original.verb}
@@ -469,9 +519,11 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
             poLabel={row.original.po_number}
             hasLinkCandidate={row.original.has_link_candidate}
           />
+          {canAcknowledge ? <OrderInquiryRejectAction row={row.original} /> : null}
+          </div>
         ),
       },
     ],
-    [],
+    [selectable, canAcknowledge],
   );
 }
