@@ -1,7 +1,9 @@
 # PLAN - Reporting foundation (Sponsorship report as report #1)
 
 Status: S1 (Phase 1, frontend against mocks) BUILT and browser-verified 2026-08-26 on
-branch `feat/reporting-foundation`. S2 onwards not started.
+branch `feat/reporting-foundation`. S2 (Phase 2, kernel, test-first) BUILT 2026-08-26 on the
+same branch: registry, engine, xlsx renderer skeleton, views service, routes, migration 422
+and the RQ export task, with 96 pytest over a synthetic dataset. S3 onwards not started.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -129,6 +131,29 @@ reads.
   (one tick column per year present) and a view written in 2026 must still mean "show the delivery
   years" in 2027.
 
+### Contract points settled while building S2 (binding on S3)
+
+- **The 422 envelope is FLAT.** `AppException` is serialised by the global handler in
+  `app/main.py` as its own detail dict, so a capped run answers
+  `{"message": "...", "code": "REPORT_CAPPED", "capped": true}` and an invalid param answers
+  `{"message": "Unknown param 'foo'", "code": "REPORT_INVALID_PARAMS"}` - NOT nested under
+  `detail`. `extractApiError` already reads `message`; `reportService.ts` documents this.
+- **Mine vs Shared is by OWNERSHIP, not by `is_shared`** (captain, S2). Mine = the views the
+  caller owns, published ones included (the menu badges them Shared); Shared = other users'
+  published views. The S1 mock, `ReportViewsMenu` and `ReportPage`'s default-view lookup were
+  corrected in the same commit - the page now looks for `is_default` across both lists,
+  because the account that published the default sees it under Mine.
+- **`GET /reports/{key}` returns the shared default view as `default_view`** when one is set,
+  falling back to the definition's own. So the screen never has to merge two sources.
+- **The export names the file, the task does not.** The route computes
+  `<title>-<period>.xlsx` and writes it on the download row; the task reads it back. One
+  place decides the name.
+- **Dataset scope has teeth.** `scope="none"` adds no predicate; `scope="company"` requires a
+  `company_column` and ANDs `admin_listing_company_filter`. The sponsorship dataset is
+  `scope="none"` (decision 4), so nothing exercises the company arm in production yet, and
+  `generate_report_xlsx` runs at the all-companies scope - a `scope="company"` dataset must
+  add an enqueuer-company argument to that task before it ships.
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
@@ -149,7 +174,7 @@ their owner only; shared views to anyone with the report permission.
 | # | Slice | Ships | Proves |
 |---|---|---|---|
 | S1 | FE mock (Phase 1) DONE | `ReportPage` + wrapper route against a mocked ReportResult: filter bar (date basis, period, agent, status), Detail with Columns show/hide + drag, Summary pivot, Configure summary dialog, Views menu (Mine / Shared, Save, Publish, Set default), Export button; sidebar entry + listing Report button; 375 / 1280 | The §4 contract is what the screen needs; user sees the shape before backend |
-| S2 | Kernel (Phase 2, test-first) | registry, engine, xlsx renderer, views service, routes, migration (table + slugs), RQ task. pytest on a SYNTHETIC dataset registered by the test, not sponsorship | The kernel is generic; report #2 costs what §Why says |
+| S2 | Kernel (Phase 2, test-first) DONE | registry, engine, xlsx renderer, views service, routes, migration (table + slugs), RQ task. pytest on a SYNTHETIC dataset registered by the test, not sponsorship | The kernel is generic; report #2 costs what §Why says |
 | S3 | Sponsorship dataset + definition | dataset select + catalog; definition; seeded-chain pytest asserting Summary cell = sum of Detail rows for the same agent/month, blanks vs zero, date basis switch changes the month | Report #1 on the real page with real 2026 rows |
 | S4 | Excel export | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
 | S5 | Local 2025 fixture | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |

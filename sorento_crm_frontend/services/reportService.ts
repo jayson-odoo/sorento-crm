@@ -29,10 +29,13 @@
  *        hidden column is still offerable in the Columns panel (AC-B7). The export asks
  *        for exactly the visible columns in the visible order (AC-C5), which is where
  *        "requested columns in the requested order" (AC-A5) is exercised.
- *        422 { "detail": { "message": "...", "capped": true } } when the sync caps
- *            (5,000 detail rows / 5,000 pivot cells) are exceeded. The export path
- *            has no cap, so the message tells the user to export instead.
- *        422 { "detail": "Unknown param 'foo'" } for an unknown param or date basis.
+ *        422 { "message": "...", "code": "REPORT_CAPPED", "capped": true } when the sync
+ *            caps (5,000 detail rows / 5,000 pivot cells) are exceeded. The export path
+ *            has no cap, so the message tells the user to export instead. The envelope is
+ *            FLAT because that is what the backend's AppException handler serialises
+ *            (app/main.py) - `extractApiError` already reads `message`.
+ *        422 { "message": "Unknown param 'foo'", "code": "REPORT_INVALID_PARAMS" } for an
+ *            unknown param, an unknown date basis or an unknown column.
  *
  *   POST /api/v1/reports/{key}/export
  *        body { "params": ReportParamValues, "view": ReportViewConfig | null }
@@ -48,8 +51,10 @@
  *   POST   /api/v1/reports/{key}/views/{id}/publish     body { "is_shared": bool }  -> ReportView
  *   POST   /api/v1/reports/{key}/views/{id}/set-default                             -> ReportView
  *
- *   Personal views are visible to their owner only; shared views to anyone holding the
- *   report permission. At most one `is_default` per report key.
+ *   `mine` = the views the caller OWNS, published ones included (the menu badges those);
+ *   `shared` = OTHER users' published views. A personal view is visible to its owner only;
+ *   a published one to anyone holding the report permission. At most one `is_default` per
+ *   report key, enforced by a partial unique index.
  *
  * --- Money -------------------------------------------------------------------------
  *

@@ -194,12 +194,14 @@ export function ReportPage({
 
   // The report opens on the shared default view when one exists, else on the report's own
   // default. Both queries have to have answered, or a default view would be missed.
+  // Both lists are searched: a published view stays under Mine for its own author, so
+  // looking only at `shared` would miss the default from the account that published it.
   useEffect(() => {
     if (state || !meta || !views) return;
-    const shared = views.shared.find((v) => v.is_default) ?? null;
-    const config = shared?.view ?? meta.default_view;
+    const fallback = [...views.mine, ...views.shared].find((v) => v.is_default) ?? null;
+    const config = fallback?.view ?? meta.default_view;
     setState({
-      viewId: shared?.id ?? null,
+      viewId: fallback?.id ?? null,
       params: config.params,
       detail: config.detail,
       pivot: config.pivot,

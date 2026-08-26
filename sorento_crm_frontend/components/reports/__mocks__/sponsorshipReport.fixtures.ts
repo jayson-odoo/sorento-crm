@@ -293,11 +293,22 @@ let VIEWS: ReportView[] = [
     view: DEFAULT_VIEW,
   },
   {
+    id: 'view-my-published',
+    name: 'Sponsorships by subject',
+    is_shared: true,
+    is_default: false,
+    owner_name: 'You',
+    view: {
+      ...DEFAULT_VIEW,
+      pivot: { rows: 'sponsor_subject', cols: 'month', measures: ['project_value'] },
+    },
+  },
+  {
     id: 'view-my-pipeline',
     name: 'My pipeline, form date',
     is_shared: false,
     is_default: false,
-    owner_name: null,
+    owner_name: 'You',
     view: {
       ...DEFAULT_VIEW,
       params: {
@@ -309,6 +320,14 @@ let VIEWS: ReportView[] = [
     },
   },
 ];
+
+/**
+ * Which of the above the signed-in user OWNS. The server does this split: Mine is what the
+ * caller owns, published ones included (the menu badges those); Shared is OTHER people's
+ * published views. A published view leaving its author's own list is how someone loses the
+ * view they just made.
+ */
+let MY_VIEW_IDS = new Set(['view-my-published', 'view-my-pipeline']);
 
 /* -------------------------------------------------------------- mock engine */
 
@@ -655,8 +674,8 @@ export async function mockReportViews(key: string): Promise<ReportViews> {
   await delay(120);
   if (key !== REPORT_KEY) throw new Error(`Unknown report "${key}"`);
   return {
-    mine: VIEWS.filter((v) => !v.is_shared),
-    shared: VIEWS.filter((v) => v.is_shared),
+    mine: VIEWS.filter((v) => MY_VIEW_IDS.has(v.id)),
+    shared: VIEWS.filter((v) => !MY_VIEW_IDS.has(v.id) && v.is_shared),
   };
 }
 
@@ -676,7 +695,7 @@ export async function mockReportViewMutation(
   if (mutation.action === 'create') {
     const name = mutation.name.trim();
     if (!name) throw new Error('Name is required');
-    if (VIEWS.some((v) => !v.is_shared && v.name.toLowerCase() === name.toLowerCase())) {
+    if (VIEWS.some((v) => MY_VIEW_IDS.has(v.id) && v.name.toLowerCase() === name.toLowerCase())) {
       throw new Error(`You already have a view called "${name}"`);
     }
     const created: ReportView = {
@@ -684,10 +703,11 @@ export async function mockReportViewMutation(
       name,
       is_shared: false,
       is_default: false,
-      owner_name: null,
+      owner_name: 'You',
       view: mutation.view,
     };
     VIEWS = [...VIEWS, created];
+    MY_VIEW_IDS = new Set([...MY_VIEW_IDS, created.id]);
     return created;
   }
 
@@ -699,7 +719,12 @@ export async function mockReportViewMutation(
     return target;
   }
   if (mutation.action === 'publish') {
-    const updated = { ...target, is_shared: mutation.is_shared };
+    // Unpublishing takes the default with it: a private view cannot be everyone's default.
+    const updated = {
+      ...target,
+      is_shared: mutation.is_shared,
+      is_default: mutation.is_shared && target.is_default,
+    };
     VIEWS = VIEWS.map((v) => (v.id === updated.id ? updated : v));
     return updated;
   }

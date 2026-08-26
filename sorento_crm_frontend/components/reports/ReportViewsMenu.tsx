@@ -23,6 +23,10 @@ import { REPORT_VIEWS_KEY, type ReportView, type ReportViewConfig } from '@/serv
  * Saved views: personal by default, shared when published, one shared view the default
  * for everyone.
  *
+ * Mine is what the caller OWNS, published ones included (badged Shared); Shared is OTHER
+ * people's published views. A view leaving its author's own list the moment they share it
+ * is how somebody loses the view they just made.
+ *
  * Publish and Set as default are ABSENT without `reports.views.publish`, not disabled
  * (AC-C4): a greyed-out control the user can never earn is only an invitation to ask
  * why it is greyed out.
@@ -75,11 +79,18 @@ export function ReportViewsMenu({
       <span className="truncate" title={view.name}>
         {view.name}
       </span>
-      {view.is_default && (
-        <Badge variant="secondary" size="sm" className="ms-auto">
-          Default
-        </Badge>
-      )}
+      <span className="ms-auto flex shrink-0 items-center gap-1">
+        {view.is_shared && mine.some((v) => v.id === view.id) && (
+          <Badge variant="outline" size="sm">
+            Shared
+          </Badge>
+        )}
+        {view.is_default && (
+          <Badge variant="secondary" size="sm">
+            Default
+          </Badge>
+        )}
+      </span>
     </DropdownMenuItem>
   );
 
