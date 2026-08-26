@@ -933,6 +933,32 @@ export interface SpoDemandLine {
   qty: number;
 }
 
+/**
+ * One piece of demand this SPO could cover, tickable (Q4, AC-G3).
+ *
+ * Two families, because they are two different records: PROJECT demand is an unlinked
+ * order-inquiry row (part 2 P3), and RETAIL demand is a line of the sales-order book. Only
+ * the project side can carry a link afterwards - the links table hangs off the inquiry row -
+ * so `kind` is not decoration, it is which half of the pipeline this line lives in.
+ */
+export interface SpoCoverageLine {
+  /** `project:<row id>` / `retail:<so line id>` - stable, and what `so_line_ids` sends. */
+  key: string;
+  kind: 'project' | 'retail';
+  document: string | null;
+  customer_name: string | null;
+  required_date: string | null;
+  /** What this piece of demand still needs. */
+  qty: number;
+  /** Where it is needed. Null on a project row whose stock location names no warehouse we
+   *  hold - it still ticks, it just cannot steer the split. */
+  warehouse_id: string | null;
+  warehouse_code: string | null;
+  /** Pre-ticked by the default walk: project by required date, then retail by required
+   *  date, until the packed quantity is used up (Q4). */
+  default_ticked: boolean;
+}
+
 /** One candidate destination warehouse for a line's SPO qty, ranked. */
 export interface SpoLocationOption {
   warehouse_id: string;
@@ -986,6 +1012,9 @@ export interface SpoSuggestionLine {
    *  convert. */
   location_options: SpoLocationOption[];
   suggested_warehouse_id: string | null;
+  /** The demand this SPO can be pointed at, in the order the default ticks walk it: project
+   *  by required date, then retail by required date (Q4, AC-G3). */
+  so_coverage: SpoCoverageLine[];
 }
 
 export interface SpoRef {
@@ -1023,6 +1052,12 @@ export interface SpoConfirmLine {
   /** Zero, one or several destinations (fourth amendment) - empty writes no allocation for
    *  this line, same as every call before this ask. */
   location_splits?: SpoLocationSplit[];
+  /** Which PO takes to draw from (AC-G1). Absent means every take the server re-derives;
+   *  present means ONLY these, and the SPO quantity falls to what they cover (AC-G2). */
+  po_take_ids?: string[];
+  /** Which demand this SPO is being pointed at - `SpoCoverageLine.key`s (AC-G3). Drives the
+   *  location split on screen, and the link rows the create writes for the project half. */
+  so_line_ids?: string[];
 }
 
 export interface CreatedSpo extends SpoRef {
@@ -1039,12 +1074,24 @@ export interface SpoAllocationWritten {
   qty: number;
 }
 
+/** One link the create wrote from a ticked project row to the SPO allocation covering it. */
+export interface SpoDemandLink {
+  key: string;
+  document: string | null;
+  spo_number: string | null;
+  qty: number;
+}
+
 export interface SpoCreateResult {
   shipment_id: string;
   shipment_number: string | null;
   created_spos: CreatedSpo[];
   skipped: { shipment_line_id: string; item_code: string | null; reason: string }[];
   allocations: SpoAllocationWritten[];
+  /** The project rows this SPO was tied to (AC-G6). Retail ticks steer the split and the
+   *  clamp but write no link: the links table hangs off an order-inquiry row, and a retail
+   *  sales-order line has none. */
+  demand_links: SpoDemandLink[];
 }
 
 export async function getSpoSuggestion(shipmentId: string): Promise<SpoSuggestion> {

@@ -512,6 +512,14 @@ class SpoLineConfirm(BaseModel):
     # single `warehouse_id` field the second amendment introduced is now the one-split case of
     # this list, not a separate field.
     location_splits: list[SpoLocationSplit] = Field(default_factory=list)
+    # Which PO takes to draw from (F7, AC-G1). None means "every take you re-derive", which
+    # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
+    # falls to what those takes cover.
+    po_take_ids: Optional[list[str]] = None
+    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
+    # project half is written as links; the retail half steers the split on screen and has
+    # no row of its own to hang a link on.
+    so_line_ids: list[str] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):

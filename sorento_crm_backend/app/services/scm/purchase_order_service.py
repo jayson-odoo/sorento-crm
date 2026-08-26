@@ -299,6 +299,111 @@ class PurchaseOrderService:
         )
         return {str(po_id): float(total or 0) for po_id, total in rows}
 
+    def _spo_takes_of(self, line_ids: list[str]) -> dict[str, list[dict]]:
+        """Every CRM SPO that pulled from one of these lines, per line (AC-G7).
+
+        Read off the SPO line's own `source_ref` - the JSON `[{po_line_id, qty}]` that
+        `spo_conversion_service.create` writes to record which open line each pull drew from
+        (its fifth amendment, "why this is JSON rather than a new link table"). So this is a
+        READ of a fact already recorded, not a second table to keep in step.
+
+        The container is named because that is what the buyer is actually being told: this
+        line's quantity is already on the water, on THAT packing list, landing at THOSE
+        warehouses. Everything on the row is a name; nothing is an id.
+        """
+        import json
+
+        from app.models.procurement import InboundShipment, SPOAllocation
+        from app.services.scm.spo_conversion_service import SOURCE_SYSTEM
+
+        if not line_ids:
+            return {}
+        spo_lines = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.source_system == SOURCE_SYSTEM,
+                PurchaseOrderLine.source_ref.isnot(None),
+            )
+            .all()
+        )
+        if not spo_lines:
+            return {}
+
+        wanted = set(line_ids)
+        interesting = []
+        for spo_line, spo in spo_lines:
+            try:
+                pulls = json.loads(spo_line.source_ref or "[]")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(pulls, list):
+                continue
+            for pull in pulls:
+                source_id = str((pull or {}).get("po_line_id") or "")
+                if source_id in wanted:
+                    interesting.append((source_id, spo_line, spo, float(pull.get("qty") or 0)))
+        if not interesting:
+            return {}
+
+        # Where each SPO line's goods are landing, and on which container - one query for
+        # the lot rather than one per take.
+        alloc_rows = (
+            self.db.query(
+                SPOAllocation.po_line_id,
+                Warehouse.warehouse_code,
+                SPOAllocation.allocated_quantity,
+                InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
+                func.coalesce(
+                    InboundShipment.actual_arrival_date,
+                    InboundShipment.estimated_arrival_date,
+                ),
+            )
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
+            .filter(
+                SPOAllocation.po_line_id.in_([str(l.id) for _s, l, _p, _q in interesting])
+            )
+            .all()
+        )
+        landing: dict[str, dict] = {}
+        for po_line_id, code, qty, shipment_number, container, arrival in alloc_rows:
+            entry = landing.setdefault(
+                str(po_line_id),
+                {"warehouses": [], "packing_list": None, "arrival_date": None},
+            )
+            if code:
+                entry["warehouses"].append({"warehouse_code": code, "qty": float(qty or 0)})
+            entry["packing_list"] = entry["packing_list"] or container or shipment_number
+            entry["arrival_date"] = entry["arrival_date"] or (
+                arrival.isoformat() if arrival else None
+            )
+
+        out: dict[str, list[dict]] = {}
+        for source_id, spo_line, spo, qty in interesting:
+            place = landing.get(str(spo_line.id), {})
+            out.setdefault(source_id, []).append({
+                "kind": "spo",
+                "spo_number": spo.po_number,
+                "qty": qty,
+                "packing_list": place.get("packing_list"),
+                "warehouses": place.get("warehouses") or [],
+                "arrival_date": place.get("arrival_date"),
+                # The panel prints one shape; an SPO take has no inquiry, customer or agent
+                # behind it, and stating None is how the row says so rather than borrowing
+                # the fields above.
+                "inquiry_no": None,
+                "so_number": None,
+                "customer": None,
+                "agent": None,
+                "needed_at": None,
+                "location_differs": False,
+            })
+        return out
+
     def _allocations_for(self, po: PurchaseOrder) -> list[dict]:
         """One block per LINE that carries a placement, each naming who is waiting on it.
 
@@ -386,6 +491,9 @@ class PurchaseOrderService:
             qty = float(row.qty or 0)
             allocated[str(row.po_line_id)] = allocated.get(str(row.po_line_id), 0.0) + qty
             placements.setdefault(str(row.po_line_id), []).append({
+                # WHICH kind of placement this row is. The order-inquiry ones are the
+                # original panel; `spo` rows (F7) are a CRM SPO that pulled from this line.
+                "kind": "inquiry",
                 "inquiry_no": row.inquiry_no,
                 # The AutoCount number where the order has one; the reference this system
                 # minted where it does not. Never the id.
@@ -405,6 +513,11 @@ class PurchaseOrderService:
                     and needed_at.upper() != line_location.strip().upper()
                 ),
             })
+
+        for line_id, spo_rows in self._spo_takes_of(list(lines)).items():
+            for spo_row in spo_rows:
+                allocated[line_id] = allocated.get(line_id, 0.0) + spo_row["qty"]
+            placements.setdefault(line_id, []).extend(spo_rows)
 
         # In the order the DOCUMENT numbers its lines, so the panel reads down the same way
         # the grid above it does. `source_ref` carries the book's own line number where it

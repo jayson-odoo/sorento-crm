@@ -212,6 +212,8 @@ from app.models.procurement import (
     SPOAllocation,
     Supplier,
 )
+from app.models.inventory import Warehouse
+from app.models.projects import Project
 from app.models.sales_agent import SalesAgent
 from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
 from app.services.company_scope_sql import company_sql_predicate
@@ -418,9 +420,18 @@ def _cascade_take(
 
 
 def _open_line_rows(q) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
-    """Shared tail of both cascade lookups below: order earliest-first, then keep only the
-    lines with real open balance."""
+    """Shared tail of both cascade lookups below: oldest DOCUMENT first, then keep only the
+    lines with real open balance.
+
+    Ordered by the purchase order's own `issue_date` since the captain's Q8 ruling (26 Aug):
+    the buyer draws down the order they raised first, and a line's expected date is when it
+    is due, not when it was ordered. The two disagree routinely - a PO raised in January can
+    be due after one raised in March - and the old ordering answered the wrong question,
+    which is why "which PO covers this" read differently here than in the PO book.
+    `order_date` is NOT the column: it does not exist on `purchase_orders`.
+    """
     rows = q.order_by(
+        PurchaseOrder.issue_date.asc().nulls_last(),
         PurchaseOrderLine.expected_date.asc().nulls_last(),
         PurchaseOrder.po_number.asc(),
         PurchaseOrderLine.id.asc(),
@@ -701,6 +712,168 @@ def _demand_lines_by_warehouse(db: Session, product_id: str) -> dict[str, list[d
     return out
 
 
+#: How a ticked piece of demand is named on the wire, and what the create sends back.
+#: `project:<order inquiry row id>` / `retail:<sales order line id>` - the family is part of
+#: the key because the two are different records, and only one of them can carry a link.
+_COVERAGE_PROJECT = "project"
+_COVERAGE_RETAIL = "retail"
+
+
+def _project_coverage(db: Session, product_id: str) -> list[dict]:
+    """Unlinked project demand for this product - the order-inquiry rows (R1, part 2 P3).
+
+    Only ORDER BACK rows: an ORDER is a new purchase and goes on a purchase order, and
+    `project_order_inquiry_service` refuses an SPO link on any other verb - so offering one
+    here would offer a tick that cannot be honoured.
+
+    `qty` is what the row still needs, net of every link it already carries. A row half
+    placed on a purchase order is offered for the other half, and a fully placed row is not
+    offered at all.
+    """
+    from app.models.project_so import (
+        INQUIRY_CANCELLED,
+        IV_ORDER_BACK,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+    )
+
+    rows = (
+        db.query(
+            OrderInquiryRow,
+            ProjectSalesOrder.autocount_doc_no,
+            ProjectSalesOrder.provisional_ref,
+            Project.title,
+        )
+        .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+        .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+        .join(ProjectSalesOrder, ProjectSalesOrder.id == OrderInquiry.project_sales_order_id)
+        .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
+        .filter(
+            ProjectSalesOrderLine.product_id == product_id,
+            OrderInquiryRow.verb == IV_ORDER_BACK,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .order_by(
+            OrderInquiryRow.delivery_date.asc().nulls_last(),
+            OrderInquiryRow.id.asc(),
+        )
+        .all()
+    )
+    if not rows:
+        return []
+
+    linked: dict[str, float] = {}
+    for row_id, total in (
+        db.query(OrderInquiryLink.row_id, func.sum(OrderInquiryLink.qty))
+        .filter(OrderInquiryLink.row_id.in_([str(r.OrderInquiryRow.id) for r in rows]))
+        .group_by(OrderInquiryLink.row_id)
+        .all()
+    ):
+        linked[str(row_id)] = float(total or 0)
+
+    codes = _warehouse_ids_by_code(db)
+    out: list[dict] = []
+    for row, doc_no, provisional, project_title in rows:
+        need = float(row.qty or 0) - linked.get(str(row.id), 0.0)
+        if need <= 0:
+            continue
+        location = (row.stock_location or "").strip().upper() or None
+        warehouse_id = codes.get(location) if location else None
+        out.append({
+            "key": f"{_COVERAGE_PROJECT}:{row.id}",
+            "kind": _COVERAGE_PROJECT,
+            "document": doc_no or provisional,
+            "customer_name": project_title,
+            "required_date": row.delivery_date.isoformat() if row.delivery_date else None,
+            "qty": need,
+            "warehouse_id": warehouse_id,
+            "warehouse_code": location,
+        })
+    return out
+
+
+def _warehouse_ids_by_code(db: Session) -> dict[str, str]:
+    """`{WAREHOUSE CODE: id}`. An inquiry row names its location as a CODE, and the split
+    needs an id; a code naming no warehouse we hold simply steers nothing."""
+    return {
+        (code or "").strip().upper(): str(wid)
+        for wid, code in db.query(Warehouse.id, Warehouse.warehouse_code).all()
+        if code
+    }
+
+
+def _retail_coverage(db: Session, product_id: str) -> list[dict]:
+    """Open sales-order book demand for this product - the retail half of the tick list.
+
+    The same predicate `_demand_lines_by_warehouse` uses, so the two answers cannot
+    disagree; the difference is that this one carries the LINE, because a tick has to name
+    the thing it ticked.
+    """
+    from app.services.scm.demand import demand_qty, is_open_demand
+
+    owed = demand_qty()
+    rows = (
+        db.query(
+            SalesOrderLine.id,
+            SalesOrderLine.warehouse_id,
+            Warehouse.warehouse_code,
+            SalesOrder.so_number,
+            Customer.customer_name,
+            SalesOrderLine.required_date,
+            owed.label("qty"),
+        )
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+        .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+        .filter(
+            SalesOrderLine.product_id == product_id,
+            SalesOrder.status == "open",
+            is_open_demand(),
+        )
+        .order_by(
+            SalesOrderLine.required_date.asc().nulls_last(),
+            SalesOrder.so_number.asc(),
+            SalesOrderLine.id.asc(),
+        )
+        .all()
+    )
+    return [
+        {
+            "key": f"{_COVERAGE_RETAIL}:{r.id}",
+            "kind": _COVERAGE_RETAIL,
+            "document": r.so_number,
+            "customer_name": r.customer_name,
+            "required_date": r.required_date.isoformat() if r.required_date else None,
+            "qty": float(r.qty or 0),
+            "warehouse_id": str(r.warehouse_id) if r.warehouse_id else None,
+            "warehouse_code": r.warehouse_code,
+        }
+        for r in rows
+        if float(r.qty or 0) > 0
+    ]
+
+
+def _so_coverage(db: Session, product_id: str, packed: float) -> list[dict]:
+    """What this SPO could be for, and what the default ticks claim (Q4, AC-G3).
+
+    Project by need-by date, THEN retail by need-by date - the priority policy's own order,
+    stated here as a walk rather than a score because the operator is being asked to confirm
+    a list, not to read a ranking. Ticks run down that list until the packed quantity is used
+    up; everything after that is offered unticked, and what no tick claims is free stock
+    (the "Unassigned" remainder the screen names).
+    """
+    coverage = _project_coverage(db, product_id) + _retail_coverage(db, product_id)
+    left = packed
+    for entry in coverage:
+        take = min(entry["qty"], left) if left > 0 else 0.0
+        entry["default_ticked"] = take > 0
+        left -= take
+    return coverage
+
+
 def _location_options(db: Session, product_id: str) -> dict:
     """Candidate destination warehouses for a new SPO on this product, ranked - the module
     docstring's "second amendment" section. Every location carrying any live figure for the
@@ -867,6 +1040,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
                 "currency": ln.currency,
                 "location_options": [],
                 "suggested_warehouse_id": None,
+                "so_coverage": [],
             })
             continue
 
@@ -939,6 +1113,9 @@ def suggest(db: Session, shipment_id: str) -> dict:
             "currency": ln.currency,
             "location_options": location["options"],
             "suggested_warehouse_id": location["suggested_warehouse_id"],
+            # What this SPO could be FOR, with the default ticks already walked (AC-G3).
+            # Empty on a line that cannot convert - there is nothing to point anywhere.
+            "so_coverage": [] if cannot_convert else _so_coverage(db, str(ln.product_id), packed),
         })
 
     return {
@@ -1034,6 +1211,7 @@ def create(
 
     groups: dict[str, dict[str, Any]] = {}
     skipped: list[tuple[str, str]] = []
+    ticked_demand: dict[str, list[str]] = {}
 
     for line_id, ln in shipment_lines.items():
         item = by_line[line_id]
@@ -1058,6 +1236,14 @@ def create(
         # double-spent. Capped at what shipped, and at what the buyer asked for.
         need = min(requested, float(ln.quantity_shipped or 0))
         matched_by, takes = _match_takes_for_line(db, ln, need)
+        # Only the takes the buyer left ticked (AC-G1). ABSENT means "every take you
+        # re-derive", which is what every caller before this ask sent; an empty LIST means
+        # "draw from none of them", and a line drawing from nothing cannot become an SPO
+        # line - the same outcome as having no open PO at all.
+        take_ids = item.get("po_take_ids")
+        if take_ids is not None:
+            wanted = {str(t) for t in take_ids}
+            takes = [t for t in takes if str(t[0].id) in wanted]
         covered_now = sum(t[2] for t in takes)
         if covered_now <= 0:
             skipped.append((line_id, _REASON_NO_PO))
@@ -1077,6 +1263,9 @@ def create(
             {"lines": [], "currency": ln.currency},
         )
         group["lines"].append((ln, covered_now, takes, splits))
+        # Which demand this line's quantity was ticked against (AC-G3). Held per shipment
+        # line so the links can be written AFTER the allocations exist to point at.
+        ticked_demand[line_id] = [str(k) for k in (item.get("so_line_ids") or [])]
 
     if not groups:
         raise AppException(
@@ -1188,11 +1377,15 @@ def create(
     db.flush()
 
     allocations = _write_allocations(db, shipment, allocation_targets, actor_user_id=actor_user_id)
+    demand_links = _link_ticked_demand(
+        db, allocations, ticked_demand, actor_user_id=actor_user_id
+    )
 
     return {
         "shipment_id": str(shipment.id),
         "shipment_number": shipment.shipment_number,
         "created_spos": created_spos,
+        "demand_links": demand_links,
         "skipped": [
             {
                 "shipment_line_id": lid,
@@ -1260,6 +1453,124 @@ def _write_allocations(
         forward_match_grn_lines_for_spo_best_effort(db, spo_number, company_id=company_id)
 
     return written
+
+
+def _link_ticked_demand(
+    db: Session,
+    allocations: list[dict],
+    ticked: dict[str, list[str]],
+    *,
+    actor_user_id: Optional[str],
+) -> list[dict]:
+    """Tie the ticked PROJECT demand to the SPO allocations that will serve it (AC-G6).
+
+    Written through `ProjectOrderInquiryService.place_on_po_allocations`, the ONE writer of
+    `projects.order_inquiry_links` (part 2 I), rather than inserting the row here: that
+    service holds the rules a link has to obey - the row is never split, the target must
+    still be open for that product, an SPO answers only an ORDER BACK row - and a second
+    writer would be a second, quietly different set of them.
+
+    **A RETAIL tick writes no link, by design.** `order_inquiry_links.row_id` is NOT NULL:
+    the table hangs off an order-inquiry row, and a retail sales-order line has none. Making
+    the column nullable to hang one there would weaken a constraint four readers join on
+    (`_allocations_for`, `links_for_rows`, `_allocated_by_po`, the sales-order detail's own
+    "Linked to"), for a link no screen reads - retail has never carried one, for a purchase
+    order either. The retail tick still counts: it is what put the quantity at that
+    warehouse.
+
+    Best-effort per row: a refusal names one row's own problem (its verb changed, the
+    allocation moved), and failing the whole confirm - after the SPO, its lines and its
+    allocations are already written - would leave the operator with a container they cannot
+    re-create and no link either.
+    """
+    if not allocations or not any(ticked.values()):
+        return []
+
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    service = ProjectOrderInquiryService(db)
+    by_line: dict[str, list[dict]] = {}
+    for allocation in allocations:
+        by_line.setdefault(str(allocation["shipment_line_id"]), []).append(allocation)
+
+    out: list[dict] = []
+    for line_id, keys in ticked.items():
+        pool = [dict(a) for a in by_line.get(line_id, [])]
+        if not pool:
+            continue
+        for key in keys:
+            if not key.startswith(f"{_COVERAGE_PROJECT}:"):
+                continue
+            row_id = key.split(":", 1)[1]
+            row = (
+                db.query(_inquiry_row_model())
+                .filter(_inquiry_row_model().id == row_id)
+                .first()
+            )
+            if row is None:
+                continue
+            need = float(row.qty or 0) - _linked_qty(db, row_id)
+            if need <= 0:
+                continue
+            # The allocation at this row's OWN location first - that is what the tick put
+            # there - then whatever else this line landed, because a row served from the
+            # other half of the same container is still served.
+            wanted_code = (row.stock_location or "").strip().upper() or None
+            codes = _warehouse_ids_by_code(db) if wanted_code else {}
+            preferred = codes.get(wanted_code) if wanted_code else None
+            pool.sort(key=lambda a: 0 if str(a["warehouse_id"]) == str(preferred) else 1)
+            for allocation in pool:
+                if need <= 0:
+                    break
+                left = float(allocation.get("qty") or 0)
+                if left <= 0:
+                    continue
+                take = min(need, left)
+                try:
+                    service.place_on_po_allocations(
+                        row_id,
+                        [{"spo_allocation_id": allocation["allocation_id"], "qty": take}],
+                        actor_user_id=actor_user_id,
+                    )
+                except AppException as exc:  # noqa: PERF203 - one row's problem, not the batch's
+                    logger.warning(
+                        "SPO link refused for order inquiry row %s: %s", row_id, exc.detail
+                    )
+                    break
+                allocation["qty"] = left - take
+                need -= take
+                out.append({
+                    "key": key,
+                    "document": row.item_code,
+                    "spo_number": _spo_number_of(db, allocation["allocation_id"]),
+                    "qty": take,
+                })
+    return out
+
+
+def _inquiry_row_model():
+    from app.models.project_so import OrderInquiryRow
+
+    return OrderInquiryRow
+
+
+def _linked_qty(db: Session, row_id: str) -> float:
+    from app.models.project_so import OrderInquiryLink
+
+    total = (
+        db.query(func.coalesce(func.sum(OrderInquiryLink.qty), 0))
+        .filter(OrderInquiryLink.row_id == str(row_id))
+        .scalar()
+    )
+    return float(total or 0)
+
+
+def _spo_number_of(db: Session, allocation_id: str) -> Optional[str]:
+    return (
+        db.query(SPOAllocation.spo_number)
+        .filter(SPOAllocation.id == str(allocation_id))
+        .scalar()
+    )
 
 
 def unwind(db: Session, shipment_id: str) -> dict:
