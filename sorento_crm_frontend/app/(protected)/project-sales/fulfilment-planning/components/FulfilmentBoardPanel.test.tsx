@@ -342,54 +342,9 @@ describe('FulfilmentBoardPanel: the axes', () => {
     expect(matrix.querySelector('[data-bucket="2026-08-17"]')?.getAttribute('data-past')).toBe(
       'false',
     );
-    expect(
-      screen.getByText('1 of 2 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-  });
-
-  /**
-   * The banner counts the SELECTION, not the columns on screen. The server sends
-   * `past_line_count` / `line_count` at the top level for exactly this reason: summing
-   * `cell.past_count` counts only what a window happens to be showing, so the same board read
-   * differently on day than on week. The per-cell count stays correct for the cell itself.
-   */
-  it('reads the selection-scoped totals rather than summing the cells on screen', async () => {
-    const board = boardOf([
-      demand({ line_no: 1, required_date: '2022-07-03' }),
-      demand({ line_no: 2, required_date: '2026-09-04' }),
-    ]);
-    getPlanningBoard.mockResolvedValue({
-      ...board,
-      // What the server counted over the whole selection; the two cells on screen are a
-      // fraction of it, and summing them would report "1 of 2".
-      line_count: 161,
-      past_line_count: 130,
-    });
-
-    renderPanel();
-
-    expect(
-      await screen.findByText('130 of 161 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-  });
-
-  it('states plainly how much of the selection is already past, and explains nothing', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardOf([
-        demand({ line_no: 1, required_date: '2022-07-03' }),
-        demand({ line_no: 2, required_date: '2026-09-04' }),
-      ]),
-    );
-
-    renderPanel();
-
-    expect(
-      await screen.findByText('1 of 2 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-    // The old copy described a column that no longer exists, and a tint that needs a
-    // paragraph is a tint that failed. No feature explanations in the UI (CLAUDE.md).
-    expect(screen.queryByText(/Overdue column/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/rather than spread/)).not.toBeInTheDocument();
+    // AC-C5 (26 August 2026): the banner that used to say so is gone. What remains is the
+    // per-bucket tint, which is what the header already announces.
+    expect(screen.queryByText(/lines are already past their delivery date/)).toBeNull();
   });
 
   it('renders the products down the side', async () => {
@@ -1397,21 +1352,18 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
     expect(await screen.findByText('1 of 3 products')).toBeInTheDocument();
   });
 
-  it('leaves the selection-scoped totals exactly where they were', async () => {
+  it('leaves the selection-scoped sentence exactly where it was', async () => {
     const board = catalogue();
     getPlanningBoard.mockResolvedValue({ ...board, line_count: 161, past_line_count: 130 });
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    const banner = '130 of 161 lines are already past their delivery date';
-    expect(screen.getByText(banner)).toBeInTheDocument();
 
     await searchFor('tpe');
 
-    // The banner describes the SELECTION, not the rows on screen. Moving it with the filter
-    // would be the day-window mistake again, in a different corner.
+    // The product filter narrows the GRID and nothing else: the selection sentence describes
+    // what is being planned, not what a search is showing.
     await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
-    expect(screen.getByText(banner)).toBeInTheDocument();
     expect(screen.getByText('Planning 2 sales orders together')).toBeInTheDocument();
   });
 
@@ -1961,49 +1913,36 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
 });
 
 /**
- * The legend is ON the page, above the board, on both views (AC-C5).
- *
- * The captain: "make sure the legend is in the fulfilment planning page so the user knows what
- * each colour means". One instance above the grid/list switch rather than one per view, so the
- * two views cannot end up explaining the same colours differently.
+ * AC-C5 (retired 26 August 2026): NO legend row, and NO "already past" banner. The decision
+ * strip's cards carry every label in its own colour, and the column headers already say
+ * "Already past" over the periods they mean - so both were the screen restated in words.
  */
-describe('FulfilmentBoardPanel: the supply legend', () => {
-  it('names all six kinds above the grid, before it scrolls', async () => {
+describe('FulfilmentBoardPanel: what was taken off the page', () => {
+  it('shows no legend row on either view', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-
-    const legend = screen.getByTestId('supply-legend');
-    expect(legend.textContent).toContain('Buy');
-    expect(legend.textContent).toContain('Use shared stock');
-    expect(legend.textContent).toContain('Use own location');
-    expect(legend.textContent).toContain('Borrow from another order');
-    expect(legend.textContent).toContain('Borrow other location');
-    expect(legend.textContent).toContain('Incoming supply');
-    expect(legend.querySelectorAll('span[data-kind]')).toHaveLength(6);
-
-    // Above the board, not below it: a legend a reader has to scroll to is not a legend.
-    expect(
-      legend.compareDocumentPosition(screen.getByTestId('fulfilment-board-matrix')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it('shows the same legend on the list view', async () => {
-    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
-
-    renderPanel();
-    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.queryByTestId('supply-legend')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
-
     await waitFor(() =>
       expect(screen.queryByTestId('fulfilment-board-matrix')).not.toBeInTheDocument(),
     );
-    expect(screen.getByTestId('supply-legend').querySelectorAll('span[data-kind]')).toHaveLength(
-      6,
-    );
+    expect(screen.queryByTestId('supply-legend')).not.toBeInTheDocument();
+  });
+
+  it('shows no "already past" banner, and the strip still carries the labels', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.queryByText(/lines are already past their delivery date/)).toBeNull();
+    const strip = screen.getByTestId('decision-strip');
+    expect(strip.textContent).toContain('Buy');
+    expect(strip.textContent).toContain('Use shared stock');
+    expect(strip.textContent).toContain('Use own location');
   });
 });
 
@@ -2062,16 +2001,14 @@ describe('FulfilmentBoardPanel: the decision strip', () => {
     expect(screen.getByTestId('decision-strip-changed-buy')).toBeInTheDocument();
   });
 
-  it('sits under the legend, above whichever view is on screen', async () => {
+  it('sits above whichever view is on screen', async () => {
     getPlanningBoard.mockResolvedValue(amendedBoard());
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    const legend = screen.getByTestId('supply-legend');
     const strip = screen.getByTestId('decision-strip');
     const matrix = screen.getByTestId('fulfilment-board-matrix');
-    expect(legend.compareDocumentPosition(strip)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(strip.compareDocumentPosition(matrix)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 

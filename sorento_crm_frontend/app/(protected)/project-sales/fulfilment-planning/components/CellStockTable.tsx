@@ -35,16 +35,6 @@ const NOT_STATED_TITLE = 'No location on the sales order line, so nothing to cou
 /** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
 const EMPTY_TAKEN: Map<string, string> = new Map();
 
-/**
- * Where a location stands, in the order the reader walks it: this line's own first, then the
- * agent's group, then the pools the ladder drew on, then anything outside the group.
- *
- * The table lists every location the LADDER consulted, and unlabelled they all look the same:
- * on SO415472 the pool holding 1716 sat beside five group warehouses holding nothing, and the
- * Suggestion card quoted a figure that appeared to come from nowhere.
- */
-const WHERE_ORDER: BoardLocationWhere[] = ['own', 'group', 'site_pool', 'other_group'];
-
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
   group: 'Group',
@@ -139,15 +129,13 @@ export function CellStockTable({
 
   const showTotals = locations.length > 1;
   /**
-   * The rows grouped by where they stand, in `WHERE_ORDER`. A section of SEVERAL rows carries a
-   * subtotal, and only while the table spans more than one section - with a single section the
-   * subtotal is the Total, printed twice under two different words.
+   * The rows grouped into the SETS the engine nets over (ladder v4), in the order the server
+   * sent them. A section carries a subtotal when it holds several rows, or when it states a
+   * net - the net is the number the ladder obeyed and it is over the whole set, including
+   * members this cell never listed, so it says something no sum of these rows can.
    */
-  const sections = WHERE_ORDER.map((where) => ({
-    where,
-    rows: locations.filter((entry) => (entry.where ?? 'own') === where),
-  })).filter((section) => section.rows.length > 0);
-  const showSubtotals = sections.length > 1;
+  const sections = sectionsOf(locations);
+  const showSubtotals = sections.length > 1 || sections.some((section) => section.net !== null);
 
   return (
     <div className="space-y-1">
@@ -276,27 +264,30 @@ export function CellStockTable({
               </React.Fragment>
             );
           }),
-          // What this section holds, added up: "Pool BRW has 1716 available" has to be the sum
-          // of rows the reader can see, not a figure only the Suggestion card knows.
-          ...(showSubtotals && section.rows.length > 1
+          // What this section holds, added up - and for Available, what the SET NETS, which
+          // is the figure the ladder actually drew on. The two differ on purpose: the net
+          // covers every location of the group, and this table lists the ones this cell
+          // consulted.
+          ...(showSubtotals && (section.rows.length > 1 || section.net !== null)
             ? [
-                <tr
-                  key={`subtotal-${section.where}`}
-                  data-testid={`stock-subtotal-${section.where}`}
-                >
+                <tr key={`subtotal-${section.key}`} data-testid={`stock-subtotal-${section.key}`}>
                   <td className={cn(CHEVRON_COL, FOOT_CELL)} />
                   <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>
-                    {`${WHERE_LABELS[section.where]} subtotal`}
+                    {section.label}
                   </td>
                   <td className={cn(WHERE_COL, FOOT_CELL)} />
                   {NUMERIC_COLUMNS.map((column) => {
                     if (!column.total) {
                       return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                     }
-                    const total = sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
+                    const total =
+                      column.key === 'available' && section.net !== null
+                        ? section.net
+                        : sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
                     return (
                       <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                         <span
+                          data-testid={`stock-subtotal-${column.key}-${section.key}`}
                           className={cn(
                             'block truncate text-end tabular-nums',
                             total === null && 'font-normal text-muted-foreground',
@@ -356,6 +347,60 @@ export function CellStockTable({
     </div>
   );
 }
+
+type StockSection = {
+  /** Stable per table, and what the subtotal row is addressed by in a test. */
+  key: string;
+  /** The SET this run belongs to, compared exactly - a prefix test would merge `IB` into `IB2`. */
+  setKey: string;
+  label: string;
+  /** What the SET nets, when the server states one. `null` for a set with no net. */
+  net: string | null;
+  rows: BoardCellLocation[];
+};
+
+/**
+ * The rows cut into the sets availability is actually counted over (ladder v4).
+ *
+ * The line's own location and its group's other warehouses are ONE ownership group and net
+ * as one, so they share a subtotal even though they carry different Where tags - the tag says
+ * where a row stands relative to this cell, the net says which pile it is part of, and after
+ * 26 August those are two different questions. Every site pool is one pile too. A donor group
+ * outside this line's own gets its own subtotal, because each donor group nets separately.
+ *
+ * Cut on CONTIGUOUS RUNS, never by re-collecting rows with the same key: the server sends the
+ * rows in the order the reader walks them, and quietly moving one up beside an earlier row of
+ * the same set would rearrange a table somebody is comparing against AutoCount.
+ */
+function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
+  const sections: StockSection[] = [];
+  locations.forEach((entry) => {
+    const where = entry.where ?? 'own';
+    const setKey = entry.net_of ? `set:${entry.net_of}` : `where:${where}`;
+    const last = sections[sections.length - 1];
+    if (last && last.setKey === setKey) {
+      last.rows.push(entry);
+      return;
+    }
+    sections.push({
+      key: `${setKey}#${sections.length}`,
+      setKey,
+      label: labelOf(where, entry.net_of ?? null),
+      net: entry.net ?? null,
+      rows: [entry],
+    });
+  });
+  return sections;
+}
+
+function labelOf(where: BoardLocationWhere, netOf: string | null): string {
+  if (netOf === POOLS_SET) return 'Site pool subtotal';
+  if (netOf) return `${netOf} group subtotal`;
+  return `${WHERE_LABELS[where]} subtotal`;
+}
+
+/** What the server calls the five-pool set on `net_of`. */
+const POOLS_SET = 'pools';
 
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
