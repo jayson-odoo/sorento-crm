@@ -96,6 +96,11 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm.group_netting import (
+    GroupNetting,
+    group_of_warehouse_code,
+    netting_for_products,
+)
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
@@ -349,6 +354,12 @@ class ProjectOrderInquiryService:
         # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
         # has already changed.
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
+        # Ladder v4's availability reader (`app.services.scm.group_netting`), over the
+        # products this instance has been asked about. A candidate walk needs to know what
+        # the group it would link into already owes, and a listing asks the same question
+        # of fifty products at once.
+        self._netting_value: Optional[GroupNetting] = None
+        self._netted_products: set = set()
 
     # ------------------------------------------------------------- derivation
 
@@ -1979,6 +1990,14 @@ class ProjectOrderInquiryService:
         26 August ruling, a promised date in the PAST does not remove a row. The book is
         the record of what is still owed; a supplier being late is not evidence the goods
         stopped existing.
+
+        LADDER V4 (section 1d): a purchase-order line sitting at a `*-<group>` location is
+        free only to the extent the GROUP can cover its own backlog with it -
+        `group_net + the group's own open PO balance > 0`. In deficit those lines are
+        already spoken for, and linking a raised row to one of them says a quantity is
+        covered when the group is 15,514 short of covering what it already owes. A
+        pool-location line has no group and is always offered; the row that finds nothing
+        stays raised and buys, which is the honest outcome.
         """
         product_id = self._resolve_product_id(row)
         if not product_id:
@@ -2008,6 +2027,7 @@ class ProjectOrderInquiryService:
             )
             .all()
         )
+        deficit = self._groups_in_deficit(product_id, po_rows, by_po)
         for line, po, supplier, warehouse in po_rows:
             remaining = (
                 _dec(line.qty_ordered)
@@ -2017,6 +2037,8 @@ class ProjectOrderInquiryService:
             if remaining <= _ZERO:
                 continue
             location = warehouse.warehouse_code if warehouse else None
+            if group_of_warehouse_code(location) in deficit:
+                continue
             candidates.append(
                 self._candidate(
                     kind="po",
@@ -2085,6 +2107,67 @@ class ProjectOrderInquiryService:
 
         candidates.sort(key=lambda candidate: candidate["sort"])
         return candidates
+
+    def _netting(self, product_ids: Sequence[Optional[str]]) -> GroupNetting:
+        """Ladder v4's availability reader, over every product asked about so far.
+
+        Rebuilt when a product it has not seen turns up, so a caller that primes it with
+        the whole batch (the cascade does) pays for ONE three-query read and a single-row
+        caller pays for one too. It is the same `group_netting` the fulfilment ladder nets
+        through, which is the point: the board refusing to promise a group's stock and
+        purchasing linking a row to that group's purchase order would be two answers to one
+        question.
+        """
+        wanted = {str(pid) for pid in product_ids if pid}
+        if self._netting_value is None or wanted - self._netted_products:
+            self._netted_products |= wanted
+            self._netting_value = netting_for_products(
+                self.db, sorted(self._netted_products)
+            )
+        return self._netting_value
+
+    def _groups_in_deficit(
+        self,
+        product_id: str,
+        po_rows: Sequence[Any],
+        by_po: Dict[str, Decimal],
+    ) -> set:
+        """The ownership groups whose OPEN PURCHASE ORDERS cannot cover their own backlog
+        (ladder v4, section 1d).
+
+        `group_net + everything still to come on the group's own purchase orders`. Above
+        zero, the group has purchases nobody has claimed and a row may link to one; at or
+        below zero, every unit already on order is owed to demand the group carries, and a
+        link would promise the same stock twice.
+
+        Computed off the CANDIDATE ROWS themselves, so it costs no query beyond the netting
+        read: those rows already are the product's whole open purchase-order book, and
+        `by_po` is already netted for the links written against them.
+        """
+        remaining_by_group: Dict[str, Decimal] = {}
+        for line, _po, _supplier, warehouse in po_rows:
+            group = group_of_warehouse_code(
+                warehouse.warehouse_code if warehouse else None
+            )
+            if not group:
+                continue
+            remaining = (
+                _dec(line.qty_ordered)
+                - _dec(line.qty_received)
+                - by_po.get(str(line.id), _ZERO)
+            )
+            if remaining > _ZERO:
+                remaining_by_group[group] = (
+                    remaining_by_group.get(group, _ZERO) + remaining
+                )
+        if not remaining_by_group:
+            return set()
+        netting = self._netting([product_id])
+        return {
+            group
+            for group, remaining in remaining_by_group.items()
+            if netting.group_net(product_id, group).net + remaining <= _ZERO
+        }
 
     @staticmethod
     def _line_label(raw: Any) -> Optional[str]:
@@ -3349,15 +3432,21 @@ class ProjectOrderInquiryService:
             return {"po": set(), "spo": set()}
         by_po, by_spo = self._linked_by_target()
 
-        po_products: set = set()
-        for line_id, product_id, qty_ordered, qty_received in (
+        # LADDER V4 (section 1d): the flag applies the SAME group-deficit rule the walk
+        # does, so a row is never offered a Link that the dialog would then show as empty.
+        # Per (product, group), because a product can be flush in one group and 15,514
+        # short in another, and a pool-location line belongs to no group and always counts.
+        po_open: Dict[str, Dict[Optional[str], Decimal]] = {}
+        for line_id, product_id, qty_ordered, qty_received, warehouse_code in (
             self.db.query(
                 PurchaseOrderLine.id,
                 PurchaseOrderLine.product_id,
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
+                Warehouse.warehouse_code,
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
             .filter(
                 PurchaseOrderLine.product_id.in_(list(wanted)),
                 PurchaseOrderLine.line_status == "open",
@@ -3369,8 +3458,22 @@ class ProjectOrderInquiryService:
             remaining = (
                 _dec(qty_ordered) - _dec(qty_received) - by_po.get(str(line_id), _ZERO)
             )
-            if remaining > _ZERO:
-                po_products.add(str(product_id))
+            if remaining <= _ZERO:
+                continue
+            group = group_of_warehouse_code(warehouse_code)
+            per_group = po_open.setdefault(str(product_id), {})
+            per_group[group] = per_group.get(group, _ZERO) + remaining
+
+        po_products: set = set()
+        if po_open:
+            netting = self._netting(list(po_open))
+            for product_id, per_group in po_open.items():
+                for group, remaining in per_group.items():
+                    if group is None or (
+                        netting.group_net(product_id, group).net + remaining > _ZERO
+                    ):
+                        po_products.add(product_id)
+                        break
 
         spo_products: set = set()
         for allocation_id, product_id, allocated, received in (
