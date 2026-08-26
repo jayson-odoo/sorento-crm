@@ -375,14 +375,39 @@ class PurchaseOrderLine(BaseModel):
     expected_date: Optional[str] = None
 
 
+class PurchaseOrderSpoLanding(BaseModel):
+    """Where an SPO take's goods are landing, and how much at each (AC-G7)."""
+
+    warehouse_code: str
+    qty: float = 0.0
+
+
 class PurchaseOrderPlacement(BaseModel):
-    """One order-inquiry placement sitting on a purchase-order line (section 3.G, AC-G1).
+    """One placement sitting on a purchase-order line (section 3.G, AC-G1; AC-G7).
 
     Every field is a NAME. The inquiry by its number, the sales order by its document
     number, the customer and the agent by the labels the order-inquiry worklist already
     prints for them - a UUID on this panel would tell the buyer nothing they could act on.
+
+    TWO KINDS. `inquiry` is somebody's order inquiry linked to this line. `spo` is a CRM SPO
+    that PULLED from it: the goods are on a container already, so the fields describing a
+    customer are null and the ones describing the container are not.
+
+    Those SPO fields are declared HERE and not only built in the service, because
+    `response_model` drops what it does not declare - and it did, silently: the panel
+    rendered the qty and printed "-" for the SPO number and the container beside it.
     """
 
+    #: `inquiry` (the original panel) or `spo` (a CRM SPO that pulled from this line).
+    kind: str = "inquiry"
+    #: The SPO that took this quantity. `spo` rows only.
+    spo_number: Optional[str] = None
+    #: The container it is on, by container number or shipment number. `spo` rows only.
+    packing_list: Optional[str] = None
+    #: Where it lands, and how much at each. `spo` rows only.
+    warehouses: List[PurchaseOrderSpoLanding] = Field(default_factory=list)
+    #: When the container is due. `spo` rows only.
+    arrival_date: Optional[str] = None
     #: `OI-000006`. Null only on a row raised before the numbering stamp existed.
     inquiry_no: Optional[str] = None
     #: The sales order this quantity is owed to - its AutoCount number where it has one.

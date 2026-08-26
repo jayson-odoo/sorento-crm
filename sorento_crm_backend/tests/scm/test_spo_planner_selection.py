@@ -676,3 +676,51 @@ def test_the_walk_stops_dead_once_packed_is_exactly_consumed():
         assert [c["default_ticked"] for c in coverage] == [True, False]
         ticked = sum(c["qty"] for c in coverage if c["default_ticked"])
         assert ticked <= 40
+
+
+# --------------------------------------------------------------------------- #
+# Browser pass 3, finding 4 - the SPO row has to survive the response model
+# --------------------------------------------------------------------------- #
+
+
+def test_the_purchase_order_route_still_carries_the_spo_placement(scm_app):
+    """The service builds the row; `response_model` decides what reaches the screen.
+
+    `PurchaseOrderPlacement` declared none of the SPO fields, and Pydantic drops what it
+    does not declare - silently. So the panel rendered the qty (a field it does declare)
+    and printed "-" for the SPO number and the container beside it, which is exactly what
+    the browser pass saw on 202511-S0111.
+    """
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    supplier = w.supplier()
+    wh = w.warehouse()
+    po = w.po("A", supplier, [("A", 100, 0)])
+    shipment, lines = w.shipment([("A", 60, supplier)])
+    created = svc.create(
+        db, str(shipment.id),
+        [_confirm(
+            lines[0], 60,
+            location_splits=[{"warehouse_id": str(wh.id), "qty": 60}],
+        )],
+    )
+    db.commit()
+
+    body = TestClient(app).get(f"/api/v1/scm/purchase-orders/{po.id}").json()
+
+    placements = [
+        p for block in body["allocations"] for p in block["placements"]
+    ]
+    spo_rows = [p for p in placements if p.get("kind") == "spo"]
+    assert spo_rows, f"no SPO placement survived the response model: {placements}"
+    row = spo_rows[0]
+    assert row["spo_number"] == created["created_spos"][0]["po_number"]
+    assert row["packing_list"] == shipment.shipment_number
+    assert row["qty"] == 60
+    assert [x["warehouse_code"] for x in row["warehouses"]] == [wh.warehouse_code]
+    assert "arrival_date" in row
