@@ -655,3 +655,24 @@ def test_an_untouched_retail_line_is_offered_in_full():
 
         entry = next(c for c in coverage if str(retail.id) in c["key"])
         assert entry["qty"] == 30
+
+
+def test_the_walk_stops_dead_once_packed_is_exactly_consumed():
+    """Browser pass 2, finding 3: the default ticks are the screen's starting point, and
+    every one of them has to be an order this container can actually put something into.
+    On the boundary - the first row consuming the packed quantity exactly - nothing after
+    it is ticked."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 40, supplier)])
+        _project_chain(db, w, "A", qty=40, delivery=date(2026, 9, 10))
+        _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 20))
+
+        coverage = _line(svc.suggest(db, str(shipment.id)), str(lines[0].id))["so_coverage"]
+
+        assert [c["default_ticked"] for c in coverage] == [True, False]
+        ticked = sum(c["qty"] for c in coverage if c["default_ticked"])
+        assert ticked <= 40

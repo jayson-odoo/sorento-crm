@@ -401,13 +401,147 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(lines[0].so_line_ids).toEqual(['project:row-1']);
   });
 
-  it('refuses to create when the ticks ask for more than was packed (AC-G5)', async () => {
+  it('states the shortfall when the ticks ask for more than the container holds (AC-G5)', async () => {
     renderTable();
     await openSoDrill();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
 
-    expect(await screen.findByText(/160 ticked against 100 packed/)).toBeInTheDocument();
+    // 160 ticked against a container of 100: the third order is served in part, which is
+    // what the default walk does on its last entry every time. Said out loud, not blocked.
+    expect(
+      await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
+  });
+});
+
+/**
+ * Browser pass 2, finding 3 - the banner and the cell must be the same arithmetic.
+ *
+ * The shape the tester hit on SHIP-DRAFT-18cdfe5e: a container packed with 100 whose open
+ * POs only cover 19, against a product with far more open demand than either figure. The
+ * SO-covered cell read 19 (right), and the banner read "302 ticked against 100 packed" and
+ * disabled Create SPO (wrong - nothing was over-ticked, the default walk simply includes
+ * the order it can only partly serve).
+ */
+function shortCoveredLine(over: Record<string, unknown> = {}) {
+  return plannerLine({
+    shipment_line_id: 'sl-short',
+    item_code: 'CGB247',
+    packed_qty: 100,
+    po_covered_qty: 19,
+    suggested_qty: 19,
+    po_takes: [
+      {
+        po_line_id: 'pol-short',
+        po_number: '202605-S0060',
+        qty: 19,
+        expected_date: '2026-09-01',
+        po_date: '2026-05-02',
+        supplier_name: 'Jinbaichuan',
+        open_qty: 19,
+      },
+    ],
+    so_coverage: [
+      {
+        key: 'project:row-a',
+        kind: 'project' as const,
+        document: 'SI26-0100',
+        customer_name: 'Sunway',
+        required_date: '2026-09-10',
+        qty: 12,
+        warehouse_id: 'wh-1',
+        warehouse_code: 'BRW',
+        default_ticked: true,
+      },
+      {
+        key: 'retail:sol-a',
+        kind: 'retail' as const,
+        document: 'SO-2201',
+        customer_name: 'Dealer A',
+        required_date: '2026-09-20',
+        qty: 90,
+        warehouse_id: 'wh-2',
+        warehouse_code: 'MWH',
+        default_ticked: true,
+      },
+      {
+        key: 'retail:sol-b',
+        kind: 'retail' as const,
+        document: 'SO-2202',
+        customer_name: 'Dealer B',
+        required_date: '2026-10-02',
+        qty: 200,
+        warehouse_id: 'wh-2',
+        warehouse_code: 'MWH',
+        default_ticked: false,
+      },
+    ],
+    ...over,
+  });
+}
+
+describe('F7 - the SO-covered cell and the Create banner are one arithmetic', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [shortCoveredLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  it('does not accuse the default ticks of over-ticking the container', async () => {
+    renderTable();
+
+    expect(await screen.findByRole('button', { name: /create spo/i })).toBeEnabled();
+    expect(screen.queryByText(/ticked against/)).not.toBeInTheDocument();
+  });
+
+  it('the cell states what the ticks actually cover, not what they asked for', async () => {
+    renderTable();
+
+    // 19 is all this SPO can pull, so 19 is what the ticked orders get between them.
+    const soCell = await screen.findByTitle(/which demand this spo is for/i);
+    expect(soCell).toHaveTextContent('19');
+    expect(soCell).not.toHaveTextContent('102');
+  });
+
+  it('ticks only as far down the list as the SPO can actually serve', async () => {
+    renderTable();
+    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+
+    // 12 to the first, 7 of the second's 90 - and the third is out of reach entirely.
+    expect(screen.getByRole('checkbox', { name: 'Cover SI26-0100' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Cover SO-2201' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
+  });
+
+  it('says which order it cannot serve when the operator ticks one it cannot reach', async () => {
+    renderTable();
+    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
+
+    expect(await screen.findByText(/SO-2202/)).toBeInTheDocument();
+    expect(screen.getByText(/nothing left for it/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+  });
+
+  it('splits only what it can serve, and calls the rest unassigned', async () => {
+    renderTable();
+    fireEvent.click(await screen.findByRole('button', { name: /create spo/i }));
+
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0].qty).toBe(19);
+    expect(lines[0].location_splits).toEqual([
+      { warehouse_id: 'wh-1', qty: 12 },
+      { warehouse_id: 'wh-2', qty: 7 },
+    ]);
   });
 });

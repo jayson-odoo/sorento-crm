@@ -122,19 +122,62 @@ function poCoveredFor(ln: SpoSuggestionLine, takeIds: string[]): number {
   return Math.min(available, ln.packed_qty);
 }
 
-/** The ticks the server proposed: project by required date, then retail, until packed is
- *  used up (Q4). Recomputed nowhere on the client - the walk is the server's. */
-function defaultSoKeys(ln: SpoSuggestionLine): string[] {
-  return (ln.so_coverage ?? []).filter((c) => c.default_ticked).map((c) => c.key);
+/**
+ * What the ticked demand actually GETS from this SPO - the one walk every figure on the
+ * row is read off (browser pass 2, finding 3).
+ *
+ * There used to be two: the cell showed `min(sum of ticked need, qty)` and the banner
+ * compared the raw `sum of ticked need` against the packed quantity. On a container packed
+ * with 100 whose POs cover 19, the cell read 19 and the banner read "302 ticked against 100
+ * packed" and disabled Create SPO - two answers to one question, and the wrong one was the
+ * one holding the button.
+ *
+ * The walk: each ticked entry, in the server's own order, takes what it needs out of the
+ * SPO quantity until there is none left. An entry that gets nothing is one this container
+ * cannot serve at all, which is the only thing worth stopping the operator for.
+ */
+function coverageTakes(
+  ln: SpoSuggestionLine,
+  soKeys: string[],
+  qty: number,
+): { entry: SpoCoverageLine; take: number }[] {
+  const out: { entry: SpoCoverageLine; take: number }[] = [];
+  let left = Math.max(qty, 0);
+  for (const entry of ln.so_coverage ?? []) {
+    if (!soKeys.includes(entry.key)) continue;
+    const take = Math.min(entry.qty, left);
+    out.push({ entry, take: Math.max(take, 0) });
+    left -= Math.max(take, 0);
+  }
+  return out;
+}
+
+/** What the ticks cover between them - what the SO-covered cell states. */
+function tickedQty(ln: SpoSuggestionLine, soKeys: string[], qty: number): number {
+  return coverageTakes(ln, soKeys, qty).reduce((sum, t) => sum + t.take, 0);
 }
 
 /**
- * Where the quantity lands, derived from the ticks (AC-G4).
+ * The ticks the server proposed, narrowed to what this SPO can reach.
  *
- * Each ticked piece of demand pulls what it needs, at ITS warehouse, in the order the
- * server walked them. What no tick claims is free stock, and it goes to the suggested
- * warehouse - labelled Unassigned on screen, because nobody has said who it is for and
- * pretending otherwise is how a container arrives against the wrong order.
+ * The server walks its list against the PACKED quantity; the SPO is capped at what open
+ * POs cover, which is often less. Ticking an order the container cannot serve on the very
+ * first render is how the banner fired on a screen nobody had touched.
+ */
+function defaultSoKeys(ln: SpoSuggestionLine, qty: number): string[] {
+  const proposed = (ln.so_coverage ?? []).filter((c) => c.default_ticked).map((c) => c.key);
+  return coverageTakes(ln, proposed, qty)
+    .filter((t) => t.take > 0)
+    .map((t) => t.entry.key);
+}
+
+/**
+ * Where the quantity lands, derived from the same walk (AC-G4).
+ *
+ * Each ticked piece of demand pulls what it needs, at ITS warehouse. What no tick claims is
+ * free stock, and it goes to the suggested warehouse - labelled Unassigned on screen,
+ * because nobody has said who it is for and pretending otherwise is how a container arrives
+ * against the wrong order.
  */
 function splitsFromTicks(
   ln: SpoSuggestionLine,
@@ -143,34 +186,25 @@ function splitsFromTicks(
 ): SplitState[] {
   if (ln.cannot_convert || qty <= 0) return [];
   const byWarehouse = new Map<string, number>();
-  let left = qty;
-  for (const entry of ln.so_coverage ?? []) {
-    if (left <= 0) break;
-    if (!soKeys.includes(entry.key)) continue;
-    const take = Math.min(entry.qty, left);
+  let claimed = 0;
+  for (const { entry, take } of coverageTakes(ln, soKeys, qty)) {
     if (take <= 0) continue;
     const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
     if (!warehouse) continue;
     byWarehouse.set(warehouse, (byWarehouse.get(warehouse) ?? 0) + take);
-    left -= take;
+    claimed += take;
   }
-  if (left > 0 && ln.suggested_warehouse_id) {
+  const unassigned = qty - claimed;
+  if (unassigned > 0 && ln.suggested_warehouse_id) {
     byWarehouse.set(
       ln.suggested_warehouse_id,
-      (byWarehouse.get(ln.suggested_warehouse_id) ?? 0) + left,
+      (byWarehouse.get(ln.suggested_warehouse_id) ?? 0) + unassigned,
     );
   }
   return [...byWarehouse.entries()].map(([warehouseId, splitQty]) => ({
     warehouseId,
     qty: splitQty,
   }));
-}
-
-/** What the ticks alone account for - the rest of the SPO qty is Unassigned. */
-function tickedQty(ln: SpoSuggestionLine, soKeys: string[]): number {
-  return (ln.so_coverage ?? [])
-    .filter((c) => soKeys.includes(c.key))
-    .reduce((sum, c) => sum + c.qty, 0);
 }
 
 function splitsTotal(splits: SplitState[]): number {
@@ -197,7 +231,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       // Every take ticked and the server's own demand walk pre-ticked: the default IS the
       // answer for most containers, and the ticks exist for the ones where it is not.
       const poTakeIds = ln.po_takes.map((t) => t.po_line_id);
-      const soKeys = defaultSoKeys(ln);
+      const soKeys = defaultSoKeys(ln, ln.suggested_qty);
       next[ln.shipment_line_id] = {
         qty: ln.suggested_qty,
         poTakeIds,
@@ -214,7 +248,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const stateFor = (ln: SpoSuggestionLine): LineState => {
     const held = state[ln.shipment_line_id];
     if (held) return held;
-    const soKeys = defaultSoKeys(ln);
+    const soKeys = defaultSoKeys(ln, ln.suggested_qty);
     return {
       qty: ln.suggested_qty,
       poTakeIds: ln.po_takes.map((t) => t.po_line_id),
@@ -311,15 +345,46 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * decision, not an arithmetic one.
    */
   const overTicked = useMemo(() => {
-    const bad = new Map<string, { ticked: number; packed: number }>();
+    const bad = new Map<string, string[]>();
     for (const ln of lines) {
       if (ln.cannot_convert) continue;
-      const ticked = tickedQty(ln, soKeysFor(ln));
-      if (ticked > ln.packed_qty + 1e-6) {
-        bad.set(ln.shipment_line_id, { ticked, packed: ln.packed_qty });
-      }
+      // An order this SPO cannot serve AT ALL - the operator ticked past what the
+      // container holds. Which one to drop is their decision, so it is named rather than
+      // silently untitcked, and Create waits until they have made it (AC-G5).
+      const starved = coverageTakes(ln, soKeysFor(ln), qtyFor(ln))
+        .filter((t) => t.take <= 0)
+        .map((t) => t.entry.document ?? t.entry.key);
+      if (starved.length) bad.set(ln.shipment_line_id, starved);
     }
     return bad;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, state]);
+
+  /**
+   * Ticked demand this SPO can only PART-cover - stated, never blocking (AC-G5's figures).
+   *
+   * The default walk does this on its last entry every time a container is smaller than the
+   * demand behind it, which is most of them, so disabling Create for it would disable Create
+   * for the normal case. What it is not allowed to do is stay quiet: the order is going to
+   * be short, and the person sending it should read that here rather than discover it when
+   * the container lands.
+   */
+  const partlyCovered = useMemo(() => {
+    const out = new Map<string, { asked: number; covered: number; short: string[] }>();
+    for (const ln of lines) {
+      if (ln.cannot_convert) continue;
+      const takes = coverageTakes(ln, soKeysFor(ln), qtyFor(ln));
+      const short = takes
+        .filter((t) => t.take > 0 && t.take < t.entry.qty)
+        .map((t) => t.entry.document ?? t.entry.key);
+      if (!short.length) continue;
+      out.set(ln.shipment_line_id, {
+        asked: takes.reduce((sum, t) => sum + t.entry.qty, 0),
+        covered: takes.reduce((sum, t) => sum + t.take, 0),
+        short,
+      });
+    }
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, state]);
 
@@ -472,8 +537,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               title={ln.item_code ?? ln.product_name ?? 'This product'}
               coverage={ln.so_coverage}
               tickedKeys={keys}
-              total={Math.min(tickedQty(ln, keys), qtyFor(ln))}
-              unassigned={Math.max(qtyFor(ln) - tickedQty(ln, keys), 0)}
+              total={tickedQty(ln, keys, qtyFor(ln))}
+              unassigned={Math.max(qtyFor(ln) - tickedQty(ln, keys, qtyFor(ln)), 0)}
               onToggle={(key, on) => toggleCoverage(ln, key, on)}
             />
           );
@@ -757,10 +822,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         ) : null}
         {overTicked.size > 0 ? (
           <span className="text-2xs font-medium text-destructive">
-            {[...overTicked.values()]
-              .map((o) => `${fmtInt(o.ticked)} ticked against ${fmtInt(o.packed)} packed`)
-              .join('; ')}{' '}
-            - untick an order, or send less
+            {[...overTicked.values()].flat().join(', ')} - this container has nothing left
+            for it. Untick it, or send more.
+          </span>
+        ) : null}
+        {overTicked.size === 0 && partlyCovered.size > 0 ? (
+          <span className="text-2xs text-muted-foreground">
+            {[...partlyCovered.values()]
+              .map(
+                (p) =>
+                  `${fmtInt(p.asked)} ticked, ${fmtInt(p.covered)} on this container - ${p.short.join(', ')} partly covered`,
+              )
+              .join('; ')}
           </span>
         ) : null}
       </div>
