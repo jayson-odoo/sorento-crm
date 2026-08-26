@@ -639,3 +639,94 @@ def test_adding_to_a_draft_locks_the_draft_too():
         assert any(
             "FROM inbound_shipments" in sql and "FOR UPDATE" in sql for sql in statements
         ), "the draft everyone is loading into was never locked"
+
+
+# --------------------------------------------------------------------------------- #
+# Browser finding 1 - a SKIP row is not a container
+# --------------------------------------------------------------------------------- #
+
+
+def _skip_only_invoice(db, w: World):
+    """An invoice whose only conversion outcome is a SKIP.
+
+    Built the way the dev database produced it: two invoices converted in ONE action, one
+    with a matched line and one without. The convert succeeds on the first and records why
+    the second went nowhere - a link row with no shipment line and an `unmatched_reason`.
+    """
+    carrier = _kailu_invoice(db, w)
+    skipped = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
+    for line in _lines(db, skipped.id):
+        line.product_id = None
+    db.flush()
+
+    svc.convert_to_draft_shipment(db, [str(carrier.id), str(skipped.id)])
+
+    links = (
+        db.query(ProformaInvoiceShipmentLink)
+        .filter(ProformaInvoiceShipmentLink.proforma_invoice_id == skipped.id)
+        .all()
+    )
+    assert links and all(l.inbound_shipment_line_id is None for l in links)
+    assert all(l.unmatched_reason for l in links)
+    return skipped
+
+
+def test_a_skip_only_invoice_reads_as_on_no_container_at_all():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        skipped = _skip_only_invoice(db, w)
+
+        out = svc.serialize(db, svc.get_or_404(db, str(skipped.id)))
+
+        assert out["placement"] == "not_converted"
+        assert out["placed_qty"] == 0
+        # The header's own list of containers - a skip names a shipment it never went on,
+        # and the panel that reads this locked the invoice for editing because of it.
+        assert out["converted_shipments"] == []
+
+
+def test_a_skip_only_invoice_can_still_be_adjusted():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        skipped = _skip_only_invoice(db, w)
+        line = _lines(db, skipped.id)[0]
+
+        out = svc.adjust_line(db, str(skipped.id), str(line.id), qty=3, actor="Ms Tee")
+
+        assert out["lines"][0]["qty"] == 3
+
+
+def test_a_skipped_line_is_offered_again_once_its_product_is_matched():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        skipped = _skip_only_invoice(db, w)
+        line = _lines(db, skipped.id)[0]
+        # Somebody fixed the catalogue and the code now resolves.
+        line.product_id = w.product("A").id
+        db.flush()
+
+        detail = svc.serialize(db, svc.get_or_404(db, str(skipped.id)))
+        offered = next(ln for ln in detail["lines"] if ln["id"] == str(line.id))
+        assert offered["remaining_qty"] == offered["qty"]
+        assert offered["placed_qty"] == 0
+
+        out = svc.convert_to_draft_shipment(db, [str(skipped.id)])
+        assert out["shipment_id"]
+
+
+def test_a_skipped_line_says_why_rather_than_reading_as_placed():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        skipped = _skip_only_invoice(db, w)
+
+        detail = svc.serialize(db, svc.get_or_404(db, str(skipped.id)))
+
+        line = detail["lines"][0]
+        assert line["matched"] is False
+        assert line["unmatched_reason"]
+        assert line["placed_qty"] == 0
+        assert line["packing_lists"] == []

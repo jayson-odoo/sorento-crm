@@ -2403,10 +2403,18 @@ def serialize(
         str(link.proforma_invoice_line_id): (link, shipment_number)
         for link, shipment_number in link_rows
     }
-    # Header summary: every DISTINCT shipment this invoice's lines went to - normally one,
-    # since a convert refuses a re-run, but shown as a list rather than assuming it.
+    # Header summary: every DISTINCT shipment this invoice's lines actually went to.
+    #
+    # A SKIP row is NOT one. It names the shipment whose convert ran, and records why
+    # this line could not go on it - so counting it here put a container in the header
+    # of an invoice that had never been on one, and the screen reading it locked the
+    # lines panel ("already in a packing list, so the quantities are fixed") on an
+    # invoice nothing was holding. Same rule as `_placed_invoice_ids`: a placement
+    # names a shipment LINE.
     seen_shipments: dict[str, str] = {}
     for link, shipment_number in link_rows:
+        if link.inbound_shipment_line_id is None:
+            continue
         seen_shipments[str(link.inbound_shipment_id)] = shipment_number
     out["converted_shipments"] = [
         {"shipment_id": sid, "shipment_number": num} for sid, num in seen_shipments.items()

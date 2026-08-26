@@ -69,8 +69,27 @@ export function ConvertToPackingListDialog({
     () => (invoice?.lines ?? []).filter((line) => (line.remaining_qty ?? 0) > 0),
     [invoice],
   );
+  /** Finished: every piece of it is on a container. */
   const alreadyPlaced = useMemo(
-    () => (invoice?.lines ?? []).filter((line) => (line.remaining_qty ?? 0) <= 0),
+    () =>
+      (invoice?.lines ?? []).filter(
+        (line) => (line.remaining_qty ?? 0) <= 0 && (line.placed_qty ?? 0) > 0,
+      ),
+    [invoice],
+  );
+  /**
+   * Nothing placed and nothing placeable - a line no container can carry YET, because its
+   * item code matches no product we hold.
+   *
+   * Reported apart from the finished ones, and with its reason: calling it "already placed"
+   * sent the reader looking for a container that never held it, and the dialog then
+   * announced that every line of the invoice was in a packing list when none of them was.
+   */
+  const unplaceable = useMemo(
+    () =>
+      (invoice?.lines ?? []).filter(
+        (line) => (line.remaining_qty ?? 0) <= 0 && (line.placed_qty ?? 0) <= 0,
+      ),
     [invoice],
   );
 
@@ -145,7 +164,9 @@ export function ConvertToPackingListDialog({
               {placeable.length === 0 ? (
                 <Alert>
                   <AlertDescription>
-                    Every line of {invoice.pi_number} is already in a packing list.
+                    {alreadyPlaced.length > 0
+                      ? `Every line of ${invoice.pi_number} is already in a packing list.`
+                      : `No line of ${invoice.pi_number} can go on a container yet.`}
                   </AlertDescription>
                 </Alert>
               ) : (
@@ -197,6 +218,19 @@ export function ConvertToPackingListDialog({
                     .join(', ') || EM_DASH}
                   {alreadyPlaced.length > 5 ? ` and ${alreadyPlaced.length - 5} more` : ''}.
                 </p>
+              ) : null}
+              {unplaceable.length > 0 ? (
+                <div className="space-y-1 rounded-lg border border-dashed p-2.5">
+                  <p className="text-2xs font-medium">Cannot go on a container yet</p>
+                  {unplaceable.map((line) => (
+                    <p key={line.id} className="text-2xs text-muted-foreground">
+                      <span className="font-medium">{line.item_code}</span>
+                      {' - '}
+                      {line.unmatched_reason ??
+                        'no catalogue product for this code, so there is nowhere to ship it.'}
+                    </p>
+                  ))}
+                </div>
               ) : null}
             </div>
           ) : null}

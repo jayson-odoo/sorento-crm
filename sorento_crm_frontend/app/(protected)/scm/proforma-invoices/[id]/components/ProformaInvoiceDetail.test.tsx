@@ -558,3 +558,78 @@ describe('F10 - the invoice says which packing list it is in', () => {
     expect(screen.queryByRole('button', { name: /convert/i })).not.toBeInTheDocument();
   });
 });
+
+describe('A line nothing could carry is not a line already placed', () => {
+  /** The dev repro: one line, no catalogue product, a convert that ran on another invoice
+   *  in the same action and recorded WHY this one went nowhere. */
+  const skipped = () =>
+    detail({
+      converted_shipments: [],
+      placement: 'not_converted',
+      placed_qty: 0,
+      remaining_qty: 0,
+      lines: [
+        {
+          ...detail().lines[0],
+          item_code: 'SRTWC8152-SH-300-UF',
+          matched: false,
+          product_code: null,
+          unmatched_reason: "No catalogue product matches this line's item code.",
+          placed_qty: 0,
+          remaining_qty: 0,
+          packing_lists: [],
+        },
+      ],
+    });
+
+  it('leaves the lines panel editable, with no "already in a packing list" lock', () => {
+    state.data = skipped();
+    renderDetail();
+
+    expect(screen.queryByText(/Already in a packing list/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
+  });
+
+  it('says why the line cannot go, instead of calling it already placed', () => {
+    state.data = skipped();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
+
+    // Twice: the lines grid already says it in its "In packing list" column, and the
+    // dialog says it again where the decision is being made.
+    expect(
+      screen.getAllByText(/No catalogue product matches this line's item code/).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/already fully placed/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/is already in a packing list/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('still reports a genuinely placed line as placed', () => {
+    // Split, so there is still something to convert and the dialog opens; its first line
+    // is finished and the second is not.
+    state.data = detail({
+      placement: 'split',
+      placed_qty: 10,
+      remaining_qty: 5,
+      lines: [
+        { ...detail().lines[0], placed_qty: 10, remaining_qty: 0 },
+        {
+          ...detail().lines[0],
+          id: 'line-2',
+          line_no: 2,
+          item_code: 'ITEM-2',
+          placed_qty: 0,
+          remaining_qty: 5,
+        },
+      ],
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert the rest/i }));
+
+    expect(screen.getByText(/already fully placed/)).toBeInTheDocument();
+  });
+});
