@@ -113,6 +113,11 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
+#: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
+#: upload names thousands of documents in one call, and one `IN` list that long is a bad
+#: plan and, on some drivers, a refused statement.
+_RELINK_BATCH = 200
+
 #: The states pre-seeded at zero on the header strip. `placed` (section G) is
 #: deliberately NOT one of them - `summary()` adds it to the dict dynamically the moment a
 #: placed row actually exists, so a project with none yet keeps reporting the exact four
@@ -259,6 +264,33 @@ TIER_SAME_GROUP = 2
 TIER_POOL = 3
 TIER_SIBLING = 4
 TIER_ELSEWHERE = 5
+
+
+def _also_cited(note: Optional[str]) -> List[str]:
+    """The EXTRA documents a form remark named, read back off the row's note.
+
+    `order_inquiry_rows` has one `cited_document` column and a remark routinely names two,
+    so the rest are written behind a fixed prefix
+    (`project_order_inquiry_import_service.ALSO_CITED_PREFIX`) and read back here.
+
+    ONLY that segment is parsed, never the whole note. The note also carries the cascade's
+    own "Linked to 202607-S0031 (...)" stamp and the relocation a book re-upload wrote, and
+    reading a document out of those would make an already-linked row cite the document it is
+    already sitting on - pinning the walk to its own past, which is the exact trap
+    `cited_document` was given its own column to avoid.
+
+    Uses the READER's document-number pattern rather than a second copy of it, so the two
+    cannot come to disagree about what a document number looks like.
+    """
+    from app.services.project_order_inquiry_import_service import ALSO_CITED_PREFIX
+    from app.services.project_order_inquiry_reader import _PO_NUMBER
+
+    text_value = str(note or "")
+    at = text_value.find(ALSO_CITED_PREFIX)
+    if at < 0:
+        return []
+    segment = text_value[at + len(ALSO_CITED_PREFIX):].split(";")[0]
+    return [str(found).strip().upper() for found in _PO_NUMBER.findall(segment)]
 
 
 def link_location_tier(
@@ -1889,17 +1921,39 @@ class ProjectOrderInquiryService:
             } if pool_ids else set()
         return self._pool_codes_cache
 
-    def _cited_documents(self, row: OrderInquiryRow) -> set:
-        """Every document number this row NAMES, upper-cased.
+    def _cited_documents(self, row: OrderInquiryRow) -> Dict[str, int]:
+        """Every document this row NAMES, upper-cased, RANKED in the order CS wrote them.
 
         `cited_document` is the column CS writes into (the Amend "Order back" field, and
-        the Order Inquiry Form's remark). `spo_ref` is read beside it for the rows raised
-        before that column existed. `po_ref` is NOT read: since section 3.I it is the
-        derived display of the first link, so reading it would make every already-linked
-        row cite the document it is already on and pin the walk to its own past.
+        the Order Inquiry Form's remark) and it holds the FIRST document. A form remark
+        routinely names more than one - `SPO-2026/08-0061 & 202606-S0082` - and the second
+        is not decoration: it is the answer when the first cannot cover the quantity. One
+        column cannot hold two, so the rest are written onto the NOTE behind a fixed prefix
+        (`project_order_inquiry_import_service.ALSO_CITED_PREFIX`) and read back here.
+        Parsed with the reader's own document-number pattern rather than a second one, so
+        the two cannot come to disagree about what a document number looks like.
+
+        A RANK rather than a set, because "cited" is not one bucket: the walk must try the
+        first document CS named before the second, or a row whose first citation is short
+        lands on the wrong one and reads as a rule that ignored the form.
+
+        `spo_ref` is read after them for the rows raised before `cited_document` existed.
+        `po_ref` is NOT read: since section 3.I it is the derived display of the first link,
+        so reading it would make every already-linked row cite the document it is already on
+        and pin the walk to its own past.
         """
-        cited = {row.cited_document, row.spo_ref}
-        return {str(value).strip().upper() for value in cited if value}
+        ordered: List[str] = []
+
+        def _add(value: Any) -> None:
+            key = str(value or "").strip().upper()
+            if key and key not in ordered:
+                ordered.append(key)
+
+        _add(row.cited_document)
+        for document in _also_cited(row.note):
+            _add(document)
+        _add(row.spo_ref)
+        return {document: rank for rank, document in enumerate(ordered)}
 
     def _candidates_for_row(
         self, row: OrderInquiryRow, *, manual: bool = False
@@ -2066,19 +2120,24 @@ class ProjectOrderInquiryService:
         currency: Optional[str],
         own_location: Optional[str],
         pools: set,
-        cited: set,
+        cited: Dict[str, int],
     ) -> Dict[str, Any]:
         """One candidate, with the sort key that IS the walk (Q5 then Q7).
 
-        The key, outermost first: the document CS cited; then an SPO before a purchase
-        order (an order back is owed against what is already shipped before it is owed
-        against a new purchase); then the location tier; then the pool sub-rank inside
-        tier 3 (the row's own site pool before the others); then the PO's own issue date,
-        then the line's expected date, then the document number, then the id so a tie
-        breaks the same way twice.
+        The key, outermost first: WHICH document CS cited, in the order they wrote them -
+        `SPO-2026/08-0061 & 202606-S0082` tries the allocation before the purchase order,
+        and a rank rather than a flag is what makes that true (a flag puts both in one
+        bucket and lets the date decide between two documents the form already ordered);
+        then an SPO before a purchase order (an order back is owed against what is already
+        shipped before it is owed against a new purchase); then the location tier; then the
+        pool sub-rank inside tier 3 (the row's own site pool before the others); then the
+        PO's own issue date, then the line's expected date, then the document number, then
+        the id so a tie breaks the same way twice.
         """
         tier, sub = link_location_tier(own_location, location, pools)
-        is_cited = bool(document) and str(document).strip().upper() in cited
+        # Uncited sorts after every citation, however many there are.
+        citation_rank = cited.get(str(document or "").strip().upper(), len(cited) + 1)
+        is_cited = bool(document) and citation_rank <= len(cited)
         return {
             "kind": kind,
             "po_line_id": target_id if kind == "po" else None,
@@ -2098,7 +2157,7 @@ class ProjectOrderInquiryService:
             "currency": currency,
             "cited": is_cited,
             "sort": (
-                0 if is_cited else 1,
+                citation_rank,
                 0 if kind == "spo" else 1,
                 tier,
                 sub,
@@ -2526,6 +2585,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: str,
         trigger: str,
+        row_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """The bulk, idempotent cascade pass (G2 rule 1: "we need to link already at
         first already instead of suggesting and needing the users to click 1 by 1").
@@ -2560,7 +2620,18 @@ class ProjectOrderInquiryService:
             OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
             OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
         )
-        if product_ids:
+        if row_ids is not None:
+            # The NAMED rows and nothing else. A product scope is right for "this purchase
+            # order was just confirmed, who was waiting for this item" and wrong for "this
+            # upload raised these instructions": the Order Inquiry Form's rows name items
+            # half the company's open orders also name, and one CS spreadsheet must not
+            # re-cascade somebody else's instructions. Wins over `product_ids`, which a
+            # caller passing both would be asking two different questions with.
+            wanted_rows = [row_id for row_id in row_ids if row_id]
+            if not wanted_rows:
+                return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+            query = query.filter(OrderInquiryRow.id.in_(wanted_rows))
+        elif product_ids:
             wanted = [pid for pid in product_ids if pid]
             so_line_ids = [
                 line_id
@@ -2822,6 +2893,18 @@ class ProjectOrderInquiryService:
         wanted = [str(po_id) for po_id in (po_ids or []) if po_id]
         if not wanted:
             return 0
+        if len(wanted) > _RELINK_BATCH:
+            # A purchase-history upload names thousands of documents, and an `IN` list that
+            # long is a query plan nobody wants and a parameter list some drivers refuse.
+            # Chunked rather than capped: every document the upload touched is still walked.
+            moved = 0
+            for start in range(0, len(wanted), _RELINK_BATCH):
+                moved += self.relink_to_matching_lines(
+                    wanted[start:start + _RELINK_BATCH],
+                    actor_user_id=actor_user_id,
+                    trigger=trigger,
+                )
+            return moved
 
         lines = (
             self.db.query(PurchaseOrderLine, Warehouse.warehouse_code)
@@ -2853,18 +2936,12 @@ class ProjectOrderInquiryService:
             return 0
 
         # What every link claims per line, as this pass sees it - kept in step as links move,
-        # so two placements cannot both be given the same 13 units.
+        # so two placements cannot both be given the same 13 units. Tallied off the rows
+        # already fetched above rather than fetching them again: the two queries would be
+        # the same query, and a second one that drifted from the first is how a line comes
+        # to be promised twice.
         claimed: Dict[str, Decimal] = {}
-        for link, _row, _line in self.db.query(
-            OrderInquiryLink, OrderInquiryRow, PurchaseOrderLine
-        ).join(
-            OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id
-        ).join(
-            PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
-        ).filter(
-            OrderInquiryLink.po_line_id.in_(list(location_of)),
-            OrderInquiryRow.state != INQUIRY_CANCELLED,
-        ):
+        for link, _row, _line in links:
             key = str(link.po_line_id)
             claimed[key] = claimed.get(key, _ZERO) + _dec(link.qty)
 
@@ -2906,9 +2983,11 @@ class ProjectOrderInquiryService:
                 f"after the book was re-uploaded; auto: {trigger}"
             )
             row.note = f"{row.note}; {stamp}" if row.note else stamp
-            if actor_user_id:
-                row.actioned_by = actor_user_id
-                row.actioned_at = datetime.utcnow()
+            # `actioned_by` / `actioned_at` are NOT touched. They say who in purchasing
+            # dealt with this instruction, and a book upload is not a person dealing with
+            # it - stamping the uploader there would erase the buyer who linked it and put
+            # a name against work they did not do. The note is where "why did this move"
+            # belongs, and it already carries the cascade's own stamp.
             touched.append(row)
             moved += 1
 

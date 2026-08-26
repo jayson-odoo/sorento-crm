@@ -269,9 +269,18 @@ paragraphs above:
   own "Upload purchase orders" action goes through, which the paragraph above did not name).
   It is deliberately narrow: within one purchase order, exact location only, never off a line
   that already fits, whole links only, and best-effort so a defect costs a relocation the
-  next upload makes again rather than the book.
+  next upload makes again rather than the book. It does NOT touch `actioned_by` / `actioned_at`
+  - those say who in purchasing dealt with the instruction, and a book upload is not a person
+  dealing with it - and it walks the documents in chunks of 200, because a purchase-history
+  upload names thousands in one call.
 - **AC-G5 holds and is pinned.** Nothing in G writes `purchase_order_lines`; the test
   snapshots every line before and after a detail read and a filtered list read.
+- **PR note - the new Allocated column and existing saved column preferences.** Checked
+  rather than assumed: `mergeColumnOrderWithLeafColumns` places a column a saved order has
+  never seen "after its nearest preceding neighbour rather than at the far right", so
+  Allocated lands beside Lines for a buyer who already has a saved config; and saved
+  visibility is MERGED over the listing's defaults rather than replacing them, so the column
+  is visible for them too. No preference reset is needed and none is shipped.
 
 ### H. Order-inquiry page: who pushed it, and when (BE + FE, one day)
 - Remove the subtitle "Every project and every adopted sales order, by delivery month."
@@ -335,13 +344,33 @@ where it differs from the paragraphs above:
   the line that no board decision produces. A dated ORDER row whose instalment the book
   already carries raises nothing: the demand is in the book and a second instruction for it
   is a second purchase.
-- **The unit is the INSTALMENT, not the sheet row.** `_instalments` already collapses
-  `(SO, item, delivery date)` and adds quantities within one tab, and an ORDER BACK row
-  states no date - so form 1's rows 1 and 12 (SRTWCX7405-RL-S-PJ 10 at BRW-IB and 12 at
-  BRW-BB) become ONE raised row of 22 at BRW-IB, and C-FH14's 30 + 30 becomes 60. That is
-  the importer's own rule rather than a new one, and form 2 amends every location to BRW-IB
-  anyway; **if the captain wants the two locations kept apart, the instalment key is what
-  has to change, for every reader of it, not the raise step.**
+- **ORDER BACK ONLY, and the unit is the SHEET ROW.** A dated row raises nothing whatever
+  the book says about it: a date is ordinary demand, the sales-order book is its record, and
+  a row the book has not got yet stays in `lines_unmatched` exactly as it always has -
+  raising one would put a second instruction beside a line the board already reads. And the
+  order backs are read off `parsed.rows`, not off the collapsed instalments: an order back
+  has no date, so the `(SO, item, delivery date)` key cannot tell two of them apart, and
+  collapsing turns two things CS asked for into one. Measured on the committed forms: form 1
+  raises **14**, form 2 restates all **14** and raises none, and every row ends at BRW-IB
+  because form 2 amends the location - which is exactly what the fixture sheet's `[NL]`
+  column says should happen. `_instalments` is untouched and still collapses for the
+  demand-writing path, where a repeat genuinely is a second call-off of one dated line.
+- **Identity is CONTENT first, POSITION second**, within a `(sales order line, item)` group,
+  each held row consumed at most once - the same two-pass shape
+  `po_history_service._match_existing_lines` uses. Pass one pairs on location, cited document
+  and quantity, which is what separates SRTWCX7405-RL-S-PJ's 10 at BRW-IB from its 12 at
+  BRW-BB and lets form 2 move the 12 without either landing on the other. Pass two takes the
+  next unconsumed row, which is how an amended instruction finds the row it amends and how
+  form 1's two identical C-FH14 30 at BRW-IB rows pair at all - no content key can separate
+  those, and it does not matter which is which.
+- **The line match ignores the date, but only among UNDATED lines.** Matching
+  `(SO, item, location)` across dated lines would be worse than not matching: SO381895 carries
+  open SRTWCX7405-RL-S-PJ lines at BRW-IB for 25 August, 5 and 10 September, and the form's
+  order back is about the 10 August quantity AutoCount closed. Attaching it to one of those
+  says this quantity is that line's, when that line has its own quantity and is already
+  counted - and the fixture's `[NL]` marking ("no open SO line in the book FOR THIS FORM
+  ROW") says so outright. An undated open line is the shape an order back's OWN line has
+  when this feed owns the order, and that is the only case where the two are the same thing.
 - **The verb comes off the delivery-date cell, never the remark.** `ORDER BACK` is the words,
   a date is `ORDER` due then, and only an `ORDER_BACK` row may name an SPO allocation - so
   reading that cell wrong decides which documents the row may be linked to at all. An ORDER
@@ -367,13 +396,40 @@ where it differs from the paragraphs above:
   has neither - so without it the fourteen instructions are raised, shown to purchasing, and
   invisible to the plan that decides what to buy. The new leg reads the ROW's own `item_code`
   and `stock_location`, joined on the code AND the company together (what
-  `uq_products_company_product_code` makes unique), INNER on both so an item or location we do
-  not hold is counted nowhere rather than everywhere. Measured before the change: 0 rows carry
-  `so_line_id IS NULL`, so it moves no live number.
-- **The auto-link runs at the end of the upload, scoped to the products it raised.** Passing
-  nothing would walk every raised row in the company off the back of one spreadsheet. Cited
-  document first, which the test pins against a decoy purchase order that wins on the
-  cascade's own date ordering (issued January, arriving May) and must not.
+  `uq_products_company_product_code` makes unique). INNER on `products` - a row naming an item
+  we do not hold is demand for nothing - and LEFT on `warehouses`, so a row naming no location
+  is still in the view at a NULL warehouse that every reader's `(product, warehouse)` join
+  matches nowhere: counted at no location rather than invented at one. Measured before the
+  change: 0 rows carry `so_line_id IS NULL`, so it moves no live number.
+- **The leg deliberately does NOT extend to a row that carries a `so_line_id`**, and that is
+  the one place this build overrules its own review. The review asked for it, guarding only
+  against the CONFIRMED leg; the leg that actually bites is the SHEET one, which counts every
+  open line of an order whose `demand_origin` is `scm_order_inquiry` - which this very upload
+  sets. So a row raised against a line the book carries is already counted at that line, and
+  adding the row would have the planner buy the same quantity twice. One test pins all three
+  cases on one product: the null-line row counted once, the line-carrying row not counted
+  here, and the location-less row present at no warehouse.
+- **The auto-link runs at the end of the upload, scoped to the ROWS it raised** - a new
+  `row_ids` argument on `auto_place_for_products`. A product scope is right for "this purchase
+  order was just confirmed, who was waiting for this item" and wrong here: the form's items are
+  items half the company's open orders also name, and one CS spreadsheet must not re-cascade
+  somebody else's instructions.
+- **Every citation is ranked, not just the first.** `SPO-2026/08-0061 & 202606-S0082` names
+  two and the row has one `cited_document` column, so the rest go on the note behind a fixed
+  prefix and `_cited_documents` reads them back - ONLY that segment, never the whole note,
+  which also carries the cascade's own "Linked to ..." stamp and would otherwise pin the walk
+  to the document the row already sits on. The candidate sort key carries a citation RANK
+  rather than a flag, because a flag puts both documents in one bucket and lets the dates
+  decide between two the form already ordered.
+- **An upload with nobody to attribute a link to does not link.** `linked_by` is nullable, so
+  the cascade would happily write a row of anonymous placements nobody can question. The actor
+  is the uploader, failing that `EXTERNAL_API_KEY_ACT_AS_USER_ID`, and failing both the rows
+  are left for purchasing's own Auto-link button and the result says so (`link_error`).
+- **`raised_by` is stamped only on a header this upload CREATED.** An inquiry the board raised
+  belongs to the CS who confirmed it, and re-stamping it would make the order-inquiry page
+  name whoever last sent a spreadsheet as the person who decided the order.
+- **A restatement appends to the note and never blanks it**, so the cascade's stamp and the
+  relocation a book re-upload wrote survive an amended form.
 - **Not done here, and named rather than half-fixed: `planning_change_service` still reads
   `INQUIRY_PLACED` alone** in its "already actioned" predicates, so a `partly_linked` row
   reads there as wholly unactioned. Conservative rather than wrong (its unlinked half IS

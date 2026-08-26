@@ -240,12 +240,6 @@ class _Instalment:
     location: str = ""
     po_numbers: tuple[str, ...] = ()
     not_ordered: bool = False
-    #: True when the DELIVERY DATE cell read `ORDER BACK` rather than a date. CS is saying
-    #: the quantity is owed against something already ordered, and the REMARK names it
-    #: (`PLAN-scm-purchasing-uat-journey.md` section 4b). It decides the raised row's VERB,
-    #: and therefore which documents that row may be linked to at all - only an order back
-    #: may name an SPO allocation.
-    order_back: bool = False
     #: The first sheet row that stated this delivery. Carried so a queued import can point an
     #: outcome at a row somebody can open the workbook to; the other rows that restate it are
     #: reported separately (see `_instalments`).
@@ -310,10 +304,6 @@ def _instalments(parsed) -> tuple[list[_Instalment], list[int]]:
         seen.project = seen.project or row.project
         seen.location = seen.location or row.location
         seen.not_ordered = seen.not_ordered or row.not_ordered
-        # Unioned, never replaced: one tab of the workbook stating ORDER BACK is CS saying
-        # this quantity is owed against a document, and a later tab that merely repeats the
-        # row without the words has not taken that back.
-        seen.order_back = seen.order_back or getattr(row, "order_back", False)
         # Unioned rather than replaced: one line split across two purchase orders is written
         # `202606-S0024 & 202607-S0043`, and a later tab naming only one of them has not
         # cancelled the other.
@@ -592,8 +582,83 @@ def _create_orders(db: Session, parsed, now: datetime,
     }
 
 
-def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str],
-                now: datetime) -> dict:
+def _order_back_lines(db: Session, so_numbers: set[str]) -> dict[tuple[str, str, str], list]:
+    """The UNDATED open lines an order back can be about, by `(SO number, item, location)`.
+
+    An order back has no delivery date - CS wrote words where the date goes - so it cannot be
+    matched on the `(SO, item, delivery date)` instalment key `_so_lines` uses. Matching it
+    on `(SO, item, location)` and ignoring the date INSTEAD would be worse than not matching
+    it at all: SO381895 carries open SRTWCX7405-RL-S-PJ lines at BRW-IB for 25 August, 5 and
+    10 September, and the form's order back is about the 10 August quantity AutoCount closed.
+    Attaching it to one of those three says this quantity is that line's, when that line has
+    its own quantity and is already counted, and the fixture sheet's whole `[NL]` marking
+    ("no open SO line in the book FOR THIS FORM ROW") says so.
+
+    So only a line with NO required date is a candidate: that is the shape an order back's
+    own line has when this feed owns the order and `_create_orders` wrote it from an
+    order-back row a moment ago. Anywhere else the answer is honestly "the book has no line
+    for this", and the row is raised carrying none.
+
+    A LIST per key, because one order may carry two of them and the pairing below consumes
+    each at most once.
+    """
+    if not so_numbers:
+        return {}
+    rows = (
+        db.query(SalesOrder.so_number, Product.product_code, Warehouse.warehouse_code,
+                 SalesOrderLine)
+        .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+        .join(Product, Product.id == SalesOrderLine.product_id)
+        .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+        .filter(SalesOrder.so_number.in_(list(so_numbers)),
+                SalesOrderLine.line_status == "open",
+                SalesOrderLine.required_date.is_(None))
+        .order_by(SalesOrderLine.created_at)
+        .all()
+    )
+    held: dict[tuple[str, str, str], list] = {}
+    for so, code, location, line in rows:
+        held.setdefault(
+            (str(so), str(code), (location or "").strip().upper()), []
+        ).append(line)
+    return held
+
+
+def _cited_from(remark: str, po_numbers: tuple[str, ...]) -> tuple[Optional[str], list[str]]:
+    """The first document the form cites, and the others, in the order CS wrote them.
+
+    `SPO-2026/08-0061 & 202606-S0082` cites two, and both matter: the first is what the
+    auto-link walk tries before any location tier or date, and the second is the answer when
+    the first cannot cover the quantity. The row has ONE `cited_document` column, so the
+    rest go on the note in a shape the walk can read back
+    (`ProjectOrderInquiryService._cited_documents`) rather than as prose it cannot.
+    """
+    ordered = [str(po).strip().upper() for po in po_numbers if str(po).strip()]
+    if not ordered:
+        return None, []
+    return ordered[0], ordered[1:]
+
+
+def _link_actor(actor: Optional[str]) -> Optional[str]:
+    """Whose name goes on a link this upload's cascade makes.
+
+    The uploader, when a person queued the job - which is the normal case, and the honest
+    answer. Failing that the configured act-as principal
+    (`EXTERNAL_API_KEY_ACT_AS_USER_ID`), which is the convention this codebase already uses
+    for an unattended write that still has to be attributable. `None` when there is neither,
+    and the caller then SKIPS the cascade rather than writing links nobody can be asked
+    about: `order_inquiry_links.linked_by` is nullable, so an anonymous link is a row that
+    passes every constraint and answers no question.
+    """
+    if actor:
+        return str(actor)
+    from app.config import settings
+
+    configured = getattr(settings, "external_api_key_act_as_user_id", None)
+    return str(configured) if configured else None
+
+
+def _raise_rows(db: Session, parsed, actor: Optional[str], now: datetime) -> dict:
     """Raise the order-inquiry rows the BOARD cannot, straight off the form.
 
     `scm-cs-planning-uat-fixture.md` marks fourteen rows of SO381895's first two forms
@@ -604,29 +669,48 @@ def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str
     and a purchase-order claim and nothing else, so those instructions reached purchasing on
     no screen at all.
 
-    Two cases, and only two:
+    **ORDER BACK ONLY.** A dated row is not raised here whatever the book says about it: a
+    date is ordinary demand, the sales-order book is its record, and a row the book has not
+    got yet stays in `lines_unmatched` exactly as it always has. Raising one would put a
+    second instruction beside a line the board already reads, and purchasing would buy it
+    twice.
 
-    * **the book states no line for this instalment** - the row is raised with `so_line_id`
-      empty, which is the honest record: there IS no line. Pointing it at the nearest line
-      of the same item instead would attach the quantity to somebody else's instalment.
-    * **the book states the line AND the form says ORDER BACK** - raised against that line,
-      because an order back is a fact about the line that no decision produces.
+    **ONE INSTRUCTION PER SHEET ROW**, read off `parsed.rows` rather than off the collapsed
+    instalments. An order back has no date, so the `(SO, item, delivery date)` instalment key
+    cannot tell two of them apart: form 1 states C-FH14 30 at BRW-IB twice and
+    SRTWCX7405-RL-S-PJ as 10 at BRW-IB and 12 at BRW-BB, and collapsing either pair turns
+    two things CS asked for into one. Each row keeps its OWN quantity, its own location and
+    its own citation. `_instalments` is untouched: it still collapses for the demand-writing
+    path, where a repeat genuinely is a second call-off of one dated line.
 
-    A dated ORDER row whose instalment the book already carries raises NOTHING: the demand is
-    in the book, the board reads it, and a second instruction for it is a second purchase.
+    **IDENTITY IS CONTENT FIRST, POSITION SECOND**, within a `(sales order line, item)`
+    group, each held row consumed at most once - the same two-pass shape
+    `po_history_service._match_existing_lines` uses on a purchase line, and for the same
+    reason.
 
-    The VERB comes off the delivery-date cell, never off the remark: `ORDER BACK` is the
-    words, a date is `ORDER` due then. Only an `ORDER_BACK` row may be linked to an SPO
-    allocation, so reading that cell wrong decides which documents the row may name.
+    Pass one pairs on what the form SAYS: location, cited document and quantity. That is what
+    separates SRTWCX7405-RL-S-PJ's 10 at BRW-IB from its 12 at BRW-BB, and it is what lets
+    form 2 move the 12 to BRW-IB without either row landing on the other.
 
-    `cited_document` is the FIRST document the remark names - what the auto-link walk tries
-    before any location tier or date - and the rest is kept as words on the note, because CS
-    wrote them and the second document is the answer when the first cannot cover it.
+    Pass two takes the next unconsumed row for anything left over, which is how an AMENDED
+    instruction finds the row it amends, and how form 1's two identical C-FH14 30 at BRW-IB
+    rows pair at all - no content key can separate those, and it does not matter which is
+    which, because they say exactly the same thing.
 
-    IDEMPOTENT on `(inquiry, so_line, item, delivery date, verb)`. CS resends the same form,
-    and a second copy of every instruction would have purchasing buy twice. A row purchasing
-    has already LINKED, actioned or cancelled is left exactly as it is - the form stopped
-    being the only word about it the moment a document was named.
+    Together they make a re-upload restate rather than double: form 2 restates form 1's
+    fourteen in place and fourteen rows still exist.
+
+    **Two cases for the line, both raised.** The book states an UNDATED open line for
+    `(SO, item, location)` - the shape an order back's own line has, see
+    `_order_back_lines` - and the row carries its `so_line_id`, because "which line is this
+    owed against" is what purchasing asks next. The book states none, and `so_line_id` is
+    empty, which is the honest record. `committed_v` counts only the second kind, and the
+    reason is in migration 423: a line the book carries is ALREADY counted by the sheet leg
+    at that line, so counting the row as well would buy the same quantity twice.
+
+    A row purchasing has already LINKED, actioned or cancelled is left exactly as it is - the
+    form stopped being the only word about it the moment a document was named - except that a
+    restatement still appends to the note, so nothing a relocation or a cascade wrote is lost.
 
     Records NO per-row outcome, and that is deliberate rather than an omission. Every sheet
     row already carries exactly one outcome from `_create_orders` (a `created`, a `refreshed`,
@@ -638,7 +722,6 @@ def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str
     """
     from app.models.project_so import (
         INQUIRY_RAISED,
-        IV_ORDER,
         IV_ORDER_BACK,
         OrderInquiry,
         OrderInquiryRow,
@@ -647,26 +730,23 @@ def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str
     from app.services.error_handler import AppException
     from app.services.project_so_adoption_service import ProjectSOAdoptionService
 
-    def _key(row) -> tuple[str, str, Optional[date]]:
-        return (row.so_number, row.item_code, row.delivery_date)
-
-    by_number: dict[str, list] = {}
-    for inst in instalments:
-        if not inst.item_code:
+    wanted: dict[str, list] = {}
+    for row in parsed.rows:
+        if not row.item_code or not row.so_number or not row.order_back:
             continue
-        line = known_lines.get(_key(inst))
-        if line is None or inst.order_back:
-            by_number.setdefault(inst.so_number, []).append((inst, line))
-    if not by_number:
-        return {"rows_raised": 0, "rows_restated": 0, "orders_not_plannable": []}
+        wanted.setdefault(row.so_number, []).append(row)
+    if not wanted:
+        return {"rows_raised": 0, "rows_restated": 0, "orders_not_plannable": [],
+                "row_ids": []}
 
-    orders = _orders_by_number(db, set(by_number))
+    orders = _orders_by_number(db, set(wanted))
+    lines_by_key = _order_back_lines(db, set(wanted))
     adoption = ProjectSOAdoptionService(db)
     raised = restated = 0
     not_plannable: list[str] = []
-    touched_codes: set[str] = set()
+    row_ids: list[str] = []
 
-    for number, wanted in by_number.items():
+    for number, form_rows in wanted.items():
         order = orders.get(number)
         if order is None:
             # Nothing to hang an inquiry off. Already counted and named by
@@ -691,19 +771,19 @@ def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str
             .first()
         )
         if inquiry is None:
+            # Only a header THIS upload created is stamped with the uploader. An inquiry the
+            # BOARD raised belongs to the CS who confirmed it, and re-stamping it would make
+            # the order-inquiry page name whoever last sent a spreadsheet as the person who
+            # decided the order - which is the one question that column exists to answer.
             inquiry = OrderInquiry(
                 company_id=order.company_id,
                 project_sales_order_id=pso_id,
                 state=INQUIRY_RAISED,
                 raised_by=actor,
+                raised_at=now,
             )
             db.add(inquiry)
             db.flush()
-        else:
-            # Section 3.H: every push re-stamps who raised it and when. The form IS a push,
-            # and the person who uploaded it is who purchasing has to ask.
-            inquiry.raised_by = actor or inquiry.raised_by
-            inquiry.raised_at = now
 
         # The MIRROR line, not the core one: `order_inquiry_rows.so_line_id` addresses
         # `projects.sales_order_lines`, which is the shim every other reader reaches the
@@ -715,67 +795,137 @@ def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str
             ).filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
             if core_id
         }
-        held = {
-            (str(row.so_line_id or ""), row.item_code, row.delivery_date, row.verb): row
-            for row in db.query(OrderInquiryRow).filter(
-                OrderInquiryRow.order_inquiry_id == inquiry.id
+        # Held order-back rows per `(so_line_id, item)`, oldest first. The two passes below
+        # consume each at most once.
+        held: dict[tuple[str, str], list] = {}
+        for row in (
+            db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.verb == IV_ORDER_BACK,
             )
-        }
+            .order_by(OrderInquiryRow.created_at, OrderInquiryRow.id)
+        ):
+            held.setdefault((str(row.so_line_id or ""), row.item_code), []).append(row)
 
-        for inst, line in wanted:
-            verb = IV_ORDER_BACK if inst.order_back else IV_ORDER
+        # Everything the form states, resolved once, in file order.
+        stated = []
+        for form_row in form_rows:
+            location = (form_row.location or "").strip().upper() or None
+            core_line = None
+            if location:
+                candidates = lines_by_key.get((number, form_row.item_code, location)) or []
+                core_line = candidates[0] if candidates else None
             so_line_id = (
-                mirror_by_core.get(str(line.id)) if line is not None else None
+                mirror_by_core.get(str(core_line.id)) if core_line is not None else None
             )
-            cited = inst.po_numbers[0] if inst.po_numbers else None
-            others = [po for po in inst.po_numbers[1:]]
-            note = (
-                f"Also cited on the form: {', '.join(others)}" if others else None
-            )
-            location = (inst.location or "").upper() or None
-            existing = held.get((str(so_line_id or ""), inst.item_code,
-                                 inst.delivery_date, verb))
-            if existing is not None:
-                if existing.state != INQUIRY_RAISED:
-                    # Purchasing has already named a document for it. Rewriting the
-                    # quantity under a link would leave that link claiming more than the
-                    # row asks for.
+            cited, others = _cited_from(form_row.remark, form_row.po_numbers)
+            stated.append((form_row, so_line_id, location, cited, others))
+
+        taken: set[str] = set()
+        matched: list = [None] * len(stated)
+
+        def _take(group: list, predicate=None):
+            for row in group:
+                if str(row.id) in taken:
                     continue
-                existing.qty = inst.qty
-                existing.stock_location = location
-                existing.cited_document = cited
-                existing.note = note
+                if predicate is not None and not predicate(row):
+                    continue
+                taken.add(str(row.id))
+                return row
+            return None
+
+        # Pass one: what the form SAYS - location, cited document and quantity together.
+        for index, (form_row, so_line_id, location, cited, _others) in enumerate(stated):
+            group = held.get((str(so_line_id or ""), form_row.item_code)) or []
+            matched[index] = _take(
+                group,
+                lambda row: (
+                    row.stock_location == location
+                    and (row.cited_document or None) == cited
+                    and float(row.qty or 0) == float(form_row.qty or 0)
+                ),
+            )
+        # Pass two: the next unconsumed row, which is how an AMENDED instruction finds the
+        # row it amends and how two rows saying exactly the same thing pair at all.
+        for index, (form_row, so_line_id, _location, _cited, _others) in enumerate(stated):
+            if matched[index] is not None:
+                continue
+            group = held.get((str(so_line_id or ""), form_row.item_code)) or []
+            matched[index] = _take(group)
+
+        for index, (form_row, so_line_id, location, cited, others) in enumerate(stated):
+            existing = matched[index]
+            if existing is not None:
+                row_ids.append(str(existing.id))
+                _restate(existing, form_row, location, cited, others)
                 restated += 1
-                touched_codes.add(inst.item_code)
                 continue
             row = OrderInquiryRow(
                 company_id=order.company_id,
                 order_inquiry_id=inquiry.id,
                 so_line_id=so_line_id,
-                item_code=inst.item_code,
-                qty=inst.qty,
+                item_code=form_row.item_code,
+                qty=form_row.qty,
                 # `ORDER BACK` is not a date and must not become one. Inventing today, or
                 # the sales order's own date, would put the row on a horizon nobody asked
                 # for.
-                delivery_date=inst.delivery_date,
+                delivery_date=None,
                 stock_location=location,
-                verb=verb,
+                verb=IV_ORDER_BACK,
                 cited_document=cited,
-                note=note,
+                note=_also_cited_note(others),
                 state=INQUIRY_RAISED,
             )
             db.add(row)
-            held[(str(so_line_id or ""), inst.item_code, inst.delivery_date, verb)] = row
+            db.flush()
+            taken.add(str(row.id))
+            row_ids.append(str(row.id))
+            held.setdefault((str(so_line_id or ""), form_row.item_code), []).append(row)
             raised += 1
-            touched_codes.add(inst.item_code)
 
     db.flush()
     return {
         "rows_raised": raised,
         "rows_restated": restated,
         "orders_not_plannable": sorted(set(not_plannable))[:200],
-        "item_codes": sorted(touched_codes),
+        "row_ids": row_ids,
     }
+
+
+#: How the extra citations are written onto the note, and read back off it by
+#: `ProjectOrderInquiryService._cited_documents`. A fixed prefix rather than free prose,
+#: so the walk can find them and a person can read them.
+ALSO_CITED_PREFIX = "Also cited on the form:"
+
+
+def _also_cited_note(others: list[str]) -> Optional[str]:
+    return f"{ALSO_CITED_PREFIX} {', '.join(others)}" if others else None
+
+
+def _restate(existing, form_row, location: Optional[str], cited: Optional[str],
+             others: list[str]) -> None:
+    """Bring a held row back in line with the form, WITHOUT losing what happened to it.
+
+    An amended form is CS correcting an instruction, so the quantity, the location and the
+    citation are the form's to restate. Two things are not:
+
+    * a row purchasing has already LINKED, actioned or cancelled keeps its figures. Rewriting
+      the quantity under a link would leave that link claiming more than the row asks for.
+    * the NOTE is appended to, never replaced. It carries the cascade's own stamp and the
+      relocation a book re-upload wrote (`relink_to_matching_lines`), and blanking it would
+      throw away the only record of why this row sits where it does.
+    """
+    from app.models.project_so import INQUIRY_RAISED
+
+    note = _also_cited_note(others)
+    if note and note not in (existing.note or ""):
+        existing.note = f"{existing.note}; {note}" if existing.note else note
+    if existing.state != INQUIRY_RAISED:
+        return
+    existing.qty = form_row.qty
+    existing.stock_location = location
+    existing.cited_document = cited
 
 
 def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
@@ -901,33 +1051,46 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     # The instructions the BOARD cannot raise, straight off the form (AC-I3). Last, because
     # it reads the sales-order lines the steps above created and the locations they wrote:
     # a row's `stock_location` is what ranks its link candidates.
-    raised = _raise_rows(db, instalments, known_lines, actor, now)
+    raised = _raise_rows(db, parsed, actor, now)
     summary["rows_raised"] = raised["rows_raised"]
     summary["rows_restated"] = raised["rows_restated"]
     summary["orders_not_plannable"] = raised["orders_not_plannable"]
 
-    # And then the cascade, with the CITED document first (section 3.I, AC-I3): CS naming
-    # `202604-S0083` on the form is what the walk tries before any location tier or date, so
-    # the answer purchasing opens is already the one the form asked for.
+    # And then the cascade, with the CITED documents first (section 3.I, AC-I3): CS naming
+    # `SPO-2026/08-0061 & 202606-S0082` on the form is what the walk tries before any
+    # location tier or date, in the order they were written, so the answer purchasing opens
+    # is already the one the form asked for.
     #
-    # Scoped to the products this upload actually raised something for - passing nothing
-    # would walk every raised row in the company off the back of one spreadsheet.
+    # Scoped to the ROWS this upload touched, not to their products: a product scope walks
+    # every raised row in the company that happens to name the same item, and one CS
+    # spreadsheet must not re-cascade somebody else's instructions.
     #
-    # Best-effort: the sheet is already written, and a defect in the cascade must cost a
-    # pass the worklist's own Auto-link button makes again, never the upload itself.
-    if raised["item_codes"]:
+    # Best-effort, because the sheet is already written and a defect in the cascade must cost
+    # a pass the worklist's own Auto-link button makes again rather than the upload. Not
+    # silent, though: it is logged with its traceback AND reported on the result, so an
+    # upload whose rows arrived unlinked says why instead of looking like a walk that found
+    # nothing.
+    link_actor = _link_actor(actor)
+    if raised["row_ids"] and link_actor:
         try:
             from app.services.project_order_inquiry_service import (
                 ProjectOrderInquiryService,
             )
 
-            product_ids = list(_products_by_code(db, set(raised["item_codes"])).values())
-            if product_ids:
-                summary["rows_linked"] = ProjectOrderInquiryService(
-                    db
-                ).auto_place_for_products(
-                    product_ids, actor_user_id=actor, trigger="order_inquiry_form",
-                )["placed_rows"]
-        except Exception:  # noqa: BLE001 - see above
+            summary["rows_linked"] = ProjectOrderInquiryService(db).auto_place_for_products(
+                None,
+                row_ids=raised["row_ids"],
+                actor_user_id=link_actor,
+                trigger="order_inquiry_form",
+            )["placed_rows"]
+        except Exception as exc:  # noqa: BLE001 - see above
             logger.exception("auto-link failed after an order inquiry form upload")
+            summary["link_error"] = str(exc)[:500]
+    elif raised["row_ids"]:
+        # Every link records WHO made it, and an unattended upload with no actor to
+        # attribute one to would write a row of anonymous placements nobody can question.
+        # Purchasing's own Auto-link button makes the same pass under a real name.
+        summary["link_error"] = (
+            "no actor to attribute the links to, so the rows were left for Auto-link"
+        )
     return summary
