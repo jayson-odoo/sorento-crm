@@ -32,6 +32,30 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * One comparable string for the three column keys, insensitive to key ORDER.
+ *
+ * `stableStringify` only sorts the top level, and both the applied config and the payload
+ * about to be saved build their visibility/sizing maps by iterating the column model - so a
+ * plain JSON compare would report a difference the moment a column moved.
+ */
+function columnStateFingerprint(state: {
+  columnOrder: string[];
+  columnVisibility: ColumnVisibilityState;
+  columnSizing: Record<string, number>;
+}): string {
+  const record = (obj: Record<string, unknown>) =>
+    Object.keys(obj)
+      .sort()
+      .map((k) => `${k}=${String(obj[k])}`)
+      .join(',');
+  return [
+    state.columnOrder.join('|'),
+    record(state.columnVisibility),
+    record(state.columnSizing),
+  ].join(';');
+}
+
 export function useListingColumnPreferences<TData extends object>({
   table,
   listingKey,
@@ -71,6 +95,17 @@ export function useListingColumnPreferences<TData extends object>({
 
   const appliedRef = useRef(false);
   const skipSaveOnceRef = useRef(false);
+  /**
+   * The column state the SERVER already holds, as the save effect below would fingerprint
+   * it. A payload identical to this one is never written.
+   *
+   * `skipSaveOnceRef` alone was not enough: the save effect runs once in the same commit as
+   * the apply effect (with the PRE-apply fingerprints, since a render has not happened yet),
+   * and that run consumed the one-shot flag - so the run that actually carried the applied
+   * state saved it. Harmless on a listing whose applied state matched its defaults, and the
+   * reason column ORDER regressed on the report screen, where it did not.
+   */
+  const persistedRef = useRef<string | null>(null);
 
   const { data: saved, isFetching } = useQuery({
     queryKey: ['list-column-config', key],
@@ -93,12 +128,22 @@ export function useListingColumnPreferences<TData extends object>({
     }
 
     const canHideIds = new Set(table.getAllLeafColumns().filter((c) => c.getCanHide()).map((c) => c.id));
+    const leafIds = table.getAllLeafColumns().map((c) => c.id);
+
+    // Filled with the value each set below actually applies, so the state the table will
+    // hold once they commit can be recorded as "what the server has".
+    const orderBeforeApply = (table.getState() as ColumnStateFromTanStack)?.columnOrder;
+    let appliedOrder = mergeColumnOrderWithLeafColumns(
+      Array.isArray(orderBeforeApply) && orderBeforeApply.length > 0 ? orderBeforeApply : leafIds,
+      leafIds,
+    );
+    let appliedSizing: Record<string, number> | null = null;
 
     if (Array.isArray(payload.columnOrder) && payload.columnOrder.length > 0) {
-      const leafIds = table.getAllLeafColumns().map((c) => c.id);
       const allowed = new Set(leafIds);
       const filteredOrder = payload.columnOrder.filter((id) => allowed.has(id));
       const mergedOrder = mergeColumnOrderWithLeafColumns(filteredOrder, leafIds);
+      appliedOrder = mergedOrder;
       skipSaveOnceRef.current = true;
       table.setColumnOrder(mergedOrder);
     }
@@ -127,9 +172,31 @@ export function useListingColumnPreferences<TData extends object>({
         const n = typeof size === 'number' ? size : Number(size);
         if (Number.isFinite(n) && n > 0) filteredSizing[colId] = n;
       }
+      appliedSizing = filteredSizing;
       skipSaveOnceRef.current = true;
       table.setColumnSizing(filteredSizing);
     }
+
+    // The state the three sets above leave behind, derived exactly as the save effect
+    // derives its payload: a hideable column keeps its current visibility unless the
+    // payload names it, and a resizable column falls back to its own size unless the
+    // payload sizes it.
+    const appliedVisibility: ColumnVisibilityState = {};
+    for (const c of table.getAllLeafColumns()) {
+      if (!c.getCanHide()) continue;
+      const fromPayload = (payload.columnVisibility as Record<string, unknown> | undefined)?.[c.id];
+      appliedVisibility[c.id] = fromPayload === undefined ? c.getIsVisible() : Boolean(fromPayload);
+    }
+    const appliedSizes: Record<string, number> = {};
+    for (const c of table.getAllLeafColumns()) {
+      if (!c.getCanResize()) continue;
+      appliedSizes[c.id] = appliedSizing?.[c.id] ?? c.getSize();
+    }
+    persistedRef.current = columnStateFingerprint({
+      columnOrder: appliedOrder,
+      columnVisibility: appliedVisibility,
+      columnSizing: appliedSizes,
+    });
 
     appliedRef.current = true;
   }, [key, saved, table]);
@@ -232,6 +299,17 @@ export function useListingColumnPreferences<TData extends object>({
       filteredSizing[c.id] = c.getSize();
     }
 
+    // Never write back what the server already holds. Reconciling an order against the
+    // columns currently on screen (a report's tick columns are data-dependent) or simply
+    // re-deriving the same state on a re-render must not count as a change the user made.
+    const fingerprint = columnStateFingerprint({
+      columnOrder: filteredOrder,
+      columnVisibility: filteredVisibility,
+      columnSizing: filteredSizing,
+    });
+    if (persistedRef.current === fingerprint) return;
+    persistedRef.current = fingerprint;
+
     const payload: UserListColumnConfigPayload = {
       version: 1,
       columnOrder: filteredOrder,
@@ -256,8 +334,17 @@ export function useListingColumnPreferences<TData extends object>({
 
   const resetToDefaults = async () => {
     if (!key) return;
-    // Prevent the reset operation from being immediately persisted back as "saved defaults".
+    // Prevent the reset operation from being immediately persisted back as "saved defaults"
+    // - the row is about to be DELETED, so re-creating it with the defaults would undo it.
     skipSaveOnceRef.current = true;
+    persistedRef.current = columnStateFingerprint({
+      columnOrder: mergeColumnOrderWithLeafColumns(
+        defaultOrder,
+        table.getAllLeafColumns().map((c) => c.id),
+      ),
+      columnVisibility: defaultVisibility,
+      columnSizing: defaultSizing,
+    });
     table.setColumnOrder(defaultOrder);
     table.setColumnVisibility(defaultVisibility);
     table.setColumnSizing(defaultSizing);

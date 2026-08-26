@@ -103,6 +103,13 @@ describe('DownloadRow', () => {
     expect(screen.getAllByText('Quotation Excel').length).toBeGreaterThan(0);
   });
 
+  it('names the report export kind', () => {
+    // The reporting export writes rows with kind report_xlsx; without the label the drawer
+    // renders the raw key.
+    render(<DownloadRow row={row({ kind: 'report_xlsx', filename: null })} />);
+    expect(screen.getAllByText('Report Excel').length).toBeGreaterThan(0);
+  });
+
   describe('preview', () => {
     it('opens the shared previewer on the resolved URL, alongside the download', async () => {
       // Preview is an ADDITION: the same row still downloads. What it resolves is both URLs the

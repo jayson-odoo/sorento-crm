@@ -645,6 +645,25 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Reporting foundation - migration 422 creates these two and sweeps them onto whoever
+# already holds the sponsorship view / edit grants. Declared here for the same reason the
+# Dealer Kit and SCM blocks above are: a database built with create_all + sync_permissions
+# (CI, `scripts/bootstrap_env`) never runs a migration body, so a slug that lives only in
+# the migration does not exist there and every report route answers 403.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "procurement.sponsorship_forms.report",
+        "name": "View Sponsorship Report",
+        "description": "Permission to open the Sponsorship report.",
+    },
+    {
+        "slug": "reports.views.publish",
+        "name": "Publish Report Views",
+        "description": "Permission to share a saved report view and set the default for everyone.",
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

@@ -5,7 +5,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useDataGrid } from '@/components/ui/data-grid';
 import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
-import { Cell, Column, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
+import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { cn } from '@/lib/utils';
@@ -109,16 +109,42 @@ function DataGridTableHeadRow<TData>({
   );
 }
 
+/**
+ * A grid with column GROUPS repeats every ungrouped column twice: TanStack puts a
+ * placeholder in the group row and the real header in the leaf row underneath, which draws
+ * an empty band above most of the header. The workbook the reports grid mirrors merges
+ * those cells vertically, so here the PLACEHOLDER carries the header and spans the
+ * remaining rows, and `skipMergedLeafHeader` drops the leaf it stands in for.
+ *
+ * A flat listing has one header row and therefore no placeholders at all, so both helpers
+ * are no-ops on every other listing in the app.
+ */
+function headerRowSpan<TData>(header: Header<TData, unknown>, rowCount: number): number {
+  // `header.depth` is 1-based: the first header row is depth 1.
+  return header.isPlaceholder ? Math.max(rowCount - (header.depth - 1), 1) : 1;
+}
+
+function skipMergedLeafHeader<TData>(header: Header<TData, unknown>, rowCount: number): boolean {
+  if (rowCount <= 1) return false; // a flat listing: nothing to merge
+  if (header.column.parent) return false; // a grouped column keeps its own cell
+  if (header.subHeaders.length > 0 && !header.isPlaceholder) return false; // a real group header
+  // What is left is an ungrouped column below the first header row: the placeholder in
+  // that first row already carries it, spanning down to here.
+  return header.depth > 1;
+}
+
 function DataGridTableHeadRowCell<TData>({
   children,
   header,
   dndRef,
   dndStyle,
+  rowSpan,
 }: {
   children: ReactNode;
   header: Header<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  rowSpan?: number;
 }) {
   const { props } = useDataGrid();
 
@@ -134,6 +160,13 @@ function DataGridTableHeadRowCell<TData>({
     <th
       key={header.id}
       ref={dndRef}
+      // 1 for every flat listing, so this is a no-op there. A grid whose columns are
+      // grouped (the reports detail grid's "Expected year of delivery" ticks) needs the
+      // group header to span its leaves, or the two header rows do not line up.
+      colSpan={header.colSpan}
+      // 1 on every flat listing. A single-level header in a GROUPED grid spans both header
+      // rows instead of leaving an empty cell above itself (see headerRowSpan).
+      rowSpan={rowSpan && rowSpan > 1 ? rowSpan : undefined}
       style={{
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
@@ -308,6 +341,19 @@ function DataGridTableBodyRow<TData>({
  * a chip competing with the buttons, and nothing tells the reader WHICH column it totals; sitting
  * under its own column the number needs no label at all.
  */
+/**
+ * The footer rows worth drawing.
+ *
+ * A flat grid has exactly one, so this is `getFooterGroups()` unchanged. A grid with
+ * COLUMN GROUPS gets a second, mirror row for the group headers, and no group declares a
+ * `footer`, so it would render as an empty bordered strip under the totals.
+ */
+function footerGroupsWithContent<TData>(table: Table<TData>) {
+  return table
+    .getFooterGroups()
+    .filter((group) => group.headers.some((h) => !h.isPlaceholder && Boolean(h.column.columnDef.footer)));
+}
+
 function DataGridTableFoot({ children }: { children: ReactNode }) {
   const { props } = useDataGrid();
 
@@ -515,6 +561,50 @@ function DataGridTableRowSelectAll({ size }: { size?: 'sm' | 'md' | 'lg' }) {
   );
 }
 
+/**
+ * A drag, with a column GROUP's members kept contiguous.
+ *
+ * TanStack draws a group header once per RUN of its members, so a foreign column dropped
+ * into the middle of a group renders that header twice - and the split order is then saved
+ * as the user's own preference. Two rules keep the group whole: a column from outside lands
+ * at the group's nearest EDGE, and a member cannot be dragged out of its group (the group
+ * is one choice, the same reason a saved view names the group and not its columns).
+ *
+ * `groups` is empty on every flat listing, where this is a plain `arrayMove` as before.
+ */
+export function moveColumnKeepingGroups(
+  order: string[],
+  activeId: string,
+  overId: string,
+  groups: string[][],
+): string[] {
+  const oldIndex = order.indexOf(activeId);
+  const overIndex = order.indexOf(overId);
+  if (oldIndex === -1 || overIndex === -1 || activeId === overId) return order;
+
+  const groupOf = (id: string) => groups.find((members) => members.includes(id));
+  const activeGroup = groupOf(activeId);
+  const overGroup = groupOf(overId);
+
+  if (activeGroup) {
+    // Inside its own group it reorders; anywhere else the drop is a no-op.
+    return overGroup === activeGroup ? arrayMove(order, oldIndex, overIndex) : order;
+  }
+
+  if (overGroup) {
+    const without = order.filter((id) => id !== activeId);
+    const indexes = overGroup.map((id) => without.indexOf(id)).filter((index) => index >= 0);
+    if (!indexes.length) return arrayMove(order, oldIndex, overIndex);
+    const first = Math.min(...indexes);
+    const last = Math.max(...indexes);
+    const dropped = without.indexOf(overId);
+    const insertAt = dropped - first <= last - dropped ? first : last + 1;
+    return [...without.slice(0, insertAt), activeId, ...without.slice(insertAt)];
+  }
+
+  return arrayMove(order, oldIndex, overIndex);
+}
+
 function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
@@ -531,15 +621,19 @@ function DataGridTable<TData>() {
       const effectiveOrder = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
       if (!Array.isArray(effectiveOrder) || effectiveOrder.length === 0) return;
 
-      const activeId = String(active.id);
-      const overId = String(over.id);
-      if (activeId === overId) return;
+      const groups = table
+        .getAllColumns()
+        .filter((column) => column.columns?.length)
+        .map((column) => column.getLeafColumns().map((leaf) => leaf.id));
 
-      const oldIndex = effectiveOrder.indexOf(activeId);
-      const newIndex = effectiveOrder.indexOf(overId);
-      if (oldIndex === -1 || newIndex === -1) return;
-
-      table.setColumnOrder(arrayMove(effectiveOrder, oldIndex, newIndex));
+      const next = moveColumnKeepingGroups(
+        effectiveOrder,
+        String(active.id),
+        String(over.id),
+        groups,
+      );
+      if (next === effectiveOrder) return;
+      table.setColumnOrder(next);
     };
 
     return (
@@ -554,20 +648,27 @@ function DataGridTable<TData>() {
       <DataGridTableBase>
         <DataGridTableHead>
           {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
+            const rowCount = table.getHeaderGroups().length;
             return (
               <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-                {headerGroup.headers.map((header, index) => {
-                  const { column } = header;
+                {headerGroup.headers
+                  .filter((header) => !skipMergedLeafHeader(header, rowCount))
+                  .map((header, index) => {
+                    const { column } = header;
 
-                  return (
-                    <DataGridTableHeadRowCell header={header} key={index}>
-                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                      {props.tableLayout?.columnsResizable && column.getCanResize() && (
-                        <DataGridTableHeadRowCellResize header={header} />
-                      )}
-                    </DataGridTableHeadRowCell>
-                  );
-                })}
+                    return (
+                      <DataGridTableHeadRowCell
+                        header={header}
+                        key={index}
+                        rowSpan={headerRowSpan(header, rowCount)}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {props.tableLayout?.columnsResizable && column.getCanResize() && (
+                          <DataGridTableHeadRowCellResize header={header} />
+                        )}
+                      </DataGridTableHeadRowCell>
+                    );
+                  })}
               </DataGridTableHeadRow>
             );
           })}
@@ -579,7 +680,9 @@ function DataGridTable<TData>() {
           {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
-                {table.getVisibleFlatColumns().map((column, colIndex) => {
+                {/* LEAF columns: the flat list includes a group PARENT, which is not a
+                    cell, so every skeleton row came out one td wider than the table. */}
+                {table.getVisibleLeafColumns().map((column, colIndex) => {
                   return (
                     <DataGridTableBodyRowSkeletonCell column={column} key={colIndex}>
                       {column.columnDef.meta?.skeleton}
@@ -637,7 +740,7 @@ function DataGridTable<TData>() {
 
         {table.getVisibleFlatColumns().some((column) => Boolean(column.columnDef.footer)) && (
           <DataGridTableFoot>
-            {table.getFooterGroups().map((footerGroup) => (
+            {footerGroupsWithContent(table).map((footerGroup) => (
               <tr key={footerGroup.id}>
                 {footerGroup.headers.map((header) => (
                   <DataGridTableFootRowCell key={header.id} header={header}>
@@ -656,6 +759,9 @@ function DataGridTable<TData>() {
 }
 
 export {
+  footerGroupsWithContent,
+  headerRowSpan,
+  skipMergedLeafHeader,
   DataGridTable,
   DataGridTableBase,
   DataGridTableBody,

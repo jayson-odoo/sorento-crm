@@ -48,6 +48,7 @@ export default function SponsorshipFormsPage() {
         <PurchaseRequestsList
           requestType="sponsorship_form"
           basePath="/procurement-management/sponsorship-forms"
+          reportPermission="procurement.sponsorship_forms.report"
         />
       </Container>
     </>

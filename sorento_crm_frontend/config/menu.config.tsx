@@ -585,6 +585,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
       },
+      {
+        title: 'Sponsorship Report',
+        path: '/procurement-management/sponsorship-forms/report',
+        permission: 'procurement.sponsorship_forms.report',
+      },
     ],
   },
   {
@@ -1719,6 +1724,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Sponsorship Report',
+        path: '/procurement-management/sponsorship-forms/report',
+        permission: 'procurement.sponsorship_forms.report',
       },
     ],
   },
