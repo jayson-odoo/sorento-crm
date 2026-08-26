@@ -190,7 +190,6 @@ export default function ContactCsRoutingRules({ contactId }: { contactId: string
                           value={rule.use_case}
                           onChange={(v) => v && patchRule(rule.id, { use_case: v })}
                           options={CS_USE_CASES.map((u) => ({ value: u.key, label: u.label }))}
-                          triggerClassName="h-9"
                         />
                       </div>
                     </div>
@@ -211,7 +210,6 @@ export default function ContactCsRoutingRules({ contactId }: { contactId: string
                           }}
                           options={candidateOptions}
                           placeholder="Select CS PIC"
-                          triggerClassName="h-9"
                         />
                       </div>
                     </div>
