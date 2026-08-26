@@ -406,8 +406,16 @@ class PurchaseOrderService:
                 ),
             })
 
+        # In the order the DOCUMENT numbers its lines, so the panel reads down the same way
+        # the grid above it does. `source_ref` carries the book's own line number where it
+        # stated one; the rest fall back to insertion order, and never to whatever order the
+        # relationship happened to load in.
+        def _line_order(line):
+            raw = (line.source_ref or "").strip()
+            return (0, int(raw)) if raw.isdigit() else (1, 0)
+
         blocks = []
-        for line in po.lines:
+        for line in sorted(po.lines, key=lambda ln: (_line_order(ln), str(ln.id))):
             found = placements.get(str(line.id))
             if not found:
                 continue

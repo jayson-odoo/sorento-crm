@@ -334,11 +334,19 @@ legs AS (
     -- Joined on the CODE and the company together, which is exactly what
     -- `uq_products_company_product_code` / `uq_warehouses_company_warehouse_code` make
     -- unique - a code alone would multiply the row once per company holding the same SKU.
-    -- INNER on both, so a row naming an item or a location this system does not hold is
-    -- counted nowhere rather than everywhere.
     --
-    -- `supply_decision_id IS NULL` keeps the two confirmed legs disjoint: a decision's own
-    -- Buy residual is counted above, at the reconciled core line's product and location.
+    -- INNER on `products`, because a row naming an item this system does not hold is demand
+    -- for nothing and there is no product to attribute it to. LEFT on `warehouses`, because
+    -- a row that names no location, or one we do not hold, is still demand - it comes out
+    -- with a NULL warehouse, which every reader joins on `(product, warehouse)` and so
+    -- matches nowhere. Counted at no location rather than invented at one, and visible in
+    -- the view rather than dropped from it.
+    --
+    -- `so_line_id IS NULL` is what stops this leg double counting. A row raised against a
+    -- line the book DOES carry is already counted by the sheet leg above, at that line's own
+    -- product and warehouse; adding the row on top would have the planner buy the same
+    -- quantity twice. `supply_decision_id IS NULL` keeps it disjoint from the confirmed leg
+    -- for the same reason.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
@@ -349,7 +357,7 @@ legs AS (
     JOIN products fp
       ON fp.product_code = oir.item_code
      AND fp.company_id = oir.company_id
-    JOIN warehouses fw
+    LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
     LEFT JOIN LATERAL (
@@ -483,11 +491,19 @@ legs AS (
     -- Joined on the CODE and the company together, which is exactly what
     -- `uq_products_company_product_code` / `uq_warehouses_company_warehouse_code` make
     -- unique - a code alone would multiply the row once per company holding the same SKU.
-    -- INNER on both, so a row naming an item or a location this system does not hold is
-    -- counted nowhere rather than everywhere.
     --
-    -- `supply_decision_id IS NULL` keeps the two confirmed legs disjoint: a decision's own
-    -- Buy residual is counted above, at the reconciled core line's product and location.
+    -- INNER on `products`, because a row naming an item this system does not hold is demand
+    -- for nothing and there is no product to attribute it to. LEFT on `warehouses`, because
+    -- a row that names no location, or one we do not hold, is still demand - it comes out
+    -- with a NULL warehouse, which every reader joins on `(product, warehouse)` and so
+    -- matches nowhere. Counted at no location rather than invented at one, and visible in
+    -- the view rather than dropped from it.
+    --
+    -- `so_line_id IS NULL` is what stops this leg double counting. A row raised against a
+    -- line the book DOES carry is already counted by the sheet leg above, at that line's own
+    -- product and warehouse; adding the row on top would have the planner buy the same
+    -- quantity twice. `supply_decision_id IS NULL` keeps it disjoint from the confirmed leg
+    -- for the same reason.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
            GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
@@ -498,7 +514,7 @@ legs AS (
     JOIN products fp
       ON fp.product_code = oir.item_code
      AND fp.company_id = oir.company_id
-    JOIN warehouses fw
+    LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
     LEFT JOIN LATERAL (

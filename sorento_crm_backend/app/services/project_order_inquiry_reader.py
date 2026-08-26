@@ -135,6 +135,11 @@ class OrderInquiryRow:
     order_back: bool
     sheet: str
     source_row: int
+    #: The REMARK cell as CS wrote it. `po_numbers` is what was parsed OUT of it, and the
+    #: raw text is kept beside them because two rows can parse to the same documents and
+    #: still not say the same thing (`202606-S0082` against `202606-S0082 & ORDER`).
+    #: Defaulted so a caller building a row by hand - several tests do - need not know it.
+    remark: str = ""
 
 
 @dataclass
@@ -265,6 +270,7 @@ def read_order_inquiry(file_data: bytes) -> OrderInquiryResult:
                     order_back=order_back,
                     sheet=name,
                     source_row=row_number,
+                    remark=_text(values.get("remark")),
                 )
             )
 

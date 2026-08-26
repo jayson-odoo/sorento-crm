@@ -14,6 +14,7 @@ the old body. Two invariants pin the fix:
    code from one.
 """
 import importlib.util
+import uuid
 from pathlib import Path
 
 import pytest
@@ -217,6 +218,101 @@ def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
         # 422's own distinguishing feature, so a downgrade that installed some THIRD body
         # would not pass on the absence above alone.
         assert "lk.linked" in restored
+
+
+@requires_pg
+def test_the_form_leg_counts_a_row_with_no_line_and_never_one_that_has_one():
+    """The whole arithmetic of the new leg, on one product, in one place.
+
+    Three rows, and the reason each is or is not counted:
+
+    * `so_line_id IS NULL` - the fixture's `[NL]` shape. Counted HERE, at the row's own item
+      code and stock location, because nothing else counts it: the line its quantity came
+      from was closed in AutoCount and no decision points at it.
+    * `so_line_id` set - counted by the SHEET leg at that line, and NOT here. Adding the row
+      on top of the line it belongs to is the same quantity twice, and the planner buys it
+      twice.
+    * no stock location - still demand, still in the view, at a NULL warehouse that every
+      reader's `(product, warehouse)` join matches nowhere. Counted at no location rather
+      than invented at one, and present rather than dropped.
+    """
+    with blank_session() as db:
+        # The view body under test, with its SCHEMA PREFIXES rebound onto this session's
+        # scratch schemas - the same thing `schema_translate_map` does for the ORM. The
+        # neighbours above drop and rebuild the REAL `scm.committed_v` inside a rolled-back
+        # transaction, which is fine for a DDL round trip and no use at all for a DATA one:
+        # the body would read the REAL `projects.order_inquiry_rows` and see none of the
+        # rows below. The SQL is the live body either way, which is what is being asserted.
+        scratch = db.execute(text("select current_schema()")).scalar()
+        projects = f"{scratch}_projects"
+        scm_schema = f"{scratch}_scm"
+        body = (
+            _load("423_committed_v_form_rows")._AS_OF_423
+            .replace("scm.committed_v", f'"{scm_schema}".committed_v')
+            .replace("projects.", f'"{projects}".')
+        )
+        db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
+        db.execute(text(body))
+
+        company = db.execute(text("select id from companies where code = 'SRT'")).scalar()
+        ids = {name: str(uuid.uuid4()) for name in
+               ("cat", "uom", "product", "warehouse", "pso", "inquiry", "a", "b", "c")}
+        db.execute(text(
+            "INSERT INTO product_categories (id, category_code, category_name) "
+            "VALUES (:i, 'ZZTCV-CAT', 'ZZTCV-CAT')"), {"i": ids["cat"]})
+        db.execute(text(
+            "INSERT INTO units_of_measure (id, uom_code, uom_name) "
+            "VALUES (:i, 'ZZTCV-U', 'ZZTCV-U')"), {"i": ids["uom"]})
+        db.execute(text(
+            "INSERT INTO products (id, company_id, product_code, product_name, "
+            "category_id, base_uom_id, list_price) "
+            "VALUES (:i, :c, 'ZZTCV-ITEM', 'ZZTCV-ITEM', :cat, :uom, 0)"),
+            {"i": ids["product"], "c": company, "cat": ids["cat"], "uom": ids["uom"]})
+        db.execute(text(
+            "INSERT INTO warehouses (id, company_id, warehouse_code, warehouse_name, "
+            "is_active) VALUES (:i, :c, 'ZZTCV-WH', 'ZZTCV-WH', true)"),
+            {"i": ids["warehouse"], "c": company})
+        db.execute(text(
+            "INSERT INTO " + projects + ".sales_orders (id, company_id, provisional_ref, status, "
+            "created_at, updated_at) VALUES (:i, :c, 'ZZTCV-PSO', 'adopted', now(), now())"),
+            {"i": ids["pso"], "c": company})
+        db.execute(text(
+            "INSERT INTO " + projects + ".order_inquiries (id, company_id, inquiry_no, "
+            "project_sales_order_id, state, raised_at) "
+            "VALUES (:i, :c, 'OI-ZZTCV', :p, 'raised', now())"),
+            {"i": ids["inquiry"], "c": company, "p": ids["pso"]})
+        db.execute(text(
+            "INSERT INTO " + projects + ".sales_order_lines (id, company_id, "
+            "project_sales_order_id, line_no, qty, unit_price, amount, product_id, "
+            "created_at) VALUES (:i, :c, :p, 1, 5, 0, 0, :prod, now())"),
+            {"i": ids["c"], "c": company, "p": ids["pso"], "prod": ids["product"]})
+
+        def _row(row_id, *, location, so_line=None):
+            db.execute(text(
+                "INSERT INTO " + projects + ".order_inquiry_rows (id, company_id, "
+                "order_inquiry_id, so_line_id, item_code, qty, verb, stock_location, "
+                "state, redirected_to_pool, created_at) "
+                "VALUES (:i, :c, :inq, :l, 'ZZTCV-ITEM', 7, 'ORDER_BACK', :loc, "
+                "'raised', false, now())"),
+                {"i": row_id, "c": company, "inq": ids["inquiry"], "l": so_line,
+                 "loc": location})
+
+        _row(ids["a"], location="ZZTCV-WH")
+        _row(ids["b"], location="ZZTCV-WH", so_line=ids["c"])
+        _row(ids["c"], location=None)
+        db.flush()
+
+        counted = db.execute(text(
+            "SELECT w.warehouse_code, cv.project_committed "
+            f'FROM "{scm_schema}".committed_v cv '
+            "LEFT JOIN warehouses w ON w.id = cv.warehouse_id "
+            "WHERE cv.product_id = :p"), {"p": ids["product"]}).all()
+        by_location = {code: float(qty) for code, qty in counted}
+
+        # Row a only. Row b belongs to a line the sheet leg counts, row c has no location.
+        assert by_location.get("ZZTCV-WH") == 7.0
+        # Present, at no warehouse, rather than dropped or attributed to somebody.
+        assert by_location.get(None) == 7.0
 
 
 @requires_pg
