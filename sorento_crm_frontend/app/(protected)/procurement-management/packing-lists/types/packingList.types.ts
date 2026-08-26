@@ -169,5 +169,9 @@ export interface PackingListFormData {
     cartons_count?: number;
     weight_per_carton?: number;
     unit_cost?: number;
+    /** Volume, editable in place on the Lines tab since F9 - the column has existed on the
+     *  line since S3b and only the importer could ever fill it. */
+    cbm?: number;
+    remarks?: string;
   }>;
 }

@@ -9,7 +9,8 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const searchParams = { value: new URLSearchParams() };
 
@@ -28,11 +29,28 @@ const state = {
   sourceInvoices: undefined as unknown,
 };
 
+const updatePackingList = vi.fn();
+
 vi.mock('../hooks/usePackingLists', () => ({
   usePackingList: () => ({ data: state.packingList, isLoading: false }),
   useDeletePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdatePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdatePackingList: () => ({ mutateAsync: updatePackingList, isPending: false }),
   usePackingListSourceInvoices: () => ({ data: state.sourceInvoices, isLoading: false }),
+  // Checkpoint labels and order come from config, and the edit-in-place clearance fields
+  // read the same list the timeline does.
+  useClearanceCheckpoints: () => ({
+    data: [
+      { field: 'etd_date', label: 'ETD', caption: null },
+      { field: 'estimated_arrival_date', label: 'ETA', caption: null },
+      { field: 'gatepass_date', label: 'Gatepass', caption: null },
+    ],
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
+vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
+  getProducts: vi.fn(async () => ({ data: [] })),
 }));
 
 vi.mock('../../suppliers/hooks/useSupplierSelectQuery', () => ({
@@ -107,7 +125,14 @@ function mixedContainer(over: Record<string, unknown> = {}) {
 }
 
 function renderDetail() {
-  return render(<PackingListDetail packingListId="pl-1" />);
+  // ConfirmDeleteDialog (the line-removal confirmation) runs its own mutation, so the page
+  // needs a client even though every data hook here is mocked.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <PackingListDetail packingListId="pl-1" />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -115,6 +140,8 @@ beforeEach(() => {
   searchParams.value = new URLSearchParams();
   state.packingList = mixedContainer();
   state.sourceInvoices = undefined;
+  updatePackingList.mockReset();
+  updatePackingList.mockResolvedValue({});
 });
 
 describe('PackingListDetail - who loaded this container', () => {
@@ -298,5 +325,131 @@ describe('F10 - which proforma invoices this container was drafted from', () => 
 
     expect(screen.getByText('Proforma invoices')).toBeInTheDocument();
     expect(screen.getByText(/KAILU proforma\.xlsx/)).toBeInTheDocument();
+  });
+});
+
+describe('F9 - the packing list edits in place', () => {
+  it('swaps values for inputs where the values were, leaving the layout alone (AC-F3)', () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    renderDetail();
+
+    expect(screen.queryByLabelText('Bill of Lading Number')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByLabelText('Bill of Lading Number')).toBeInTheDocument();
+    expect(screen.getByLabelText('Shipping Container Number')).toHaveValue('FSCU8103365');
+    // Same fields, same order - the ones with no input counterpart stay as values.
+    expect(screen.getByText('Total Items')).toBeInTheDocument();
+    expect(screen.getByText('Source sheet')).toBeInTheDocument();
+  });
+
+  it('offers the clearance dates where they are read, so nothing loses its editor', () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByLabelText('ETD')).toBeInTheDocument();
+    expect(screen.getByLabelText('Gatepass')).toBeInTheDocument();
+    // ETA is edited in the header field, and is not asked for twice.
+    expect(screen.queryByLabelText('ETA')).not.toBeInTheDocument();
+  });
+
+  it('saves the whole packing list in one PUT, lines included (AC-F3)', async () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Invoice Number'), {
+      target: { value: 'INV-77' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const payload = updatePackingList.mock.calls[0][0];
+    expect(payload.id).toBe('pl-1');
+    expect(payload.data.invoice_number).toBe('INV-77');
+    expect(payload.data.shipment_lines).toHaveLength(3);
+  });
+
+  it('restores the saved values on Cancel, writing nothing', () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Invoice Number'), {
+      target: { value: 'INV-77' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(updatePackingList).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Invoice Number')).not.toBeInTheDocument();
+  });
+
+  it('edits a line where it is read, and totals follow the draft (AC-F4)', async () => {
+    searchParams.value = new URLSearchParams('tab=lines');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const qty = screen.getByLabelText('Quantity for SRTWT7443');
+    expect(qty).toHaveValue(490);
+    fireEvent.change(qty, { target: { value: '400' } });
+    fireEvent.change(screen.getByLabelText('CBM for SRTWT7443'), {
+      target: { value: '10' },
+    });
+
+    const total = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(total).getByText('1420')).toBeInTheDocument();
+    expect(within(total).getByText('17.25')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];
+    expect(line.quantity_shipped).toBe(400);
+    expect(line.cbm).toBe(10);
+  });
+
+  it('asks before removing a line, and only then drops it (AC-F4)', async () => {
+    searchParams.value = new URLSearchParams('tab=lines');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: /remove/i }));
+    expect(screen.getByText(/This removes SRTWT7443 from this packing list/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Quantity for SRTWT7443')).not.toBeInTheDocument(),
+    );
+    expect(updatePackingList).not.toHaveBeenCalled();
+  });
+
+  it('adds a line through a searchable product picker (AC-F4)', () => {
+    searchParams.value = new URLSearchParams('tab=lines');
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add line/i }));
+
+    expect(screen.getByLabelText('Quantity for the new line')).toBeInTheDocument();
+  });
+
+  it('asks before unlinking the attachment, never on one click', () => {
+    searchParams.value = new URLSearchParams('tab=documents');
+    state.packingList = mixedContainer({
+      attachment_id: 'att-1',
+      attachment: {
+        id: 'att-1',
+        original_filename: 'FSCU8103365.pdf',
+        stored_filename: 'x.pdf',
+        file_path: '/x.pdf',
+        file_size_bytes: 2048,
+        mime_type: 'application/pdf',
+        attachment_type: null,
+      },
+    });
+    renderDetail();
+
+    fireEvent.click(screen.getByTitle('Unlink attachment'));
+
+    expect(screen.getByText('Unlink this attachment?')).toBeInTheDocument();
+    expect(updatePackingList).not.toHaveBeenCalled();
   });
 });

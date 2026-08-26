@@ -20,7 +20,6 @@ import {
 } from '@/components/ui/table';
 import {
   usePackingList,
-  useDeletePackingList,
   usePackingListSourceInvoices,
   useUpdatePackingList,
 } from '../hooks/usePackingLists';
@@ -38,6 +37,21 @@ import { toast } from 'sonner';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
+import { ProductComboboxSearchable } from './ProductComboboxSearchable';
+import { SupplierCombobox } from './SupplierCombobox';
+import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useClearanceCheckpoints } from '../hooks/usePackingLists';
+import type { PackingListFormData } from '../types/packingList.types';
 import SourceProformaInvoicesCard from './SourceProformaInvoicesCard';
 import SpoPlannerTable from './SpoPlannerTable';
 
@@ -57,6 +71,72 @@ function fmtCbm(value: number | string | null | undefined): string {
   const parsed = toNumber(value);
   if (parsed === null) return '-';
   return String(Number(parsed.toFixed(3)));
+}
+
+/** ISO datetime -> `yyyy-mm-dd`, which is what `<input type="date">` speaks. */
+function toDateInput(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  return /^\d{4}-\d{2}-\d{2}T/.test(s) ? s.slice(0, 10) : s;
+}
+
+/** The header field this checkpoint is already edited in, so it is not asked for twice. */
+const CHECKPOINTS_RENDERED_ELSEWHERE = new Set(['estimated_arrival_date']);
+
+/**
+ * One field, read or typed IN THE SAME PLACE.
+ *
+ * One component rather than two blocks behind a ternary, because the ADR's rule is that
+ * nothing moves between view and edit - and the cheapest way to guarantee that is for one
+ * piece of code to own both.
+ */
+function TextField({
+  label,
+  name,
+  view,
+  editing,
+  draft,
+  onChange,
+  type = 'text',
+}: {
+  label: string;
+  name: string;
+  view: React.ReactNode;
+  editing: boolean;
+  draft: Record<string, string>;
+  onChange: (name: string, value: string) => void;
+  type?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      {editing ? (
+        <Input
+          className="mt-1"
+          type={type}
+          value={draft[name] ?? ''}
+          onChange={(e) => onChange(name, e.target.value)}
+          aria-label={label}
+        />
+      ) : (
+        <p className="font-medium break-words">{view}</p>
+      )}
+    </div>
+  );
+}
+
+/** One line as it is being edited. `id` is absent on a line the operator just added. */
+interface DraftLine {
+  key: string;
+  id?: string;
+  product_id: string;
+  product_code: string;
+  product_name: string | null;
+  quantity_shipped: string;
+  supplier_id: string;
+  cartons_count: string;
+  cbm: string;
+  uom_id: string | null;
 }
 
 export default function PackingListDetail({
@@ -86,6 +166,24 @@ export default function PackingListDetail({
   const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const downloadMutation = useDownloadAttachment();
+  const { data: checkpoints = [] } = useClearanceCheckpoints();
+
+  /**
+   * Edit in place, per the ADR: the same tabs, the same fields in the same order, and a
+   * value swapped for an input where the value was. The dedicated `/edit` page it replaces
+   * was a three-card form that shared no layout with this page at all, so every edit began
+   * with re-finding the field.
+   *
+   * ONE edit mode for the record, not one per tab: Save writes the whole packing list in a
+   * single `PUT`, which is also what stops a header saved from one tab and lines saved from
+   * another disagreeing about which version is current.
+   */
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
+  const [lineToRemove, setLineToRemove] = useState<DraftLine | null>(null);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   // The proforma invoices behind this container, read ONCE for the four places that show
   // them: the Details card, the Lines column, the Timeline entry and the Documents list.
   const { data: sourceInvoices } = usePackingListSourceInvoices(packingListId);
@@ -99,12 +197,152 @@ export default function PackingListDetail({
     });
   };
 
+  const beginEdit = () => {
+    if (!packingList) return;
+    // Read from the server's answer every time. A draft left over from a cancelled edit
+    // would silently re-apply a value the operator backed out of.
+    const next: Record<string, string> = {
+      shipment_number: packingList.shipment_number ?? '',
+      supplier_id: packingList.supplier_id ?? '',
+      shipment_date: toDateInput(packingList.shipment_date),
+      estimated_arrival_date: toDateInput(packingList.estimated_arrival_date),
+      actual_arrival_date: toDateInput(packingList.actual_arrival_date),
+      bill_of_lading_number: packingList.bill_of_lading_number ?? '',
+      shipping_container_number: packingList.shipping_container_number ?? '',
+      invoice_number: packingList.invoice_number ?? '',
+      notes: packingList.notes ?? '',
+    };
+    for (const cp of checkpoints) {
+      next[cp.field] = toDateInput(
+        (packingList as unknown as Record<string, unknown>)[cp.field],
+      );
+    }
+    for (const f of CLEARANCE_ATTRIBUTE_FIELDS) {
+      const value = (packingList as unknown as Record<string, unknown>)[f.name];
+      next[f.name] = value === null || value === undefined ? '' : String(value);
+    }
+    setDraft(next);
+    setDraftLines(
+      (packingList.shipment_lines ?? []).map((line) => ({
+        key: line.id,
+        id: line.id,
+        product_id: line.product_id,
+        product_code: line.product?.product_code ?? '',
+        product_name: line.product?.product_name ?? null,
+        quantity_shipped: String(line.quantity_shipped ?? 0),
+        supplier_id: line.supplier_id ?? '',
+        cartons_count: String(line.cartons_count ?? ''),
+        cbm: line.cbm === null || line.cbm === undefined ? '' : String(line.cbm),
+        uom_id: line.uom_id ?? null,
+      })),
+    );
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft({});
+    setDraftLines([]);
+  };
+
+  const setField = (name: string, value: string) =>
+    setDraft((prev) => ({ ...prev, [name]: value }));
+
+  /** A blank line for the operator to fill. Its product is the first thing it asks for,
+   *  because a shipment line with no product is not a line the backend can store. */
+  const addLine = () =>
+    setDraftLines((prev) => [
+      ...prev,
+      {
+        key: `new-${prev.length}-${Date.now()}`,
+        product_id: '',
+        product_code: '',
+        product_name: null,
+        quantity_shipped: '0',
+        supplier_id: '',
+        cartons_count: '',
+        cbm: '',
+        uom_id: null,
+      },
+    ]);
+
+  /** Server-searched, so any of the 10k+ products is reachable rather than a first page. */
+  const fetchProducts = async (query: string, pageIndex: number) => {
+    const res = await getProducts({
+      pageIndex,
+      pageSize: 50,
+      sorting: [],
+      searchQuery: query,
+      status: 'active',
+    });
+    return { data: res.data ?? [] };
+  };
+
+  const setLineField = (key: string, name: keyof DraftLine, value: string) =>
+    setDraftLines((prev) =>
+      prev.map((line) => (line.key === key ? { ...line, [name]: value } : line)),
+    );
+
+  const saveEdit = async () => {
+    if (!packingList) return;
+    const incomplete = draftLines.find((line) => !line.product_id);
+    if (incomplete) {
+      toast.error('Every line needs a product. Pick one, or remove the line.');
+      return;
+    }
+    setSaving(true);
+    // Only what the operator can actually type. `total_items_shipped` is derived from the
+    // lines by the backend, and sending our own would let the two disagree.
+    const payload: Partial<PackingListFormData> = {
+      shipment_number: draft.shipment_number || undefined,
+      supplier_id: draft.supplier_id || undefined,
+      shipment_date: draft.shipment_date,
+      estimated_arrival_date: draft.estimated_arrival_date || undefined,
+      actual_arrival_date: draft.actual_arrival_date || undefined,
+      bill_of_lading_number: draft.bill_of_lading_number || undefined,
+      shipping_container_number: draft.shipping_container_number || undefined,
+      invoice_number: draft.invoice_number || undefined,
+      notes: draft.notes || undefined,
+      shipment_lines: draftLines.map((line) => ({
+        product_id: line.product_id,
+        quantity_shipped: Number(line.quantity_shipped || 0),
+        supplier_id: line.supplier_id || undefined,
+        uom_id: line.uom_id || undefined,
+        cartons_count: line.cartons_count === '' ? undefined : Number(line.cartons_count),
+        cbm: line.cbm === '' ? undefined : Number(line.cbm),
+      })),
+    };
+    // The clearance fields are on the payload schema but not on `PackingListFormData`'s
+    // named members, so they are written through one cast here rather than the whole
+    // payload losing its type.
+    const clearance = payload as unknown as Record<string, unknown>;
+    for (const cp of checkpoints) {
+      clearance[cp.field] = draft[cp.field] || undefined;
+    }
+    for (const f of CLEARANCE_ATTRIBUTE_FIELDS) {
+      clearance[f.name] = draft[f.name] === '' ? undefined : draft[f.name];
+    }
+    try {
+      await updatePackingListMutation.mutateAsync({
+        id: packingListId,
+        data: payload,
+      });
+      cancelEdit();
+    } catch {
+      // The mutation hook toasts the message; the edit stays open on the values that were
+      // refused rather than throwing every other change away with them.
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleUnlinkAttachment = async () => {
     try {
       await updatePackingListMutation.mutateAsync({
         id: packingListId,
         data: { attachment_id: null },
       });
+      setUnlinkOpen(false);
       toast.success('Attachment unlinked');
     } catch {
       toast.error('Failed to unlink attachment');
@@ -238,11 +476,20 @@ export default function PackingListDetail({
    * full to close.
    */
   const lineTotals = useMemo(() => {
+    // While editing, the totals follow the DRAFT - a footer that keeps showing the saved
+    // figures under quantities somebody is changing reads as the edit not working.
+    const rows = editing
+      ? draftLines.map((l) => ({
+          quantity_shipped: Number(l.quantity_shipped || 0),
+          cartons_count: l.cartons_count === '' ? null : Number(l.cartons_count),
+          cbm: l.cbm === '' ? null : l.cbm,
+        }))
+      : sortedAndFilteredLines;
     let qty = 0;
     let cartons = 0;
     let cbm = 0;
     let unmeasured = 0;
-    for (const line of sortedAndFilteredLines) {
+    for (const line of rows) {
       qty += line.quantity_shipped ?? 0;
       cartons += line.cartons_count ?? 0;
       const volume = toNumber(line.cbm);
@@ -250,7 +497,7 @@ export default function PackingListDetail({
       else cbm += volume;
     }
     return { qty, cartons, cbm: cbm === 0 && unmeasured > 0 ? null : cbm, unmeasured };
-  }, [sortedAndFilteredLines]);
+  }, [sortedAndFilteredLines, editing, draftLines]);
 
   const handleSort = (field: 'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status') => {
     if (sortField === field) {
@@ -283,7 +530,7 @@ export default function PackingListDetail({
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
@@ -329,19 +576,13 @@ export default function PackingListDetail({
       (sum, line) => sum + (line.quantity_shipped ?? 0),
       0,
     ) ?? 0;
-  const totalCartonsFromLines =
-    packingList.shipment_lines?.reduce(
-      (sum, line) => sum + (line.cartons_count ?? 0),
-      0,
-    ) ?? 0;
   const displayTotalItems =
     packingList.shipment_lines?.length && totalItemsFromLines > 0
       ? totalItemsFromLines
       : packingList.total_items_shipped ?? 0;
-  const displayTotalCartons =
-    packingList.shipment_lines?.length && totalCartonsFromLines > 0
-      ? totalCartonsFromLines
-      : packingList.total_cartons ?? 0;
+  // Cartons are totalled under their own column on the Lines tab (F6), which follows the
+  // rows on screen - a second header-level figure derived differently would disagree with
+  // it the moment a search is typed.
 
   return (
     <div className="space-y-6">
@@ -364,27 +605,76 @@ export default function PackingListDetail({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <PackingListNavigation packingListId={packingListId} />
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(
-                `/procurement-management/packing-lists/${packingListId}/edit`,
-              )
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-          >
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
+          {editing ? (
+            <>
+              <Button onClick={() => void saveEdit()} disabled={saving}>
+                Save
+              </Button>
+              <Button variant="outline" onClick={cancelEdit} disabled={saving}>
+                <X className="size-4" />
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <PackingListNavigation packingListId={packingListId} />
+              <Button variant="outline" onClick={beginEdit}>
+                <Edit className="size-4" />
+                Edit
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Nothing is removed or detached on one click - the CRUD standard's rule, and the
+          one this page was breaking on Unlink. */}
+      <ConfirmDeleteDialog
+        open={!!lineToRemove}
+        onOpenChange={(o) => !o && setLineToRemove(null)}
+        title="Remove this line?"
+        description={
+          lineToRemove
+            ? `This removes ${lineToRemove.product_code || 'the new line'} from this packing list when you save. This action cannot be undone.`
+            : ''
+        }
+        onDelete={async () => {
+          if (!lineToRemove) return;
+          setDraftLines((prev) => prev.filter((l) => l.key !== lineToRemove.key));
+        }}
+        successMessage="Line removed. Save to apply it."
+      />
+
+      <AlertDialog open={unlinkOpen} onOpenChange={setUnlinkOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink this attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {packingList.attachment?.original_filename
+                ? `${packingList.attachment.original_filename} stays in the file library; it just stops being attached to this packing list.`
+                : 'The file stays in the library; it just stops being attached to this packing list.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => setUnlinkOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleUnlinkAttachment()}
+              disabled={updatePackingListMutation.isPending}
+            >
+              Unlink
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {packingList && (
         <PackingListDeleteDialog
@@ -457,78 +747,120 @@ export default function PackingListDetail({
             <CardTitle>Shipment Information</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* View and edit are the SAME layout: the same fields in the same order, and
+                an input where the value was. Nothing moves between the two. */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Shipment Number</p>
-                <p className="font-medium">{packingList.shipment_number || '-'}</p>
-              </div>
+              <TextField
+                label="Shipment Number"
+                name="shipment_number"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={packingList.shipment_number || '-'}
+              />
               <div>
                 <p className="text-sm text-muted-foreground">Supplier</p>
-                <p className="font-medium">
-                  {packingList.supplier?.supplier_name || lineSupplierNames || '-'}
-                </p>
+                {editing ? (
+                  <SupplierCombobox
+                    className="mt-1"
+                    value={draft.supplier_id ?? ''}
+                    onChange={(v) => setField('supplier_id', v)}
+                    suppliers={suppliers}
+                    supplierFallback={packingList.supplier ?? null}
+                    placeholder="No supplier on the header"
+                  />
+                ) : (
+                  <p className="font-medium">
+                    {packingList.supplier?.supplier_name || lineSupplierNames || '-'}
+                  </p>
+                )}
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Shipment Date</p>
-                <p className="font-medium">
-                  {packingList.shipment_date
+              <TextField
+                label="Shipment Date"
+                name="shipment_date"
+                type="date"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={
+                  packingList.shipment_date
                     ? formatDate(new Date(packingList.shipment_date))
-                    : '-'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Estimated Arrival Date
-                </p>
-                <p className="font-medium">
-                  {packingList.estimated_arrival_date
+                    : '-'
+                }
+              />
+              <TextField
+                label="Estimated Arrival Date"
+                name="estimated_arrival_date"
+                type="date"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={
+                  packingList.estimated_arrival_date
                     ? formatDate(new Date(packingList.estimated_arrival_date))
-                    : '-'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Actual Arrival Date
-                </p>
-                <p className="font-medium">
-                  {packingList.actual_arrival_date
+                    : '-'
+                }
+              />
+              <TextField
+                label="Actual Arrival Date"
+                name="actual_arrival_date"
+                type="date"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={
+                  packingList.actual_arrival_date
                     ? formatDate(new Date(packingList.actual_arrival_date))
-                    : '-'}
-                </p>
-              </div>
+                    : '-'
+                }
+              />
+              <TextField
+                label="Bill of Lading Number"
+                name="bill_of_lading_number"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={packingList.bill_of_lading_number || '-'}
+              />
+              <TextField
+                label="Shipping Container Number"
+                name="shipping_container_number"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={packingList.shipping_container_number || '-'}
+              />
+              <TextField
+                label="Invoice Number"
+                name="invoice_number"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={packingList.invoice_number || '-'}
+              />
               <div>
-                <p className="text-sm text-muted-foreground">
-                  Bill of Lading Number
-                </p>
-                <p className="font-medium">
-                  {packingList.bill_of_lading_number || '-'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Shipping Container Number
-                </p>
-                <p className="font-medium">
-                  {packingList.shipping_container_number || '-'}
-                </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Invoice Number</p>
-                <p className="font-medium">
-                  {packingList.invoice_number || '-'}
-                </p>
-              </div>
-              <div>
+                {/* Derived from the lines by the backend, so it has no input counterpart -
+                    typing our own here would let the two disagree. */}
                 <p className="text-sm text-muted-foreground">Total Items</p>
                 <p className="font-medium">{displayTotalItems}</p>
               </div>
             </div>
-            {packingList.notes && (
-              <div>
-                <p className="text-sm text-muted-foreground">Notes</p>
-                <p className="font-medium">{packingList.notes}</p>
-              </div>
-            )}
+            {/* Always rendered now, not only when it has a value: a field that appears
+                solely in edit mode is a field nobody knows exists. */}
+            <div>
+              <p className="text-sm text-muted-foreground">Notes</p>
+              {editing ? (
+                <Textarea
+                  className="mt-1"
+                  rows={3}
+                  value={draft.notes ?? ''}
+                  onChange={(e) => setField('notes', e.target.value)}
+                  aria-label="Notes"
+                />
+              ) : (
+                <p className="font-medium">{packingList.notes || '-'}</p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -546,15 +878,45 @@ export default function PackingListDetail({
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* The clearance DATES, in the checkpoint order the timeline reads from the
+                  same config. They are here as well as on the timeline because this is
+                  where they can be TYPED: the workbook import normally fills them, and
+                  before the first import - or when a liner revises an ETA between imports -
+                  somebody enters one by hand. The timeline above is the narrative; this is
+                  the record, and the ADR asks for the record to be edited where it is read. */}
+              {checkpoints
+                .filter((cp) => !CHECKPOINTS_RENDERED_ELSEWHERE.has(cp.field))
+                .map((cp) => {
+                  const value = (packingList as unknown as Record<string, unknown>)[cp.field];
+                  return (
+                    <TextField
+                      key={cp.field}
+                      label={cp.label}
+                      name={cp.field}
+                      type="date"
+                      editing={editing}
+                      draft={draft}
+                      onChange={setField}
+                      view={value ? formatDate(new Date(String(value))) : '-'}
+                    />
+                  );
+                })}
               {CLEARANCE_ATTRIBUTE_FIELDS.map((f) => {
                 const value = (packingList as unknown as Record<string, unknown>)[f.name];
                 return (
-                  <div key={f.name} className="min-w-0">
-                    <p className="text-sm text-muted-foreground">{f.label}</p>
-                    <p className="font-medium break-words">
-                      {value === null || value === undefined || value === '' ? '-' : String(value)}
-                    </p>
-                  </div>
+                  <TextField
+                    key={f.name}
+                    label={f.label}
+                    name={f.name}
+                    editing={editing}
+                    draft={draft}
+                    onChange={setField}
+                    view={
+                      value === null || value === undefined || value === ''
+                        ? '-'
+                        : String(value)
+                    }
+                  />
                 );
               })}
               <div className="min-w-0">
@@ -619,7 +981,7 @@ export default function PackingListDetail({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={handleUnlinkAttachment}
+                      onClick={() => setUnlinkOpen(true)}
                       disabled={updatePackingListMutation.isPending}
                       title="Unlink attachment"
                     >
@@ -703,7 +1065,10 @@ export default function PackingListDetail({
         </TabsContent>
 
         <TabsContent value="lines" className="mt-6">
-        {!packingList.shipment_lines || packingList.shipment_lines.length === 0 ? (
+        {/* In edit mode the table is always rendered, even with no lines yet: the empty
+            state is where somebody would go to ADD the first one, and a card with no table
+            in it has nowhere to put it. */}
+        {!editing && (!packingList.shipment_lines || packingList.shipment_lines.length === 0) ? (
           <Card>
             <CardContent className="py-10 text-center">
               <p className="text-sm font-medium">No shipment lines</p>
@@ -802,8 +1167,100 @@ export default function PackingListDetail({
                           <SortIcon field="status" />
                         </button>
                       </TableHead>
+                      {/* An action has no read-only counterpart, so this column exists only
+                          while editing - the fields themselves do not move. */}
+                      {editing ? <TableHead /> : null}
                     </TableRow>
                   </TableHeader>
+                  {editing ? (
+                    <TableBody>
+                      {draftLines.map((line) => (
+                        <TableRow key={line.key}>
+                          <TableCell>
+                            {line.id ? (
+                              <span className="font-medium">{line.product_code || '-'}</span>
+                            ) : (
+                              <ProductComboboxSearchable
+                                className="w-56"
+                                value={line.product_id}
+                                onChange={(v) => setLineField(line.key, 'product_id', v)}
+                                fetchProducts={fetchProducts}
+                                placeholder="Search a product"
+                              />
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <SupplierCombobox
+                              className="w-48"
+                              value={line.supplier_id}
+                              onChange={(v) => setLineField(line.key, 'supplier_id', v)}
+                              suppliers={suppliers}
+                              placeholder="No factory named"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              className="h-8 w-24 text-end tabular-nums"
+                              value={line.quantity_shipped}
+                              onChange={(e) =>
+                                setLineField(line.key, 'quantity_shipped', e.target.value)
+                              }
+                              aria-label={`Quantity for ${line.product_code || 'the new line'}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              className="h-8 w-24 text-end tabular-nums"
+                              value={line.cartons_count}
+                              onChange={(e) =>
+                                setLineField(line.key, 'cartons_count', e.target.value)
+                              }
+                              aria-label={`Cartons for ${line.product_code || 'the new line'}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.001"
+                              className="h-8 w-24 text-end tabular-nums"
+                              value={line.cbm}
+                              onChange={(e) => setLineField(line.key, 'cbm', e.target.value)}
+                              aria-label={`CBM for ${line.product_code || 'the new line'}`}
+                            />
+                          </TableCell>
+                          {/* No input counterparts: these are what the container did, not
+                              what somebody types about it. */}
+                          <TableCell className="text-muted-foreground">-</TableCell>
+                          <TableCell className="text-muted-foreground">-</TableCell>
+                          <TableCell className="text-muted-foreground">-</TableCell>
+                          <TableCell className="text-muted-foreground">-</TableCell>
+                          <TableCell className="text-end">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+                              onClick={() => setLineToRemove(line)}
+                            >
+                              <Trash2 className="size-3.5" />
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow>
+                        <TableCell colSpan={10}>
+                          <Button variant="outline" size="sm" onClick={addLine}>
+                            Add line
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  ) : (
                   <TableBody>
                     {sortedAndFilteredLines.map((line) => {
                       const lineStatus =
@@ -1004,6 +1461,7 @@ export default function PackingListDetail({
                       );
                     })}
                   </TableBody>
+                  )}
                   {/* The total is what the container is judged against, so it sits under
                       the column rather than being added up by hand. */}
                   <TableFooter>
@@ -1021,7 +1479,7 @@ export default function PackingListDetail({
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell colSpan={4} />
+                      <TableCell colSpan={editing ? 5 : 4} />
                     </TableRow>
                   </TableFooter>
                 </Table>
