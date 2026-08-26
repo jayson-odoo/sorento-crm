@@ -2370,3 +2370,48 @@ def test_the_frozen_proposal_is_walked_as_of_the_day_the_planner_was_deciding(ap
     assert _shape(_active_snapshots(db, order.id)[0]["proposed_components"]) == [
         ("buy", "20", None, "buy")
     ]
+
+
+def test_a_frozen_proposal_is_stamped_with_the_ladder_that_composed_it(api):
+    """A frozen suggestion outlives the rule that made it.
+
+    "MWH-IB has 30 available in the IB group" is a v3 sentence about ONE warehouse's own
+    availability, and under v4 that is not a reading anybody makes - so the board has to be
+    able to tell a suggestion composed today from one composed under a rule that no longer
+    runs. The stamp is on every component of `proposed_components`, and its ABSENCE is the
+    signal for every snapshot written before it existed: a JSON column needs no migration to
+    grow a key, and "no stamp" is exactly "before ladder v4".
+    """
+    from app.models.project_so import SOSupplyDecision
+    from app.services.project_supply_service import LADDER_VERSION
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=40)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .order_by(SOSupplyDecision.revision_no.desc())
+        .first()
+    )
+    proposed = decision.line_snapshots[0]["proposed_components"]
+    assert proposed, "the engine's own composition is frozen beside the decided one"
+    assert {part["ladder"] for part in proposed} == {LADDER_VERSION}

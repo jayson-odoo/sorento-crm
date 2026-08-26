@@ -1099,6 +1099,17 @@ export interface BoardPolicy {
 export interface BoardSource {
   kind: BoardSourceKind;
   qty: string;
+  /**
+   * WHICH LADDER composed this component, on a proposal frozen at confirm (`"v4"`).
+   *
+   * A frozen suggestion outlives the rule that made it: "MWH-IB has 30 available in the IB
+   * group" is a v3 sentence about ONE warehouse's availability, and under v4 that reading
+   * does not exist. Absent means the snapshot predates the stamp, which is exactly
+   * "suggested before ladder v4" - the screen labels it rather than passing it off as
+   * today's answer. Never set on the live ladder's own sources, which are today's by
+   * definition.
+   */
+  ladder?: string | null;
   /** Warehouse code for a Reserve; null for Buy, which has no location by definition. */
   location?: string | null;
   /**

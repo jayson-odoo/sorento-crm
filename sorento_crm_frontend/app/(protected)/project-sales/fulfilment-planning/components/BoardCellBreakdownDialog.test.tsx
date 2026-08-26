@@ -2140,7 +2140,10 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
       contributions: base.contributions.map((entry) => ({
         ...entry,
         sources,
-        proposed: { components: sources },
+        // Stamped `v4`, which is what a confirm writes today. An UNSTAMPED frozen proposal
+        // is a suggestion from a ladder that no longer runs, and the card says so - see
+        // the test below.
+        proposed: { components: sources.map((part) => ({ ...part, ladder: 'v4' })) },
       })),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -2178,6 +2181,55 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     const card = screen.getByTestId('cell-suggestion');
     expect(card).toHaveTextContent('Use own location');
     expect(card).toHaveTextContent('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+  });
+
+  it('labels a frozen suggestion that a ladder no longer in use composed', () => {
+    // "MWH-IB has 30 available in the IB group" is v3 reading ONE warehouse's own
+    // availability; under v4 that is not a reading anybody makes. The stamp's ABSENCE is
+    // what says so, because a snapshot written before the stamp existed cannot carry it.
+    const base = cellOf([demand({ qty: '60' })]);
+    const stale: BoardContribution['sources'] = [
+      {
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '60',
+        location: 'MWH-IB',
+        reason: 'MWH-IB has 30 available in the IB group.',
+      },
+    ];
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={{
+            ...base,
+            contributions: base.contributions.map((entry) => ({
+              ...entry,
+              covered: true,
+              proposed: { components: stale },
+            })),
+          }}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    const card = screen.getByTestId('cell-suggestion');
+    expect(card).toHaveTextContent('Suggestion (before ladder v4)');
+    // One short label and no sentence: what a planner needs is to know they are reading
+    // history, not a paragraph about ladder versions.
+    expect(card).not.toHaveTextContent(/no longer/);
+  });
+
+  it('leaves a suggestion the current ladder composed unlabelled', () => {
+    renderWithSources([
+      { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+    ]);
+
+    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder v4');
   });
 
   it('tells the two borrows apart by rung (AC-A3)', () => {
