@@ -394,8 +394,8 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
               value={escWindow}
               onChange={(v) => setEscWindow(v as KpiEscWindow)}
               options={ESC_WINDOW_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-              triggerClassName="h-8 w-[190px]"
               size="sm"
+              triggerClassName="w-[190px]"
             />
             {isFiltered ? (
               <Button variant="outline" size="sm" className="h-8" onClick={() => { setEscWindow('all'); onClear(); }}>

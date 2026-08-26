@@ -116,7 +116,8 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
                 : 'Pick a user'
             }
             disabled={busy}
-            triggerClassName="h-8 text-sm"
+            size="sm"
+            triggerClassName="text-sm"
           />
           <Button
             variant="ghost"
