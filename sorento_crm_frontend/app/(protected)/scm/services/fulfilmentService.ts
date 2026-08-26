@@ -372,6 +372,14 @@ export interface SupplierNotice {
   last_error: string | null;
   document_filename: string | null;
   has_document: boolean;
+  /** The supplier's own stock list with the quantity to load filled in (F4). Container
+   *  requests only - a loading notice carries no spreadsheet. */
+  xlsx_filename: string | null;
+  has_xlsx: boolean;
+  /** The read-only page the supplier opens (F8). Built server-side because it has to match
+   *  what went out in the email; null once it has expired, been retired by a resend, or when
+   *  no public base URL is configured. */
+  public_url: string | null;
   container_type: string | null;
   container_count: number | null;
   planned_cbm: number | null;
@@ -396,8 +404,11 @@ export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> 
 
 export async function getNoticeDocumentUrl(
   noticeId: string,
+  kind: 'pdf' | 'xlsx' = 'pdf',
 ): Promise<{ url: string; filename: string | null }> {
-  const res = await apiFetch(`/api/v1/scm/supplier-notices/${noticeId}/document`);
+  const res = await apiFetch(
+    `/api/v1/scm/supplier-notices/${noticeId}/document?kind=${kind}`,
+  );
   return readJson(res, 'Failed to open the notice document');
 }
 

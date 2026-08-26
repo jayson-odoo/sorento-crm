@@ -439,29 +439,72 @@ describe('ContainerRequestSection - requests already sent', () => {
     expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
   });
 
-  it('clicking Document calls getNoticeDocumentUrl for that notice and opens the returned url', async () => {
+  const sentRequest = () => ({
+    id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
+    loading_plan_id: null, notice_type: 'container_request', channel: 'email',
+    recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
+    sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
+    document_filename: 'container-request.pdf', has_document: true,
+    xlsx_filename: 'container-request.xlsx', has_xlsx: true,
+    public_url: 'https://crm.test/c/SRT/supplier-request/tok-1',
+    container_type: null, container_count: null, planned_cbm: null,
+    line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
+    created_by: 'Ms Tee',
+  });
+
+  it('clicking PDF calls getNoticeDocumentUrl for that notice and opens the returned url', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    state.notices = [
-      {
-        id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-        loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-        recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
-        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-        document_filename: 'container-request.pdf', has_document: true,
-        container_type: null, container_count: null, planned_cbm: null,
-        line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-        created_by: 'Ms Tee',
-      },
-    ];
+    state.notices = [sentRequest()];
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /document/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^pdf$/i }));
 
-    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3'));
+    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'pdf'));
     await waitFor(() =>
       expect(openSpy).toHaveBeenCalledWith('https://cdn.test/doc.pdf', '_blank', 'noopener'),
     );
     openSpy.mockRestore();
+  });
+
+  // AC-C4: the card offers all three of what the send produced.
+  it('clicking XLSX asks for the spreadsheet, not the pdf', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    state.notices = [sentRequest()];
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /xlsx/i }));
+
+    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'xlsx'));
+    openSpy.mockRestore();
+  });
+
+  it('a notice sent before the spreadsheet existed offers no XLSX button', () => {
+    state.notices = [{ ...sentRequest(), has_xlsx: false, xlsx_filename: null }];
+    renderSection();
+
+    expect(screen.queryByRole('button', { name: /xlsx/i })).not.toBeInTheDocument();
+  });
+
+  it('Copy link puts the supplier page on the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    state.notices = [sentRequest()];
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /copy link/i }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-1'),
+    );
+  });
+
+  it('a retired link offers no Copy link button', () => {
+    // A copied dead link is worse than no button: the supplier opens it, is told it is gone,
+    // and has no way to tell that a live one exists.
+    state.notices = [{ ...sentRequest(), public_url: null }];
+    renderSection();
+
+    expect(screen.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
   });
 });
 
