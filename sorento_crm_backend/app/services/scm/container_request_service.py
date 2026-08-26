@@ -74,7 +74,8 @@ from app.services.scm.demand import (
     is_plan_demand_order,
 )
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
-from app.services.scm.supplier_scope import supplier_row
+from app.services.scm.supplier_scope import is_uuid, supplier_row
+from app.services.scm.trajectory import month_shift
 
 
 def _pool_predicate(alias: str = "w") -> str:
@@ -566,27 +567,6 @@ def _empty_context() -> dict:
     }
 
 
-def _context_payload(ctx: dict) -> dict:
-    """The stock half of a row, spelled the same way for a demand row and a no-demand row.
-
-    ONE builder, because the two used to be two literal dicts and any field added to one was
-    a field missing from the other - which the breakdown dialog reads as a broken row rather
-    than as an empty one.
-    """
-    return {
-        "on_hand": ctx["on_hand"],
-        "on_hand_group": ctx["on_hand_group"],
-        "incoming_spo": ctx["incoming_spo"],
-        "incoming_spo_group": ctx["incoming_spo_group"],
-        "incoming_pl": ctx["incoming_pl"],
-        "incoming_pl_shipments": ctx["incoming_pl_shipments"],
-        "outstanding_po": ctx["outstanding_po"],
-        "outstanding_po_lines": ctx["outstanding_po_lines"],
-        "sites": ctx["sites"],
-        "group_locations": ctx["group_locations"],
-    }
-
-
 #: How many group locations to name on the muted line before it becomes "... (N)". The count
 #: is always exact; the codes are there to say what KIND of location holds the rest.
 _GROUP_CODES_SHOWN = 6
@@ -794,7 +774,7 @@ def _outstanding_po_lines(db: Session, product_ids: list[str]) -> dict[str, list
                SUM(pol.qty_ordered - pol.qty_received) AS qty
         FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
-        WHERE pol.product_id::text = ANY(:pids)
+        WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
           AND po.status IN ('active', 'received', 'partial', 'closed')
           AND pol.line_status = 'open'
           AND pol.qty_ordered > pol.qty_received
@@ -1025,7 +1005,9 @@ def build(
                     "product_name": info.get("product_name"),
                     "open_so_need": open_so_need,
                     "suggested_qty": suggested_qty,
-                    **_context_payload(ctx),
+                    # `_empty_context` IS the shape (see its docstring), so the row spreads it
+                    # whole rather than re-listing its keys - a list that could drift.
+                    **ctx,
                     # Gross split - it explains the NEED, not the netted suggestion above.
                     "project_qty": project_qty,
                     "retail_qty": retail_qty,
@@ -1056,7 +1038,7 @@ def build(
                 "product_name": info.get("product_name"),
                 "open_so_need": 0.0,
                 "suggested_qty": 0.0,
-                **_context_payload(ctx),
+                **ctx,
                 "project_qty": 0.0,
                 "retail_qty": 0.0,
                 "unclassified_qty": 0.0,
@@ -1087,15 +1069,6 @@ def build(
 
 #: How many whole months of order history the loading plan reads (AC-B6/B7).
 _HISTORY_MONTHS = 12
-
-
-def _month_floor(d: date) -> date:
-    return d.replace(day=1)
-
-
-def _month_shift(d: date, months: int) -> date:
-    total = d.year * 12 + (d.month - 1) + months
-    return date(total // 12, total % 12 + 1, 1)
 
 
 def _month_label(d: date) -> str:
@@ -1154,10 +1127,12 @@ def history(
     orders in 12 months" rather than sit on a spinner waiting for a row that is never coming.
     """
     _supplier(db, supplier_id)
-    until = _month_floor(as_of or date.today())
-    since = _month_shift(until, -_HISTORY_MONTHS)
+    # `month_shift(d, 0)` is the first of d's own month - the floor, and the same
+    # arithmetic `trajectory_service` and `purchase_trend_service` already share.
+    until = month_shift(as_of or date.today(), 0)
+    since = month_shift(until, -_HISTORY_MONTHS)
     buckets = [
-        _month_label(_month_shift(since, i)) for i in range(_HISTORY_MONTHS)
+        _month_label(month_shift(since, i)) for i in range(_HISTORY_MONTHS)
     ]
     result = {
         "from_month": buckets[0],
@@ -1176,14 +1151,24 @@ def history(
                SUM(COALESCE(sol.qty_ordered, 0)) AS qty
         FROM sales_order_lines sol
         JOIN sales_orders so ON so.id = sol.sales_order_id
-        WHERE sol.product_id::text = ANY(:pids)
+        WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
           AND so.order_date >= :since AND so.order_date < :until
           {("AND " + co) if co else ""}
         GROUP BY 1, 2, 3
     """
+    # Id-SHAPED values only. These arrive off a query string, so "nope" is a caller's typo
+    # rather than a server error - the same rule `list_for_supplier` follows - and the filter
+    # below casts to `uuid[]` (for the index on a 90k-row table), which is a good deal less
+    # forgiving than the text comparison it replaced. A value that never parsed simply
+    # matches nothing, and the zero-fill below still answers for it.
     rows = db.execute(
         text(sql),
-        {"pids": product_ids, "since": since, "until": until, **co_params},
+        {
+            "pids": [p for p in product_ids if is_uuid(p)],
+            "since": since,
+            "until": until,
+            **co_params,
+        },
     ).mappings().all()
 
     by_product: dict[str, dict[str, dict[str, float]]] = {}
