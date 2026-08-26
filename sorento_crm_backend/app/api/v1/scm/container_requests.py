@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -75,6 +75,26 @@ def build_container_request(
         supplier_id=body.supplier_id,
         include_lines=include_lines,
         plan_horizon_date=body.plan_horizon_date,
+    )
+
+
+@router.get("/container-requests/history")
+def container_request_history(
+    supplier_id: str,
+    product_ids: list[str] = Query(default=[]),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What these products were ordered, per month, for the last twelve full months.
+
+    A GET with the product ids repeated, because it is a pure read scoped to the page on
+    screen (AC-B8) - the caller asks again when it pages, and the answer is cacheable.
+    Declared BEFORE the `/container-requests` POST above it is irrelevant, but it must stay
+    ahead of any future `/container-requests/{id}` route: a static segment behind a path
+    parameter never matches (the SLA route-shadowing lesson).
+    """
+    return container_request_service.history(
+        db, supplier_id=supplier_id, product_ids=product_ids
     )
 
 

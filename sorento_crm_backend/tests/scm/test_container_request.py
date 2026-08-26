@@ -25,6 +25,7 @@ from app.models.job import ImportJob, JobStatus
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    InboundShipmentLine,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
@@ -132,16 +133,62 @@ def _row(rows: list[dict], key: str, w: World) -> dict:
     return next(r for r in rows if r["item_code"] == code)
 
 
-def _warehouse(db) -> Warehouse:
+def _warehouse(db, *, segment: str | None = None) -> Warehouse:
+    """A location. `segment='project'` makes it a GROUP location - stock there is spoken for.
+
+    The pool predicate is `COALESCE(segment, 'dealer') <> 'project'`, the reorder engine's own
+    (`reorder_run_service`), so a warehouse with no segment stated is a site pool: a location
+    nobody has classified is not assumed to be a project bin.
+    """
     wh = Warehouse(
         id=str(uuid.uuid4()),
         warehouse_code=f"{MARKER}-WH-{uuid.uuid4().hex[:8]}",
         warehouse_name=f"{MARKER} warehouse",
+        segment=segment,
         is_active=True,
     )
     db.add(wh)
     db.flush()
     return wh
+
+
+def _packing_list(
+    db,
+    w: World,
+    key: str,
+    qty: float,
+    *,
+    received: float = 0,
+    eta: date | None = None,
+    arrived: date | None = None,
+    number: str | None = _AUTO_ORIGIN,
+) -> InboundShipment:
+    """A packing list carrying this product. `number=None` is a draft nobody has numbered."""
+    ship = InboundShipment(
+        id=str(uuid.uuid4()),
+        shipment_number=(
+            f"{MARKER}-PL-{uuid.uuid4().hex[:8]}" if number is _AUTO_ORIGIN else number
+        ),
+        supplier_id=w.supplier.id,
+        shipment_date=date(2026, 1, 1),
+        estimated_arrival_date=eta,
+        actual_arrival_date=arrived,
+        shipment_status="fully_received" if arrived else "in_transit",
+    )
+    db.add(ship)
+    db.flush()
+    db.add(
+        InboundShipmentLine(
+            id=str(uuid.uuid4()),
+            shipment_id=ship.id,
+            product_id=w.product(key).id,
+            supplier_id=w.supplier.id,
+            quantity_shipped=qty,
+            quantity_received=received,
+        )
+    )
+    db.flush()
+    return ship
 
 
 def _on_hand(db, w: World, key: str, wh: Warehouse, qty: float) -> None:
@@ -384,6 +431,188 @@ def test_build_suggested_qty_floors_at_zero_when_stock_and_incoming_cover_the_ne
     assert row["open_so_need"] == 50
     assert row["on_hand"] == 200
     assert row["suggested_qty"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# F2 - the pool predicate, and the packing list as a reference
+# --------------------------------------------------------------------------- #
+
+
+def test_build_on_hand_counts_site_pools_only_and_reports_group_stock_beside_it(scm_app):
+    # AC-B1. Stock in a group location is real and it is spoken for - a project bin holds it
+    # for an order that is already promised - so it can neither be asked against nor netted
+    # off the ask. Same predicate the reorder engine nets by.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _on_hand(db, w, "A", pool, 200)
+    _on_hand(db, w, "A", group, 50)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["on_hand"] == 200
+    assert row["on_hand_group"] == 50
+    assert row["suggested_qty"] == 300  # 500 - 200, the group 50 is NOT netted
+
+
+def test_build_spo_counts_site_pools_only(scm_app):
+    # AC-B2, review item 1: an allocation bound for a group location lands in a bin this
+    # container cannot draw on, so it is out of the cell and muted in the breakdown.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _incoming_spo(db, w, "A", pool, 30)
+    _incoming_spo(db, w, "A", group, 70)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_spo"] == 30
+    assert row["incoming_spo_group"] == 70
+    assert row["suggested_qty"] == 470  # 500 - 30
+
+
+def test_build_lists_every_site_pool_including_the_empty_ones(scm_app):
+    # AC-B3: a site with nothing in it is a fact the reader needs ("we looked, there is
+    # none"), not an absence to be inferred from a missing row.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    held = _warehouse(db)
+    empty = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _on_hand(db, w, "A", held, 40)
+    _on_hand(db, w, "A", group, 15)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    sites = {s["warehouse_code"]: s for s in row["sites"]}
+    assert sites[held.warehouse_code]["on_hand"] == 40
+    assert empty.warehouse_code in sites
+    assert sites[empty.warehouse_code]["on_hand"] == 0
+    # The group location is never a site row - it has its own muted line.
+    assert group.warehouse_code not in sites
+    assert row["group_locations"]["on_hand"] == 15
+    assert row["group_locations"]["count"] == 1
+    assert group.warehouse_code in row["group_locations"]["warehouse_codes"]
+
+
+def test_build_incoming_packing_list_is_shown_and_never_subtracted(scm_app):
+    # AC-B4 / Q1: a packing list names no destination, so it cannot be netted against a pool
+    # the way an SPO can. It travels as a reference, with the shipment and ETA behind it.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    ship = _packing_list(db, w, "A", 60, received=10, eta=date(2026, 7, 27))
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 50  # 60 shipped - 10 already received
+    assert row["suggested_qty"] == 100  # untouched
+    assert row["incoming_pl_shipments"] == [
+        {
+            "shipment_id": str(ship.id),
+            "shipment_number": ship.shipment_number,
+            "estimated_arrival_date": "2026-07-27",
+            "qty": 50,
+        }
+    ]
+
+
+def test_build_incoming_packing_list_ignores_shipments_that_have_arrived(scm_app):
+    # Arrived stock is already in `on_hand`; counting it here would show it twice.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    _packing_list(db, w, "A", 60, arrived=date(2026, 7, 1))
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 0
+    assert row["incoming_pl_shipments"] == []
+
+
+def test_build_a_draft_packing_list_reads_as_a_draft_not_as_a_missing_number(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    _packing_list(db, w, "A", 25, number=None)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 25
+    assert row["incoming_pl_shipments"][0]["shipment_number"] is None
+    assert row["incoming_pl_shipments"][0]["estimated_arrival_date"] is None
+
+
+def test_build_outstanding_po_lines_foot_to_the_outstanding_po_figure(scm_app):
+    # AC-H2: still shown, still not deducted - now with the POs named, so the reader can see
+    # which order the figure is.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    wh = _warehouse(db)
+    _outstanding_po(db, w, "A", wh, 30)
+    _outstanding_po(db, w, "A", wh, 12)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["outstanding_po"] == 42
+    assert sum(line["qty"] for line in row["outstanding_po_lines"]) == 42
+    assert all(line["po_number"] for line in row["outstanding_po_lines"])
+    assert row["suggested_qty"] == 100  # never deducted
+
+
+def test_build_a_no_demand_row_carries_the_same_breakdown_fields(scm_app):
+    # The two row builders are one shape or the breakdown dialog breaks on half the grid.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("B", packed=5, cbm=0.5)  # stock, no open need
+    pool = _warehouse(db)
+    _on_hand(db, w, "B", pool, 7)
+    _packing_list(db, w, "B", 3)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "B", w)
+    assert row["has_demand"] is False
+    assert row["on_hand"] == 7
+    assert row["incoming_pl"] == 3
+    assert row["on_hand_group"] == 0
+    assert any(s["warehouse_code"] == pool.warehouse_code for s in row["sites"])
 
 
 def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_app):
