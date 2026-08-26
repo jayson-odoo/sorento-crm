@@ -714,6 +714,23 @@ describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
     expect(subtotal).toContain('12290');
   });
 
+  it('says on the subtotal why the Available figure is not the column added up', () => {
+    // A tooltip, not a line of copy: the number is the point, and the one thing a reader
+    // cannot see is that the net covers locations this table never listed.
+    renderTable(ibGroup());
+
+    expect(
+      screen.getByTestId('stock-subtotal-available-IB').getAttribute('title'),
+    ).toBe('-15514 across every IB location, including any this table does not list');
+    expect(
+      screen.getByTestId('stock-subtotal-available-pools').getAttribute('title'),
+    ).toBe('-102 across every site pool, including any this table does not list');
+    // Every other subtotal cell IS its column added up, so it explains nothing.
+    expect(
+      screen.getByTestId('stock-subtotal-on-hand-IB').getAttribute('title'),
+    ).toBeNull();
+  });
+
   it('prints the site pools net rather than the pools on screen', () => {
     renderTable(ibGroup());
 
@@ -742,15 +759,36 @@ describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
     expect(screen.getByTestId('stock-subtotal-available-BB').textContent).toBe('-40');
   });
 
-  it('takes nothing from a set whose net is not positive', () => {
-    // The engine cannot draw on a set that nets zero or less, so every row of one reads 0 -
-    // which is the answer to "why not MWH-IB", said by the row itself.
-    renderTable(ibGroup(), null, new Map());
+  it('draws only from the set that has something, and reads 0 on the ones that do not', () => {
+    // The engine cannot draw on a set that nets zero or less, so what it hands the table
+    // draws from the IR group alone. The rows of the two sets it could not touch read 0 -
+    // which is the answer to "why not MWH-IB", said by the row itself - and the drawn row
+    // reads its own quantity, so the column is not simply blank everywhere.
+    renderTable(
+      [
+        ...ibGroup(),
+        position({
+          location: 'MWH-IR',
+          warehouse_id: 'wh-mwh-ir',
+          where: 'other_group',
+          qty_on_hand: '100',
+          so_qty: '0',
+          available_qty: '100',
+          net: '100',
+          net_of: 'IR',
+        }),
+      ],
+      null,
+      new Map([['MWH-IR', '60']]),
+    );
 
+    expect(screen.getByTestId('stock-taken-MWH-IR').textContent).toBe('60');
+    expect(screen.getByTestId('stock-subtotal-taken-IR').textContent).toBe('60');
     expect(screen.getByTestId('stock-taken-BRW-IB').textContent).toBe('0');
     expect(screen.getByTestId('stock-taken-MWH-IB').textContent).toBe('0');
     expect(screen.getByTestId('stock-taken-DC1').textContent).toBe('0');
     expect(screen.getByTestId('stock-subtotal-taken-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-subtotal-taken-pools').textContent).toBe('0');
   });
 
   it('falls back to the sum where the server states no net', () => {

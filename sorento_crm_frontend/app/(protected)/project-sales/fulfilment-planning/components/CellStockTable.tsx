@@ -280,10 +280,10 @@ export function CellStockTable({
                     if (!column.total) {
                       return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                     }
-                    const total =
-                      column.key === 'available' && section.net !== null
-                        ? section.net
-                        : sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
+                    const isNet = column.key === 'available' && section.net !== null;
+                    const total = isNet
+                      ? section.net
+                      : sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
                     return (
                       <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                         <span
@@ -293,6 +293,10 @@ export function CellStockTable({
                             total === null && 'font-normal text-muted-foreground',
                             column.signed && isNegative(total) && 'text-destructive',
                           )}
+                          // Why this one figure is not the column above it added up: the
+                          // net covers EVERY location of the set, and the table lists the
+                          // ones this cell consulted.
+                          title={isNet ? netTitle(section) : undefined}
                         >
                           {total ?? BLANK}
                         </span>
@@ -353,6 +357,8 @@ type StockSection = {
   key: string;
   /** The SET this run belongs to, compared exactly - a prefix test would merge `IB` into `IB2`. */
   setKey: string;
+  /** The set's own name (`IB`, `pools`), for the subtotal's label and its tooltip. */
+  netOf: string | null;
   label: string;
   /** What the SET nets, when the server states one. `null` for a set with no net. */
   net: string | null;
@@ -392,12 +398,28 @@ function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
     sections.push({
       key,
       setKey,
+      netOf: entry.net_of ?? null,
       label: labelOf(where, entry.net_of ?? null),
       net: entry.net ?? null,
       rows: [entry],
     });
   });
   return sections;
+}
+
+/**
+ * What the Available subtotal means, for the one cell whose figure is not a sum of the rows
+ * above it. A tooltip rather than a line of copy: the number is the point, and a table that
+ * explains itself in prose is a table nobody reads twice.
+ */
+function netTitle(section: StockSection): string {
+  const what =
+    section.netOf === POOLS_SET
+      ? 'every site pool'
+      : section.netOf
+        ? `every ${section.netOf} location`
+        : 'every location of this set';
+  return `${section.net} across ${what}, including any this table does not list`;
 }
 
 function labelOf(where: BoardLocationWhere, netOf: string | null): string {
