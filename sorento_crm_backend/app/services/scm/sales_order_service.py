@@ -593,6 +593,10 @@ class SalesOrderService:
                         "line_label": link["line_label"],
                         "qty": link["qty"],
                         "location": link["location"],
+                        # AC-P3-7: "arrives late" wherever the link is shown. Derived once,
+                        # in `links_for_rows`; a reader that rebuilds the entry by hand has
+                        # to carry it, or the badge is dead on this surface only.
+                        "late": link["late"],
                         # ISO strings, like every other date this schema states: the SCM
                         # order contract spells dates as text and a `date` object would
                         # not validate against it.
