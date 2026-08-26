@@ -1318,6 +1318,19 @@ def convert_to_draft_shipment(
             detail=", ".join(missing),
         )
 
+    # Take the row lock BEFORE reading what is placed. Migration 429 dropped the unique
+    # index that made a double convert impossible, and what replaced it - "what is placed
+    # against what can be placed" - is a READ: two overlapping converts both saw an unplaced
+    # invoice and both placed it, doubling what the office is asked to key in. The second
+    # one now waits here and then sees the first one's work.
+    db.query(ProformaInvoice.id).filter(ProformaInvoice.id.in_(ids)).with_for_update().all()
+    if target_shipment_id and _is_uuid(target_shipment_id):
+        # And the box everyone is loading INTO: the capacity gate reads what it already
+        # holds, and two converts adding to the same draft would both read it empty.
+        db.query(InboundShipment.id).filter(
+            InboundShipment.id == str(target_shipment_id)
+        ).with_for_update().all()
+
     # What is left to place. Since Q9 an invoice may go into two containers, so "already
     # converted" is no longer "has a link row" - it is "has nothing left", which is
     # arithmetic rather than existence. An invoice with nothing left is SKIPPED and named

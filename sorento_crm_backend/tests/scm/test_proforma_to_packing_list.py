@@ -561,3 +561,81 @@ def test_a_fractional_split_places_exactly_what_was_asked_for():
         placed = next(ln for ln in detail["lines"] if ln["id"] == str(line.id))
         assert placed["placed_qty"] == 2.5
         assert placed["remaining_qty"] == 7.5
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 8 - two converts of one invoice cannot both win
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_convert_locks_the_invoice_before_it_reads_what_is_placed():
+    """Migration 429 dropped the unique index that made a double convert impossible, and
+    the arithmetic that replaced it ("what is placed against what can be placed") is a READ
+    - so two overlapping converts both saw an unplaced invoice and both placed it.
+
+    The row is locked FOR UPDATE before that read, so the second one waits and then sees
+    the first one's work. Asserted as "the lock is taken, and taken first" rather than with
+    two live connections: this suite runs inside one rolled-back transaction, and a second
+    connection contending for the same row would block on it until the test timed out.
+    """
+    from sqlalchemy import event
+
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(" ".join(statement.split()))
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        locks = [
+            i for i, sql in enumerate(statements)
+            if "FROM scm.proforma_invoice" in sql and "FOR UPDATE" in sql
+        ]
+        reads = [
+            i for i, sql in enumerate(statements)
+            if "scm.proforma_invoice_shipment_link" in sql
+        ]
+        assert locks, "the convert never locked the invoice it is about to place"
+        assert reads, "the convert never read what is already placed"
+        assert locks[0] < reads[0], "the placement was read before the row was locked"
+
+
+def test_adding_to_a_draft_locks_the_draft_too():
+    """Two converts adding to the SAME draft race on its contents - the capacity gate reads
+    what the box already holds, and both would read it empty."""
+    from sqlalchemy import event
+
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        first = _kailu_invoice(db, w)
+        draft = svc.convert_to_draft_shipment(db, [str(first.id)])
+        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
+
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(" ".join(statement.split()))
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            svc.convert_to_draft_shipment(
+                db, [str(second.id)], target_shipment_id=draft["shipment_id"]
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        assert any(
+            "FROM inbound_shipments" in sql and "FOR UPDATE" in sql for sql in statements
+        ), "the draft everyone is loading into was never locked"
