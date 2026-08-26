@@ -478,7 +478,8 @@ export interface ContainerRequestRow {
   sites: ContainerRequestSite[];
   /** Everything the pool predicate excluded, as one muted line. */
   group_locations: ContainerRequestGroupLocations;
-  /** Gross split - explains the NEED, not the netted `suggested_qty`. */
+  /** Gross split - explains the NEED, not the netted `suggested_qty`. `project_qty` is the
+   *  open project SO book net of what CS placed on a PO or an SPO (R15). */
   project_qty: number;
   retail_qty: number;
   unclassified_qty: number;
@@ -541,9 +542,9 @@ export interface ContainerRequestPoLine {
 
 /** One open SO line behind a demand row - `include_lines=true` on the build. Flat, so the FE
  *  can bucket them into a schedule matrix or answer "which order does this cover" without a
- *  second fetch. `sum(qty per product) === that row's retail_qty`: these are the sales-order
- *  BOOK, and since P3 the book speaks for retail alone - project need comes off the Order
- *  Inquiry and has no book line to list. */
+ *  second fetch. `sum(qty per product) === that row's open_so_need`: since R15 both channels
+ *  are the sales-order BOOK, told apart by `demand_class`, and a project line is listed at the
+ *  remainder left after what CS already placed on a PO or an SPO. */
 export interface ContainerRequestSoLine {
   product_id: string;
   item_code: string | null;
