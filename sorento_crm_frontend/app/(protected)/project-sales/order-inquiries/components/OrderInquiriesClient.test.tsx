@@ -48,6 +48,12 @@ const downloadOrderInquiryWorklistXlsx = vi.fn();
 const autoPlaceOrderInquiryRows = vi.fn();
 const getUnplaceAllPreview = vi.fn();
 const unplaceAllOrderInquiryRows = vi.fn();
+// The handshake's own three writes (`PLAN-scm-oi-handshake.md`): `useOrderInquiryHandshake`
+// (used by the bulk Acknowledge press, `OrderInquiryRejectAction` and the post-upload
+// "Link now" button) reaches these through the SAME module this mock already replaces.
+const acknowledgeOrderInquiryRows = vi.fn();
+const rejectOrderInquiryRow = vi.fn();
+const linkNowOrderInquiryRows = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', () => ({
   listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
@@ -58,6 +64,20 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
   autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
   unplaceAllOrderInquiryRows: (...args: unknown[]) => unplaceAllOrderInquiryRows(...args),
+  acknowledgeOrderInquiryRows: (...args: unknown[]) => acknowledgeOrderInquiryRows(...args),
+  rejectOrderInquiryRow: (...args: unknown[]) => rejectOrderInquiryRow(...args),
+  linkNowOrderInquiryRows: (...args: unknown[]) => linkNowOrderInquiryRows(...args),
+}));
+
+// The two upload dialogs are their own suites' subject (`OrderInquiryUploadMenu.test.tsx`);
+// what this file needs is only the `onQueued` seam that offers Link now / Open purchase
+// orders, so the real menu is replaced with a button that fires it directly.
+vi.mock('./OrderInquiryUploadMenu', () => ({
+  OrderInquiryUploadMenu: ({ onQueued }: { onQueued?: () => void }) => (
+    <button type="button" onClick={() => onQueued?.()}>
+      Upload (stub)
+    </button>
+  ),
 }));
 
 const saveBlobAs = vi.fn();
@@ -790,5 +810,132 @@ describe('OrderInquiriesClient', () => {
         'false',
       );
     });
+  });
+});
+
+describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission gating', () => {
+  it('AC-H2: the bulk press counts every ticked row and sends exactly those ids', async () => {
+    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 1, links: 1 });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    expect(await screen.findByRole('button', { name: 'Acknowledge (1)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
+    const button = await screen.findByRole('button', { name: 'Acknowledge (2)' });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3']),
+    );
+  });
+
+  it('clears the tick marks once the press succeeds', async () => {
+    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 1, linked_rows: 0, links: 0 });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Acknowledge \(/ })).toBeNull(),
+    );
+  });
+
+  // DEFECT, reported not fixed (tester's brief): `buildSelectColumn`'s `enableRow`
+  // (`orderInquiryWorklistColumns.tsx`, the `isAcknowledgeable` predicate wired to the
+  // select column) has no effect, because `useReactTable` here sets a plain BOOLEAN
+  // `enableRowSelection: canAcknowledge` (OrderInquiriesClient.tsx:465) rather than a
+  // function. `row.getCanSelect()` (`@tanstack/table-core`'s `RowSelection` feature)
+  // reads ONLY `table.options.enableRowSelection`, never a column-level property -
+  // `data-grid-select-column.tsx:78` sets `enableRowSelection` on the COLUMN DEF, which
+  // `ColumnDef` does not recognise and react-table silently ignores. So every row's
+  // checkbox is tickable regardless of `ack_state`/`state`, including a CANCELLED or
+  // ACTIONED one - the exact gotcha this codebase already has a comment about at
+  // `FulfilmentPlanningClient.tsx:547` ("a column-level `enableRowSelection` is
+  // silently ignored, and every row would tick") and three OTHER callers of
+  // `buildSelectColumn` correctly avoid by passing a matching FUNCTION to the table's
+  // own `enableRowSelection` (`SalesOrdersPanel.tsx:383`,
+  // `FulfilmentPlanningClient.tsx:548`, `StockTransfersPanel.tsx:480`). Plan section 7's
+  // "found in the browser, where the first press took on three cancelled rows" is this
+  // exact bug, described as fixed; it is not, at the wiring level this test pins.
+  it.fails(
+    'offers no checkbox at all for a row that cannot be acknowledged (cancelled/actioned)',
+    async () => {
+      granted = new Set([
+        'projects.order_inquiry.action',
+        'project_sales.order_inquiries.acknowledge',
+      ]);
+      renderClient();
+      await screen.findByText('SO385126');
+
+      // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent, exactly
+      // the way a locked record's checkbox is elsewhere in this codebase.
+      expect(screen.getByLabelText('Select SRTWB5400 on SO385126')).toBeDisabled();
+    },
+  );
+
+  it('a CS user (no acknowledge grant) sees the Acknowledged column and the filter, but none of the actions', async () => {
+    // The default `beforeEach` grant is exactly this: `projects.order_inquiry.action`
+    // only, no `project_sales.order_inquiries.acknowledge` - CS's own shape.
+    renderClient();
+    await screen.findByText('SO385126');
+
+    // Sees: the column (every row's handshake state) ...
+    expect(screen.getAllByText('Awaiting').length).toBeGreaterThan(0);
+    // ... and the filter.
+    openFilters();
+    expect(await screen.findByLabelText('Any')).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    // Does not see: any row checkbox, so no bulk bar can ever appear ...
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /^Acknowledge \(/ })).toBeNull();
+    // ... no per-row Reject ...
+    expect(screen.queryByRole('button', { name: /reject/i })).toBeNull();
+    // ... and no upload entry (AC-H12's own gate).
+    expect(screen.queryByRole('button', { name: /upload/i })).toBeNull();
+  });
+
+  it('the endpoints themselves are never reached for a CS user - the grant is enforced beyond the button', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    expect(acknowledgeOrderInquiryRows).not.toHaveBeenCalled();
+    expect(rejectOrderInquiryRow).not.toHaveBeenCalled();
+    expect(linkNowOrderInquiryRows).not.toHaveBeenCalled();
+  });
+
+  it('AC-H13: an upload this page queued offers Link now and Open purchase orders, only for purchasing', async () => {
+    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    linkNowOrderInquiryRows.mockResolvedValue({ placed_rows: 2, allocations: 3 });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
+
+    expect(await screen.findByRole('button', { name: 'Link now' })).toBeInTheDocument();
+    const openPurchaseOrders = screen.getByRole('link', { name: 'Open purchase orders' });
+    expect(openPurchaseOrders).toHaveAttribute('href', '/scm/purchase-orders');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link now' }));
+    await waitFor(() => expect(linkNowOrderInquiryRows).toHaveBeenCalledWith({}));
+    // Dismissed by the success it reports, never by a timer.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull());
+  });
+
+  it('never offers Link now / Open purchase orders to a CS user, upload button included', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    expect(screen.queryByRole('button', { name: 'Upload (stub)' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open purchase orders' })).toBeNull();
   });
 });
