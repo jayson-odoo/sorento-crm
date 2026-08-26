@@ -68,6 +68,15 @@ class SupplierNotice(Base, CompanyScopedMixin):
     storage_provider = Column(String(16), nullable=True)
     storage_key = Column(String(512), nullable=True)
 
+    #: The second file a container request carries (F4): the supplier's own stock list handed
+    #: back with a `需装数量 / Qty to load` column. Stored rather than regenerated, for the
+    #: reason this module opens with - the stock list is a full-replace snapshot, so rebuilding
+    #: the sheet next month would answer with today's holdings under July's quantities. A
+    #: loading notice has none, and reads as null.
+    xlsx_filename = Column(String(255), nullable=True)
+    xlsx_storage_provider = Column(String(16), nullable=True)
+    xlsx_storage_key = Column(String(512), nullable=True)
+
     container_type = Column(String(30), nullable=True)
     container_count = Column(Integer, nullable=True)
     planned_cbm = Column(Numeric, nullable=True)

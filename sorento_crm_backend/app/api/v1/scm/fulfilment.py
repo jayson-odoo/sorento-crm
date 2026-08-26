@@ -465,11 +465,16 @@ def list_supplier_notices(
 @router.get("/supplier-notices/{notice_id}/document")
 def supplier_notice_document(
     notice_id: str,
+    kind: str = Query("pdf", pattern="^(pdf|xlsx)$"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """A short-lived link to the document, so Ms Tee can send it by hand too (AC-F3)."""
-    return supplier_notice_service.document_url(db, notice_id)
+    """A short-lived link to one of the notice's files, so Ms Tee can send it by hand (AC-F3).
+
+    `kind=xlsx` is the supplier's own stock list with the quantity to load filled in (AC-C4);
+    it exists on a container request and not on a loading notice.
+    """
+    return supplier_notice_service.document_url(db, notice_id, kind=kind)
 
 
 # --------------------------------------------------------------------------- #
