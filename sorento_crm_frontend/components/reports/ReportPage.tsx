@@ -7,7 +7,6 @@ import {
   type SortingState,
   type VisibilityState,
   getCoreRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
@@ -72,10 +71,11 @@ function expandDetailColumns(keys: string[], layout: ReportDetailLayout): string
 /**
  * The inverse: the grid's leaf ids back to what a view (and an export) is allowed to name.
  *
- * A tick group's leaves are `expected_delivery_year__2026`, one per year the RESULT held,
- * and neither the export nor a saved view may name one: the backend catalog has no such
- * column, and a view written in 2026 must still mean "show the delivery years" in 2027.
- * Hiding one member of a group therefore hides none of them - the group is one choice.
+ * A tick group's leaves are its member columns (`expected_delivery_year_1` .. `_4` on the
+ * sponsorship report; a group that derives its members from the data has one per value
+ * present). Neither the export nor a saved view may name one: the backend catalog has no
+ * such column, and a view written in 2026 must still mean "show the delivery years" in
+ * 2027. Hiding one member of a group therefore hides none of them - it is one choice.
  */
 function collapseDetailColumns(keys: string[], layout: ReportDetailLayout): string[] {
   const out: string[] = [];
@@ -197,6 +197,19 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
 }
 
 /**
+ * ONE page, always (AC-G2), and a skeleton that does not grow with the answer.
+ *
+ * The register this screen mirrors has no pages: a month is a table you read down to its
+ * GRAND TOTAL, and a page control that hides half the rows from a total printed under them
+ * is a way to be quietly wrong. So there is no pagination row model at all - every row of
+ * the run renders - and the pagination state is left to the ONE thing that still reads it:
+ * the shared DataGrid draws one skeleton row per page size while a run is in flight. Set to
+ * the row count, a year of forms turned every reload into 214 grey rows scrolling past a
+ * screen the user is waiting on; the wait is the same wait whatever the answer's size.
+ */
+const ONE_PAGE: PaginationState = { pageIndex: 0, pageSize: 15 };
+
+/**
  * The one report screen. Everything about it comes from `GET /reports/{key}` and
  * `POST /reports/{key}/run`, so report #2 is a two-line route wrapper over this file and
  * nothing here learns its name (PLAN-reporting-foundation, "Why a foundation and not a page").
@@ -284,28 +297,15 @@ export function ReportPage({
   /**
    * The order, minus any id the CURRENT result has no column for.
    *
-   * Tick columns are data-dependent: 2026 has an `expected_delivery_year__2026`, 2025 has
-   * none at all. Switching the period keeps the user's order, so without this the table is
-   * handed an id it cannot resolve and logs "Column with id ... does not exist" on every
-   * render.
+   * The sponsorship band is fixed now, so its four ids outlive any period; a group that
+   * DERIVES its members still has data-dependent ones, and a column order saved before the
+   * band was fixed still names the old derived ids. Either way the table must not be handed
+   * an id it cannot resolve, or it logs "Column with id ... does not exist" every render.
    */
   const columnOrder = useMemo(() => {
     const present = new Set((detailLayout?.columns ?? []).map((column) => column.key));
     return (effectiveGrid?.order ?? []).filter((id) => present.has(id));
   }, [detailLayout, effectiveGrid]);
-
-  /**
-   * ONE page, always (AC-G2).
-   *
-   * The register this screen mirrors has no pages: a month is a table you read down to its
-   * GRAND TOTAL, and a page control that hides half the rows from a total printed under
-   * them is a way to be quietly wrong. The row set is a year of forms (~214), so the page
-   * size IS the row count; the DataGrid still needs a positive one for its skeletons.
-   */
-  const pagination: PaginationState = {
-    pageIndex: 0,
-    pageSize: Math.max(detailLayout?.rows.length ?? 0, 1),
-  };
 
   const table = useReactTable({
     data: (detailLayout?.rows ?? []) as ReportRow[],
@@ -313,7 +313,7 @@ export function ReportPage({
     getRowId: (_row, index) => String(index),
     state: {
       sorting,
-      pagination,
+      pagination: ONE_PAGE,
       columnVisibility: effectiveGrid?.visibility ?? {},
       columnOrder,
     },
@@ -350,7 +350,6 @@ export function ReportPage({
     enableColumnResizing: true,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
 
   /** What Save view and Export record: the columns the user can actually see, in order. */

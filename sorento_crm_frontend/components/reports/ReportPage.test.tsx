@@ -302,6 +302,34 @@ describe('ReportPage', () => {
     expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(RESULT.row_count);
   });
 
+  it('paints a handful of skeleton rows while it reloads, not one per row (S6 review)', async () => {
+    // The page size IS the row count (AC-G2), and the shared DataGrid draws one skeleton
+    // row per page size - so a year of forms turned every reload into 214 grey rows
+    // scrolling past. The wait is the same wait whatever the answer's size.
+    const rows = Array.from({ length: 60 }, (_, index) => ({
+      request_number: `PSSF26-${String(index).padStart(4, '0')}`,
+      sales_agent: 'Eric Ng',
+      project_value: '1.00',
+    }));
+    runReport.mockResolvedValueOnce({
+      ...RESULT,
+      row_count: rows.length,
+      layouts: { ...RESULT.layouts, detail: { ...RESULT.layouts.detail, rows } },
+    });
+    // The reload never answers, so the grid stays on its skeletons to be counted.
+    runReport.mockReturnValue(new Promise(() => {}));
+    const { container } = render();
+    await screen.findByText('PSSF26-0000');
+    expect(container.querySelectorAll('tbody tr').length).toBe(rows.length);
+
+    fireEvent.change(screen.getByLabelText('Date basis'), { target: { value: 'request_date' } });
+
+    await waitFor(() =>
+      expect(container.querySelectorAll('tbody [data-slot="skeleton"]').length).toBeGreaterThan(0),
+    );
+    expect(container.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
+  });
+
   it('names both tabs, with the row count on the detail one', async () => {
     render();
 
