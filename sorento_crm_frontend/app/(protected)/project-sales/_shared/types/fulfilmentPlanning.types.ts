@@ -1526,6 +1526,15 @@ export interface StockDetailIncoming {
   supplier_name?: string | null;
   expected_date?: string | null;
   spo_qty: string;
+  /**
+   * How many days late the promised arrival is; 0 when it is today, ahead or unstated.
+   *
+   * The quantity is counted either way (captain, 26 August 2026: trust the book - the goods
+   * are owed until a re-uploaded book says they arrived). This is what stops that being
+   * read as a fresh promise: an overdue row is named as overdue, so the buyer can see which
+   * supplier to chase instead of wondering why the cover never lands.
+   */
+  overdue_days?: number | null;
 }
 
 /**

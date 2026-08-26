@@ -115,6 +115,54 @@ describe('StockDocumentsPanel', () => {
     expect(screen.queryByText(/On hand 478 - SO 47009/)).not.toBeInTheDocument();
   });
 
+  it('names an overdue arrival as overdue, and still lists its quantity', async () => {
+    // TRUST THE BOOK (captain, 26 August 2026): a promised date that has passed does not
+    // remove the supply, it changes what the row SAYS. The buyer reading this is the person
+    // who can chase the supplier, and they cannot do that if the row reads as though the
+    // date were fine.
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/08-0061',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-08-01',
+            spo_qty: '332',
+            overdue_days: 25,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(table.textContent).toContain('SPO-2026/08-0061');
+    expect(table.textContent).toContain('(overdue 25 days)');
+    expect(table.textContent).toContain('332');
+  });
+
+  it('says nothing about overdue when the arrival is still ahead', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/09-0001',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-09-12',
+            spo_qty: '500',
+            overdue_days: 0,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(table.textContent).not.toContain('overdue');
+  });
+
   it('lists every document behind the position, typed', async () => {
     getStockDetail.mockResolvedValue(
       captainsPosition({

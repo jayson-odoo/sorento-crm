@@ -714,16 +714,12 @@ WHERE sa.warehouse_id IS NOT NULL
   -- false: a filter that looks like a guard and is not one. Both spellings are listed so
   -- the honest test survives whichever a future writer picks.
   AND COALESCE(sa.receipt_status, 'pending') NOT IN ('fully_received', 'received')
+  -- TRUST THE BOOK (captain, 26 Aug 2026). What is still to come is what makes a row
+  -- supply, and nothing else: a promised date that has passed does NOT remove it, because
+  -- the goods are owed until a re-uploaded book says they arrived. An overdue promise is
+  -- named as overdue where it is shown (`app/services/scm/spo_supply.py`, the one copy of
+  -- this rule in Python), never quietly dropped.
   AND sa.allocated_quantity > COALESCE(sa.quantity_received, 0)
-  -- STALENESS (`app/services/scm/spo_supply.py`, the one copy of this rule in Python).
-  -- A shipping order nobody has booked a container for, whose promised date has passed,
-  -- is not supply: all 715 open SPO lines on the captain's book are past-dated, the
-  -- oldest by two years, and no feed refreshes them. A shipment-backed row is never
-  -- stale, because its arrival is tracked; a row with no date at all is not stale
-  -- either, because nothing says its date has passed.
-  AND (sa.inbound_shipment_id IS NOT NULL
-       OR sa.expected_date IS NULL
-       OR sa.expected_date >= CURRENT_DATE)
 GROUP BY sa.product_id, sa.warehouse_id;
 """
 

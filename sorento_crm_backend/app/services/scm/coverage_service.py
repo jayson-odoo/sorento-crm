@@ -80,10 +80,6 @@ from app.services.scm.reorder_engine import resolve_policy_for_sku
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 
-def _today() -> date:
-    """The planner's today, in the wall clock the rest of this module reads dates in."""
-    return to_naive_datetime(datetime.now(MALAYSIA_TZ)).date()
-
 # PO statuses that represent real placed supply. Drafts are NOT supply: a draft PO is a
 # recommendation nobody has committed to, and counting it would suppress the buy that
 # creates it. Mirrors scm.on_order_v.
@@ -563,9 +559,9 @@ class CoverageService:
         # counted below as such, so restricting this half to `inbound_shipment_id IS NULL`
         # is what stops the same units being reported twice. `scm.on_order_v` already reads
         # these rows, so leaving them out here is the two supply readers disagreeing about
-        # a document they can both see. Same staleness rule as everything else
-        # (`spo_supply`): an unshipped promise whose date has passed is not an order
-        # anybody is still waiting for.
+        # a document they can both see. A past promised date does not remove one: the goods
+        # are owed until the book says they arrived (captain, 26 Aug), and this figure is
+        # exactly "what is already on order" - an overdue order is the clearest case of it.
         for pid, allocated, received, when in (
             self.db.query(
                 SPOAllocation.product_id,
@@ -587,7 +583,6 @@ class CoverageService:
                         spo_supply.RECEIVED_RECEIPT_STATUSES
                     ),
                 ),
-                spo_supply.not_stale_clause(_today()),
             )
             .all()
         ):

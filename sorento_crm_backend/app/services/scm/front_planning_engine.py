@@ -212,9 +212,31 @@ def _own_reason(location: str) -> str:
     return f"free stock at {location} covers the need by the required date"
 
 
-def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
-    when = arrival_date.isoformat() if arrival_date else "an unstated date"
-    return f"SPO {spo_number} arrives on {when}, by the required date"
+def spo_reason(
+    spo_number: str, arrival_date: Optional[date], overdue_days: int = 0
+) -> str:
+    """How a timely incoming row reads, wherever it is named.
+
+    An OVERDUE promise is named as overdue rather than dropped (captain's ruling, 26 Aug
+    2026: trust the book). The goods are still owed and are still supply, and the buyer
+    reading this is the person who can go and chase the supplier - which they cannot do if
+    the row either disappears or reads as though the date were fine.
+
+    Public, because the supply service builds this same sentence for its own reason field.
+    Two copies agreed by coincidence until there was something new to say in both.
+
+    The `SPO` prefix is only added to a number that does not already carry one. Every
+    shipping order in the book is written `SPO-2026/08-0061`, and "SPO SPO-2026/08-0061"
+    is how a label reads when nobody looked at real data; the older `202703-S0011` spelling
+    still needs the word.
+    """
+    when = _date_text(arrival_date) if arrival_date else "an unstated date"
+    named = spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
+    if overdue_days > 0:
+        day = "day" if overdue_days == 1 else "days"
+        return f"{named} arrives on {when} (overdue {overdue_days} {day})"
+    return f"{named} arrives on {when}, by the required date"
+
 
 
 # --------------------------------------------------------------------------- #
@@ -514,8 +536,10 @@ def _timely_components(
             Component(
                 kind=TIMELY_SPO,
                 qty=take,
-                reason=_spo_reason(
-                    str(ref.get("spo_number") or ""), _as_date(ref.get("arrival_date"))
+                reason=spo_reason(
+                    str(ref.get("spo_number") or ""),
+                    _as_date(ref.get("arrival_date")),
+                    int(ref.get("overdue_days") or 0),
                 ),
                 source_location=location,
             )
@@ -656,7 +680,9 @@ def attribute_sources(
                 Component(
                     kind=TIMELY_SPO,
                     qty=taken,
-                    reason=_spo_reason(event["spo_number"], arrival),
+                    reason=spo_reason(
+                        event["spo_number"], arrival, int(event.get("overdue_days") or 0)
+                    ),
                     source_location=warehouse_code,
                 )
             )

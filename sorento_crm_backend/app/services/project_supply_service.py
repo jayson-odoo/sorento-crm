@@ -110,6 +110,7 @@ from app.services.scm.front_planning_engine import (
     propose_line,
     qty_text,
     reserve_window_end,
+    spo_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -322,6 +323,10 @@ class _SpoRow:
     allocation_id: str
     arrival_date: Optional[date]
     qty: Decimal
+    #: How many days late the promised arrival is, 0 when it is today, ahead or unstated.
+    #: Carried on the row rather than recomputed per surface: the trail, the popover and
+    #: the sheet all say "overdue N days" and they must say the same N.
+    overdue_days: int = 0
     #: Who it is coming from. Display only, and defaulted so every existing construction of
     #: this row keeps working; the sheet does not read it, the stock drill-down does.
     supplier_name: Optional[str] = None
@@ -874,6 +879,9 @@ class ProjectSupplyService:
                     "spo_line_no": ref.spo_line_no,
                     "arrival_date": ref.arrival_date,
                     "qty": ref.qty,
+                    # The engine names this row in the trail, so it needs to know whether
+                    # the promise it is leaning on has already been missed.
+                    "overdue_days": ref.overdue_days,
                 }
                 for ref in fact.timely_refs
             ],
@@ -1668,6 +1676,7 @@ class ProjectSupplyService:
             "spo_number": ref.spo_number,
             "arrival_date": ref.arrival_date,
             "qty": qty_text(ref.qty),
+            "overdue_days": ref.overdue_days,
         }
 
     def frozen_lines_of(
@@ -3167,6 +3176,7 @@ class ProjectSupplyService:
                         ref.arrival_date.isoformat() if ref.arrival_date else None
                     ),
                     "qty": qty_text(ref.qty),
+                    "overdue_days": ref.overdue_days,
                 }
                 for ref in fact.timely_refs
             ],
@@ -3258,8 +3268,10 @@ class ProjectSupplyService:
         if not fact.timely_refs:
             return "incoming supply arrives by the required date"
         first = fact.timely_refs[0]
-        when = first.arrival_date.isoformat() if first.arrival_date else "an unstated date"
-        return f"SPO {first.spo_number} arrives on {when}, by the required date"
+        # The engine's own builder, not a second copy of the sentence: this reason and the
+        # one in the trail describe the same row, and they said the same thing by
+        # coincidence until an overdue promise had to be named in both.
+        return spo_reason(first.spo_number, first.arrival_date, first.overdue_days)
 
     def _borrow_reason(
         self, item: Any, warehouse: Optional[Warehouse], donor: Optional[Project]
@@ -4314,6 +4326,7 @@ class ProjectSupplyService:
         # Two ways a row can name a factory: through its shipment, or on the SPO line
         # itself for a document nobody has booked a container for yet.
         DirectSupplier = aliased(Supplier)
+        today = date.today()
         rows = (
             self.db.query(
                 SPOAllocation.id,
@@ -4340,30 +4353,33 @@ class ProjectSupplyService:
             .filter(
                 SPOAllocation.product_id.in_(pids),
                 SPOAllocation.warehouse_id.in_(wids),
-                # Closed lines, landed shipments, received rows and STALE promises, in one
-                # rule shared with `on_order_v`, the order inquiry's inbound pool and the
-                # coverage screen. The board's cell popover reads this same method, so what
-                # the planner is shown and what the engine decides on cannot differ.
-                *spo_supply.open_incoming_clauses(date.today()),
+                # Closed lines, landed shipments and received rows, in one rule shared
+                # with `on_order_v`, the order inquiry's inbound pool and the coverage
+                # screen. The board's cell popover reads this same method, so what the
+                # planner is shown and what the engine decides on cannot differ. A promise
+                # whose date has passed is still supply and is stated as OVERDUE below.
+                *spo_supply.open_incoming_clauses(),
             )
             .all()
         )
         out: Dict[Tuple[str, str], List[_SpoRow]] = {}
         for row in rows:
+            # The quantity test, stated beside the arithmetic it belongs to: nothing left to
+            # come is not supply, whatever the statuses say.
             balance = _dec(row.allocated_quantity) - _dec(row.quantity_received)
             if balance <= _ZERO:
                 continue
+            arrival = (
+                row.eta_delay_date or row.estimated_arrival_date or row.expected_date
+            )
             out.setdefault((str(row.product_id), str(row.warehouse_id)), []).append(
                 _SpoRow(
                     spo_number=str(row.spo_number or ""),
                     spo_line_no=row.spo_line_number,
                     allocation_id=str(row.id),
-                    arrival_date=(
-                        row.eta_delay_date
-                        or row.estimated_arrival_date
-                        or row.expected_date
-                    ),
+                    arrival_date=arrival,
                     qty=balance,
+                    overdue_days=spo_supply.overdue_days(arrival, today),
                     supplier_name=row.shipment_supplier_name or row.spo_supplier_name,
                 )
             )
@@ -4716,6 +4732,11 @@ class ProjectSupplyService:
                         "allocation_id": row.allocation_id,
                         "arrival_date": row.arrival_date,
                         "qty": row.qty,
+                        # Named the same way here as in the trail: this allocator writes the
+                        # sentence too, and one surface calling a promise overdue while
+                        # another calls it fine is the disagreement the shared rule exists
+                        # to prevent.
+                        "overdue_days": row.overdue_days,
                     }
                     for row in spo.get(key, [])
                 ],

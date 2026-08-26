@@ -1576,16 +1576,67 @@ def test_an_spo_arriving_after_the_required_date_is_not_timely():
     assert [c["kind"] for c in components] == ["buy"]
 
 
-def test_a_past_dated_promise_with_no_container_is_not_supply():
-    """The staleness rule (`app/services/scm/spo_supply.py`), which the whole SCM module
-    shares. All 715 open SPO lines on the captain's book are past-dated, the oldest by two
-    years, and nothing refreshes them: counted as supply they suppress a real purchase for
-    ever on the strength of a date nobody has restated."""
+def test_a_past_dated_promise_still_fires_rung_1_and_says_it_is_overdue():
+    """TRUST THE BOOK (captain, 26 August 2026). The goods are owed until a re-uploaded PO
+    and SPO book says they arrived, so an overdue promise is still incoming supply - and it
+    is NAMED as overdue, because the buyer reading the trail is the person who can chase it.
+
+    Dropping these rows instead would have told the planner to buy 39,110 units a second
+    time: every open SPO line on the captain's book carries a past date today.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        _spo_line(db, product, own, qty=40, arrives=date.today() - timedelta(days=1))
+        spo_number = _spo_line(
+            db, product, own, qty=40, arrives=date.today() - timedelta(days=25)
+        ).spo_number
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert components[0]["qty"] == "40"
+    assert components[0]["rung"] == "incoming"
+    assert spo_number in components[0]["reason"]
+    assert "(overdue 25 days)" in components[0]["reason"]
+
+
+def test_a_promise_dated_today_is_not_overdue():
+    """The boundary, said out loud on both rules: a row dated today arrives today, so it is
+    not overdue, and an arrival on the required date itself is timely. An exclusive
+    comparison on either would look like a rounding detail and cost a whole day."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _spo_line(db, product, own, qty=40, arrives=date.today())
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+            required_date=date.today(),
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert "overdue" not in components[0]["reason"]
+
+
+def test_a_fully_received_line_is_not_supply_however_open_its_date_looks():
+    """The other half of the rule. What makes a row supply is what is still TO COME on it,
+    and a line the book states as received has nothing: it is out, and no date changes
+    that."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        row = _spo_line(db, product, own, qty=40, arrives=REQUIRED_DATE - timedelta(days=5))
+        row.quantity_received = 40
+        row.receipt_status = "fully_received"
         db.commit()
 
         order, _line, _cso, _cline = _seed_line(
@@ -1596,10 +1647,9 @@ def test_a_past_dated_promise_with_no_container_is_not_supply():
     assert [c["kind"] for c in components] == ["buy"]
 
 
-def test_the_same_past_dated_promise_IS_supply_once_a_container_is_booked():
-    """A shipment-backed row is never stale: the arrival is tracked from that point, so a
-    late container is late rather than imaginary, and the date the ladder reads is the
-    shipment's, not the line's."""
+def test_a_shipment_backed_row_reads_its_container_date():
+    """Once a container is booked the arrival is tracked, so the ladder reads the
+    shipment's date rather than the line's promise."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -1615,25 +1665,4 @@ def test_the_same_past_dated_promise_IS_supply_once_a_container_is_booked():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert [c["kind"] for c in components] == ["timely_spo"]
-    assert components[0]["qty"] == "40"
-
-
-def test_a_promise_dated_today_still_counts():
-    """The boundary is inclusive on BOTH rules: `expected_date == as_of` arrives today, and
-    an arrival on the required date itself is timely. Written down because an exclusive
-    comparison on either would drop a whole day of real supply and read as a rounding
-    detail."""
-    with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
-        _group, sites = _group_sites(db)
-        own, _pool = sites["BRW"]
-        _spo_line(db, product, own, qty=40, arrives=date.today())
-        db.commit()
-
-        order, _line, _cso, _cline = _seed_line(
-            db, company_id, project, product, own, qty_ordered="40",
-            required_date=date.today(),
-        )
-        components = _components(ProjectSupplyService(db).proposal_for(order))
-
-    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert "overdue" not in components[0]["reason"]
