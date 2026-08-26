@@ -1326,7 +1326,10 @@ class ResolveReferenceRequest(BaseModel):
             "don't know what X means'). Absent or false "
             "means the response is byte-identical to today, so the feature is inert "
             "for every existing caller. It is a FALLBACK: it never runs when the "
-            "normal probes already resolved something."
+            "normal probes already resolved something the question can be "
+            "answered with - on an inventory / master_products / "
+            "product_attachment question (`domain`), that means a product row; "
+            "a promotion whose description matched does not count there."
         ),
     )
     extracted_specs: list[dict] | None = Field(
@@ -1417,9 +1420,11 @@ def _product_words_unanswered(result: dict[str, Any]) -> bool:
     fires. Partially matching a code is not answering the description.
 
     Reads the `token_coverage` the AND exit already computed. Product rows
-    only: a promotion whose description covered the words DID answer the turn.
-    A missing/unscored coverage block stays False - this widens the fallback
-    gate, and a widening must never fire on absence of evidence.
+    only: whether a promotion whose description covered the words answered the
+    turn depends on what was asked, and that is `_no_product_row_answered`'s
+    rule, not this one's. A missing/unscored coverage block stays False - this
+    widens the fallback gate, and a widening must never fire on absence of
+    evidence.
     """
     for entry in result.get("token_coverage") or []:
         for claim in (entry or {}).get("coverage") or []:
@@ -1442,6 +1447,48 @@ def _has_unresolved_tokens(result: dict[str, Any]) -> bool:
     if not isinstance(resolutions, list):
         return False
     return any(not (tr.get("matches") or []) for tr in resolutions)
+
+
+# The parser's domains whose answer is a product row. n8n sends the parser's
+# `domain_hint` as `domain`: `master_products` and `product_attachment` already
+# canonicalize to `product`; `inventory` is the stock domain and has no alias.
+_PRODUCT_QUESTION_DOMAINS: frozenset[str] = frozenset({"product", "inventory"})
+# What counts as a product row: the resolver's own product domain (see
+# `_expand_entity_types`, which reaches the set probe from the `product` hint).
+_PRODUCT_ROW_TYPES: frozenset[str] = frozenset({"product", "product_set"})
+
+
+def _no_product_row_answered(result: dict[str, Any], domain_hint: str | None) -> bool:
+    """A product question that only non-product rows answered is still open.
+
+    Exec 14061515: "any water closet s trap 250mm got stock?" - the one token
+    matched eleven promotions whose description contains the words, plus an
+    attachment type, and no product. Every other gate counted that as answered,
+    so spec search never ran and the customer was told there was no inventory
+    "for promotion water closet s trap 250mm". Whether the sentence reached the
+    ranker depended on whether the parser had happened to emit a second,
+    product-hinted copy of it.
+
+    The rule: on a product question (the parser's `inventory`, `master_products`
+    or `product_attachment` domain, sent as `domain`), a token is answered only
+    by a product row. A promotion is the answer to a promotion question, and that
+    path is untouched, as is a request that named no domain: the gate decides on
+    what the caller sent, never on a guess. The relevance floor stays the
+    counterweight: opening the path is not the same as offering something.
+    """
+    if _canonical_entity_type(domain_hint or "") not in _PRODUCT_QUESTION_DOMAINS:
+        return False
+    if "intersection" in result:
+        shown = [result.get("intersection") or []]
+    else:
+        resolutions = result.get("resolutions")
+        if not isinstance(resolutions, list):
+            return False
+        shown = [tr.get("matches") or [] for tr in resolutions]
+    return any(
+        not any(m.get("entity_type") in _PRODUCT_ROW_TYPES for m in matches)
+        for matches in shown
+    )
 
 
 def _suppress_brand_prefix_junk(
@@ -2133,6 +2180,8 @@ def resolve_reference_post(
     # asked for it AND the normal (code-only) product probes found nothing - or
     # found only PARTIAL code-word overlap (`_product_words_unanswered`): a code
     # that happens to contain "WALL HUNG" has not answered "wall hung basin".
+    # Or, on a product question, found no product row at all
+    # (`_no_product_row_answered`): a promotion is not stock.
     # The response stays byte-identical for every existing caller and for every
     # request that resolves a code fully. The product probes themselves are
     # untouched: see _and_probe_product's "CODE-ONLY by design" note.
@@ -2140,6 +2189,7 @@ def resolve_reference_post(
         _result_has_zero_matches(result)
         or _product_words_unanswered(result)
         or _has_unresolved_tokens(result)
+        or _no_product_row_answered(result, payload.domain_hint)
     ):
         import time
 
