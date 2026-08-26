@@ -313,7 +313,30 @@ class _World:
         )
         self.db.flush()
 
-    def row(self, verb: str, qty, *, location="BRW-IB", cited=None, so_line=True):
+    def another_product(self, code: str) -> str:
+        """A SECOND product on the same masters, for a pass that spans more than one."""
+        cat = self.db.execute(
+            text("SELECT id FROM product_categories WHERE category_code = :c"),
+            {"c": f"{MARKER}-CAT"},
+        ).scalar()
+        uom = self.db.execute(
+            text("SELECT id FROM units_of_measure WHERE uom_code = :c"),
+            {"c": f"{MARKER}-UOM"},
+        ).scalar()
+        product = _uid()
+        self.db.execute(
+            text(
+                "INSERT INTO products (id, company_id, product_code, product_name, "
+                "category_id, base_uom_id, list_price) "
+                "VALUES (:i, :c, :code, :code, :cat, :uom, 0)"
+            ),
+            {"i": product, "c": self.company_id, "code": code, "cat": cat, "uom": uom},
+        )
+        self.db.flush()
+        return product
+
+    def row(self, verb: str, qty, *, location="BRW-IB", cited=None, so_line=True,
+            item_code=None):
         rid = _uid()
         self.db.execute(
             text(
@@ -328,7 +351,7 @@ class _World:
                 "c": self.company_id,
                 "inq": self.inquiry,
                 "l": self.line if so_line else None,
-                "code": f"{MARKER}-7405",
+                "code": item_code or f"{MARKER}-7405",
                 "q": Decimal(str(qty)),
                 "v": verb,
                 "loc": location,
@@ -1212,3 +1235,40 @@ def test_a_person_may_still_link_a_deficit_group_line_by_hand(world):
     by_hand = world.svc._candidates_for_row(row, manual=True)
 
     assert [c["target_id"] for c in by_hand] == [line_id]
+
+
+def test_the_cascade_builds_the_availability_reader_once_for_the_whole_pass(world, monkeypatch):
+    """Ladder v4: `netting_for_products` is three queries over the products it is given,
+    and `_netting` rebuilds whenever it meets one it has not seen.
+
+    A pass that met them one row at a time would therefore rebuild per product, over a
+    growing list - three queries, then six, then nine - on a call that names thousands of
+    rows. `auto_place_for_products` primes it once from the whole row set instead, and this
+    counts the builds across a pass spanning TWO products, where an unprimed loop would
+    have built twice.
+    """
+    import app.services.project_order_inquiry_service as module
+
+    second = world.another_product(f"{MARKER}-8605")
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    world.row("ORDER", 60)
+    world.row("ORDER", 20, item_code=f"{MARKER}-8605", so_line=False)
+
+    builds = []
+    real = module.netting_for_products
+
+    def counted(db, product_ids):
+        builds.append(sorted(str(p) for p in product_ids))
+        return real(db, product_ids)
+
+    monkeypatch.setattr(module, "netting_for_products", counted)
+    world.svc.auto_place_for_products(
+        [world.product, second], actor_user_id=None, trigger="test"
+    )
+
+    assert len(builds) == 1, f"one build for the whole pass, not {len(builds)}"
+    assert builds[0] == sorted([str(world.product), str(second)])

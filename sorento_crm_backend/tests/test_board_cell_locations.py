@@ -526,3 +526,43 @@ def test_a_cell_whose_lines_sit_at_two_sites_leads_with_both_own_pools():
         # the pool order follows the locations the cell's lines actually named.
         assert set(pool_codes[:2]) == {"BRW", "MWH"}
         assert pool_codes[2:] == ["DC1"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-L12: the net the ladder obeyed, on the wire
+# --------------------------------------------------------------------------- #
+
+
+def test_the_group_and_pool_nets_reach_the_wire():
+    """`response_model` drops what the schema does not declare, so `net` / `net_of` are
+    asserted through `BoardCell` and not off the service dict.
+
+    The popover's subtotal PRINTS these rather than summing the rows it shows - the net
+    covers every location of the set, silent members included - so a field that never left
+    the server would leave the table adding up a different number from the one the engine
+    obeyed (AC-L12).
+    """
+    with blank_session() as db:
+        product = _product(db)
+        pools, bins = _sites(db, ["BRW", "MWH"], "BB")
+        _stock(db, product, bins["BRW"], on_hand="40")
+        _stock(db, product, bins["MWH"], on_hand="10")
+        _stock(db, product, pools["BRW"], on_hand="7")
+        agent = _agent(db, group="BB")
+        order = _order(db, agent=agent)
+        _line(db, order, product, bins["BRW"], qty="5")
+
+        cell = BoardCell.model_validate(_cell(db, order, product))
+        on_wire = {entry["location"]: entry for entry in cell.model_dump()["locations"]}
+
+    # Every location of one ownership group carries that GROUP's net, so the table can
+    # print it once on their shared subtotal: 40 + 10 on hand less the 5 this line owes.
+    assert on_wire["BRW-BB"]["net_of"] == "BB"
+    assert on_wire["MWH-BB"]["net_of"] == "BB"
+    assert on_wire["BRW-BB"]["net"] == on_wire["MWH-BB"]["net"] == "45"
+
+    # And every site pool carries the five pools' own net, under its own name.
+    assert on_wire["BRW"]["net_of"] == "pools"
+    assert on_wire["BRW"]["net"] == "7"
+    assert on_wire["MWH"]["net_of"] == "pools"
+    assert on_wire["MWH"]["net"] == "7", "one pile, so both pools state the same number"
