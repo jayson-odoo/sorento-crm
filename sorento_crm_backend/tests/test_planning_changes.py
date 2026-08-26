@@ -2165,13 +2165,17 @@ def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_rea
 # ============================================================================
 
 
-def test_apply_qty_up_after_a_real_place_on_po_raises_only_the_delta(api):
+def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its_link(api):
     """Case A (the captain, 20 Aug): SO349754 WESERP10B - a line already covered by an
     active decision, placed 5 on a real PO, then the book raised the qty to 10. Before the
     fix, the netting predicate only recognised `INQUIRY_ACTIONED` (0 rows company-wide;
     "Place on PO" writes `INQUIRY_PLACED`), so a reconfirm re-raised the FULL new need on
-    top of the untouched placed row - 15 against a 10 line. Expected: the placed 5 stays
-    exactly as it was, and only the 5-unit delta is freshly raised."""
+    top of the untouched placed row - 15 against a 10 line.
+
+    Since AC-P3-5 the answer is ONE row, not two: the line's own row is updated in place
+    to the 10 the book says, its 5 stays on the purchase order it was placed on, and the
+    row reads partly linked. The name used to promise a freshly-raised delta row, which is
+    the shape this test now exists to say does NOT happen."""
     client, world = api
     db = world.db
     # No pool stock: the board proposes the whole line as Buy, isolating this case from

@@ -1099,6 +1099,25 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     expect(getPlanningBoard).not.toHaveBeenCalled();
   });
 
+  it('opens a board on every order of a planning-change batch, cap or no cap', async () => {
+    // The cap exists because a selection the sender did not choose is not the set they
+    // meant to share. A batch IS a chosen set - one upload, the orders it moved - and the
+    // separate batch page is retired, so refusing it dead-ends the change with nowhere
+    // else to decide it.
+    const many = Array.from({ length: 60 }, (_unused, index) => `SO${200000 + index}`);
+    currentSearchParams = new URLSearchParams(
+      `orders=${many.join(',')}&batch=pcb-so381895`,
+    );
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+
+    renderClient();
+
+    expect(await screen.findByText('Planning 60 sales orders together')).toBeInTheDocument();
+    expect(
+      screen.queryByText('60 ticked. A board takes at most 50 sales orders.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('writes the selection into the URL when the board is opened', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));

@@ -188,7 +188,7 @@ export function annotationsByCell(
           contribution.fulfilment_location ?? null,
         );
       }
-      const pair = `${contribution.so_number} ${contribution.item_code}`;
+      const pair = `${contribution.so_number} ${contribution.item_code}`;
       if (!cellByOrderItem.has(pair)) cellByOrderItem.set(pair, key);
     }
   }
@@ -196,8 +196,13 @@ export function annotationsByCell(
   for (const order of batch.orders ?? []) {
     for (const row of order.rows ?? []) {
       const proposal = (row.proposal ?? null) as BoardContribution | null;
-      const lineId = proposal?.project_line_id ?? null;
-      const pair = `${order.so_number} ${row.item_code}`;
+      // The ROW's own line first, exactly as `annotationOf` and `proposalsByLine` read it.
+      // Only a `replan` row carries a proposal, so reading the proposal alone sent every
+      // other changed line to the (SO, item) fallback - which is the FIRST cell of that
+      // product on that order, so the second instalment of a product landed its Was / Now
+      // table on the first instalment's cell instead of its own.
+      const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
+      const pair = `${order.so_number} ${row.item_code}`;
       const key =
         (lineId ? cellByLine.get(lineId) : undefined) ?? cellByOrderItem.get(pair) ?? null;
       if (!key) continue;

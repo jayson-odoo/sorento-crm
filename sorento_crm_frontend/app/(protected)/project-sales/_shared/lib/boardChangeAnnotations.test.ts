@@ -215,6 +215,32 @@ describe('annotationsByCell', () => {
     expect(map.get(key)?.map((entry) => entry.rowId)).toEqual(['pcr-1', 'pcr-2', 'pcr-3']);
   });
 
+  it('lands a proposal-less row on its OWN cell, not the first cell of its product', () => {
+    // The second instalment of the same product on the same order. Only a `replan` row
+    // carries a proposal, so reading the line off the proposal alone sent every other
+    // changed line to the (SO, item) fallback - the FIRST cell of that product - and the
+    // second instalment's Was / Now table landed on the first instalment's cell.
+    const second = cell({
+      bucket_key: '2026-09-07',
+      contributions: [contribution({ key: 'k2', project_line_id: 'pl-2', line_no: 2 })],
+    });
+    const map = annotationsByCell(
+      batchOf([
+        row({ proposal: null }),
+        row({
+          id: 'pcr-2',
+          project_line_id: 'pl-2',
+          line_no: 2,
+          kind: 'qty_down',
+          proposal: null,
+        }),
+      ]),
+      [surviving, second],
+    );
+    expect(map.get(key)?.map((entry) => entry.rowId)).toEqual(['pcr-1']);
+    expect(map.get(cellKeyOf(second))?.map((entry) => entry.rowId)).toEqual(['pcr-2']);
+  });
+
   it('drops a row whose product is nowhere on the board', () => {
     const map = annotationsByCell(
       batchOf([row({ id: 'pcr-9', project_line_id: 'pl-9', item_code: 'NOT-HERE' })]),

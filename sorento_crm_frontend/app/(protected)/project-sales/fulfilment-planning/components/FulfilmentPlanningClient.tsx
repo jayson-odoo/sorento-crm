@@ -129,9 +129,6 @@ export function FulfilmentPlanningClient() {
         .filter(Boolean),
     [searchParams],
   );
-  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
-    urlOrders.length > 0 && urlOrders.length <= MAX_BOARD_SELECTION ? urlOrders : null,
-  );
   /**
    * The planning-change batch the board was opened ON (AC-P3-1), from the same URL as the
    * selection: `?orders=SO381895&batch=<id>`. The Planning changes list and the sales-order
@@ -142,9 +139,19 @@ export function FulfilmentPlanningClient() {
     () => searchParams.get('batch')?.trim() || null,
     [searchParams],
   );
+  const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
+    // THE CAP DOES NOT APPLY TO A BATCH. It exists because a selection the sender did not
+    // choose is not the set they meant to share - but a batch IS a chosen set: one book
+    // upload, the orders it moved, and the only screen those changes can be decided on. A
+    // 60-order upload dead-ended on "too many orders" with nowhere else to go, because the
+    // separate batch page is retired.
+    urlOrders.length > 0 && (batchId !== null || urlOrders.length <= MAX_BOARD_SELECTION)
+      ? urlOrders
+      : null,
+  );
   /** A link that asked for too many, so the refusal can be stated on the worklist. */
   const [refusedLink] = React.useState(() =>
-    urlOrders.length > MAX_BOARD_SELECTION ? urlOrders.length : 0,
+    urlOrders.length > MAX_BOARD_SELECTION && batchId === null ? urlOrders.length : 0,
   );
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
