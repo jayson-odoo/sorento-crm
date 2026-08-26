@@ -342,6 +342,16 @@ def _view_with_columns(columns):
     )
 
 
+def _view_with_columns(columns):
+    """A view that asks for particular detail columns, the way the Columns panel does."""
+    from app.schemas.report import ReportViewConfig
+
+    definition = _definition()
+    return ReportViewConfig.model_validate(
+        {**definition.default_view, "detail": {"columns": list(columns), "order": list(columns)}}
+    )
+
+
 def _view_with_pivot(rows: str, cols: str, measures=("project_value",)):
     from app.schemas.report import ReportViewConfig
 
@@ -564,6 +574,26 @@ def test_the_year_columns_are_the_same_ids_in_a_year_with_no_delivery_dates(db):
     assert group.keys == [f"expected_delivery_year_{index}" for index in range(1, 5)]
     assert _row(detail_result := _run(db), "0502")["expected_delivery_year_1"] is False
     assert detail_result is not None
+
+
+def test_a_delivery_year_outside_the_band_ticks_nothing_and_is_readable_in_its_own_column(db):
+    """AC-G3 / S6 review. The band is the period's year and the three after it, so a 2025
+    report has no column a 2029 delivery can tick: four blank cells, and until now no way
+    on the screen to learn WHEN that form is due. The raw date is a catalog column of its
+    own - hidden by default like `purpose`, offerable in the Columns panel."""
+    _form(db, "0510", approved_at=datetime(2025, 5, 4),
+          expected_delivery_date=date(2029, 3, 1))
+    params = {"period": {"kind": "year", "year": 2025}}
+
+    row = _row(_run(db, params), "0510")
+    assert [row[f"expected_delivery_year_{index}"] for index in range(1, 5)] == [False] * 4
+
+    column = _definition().dataset.column("expected_delivery_date")
+    assert column is not None and column.type == "date"
+    assert "expected_delivery_date" not in _definition().default_view["detail"]["columns"]
+
+    shown = _run(db, params, view=_view_with_columns(["request_number", "expected_delivery_date"]))
+    assert _row(shown, "0510")["expected_delivery_date"] == "2029-03-01"
 
 
 # --------------------------------------------------------------- AC-B8 default summary

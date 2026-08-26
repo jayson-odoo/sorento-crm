@@ -240,6 +240,18 @@ COLUMNS: Tuple[reg.Column, ...] = (
         lambda c: sa.cast(sa.func.extract("year", _PR.c.expected_delivery_date), sa.Integer),
         size=130,
     ),
+    # The delivery DATE itself. The tick band is four columns wide (the period's year and
+    # the three after it), so a form due outside it reads as four blank ticks and nothing
+    # else - the report holding a fact it will not show. Hidden by default like `purpose`,
+    # and one tick in the Columns panel away.
+    reg.Column(
+        "expected_delivery_date",
+        "Expected delivery date",
+        "date",
+        "date",
+        lambda c: _PR.c.expected_delivery_date,
+        size=140,
+    ),
     reg.Column(
         "month",
         "Month",

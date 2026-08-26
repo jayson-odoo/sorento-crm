@@ -85,7 +85,7 @@ JSON-serialisable, so moving them into a table later is a migration, not a rewri
 | SAMPLE PRICE | `sample_price` | `SUM(lines.total)` subquery, `COALESCE(total, quantity*unit_price)` | measure (money) |
 | EXPECTED YEAR OF DELIVERY | `expected_delivery_year` | `EXTRACT(year FROM expected_delivery_date)` | dimension, rendered as YearTicks group |
 | (month bucket) | `month` | `date_trunc('month', <date_basis>)` | dimension (derived from the chosen date basis) |
-| - | `status`, `approved_at`, `request_date`, `submitted_at`, `approver`, `purpose`, `delivery_address`, `pic` | header | extra catalog columns, hidden by default |
+| - | `status`, `approved_at`, `request_date`, `submitted_at`, `expected_delivery_date`, `approver`, `purpose`, `delivery_address`, `pic` | header | extra catalog columns, hidden by default |
 
 ## Architecture
 
