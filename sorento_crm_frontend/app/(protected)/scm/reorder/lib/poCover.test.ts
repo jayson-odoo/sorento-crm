@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { describePoBook, poOffset, type PoReceipt } from './poCover';
+import {
+  describePoBook,
+  isProjectOnlyLine,
+  poOffset,
+  type PoReceipt,
+} from './poCover';
 
 /**
  * S15: "if there is outstanding PO already then why should i buy" - the PO book offsets
@@ -43,5 +48,33 @@ describe('describePoBook', () => {
     expect(describePoBook([receipt({ expected_date: null })])).toEqual([
       '504 still to come on PO-2026/07-0002, no promised date.',
     ]);
+  });
+});
+
+describe('isProjectOnlyLine', () => {
+  /**
+   * P8: a project row's purchase order is consumed by the Order Inquiry's own links, so
+   * offering it on the plan as well nets the same units twice. ALL project is the test,
+   * not "any project" - a mixed cell has a retail need that nothing else nets against a PO.
+   */
+  const line = (project: number | null, retail: number | null) =>
+    ({ rec: { project_committed: project, retail_committed: retail } }) as Parameters<
+      typeof isProjectOnlyLine
+    >[0];
+
+  it('is a project row when every unit of its demand is project', () => {
+    expect(isProjectOnlyLine(line(9857, 0))).toBe(true);
+  });
+
+  it('is not one when it carries any retail demand at all', () => {
+    expect(isProjectOnlyLine(line(9857, 5))).toBe(false);
+  });
+
+  it('is not one when it carries no demand at all - a level-driven row still may use a PO', () => {
+    expect(isProjectOnlyLine(line(0, 0))).toBe(false);
+  });
+
+  it('reads a legacy row that states neither figure as not-project, never as project', () => {
+    expect(isProjectOnlyLine(line(null, null))).toBe(false);
   });
 });
