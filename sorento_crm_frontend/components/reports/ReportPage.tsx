@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ColumnDef,
   type PaginationState,
@@ -40,6 +40,7 @@ import {
   type ReportDetailLayout,
   type ReportParamValue,
   type ReportParamValues,
+  type ReportPeriod,
   type ReportRow,
   type ReportView,
   type ReportViewConfig,
@@ -197,6 +198,24 @@ function buildColumns(layout: ReportDetailLayout): ColumnDef<ReportRow>[] {
 }
 
 /**
+ * Is this set of params a whole question?
+ *
+ * A custom range is picked in TWO clicks and cleared in one, so between them the period
+ * carries one end, or none, or an end that falls before its start. None of those is a
+ * question the backend can answer, and asking anyway answers a 422 on screen that the user
+ * appears to have caused by opening a calendar. The screen keeps the last answer instead.
+ */
+export function periodIsRunnable(params: ReportParamValues): boolean {
+  for (const value of Object.values(params)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !('kind' in value)) continue;
+    const period = value as ReportPeriod;
+    if (period.kind !== 'custom') continue;
+    if (!period.from || !period.to || period.from > period.to) return false;
+  }
+  return true;
+}
+
+/**
  * ONE page, always (AC-G2), and a skeleton that does not grow with the answer.
  *
  * The register this screen mirrors has no pages: a month is a table you read down to its
@@ -265,14 +284,24 @@ export function ReportPage({
     });
   }, [state, meta, views, viewsLoading]);
 
+  // The last params that were a whole question. Everything that leaves this page - the
+  // run, the export, a saved view - uses these, so the file and the screen always carry the
+  // same period; the filter bar goes on showing what the user has picked so far.
+  const lastRunnable = useRef<ReportParamValues | null>(null);
+  const runParams = useMemo(() => {
+    if (!state) return {};
+    if (periodIsRunnable(state.params)) lastRunnable.current = state.params;
+    return lastRunnable.current ?? state.params;
+  }, [state]);
+
   const runView: ReportViewConfig | null = useMemo(
     () =>
       state
         ? // Empty `detail.columns` asks for the whole catalog: hiding a column is then a
           // client-side tick rather than a round trip, and a hidden column stays offerable.
-          { params: state.params, detail: { columns: [], order: [] }, pivot: state.pivot }
+          { params: runParams, detail: { columns: [], order: [] }, pivot: state.pivot }
         : null,
-    [state],
+    [state, runParams],
   );
 
   const {
@@ -280,7 +309,7 @@ export function ReportPage({
     error: runError,
     isFetching,
     refetch: refetchRun,
-  } = useReportRun(reportKey, state?.params ?? {}, runView);
+  } = useReportRun(reportKey, runParams, runView);
 
   const detailLayout = result?.layouts.detail;
   const columns = useMemo(() => (detailLayout ? buildColumns(detailLayout) : []), [detailLayout]);
@@ -360,7 +389,7 @@ export function ReportPage({
   };
 
   const currentConfig: ReportViewConfig | null = state
-    ? { params: state.params, detail: visibleDetail(), pivot: state.pivot }
+    ? { params: runParams, detail: visibleDetail(), pivot: state.pivot }
     : null;
 
   const setParam = (key: string, value: ReportParamValue) => {
@@ -408,7 +437,7 @@ export function ReportPage({
               </Button>
               <Button
                 onClick={() =>
-                  exportMutation.mutate({ params: state.params, view: currentConfig })
+                  exportMutation.mutate({ params: runParams, view: currentConfig })
                 }
                 disabled={exportMutation.isPending}
                 className="gap-1.5"
@@ -485,7 +514,7 @@ export function ReportPage({
                   size="sm"
                   onClick={() =>
                     currentConfig &&
-                    exportMutation.mutate({ params: state.params, view: currentConfig })
+                    exportMutation.mutate({ params: runParams, view: currentConfig })
                   }
                   className="gap-1.5"
                 >

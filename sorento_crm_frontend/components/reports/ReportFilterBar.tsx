@@ -110,7 +110,7 @@ function MonthChips({
   );
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Month">
       {chip('All', period.kind === 'year', { kind: 'year', year })}
       {MONTH_CHIPS.map((label, index) =>
         chip(label, single === index + 1, {
@@ -209,11 +209,12 @@ export function ReportFilterBar({
                 />
               </div>
 
-              {/* A ONE-month range is what a chip sets, and the chip row already says
-                  which month it is: repeating it as Year + From + To is three controls
-                  that can only disagree with the chips. A real range (chosen from Period)
-                  still gets them (AC-G1). */}
-              {period.kind === 'month_range' && period.from_month !== period.to_month && (
+              {/* A chip and these three controls describe the SAME period, so they are
+                  shown together and always agree: the chip says which month, and To is how
+                  that month becomes Mar..Jun. Hidden while the range was one month, a
+                  single month was a dead end - Period already read "Month range", so
+                  re-picking it changed nothing (AC-G1). */}
+              {period.kind === 'month_range' && (
                 <>
                   <div className="w-full sm:w-32">
                     <Label htmlFor="report-param-period-year">Year</Label>
@@ -276,11 +277,16 @@ export function ReportFilterBar({
                     aria-label="Custom date range"
                     from={period.from}
                     to={period.to}
+                    // A null end is an ANSWER: Clear empties both, and the first click of
+                    // a two-click range carries a start alone. Mapping it back onto the
+                    // previous value made Clear a no-op and could leave the old end BEFORE
+                    // the new start, which the backend answers with a 422. An incomplete
+                    // range is simply not run (`periodIsRunnable` in ReportPage).
                     onChange={(next) =>
                       onChange(param.key, {
-                        ...period,
-                        from: next.from ?? period.from,
-                        to: next.to ?? period.to,
+                        kind: 'custom',
+                        from: next.from ?? '',
+                        to: next.to ?? '',
                       })
                     }
                     disabled={disabled}

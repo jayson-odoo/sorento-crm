@@ -106,7 +106,7 @@ vi.mock('@/services/reportService', async (importOriginal) => {
 });
 
 import { ReportCappedError, type ReportMeta, type ReportResult } from '@/services/reportService';
-import { ReportPage, numericSortingFn } from './ReportPage';
+import { ReportPage, numericSortingFn, periodIsRunnable } from './ReportPage';
 
 const DEFAULT_VIEW = {
   params: {
@@ -469,6 +469,25 @@ describe('ReportPage', () => {
 
     const [, , view] = runReport.mock.calls[0] as [string, unknown, { detail: { columns: string[] } }];
     expect(view.detail.columns).toEqual([]);
+  });
+});
+
+describe('periodIsRunnable', () => {
+  /**
+   * A custom range is picked in two clicks, and Clear empties both ends. Sending a half a
+   * range asks the backend a question it can only answer with a 422, which reads on screen
+   * as an error the user caused by clicking a calendar.
+   */
+  it('accepts a whole range and every non-custom period', () => {
+    expect(periodIsRunnable({ period: { kind: 'custom', from: '2026-01-01', to: '2026-03-31' } })).toBe(true);
+    expect(periodIsRunnable({ period: { kind: 'year', year: 2026 } })).toBe(true);
+    expect(periodIsRunnable({ date_basis: 'approved_at', status: ['approved'] })).toBe(true);
+  });
+
+  it('refuses a half-picked, cleared or inverted range', () => {
+    expect(periodIsRunnable({ period: { kind: 'custom', from: '2026-01-01', to: '' } })).toBe(false);
+    expect(periodIsRunnable({ period: { kind: 'custom', from: '', to: '' } })).toBe(false);
+    expect(periodIsRunnable({ period: { kind: 'custom', from: '2026-05-01', to: '2026-03-31' } })).toBe(false);
   });
 });
 

@@ -47,6 +47,28 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: () => <div />,
 }));
 
+// The range picker is a popover calendar. What is asserted here is what the bar DOES with
+// the two ends it is handed, so the stub just hands them over.
+vi.mock('@/components/ui/date-range-picker', () => ({
+  DateRangePicker: ({
+    onChange,
+    ...props
+  }: {
+    onChange: (next: { from: string | null; to: string | null }) => void;
+    'aria-label'?: string;
+  }) => (
+    <div>
+      <button type="button" aria-label={props['aria-label']} />
+      <button type="button" onClick={() => onChange({ from: null, to: null })}>
+        Clear dates
+      </button>
+      <button type="button" onClick={() => onChange({ from: '2026-05-01', to: null })}>
+        Pick a start
+      </button>
+    </div>
+  ),
+}));
+
 import { ReportFilterBar } from './ReportFilterBar';
 import type { ReportParamMeta, ReportPeriod } from '@/services/reportService';
 
@@ -106,6 +128,34 @@ describe('ReportFilterBar period', () => {
   });
 });
 
+describe('ReportFilterBar custom dates', () => {
+  const period: ReportPeriod = { kind: 'custom', from: '2026-02-01', to: '2026-03-15' };
+
+  it('clears both ends when the picker is cleared', () => {
+    // Mapping a null end back onto the previous value made Clear a no-op: the button moved
+    // nothing on screen and the same range ran again.
+    const onChange = renderBar(periodParam([2026], { kind: 'year', year: 2026 }), period);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear dates' }));
+
+    expect(onChange).toHaveBeenCalledWith('period', { kind: 'custom', from: '', to: '' });
+  });
+
+  it('does not keep the old end when a new start is picked', () => {
+    // The first click of a two-click range carries a start only. Keeping the previous end
+    // can put the end BEFORE the start, which the backend answers with a 422.
+    const onChange = renderBar(periodParam([2026], { kind: 'year', year: 2026 }), period);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick a start' }));
+
+    expect(onChange).toHaveBeenCalledWith('period', {
+      kind: 'custom',
+      from: '2026-05-01',
+      to: '',
+    });
+  });
+});
+
 describe('ReportFilterBar month chips (AC-G1)', () => {
   it('offers All and the twelve months while the period is a year', () => {
     renderBar(periodParam([2025], { kind: 'year', year: 2025 }), { kind: 'year', year: 2025 });
@@ -147,7 +197,10 @@ describe('ReportFilterBar month chips (AC-G1)', () => {
     expect(onChange).toHaveBeenCalledWith('period', { kind: 'year', year: 2025 });
   });
 
-  it('replaces the Year, From and To controls while the range is one month', () => {
+  it('keeps Year, From and To beside the chips while the range is one month', () => {
+    // The chip and the selects describe the SAME period and must agree. Hiding them left a
+    // single month with no way out: Period read "Month range", so re-picking it changed
+    // nothing, and Mar could not become Mar..Jun without going back through All.
     renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
       kind: 'month_range',
       year: 2025,
@@ -155,9 +208,34 @@ describe('ReportFilterBar month chips (AC-G1)', () => {
       to_month: 3,
     });
 
-    expect(screen.queryByTestId('report-param-period-from')).toBeNull();
-    expect(screen.queryByTestId('report-param-period-to')).toBeNull();
-    expect(screen.queryByTestId('report-param-period-year')).toBeNull();
+    expect(screen.getByTestId('report-param-period-year')).toHaveValue('2025');
+    expect(screen.getByTestId('report-param-period-from')).toHaveValue('3');
+    expect(screen.getByTestId('report-param-period-to')).toHaveValue('3');
+    expect(screen.getByRole('button', { name: 'Mar' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('widens a single month into a range from the To control', () => {
+    const onChange = renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 3,
+    });
+
+    fireEvent.change(screen.getByTestId('report-param-period-to'), { target: { value: '6' } });
+
+    expect(onChange).toHaveBeenCalledWith('period', {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 6,
+    });
+  });
+
+  it('names the chip row for a screen reader', () => {
+    renderBar(periodParam([2025], { kind: 'year', year: 2025 }), { kind: 'year', year: 2025 });
+
+    expect(screen.getByRole('group', { name: 'Month' })).toBeInTheDocument();
   });
 
   it('leaves a multi-month range to the From and To controls', () => {
