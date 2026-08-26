@@ -51,7 +51,15 @@ class ReportViewsService:
         return ReportViews(mine=mine, shared=shared)
 
     def default_config(self, report_key: str) -> Optional[ReportViewConfig]:
-        """The shared default view's config, when a holder of the publish grant set one."""
+        """The shared default view's config, when a holder of the publish grant set one.
+
+        WITHOUT its period. A default view is what every user opens the report on, and the
+        period it happened to be saved with is a date, not a preference: saved in 2026, it
+        went on opening the report on 2026 through the whole of 2027 until somebody thought
+        to re-save it. Dropped here, the param's own default fills it in - "this year",
+        resolved per request. A view the user PICKS keeps its period, because picking a
+        saved view is how you ask for the year it covers.
+        """
         row = (
             self.db.query(ReportViewRow)
             .filter(
@@ -60,6 +68,16 @@ class ReportViewsService:
             )
             .first()
         )
+        if row is None:
+            return None
+        config = ReportViewConfig.model_validate(row.view)
+        return config.model_copy(
+            update={"params": {k: v for k, v in config.params.items() if k != "period"}}
+        )
+
+    def config_of(self, report_key: str, view_id: str) -> Optional[ReportViewConfig]:
+        """A stored view as it stands, for a caller that has to check it before acting."""
+        row = self._row(report_key, view_id)
         return ReportViewConfig.model_validate(row.view) if row else None
 
     # ----------------------------------------------------------------- writes
@@ -127,6 +145,11 @@ class ReportViewsService:
                 code="CONFLICT",
             )
         # Clear first: the partial unique index would otherwise reject the second default.
+        # Under a lock on this report's rows, because clear-then-set is two statements and
+        # two people pressing Set as default at the same moment both cleared, then both set.
+        self.db.query(ReportViewRow.id).filter(
+            ReportViewRow.report_key == report_key
+        ).with_for_update().all()
         self.db.query(ReportViewRow).filter(
             ReportViewRow.report_key == report_key,
             ReportViewRow.is_default.is_(True),
@@ -134,7 +157,16 @@ class ReportViewsService:
         ).update({"is_default": False}, synchronize_session=False)
         row.is_shared = True  # the report default is shared by definition
         row.is_default = True
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # The index is the arbiter, and the loser of a race is a conflict, not a crash.
+            self.db.rollback()
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                message="Another default was set at the same moment. Try again.",
+                code="CONFLICT",
+            )
         self.db.refresh(row)
         return self._to_schema(row, self._owner_names([row.owner_user_id]))
 

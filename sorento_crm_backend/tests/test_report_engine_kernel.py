@@ -186,6 +186,33 @@ def test_a_custom_period_includes_its_last_day(db, definition):
     assert [r["order_no"] for r in result.layouts.detail.rows] == ["Z-001"]
 
 
+def test_a_custom_period_is_labelled_the_way_the_crm_writes_dates(db, definition):
+    """The CRM writes DD/MM/YYYY everywhere. An ISO label leaked into the title block and
+    into the SUMMARY's own closing line: "GRAND TOTAL AMOUNT 2026-01-15 TO 2026-03-10"."""
+    from app.services.reports import engine
+
+    period = engine.resolve_period({"kind": "custom", "from": "2026-01-15", "to": "2026-03-10"})
+
+    assert period.label == "15/01/2026 to 10/03/2026"
+    assert period.compact_label == "15/01/2026 TO 10/03/2026"
+
+
+def test_a_year_outside_the_calendar_is_a_422_rather_than_a_500(db, definition):
+    """`date(0, 1, 1)` raises ValueError and `year + 1` on 9999 overflows, so a typed or
+    fuzzed year came back as a server error instead of an answer about the field."""
+    from fastapi import HTTPException
+
+    for period in (
+        {"kind": "year", "year": 0},
+        {"kind": "year", "year": 10000},
+        {"kind": "month_range", "year": 99999, "from_month": 1, "to_month": 2},
+    ):
+        with pytest.raises(HTTPException) as excinfo:
+            _run(db, definition, {"period": period})
+        assert excinfo.value.status_code == 422
+        assert "year" in str(excinfo.value.detail).lower()
+
+
 def test_a_select_param_filters_the_rows(db, definition):
     result = _run(db, definition, {"agent": ["Bob"]})
     assert [r["order_no"] for r in result.layouts.detail.rows] == ["Z-004", "Z-005"]

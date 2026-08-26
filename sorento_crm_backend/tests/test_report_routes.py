@@ -357,6 +357,35 @@ def test_export_goes_on_the_queue_the_settings_name(api, monkeypatch):
     assert queued["queue_name"] == "zzt_reports_lane"
 
 
+def test_the_export_filename_names_the_period_it_covers(api, monkeypatch):
+    """Jan, Feb and the whole year all exported as "<report>-2026.xlsx", so three files
+    landed in My Downloads under one name and only the timestamp told them apart."""
+    from app.services import queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda func, *a, **kw: object())
+    client, _allow = api
+
+    def _filename(period):
+        body = _run_body(params={**_config()["params"], "period": period})
+        resp = client.post(f"{BASE}/export", json=body)
+        assert resp.status_code == 200, resp.text
+        return resp.json()["filename"]
+
+    assert _filename({"kind": "year", "year": 2026}) == "Scratch orders-2026.xlsx"
+    assert (
+        _filename({"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 1})
+        == "Scratch orders-JAN'26.xlsx"
+    )
+    assert (
+        _filename({"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 3})
+        == "Scratch orders-JAN-MAR'26.xlsx"
+    )
+    # A custom range names its dates, with nothing a filesystem reads as a path.
+    custom = _filename({"kind": "custom", "from": "2026-01-15", "to": "2026-03-10"})
+    assert "15-01-2026" in custom and "10-03-2026" in custom
+    assert "/" not in custom
+
+
 def test_export_refuses_an_unknown_detail_column_at_the_button(api, db):
     """A bad view used to reach the worker: the user pressed Export, got a download row,
     and it failed a minute later in a drawer. The 422 belongs at the button."""
@@ -574,19 +603,103 @@ def test_views_are_403_without_the_report_permission(api):
     assert _create_view(client, "Nope").status_code == 403
 
 
+def test_a_view_the_report_cannot_run_is_refused_at_save(api, db):
+    """A view was persisted unvalidated, so an unrunnable one could be saved, published and
+    made everyone's default - and every /run after that answered 422."""
+    from app.models.report_view import ReportView as Row
+
+    client, _allow = api
+    resp = client.post(
+        f"{BASE}/views",
+        json={
+            "name": "Broken",
+            "view": _config(detail={"columns": ["no_such_column"], "order": []}),
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "no_such_column" in resp.json()["message"]
+    assert db.query(Row).count() == 0
+
+
+def test_a_stale_view_cannot_be_published_or_made_the_default(api, db):
+    """A view saved before a column left the catalog. Publishing it hands everyone a report
+    that cannot run; the 422 belongs on the person doing the publishing."""
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    stale = _config(pivot={"rows": "agent", "cols": "month", "measures": ["no_such_measure"]})
+    mine = _seed_other_view(db, name="Stale mine", is_shared=False, owner=_ME["id"], config=stale)
+    theirs = _seed_other_view(db, name="Stale theirs", is_shared=True, config=stale)
+
+    published = client.post(f"{BASE}/views/{mine}/publish", json={"is_shared": True})
+    assert published.status_code == 422, published.text
+    assert "no_such_measure" in published.json()["message"]
+    assert client.post(f"{BASE}/views/{theirs}/set-default").status_code == 422
+
+
+def test_the_shared_default_does_not_freeze_the_year_it_was_saved_in(api, db, monkeypatch):
+    """A default view saved in 2026 carried `period: 2026` in its params, so in 2027 every
+    user still opened the report on 2026 until somebody re-saved the view. A DEFAULT view
+    does not carry the period: the report's own default (this year) fills it in."""
+    from dataclasses import replace
+    from datetime import date
+
+    from app.services.reports import registry as reg
+
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    # As a real report declares it: "the year in front of the user", resolved per request.
+    definition = reg.get(KEY)
+    reg.register(
+        replace(
+            definition,
+            params=tuple(
+                replace(p, default=reg.current_year_period) if isinstance(p, reg.PeriodParam) else p
+                for p in definition.params
+            ),
+        )
+    )
+    view_id = _create_view(client, "House view").json()["id"]
+    client.post(f"{BASE}/views/{view_id}/set-default")
+    monkeypatch.setattr(reg, "today_malaysia", lambda: date(2027, 3, 1))
+
+    meta = client.get(BASE).json()
+    assert "period" not in meta["default_view"]["params"]
+    period_meta = next(p for p in meta["params"] if p["key"] == "period")
+    assert period_meta["default"] == {"kind": "year", "year": 2027}
+    # A view the user PICKS still opens on the period it was saved with.
+    saved = next(v for v in client.get(f"{BASE}/views").json()["mine"] if v["id"] == view_id)
+    assert saved["view"]["params"]["period"] == {"kind": "year", "year": 2026}
+
+
+def test_two_set_defaults_at_once_answer_409_rather_than_500(api, db, monkeypatch):
+    """The partial unique index is the arbiter, and the loser of a race used to get a 500."""
+    from sqlalchemy.exc import IntegrityError
+
+    client, allow = api
+    allow.add(PUBLISH_PERMISSION)
+    view_id = _create_view(client, "House view").json()["id"]
+
+    def _collide(*args, **kwargs):
+        raise IntegrityError("set default", None, Exception("uq_report_views_one_default"))
+
+    monkeypatch.setattr(db, "commit", _collide)
+    resp = client.post(f"{BASE}/views/{view_id}/set-default")
+    assert resp.status_code == 409, resp.text
+
+
 def test_a_view_for_an_unknown_report_is_404(api):
     client, _allow = api
     assert client.get("/api/v1/reports/zzt_no_such_report/views").status_code == 404
 
 
-def _seed_other_view(db, *, name: str, is_shared: bool) -> str:
+def _seed_other_view(db, *, name: str, is_shared: bool, owner=_OTHER_ID, config=None) -> str:
     from app.models.report_view import ReportView
 
     row = ReportView(
         report_key=KEY,
-        owner_user_id=_OTHER_ID,
+        owner_user_id=owner,
         name=name,
-        view=_config(),
+        view=config or _config(),
         is_shared=is_shared,
     )
     db.add(row)

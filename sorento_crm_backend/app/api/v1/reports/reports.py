@@ -11,7 +11,6 @@ a second module owns a report (PLAN-reporting-foundation, Architecture).
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import List
 
 from fastapi import APIRouter, Depends, Response, status
@@ -194,12 +193,23 @@ def run_report(
     return engine.run(db, definition, _params_of(body), body.view)
 
 
+#: Anything a filesystem or a Content-Disposition header reads as structure. The period
+#: label carries slashes on a custom range ("15/01/2026 TO 10/03/2026").
+_FILENAME_UNSAFE = str.maketrans({c: "-" for c in '/\\:*?"<>|'})
+
+
 def _export_filename(definition: reg.ReportDefinition, period: engine.Period) -> str:
-    if period.kind == "custom":
-        last = period.end_exclusive - timedelta(days=1)
-        suffix = f"{period.start.isoformat()}_{last.isoformat()}"
-    else:
+    """The file names the period it covers, the way the report's own labels do.
+
+    The year alone put January, February and the whole of 2026 in My Downloads under one
+    name, with only a timestamp to tell three different workbooks apart. A whole year is
+    still written as the year: "JAN-DEC'26" is the label a total row wants, not a filename.
+    """
+    if period.kind == "year":
         suffix = str(period.start.year)
+    else:
+        suffix = period.compact_label or str(period.start.year)
+    suffix = suffix.translate(_FILENAME_UNSAFE)
     return f"{definition.title}-{suffix}.xlsx"
 
 
@@ -264,6 +274,21 @@ def list_report_views(
     return ReportViewsService(db).list_for(key, str(current_user["id"]))
 
 
+def _validate_stored(
+    db: Session, definition: reg.ReportDefinition, view_id: str
+) -> None:
+    """A stored view, checked before it is handed to anybody else.
+
+    Save validates what the screen sent, but a view saved last year can name a column the
+    catalog has since lost. Publishing or defaulting one hands every user a report that
+    answers 422 on open, so the fault belongs to the person doing the publishing. A view
+    that does not exist is left to the service, which answers 404.
+    """
+    stored = ReportViewsService(db).config_of(definition.key, view_id)
+    if stored is not None:
+        engine.validate_view(definition, stored)
+
+
 @router.post("/{key}/views", response_model=ReportView)
 def create_report_view(
     key: str,
@@ -271,7 +296,10 @@ def create_report_view(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReportView:
-    _authorised(db, current_user, key)
+    definition = _authorised(db, current_user, key)
+    # A view is persisted for later, so it is validated now: an unrunnable one could
+    # otherwise be saved, published, made everyone's default, and 422 every run after that.
+    engine.validate_view(definition, body.view)
     return ReportViewsService(db).create(key, str(current_user["id"]), body.name, body.view)
 
 
@@ -296,9 +324,11 @@ def publish_report_view(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReportView:
-    _authorised(db, current_user, key)
+    definition = _authorised(db, current_user, key)
     _require_publish(db, current_user)
     validate_uuid_path(view_id, resource="View")
+    if body.is_shared:
+        _validate_stored(db, definition, view_id)
     return ReportViewsService(db).publish(key, view_id, str(current_user["id"]), body.is_shared)
 
 
@@ -310,7 +340,8 @@ def set_default_report_view(
     db: Session = Depends(get_db),
 ) -> ReportView:
     """Make one shared view the report default for everyone. At most one per report."""
-    _authorised(db, current_user, key)
+    definition = _authorised(db, current_user, key)
     _require_publish(db, current_user)
     validate_uuid_path(view_id, resource="View")
+    _validate_stored(db, definition, view_id)
     return ReportViewsService(db).set_default(key, view_id, str(current_user["id"]))

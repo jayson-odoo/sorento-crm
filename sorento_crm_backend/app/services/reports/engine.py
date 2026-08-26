@@ -129,6 +129,23 @@ def _months_between(start: date, end_exclusive: date) -> Tuple[str, ...]:
     return tuple(keys)
 
 
+#: The calendar a report can be asked about. Outside it, `date(year, 1, 1)` raises and
+#: `year + 1` overflows, so a typed or fuzzed year came back as a 500 rather than as an
+#: answer about the field the user filled in.
+_MIN_YEAR = 1900
+_MAX_YEAR = 2200
+
+
+def _checked_year(raw: Any) -> int:
+    try:
+        year = int(raw)
+    except (TypeError, ValueError):
+        raise _invalid(f"Invalid period: '{raw}' is not a year")
+    if not _MIN_YEAR <= year <= _MAX_YEAR:
+        raise _invalid(f"Invalid period: year {year} is outside {_MIN_YEAR}-{_MAX_YEAR}")
+    return year
+
+
 def _parse_date(value: Any, field_name: str) -> date:
     try:
         return date.fromisoformat(str(value))
@@ -142,10 +159,9 @@ def resolve_period(raw: Any) -> Period:
     kind = raw.get("kind")
 
     if kind == "year":
-        try:
-            year = int(raw["year"])
-        except (KeyError, TypeError, ValueError):
+        if "year" not in raw:
             raise _invalid("Invalid period: 'year' is required for a yearly period")
+        year = _checked_year(raw["year"])
         start, end = date(year, 1, 1), date(year + 1, 1, 1)
         suffix = str(year)[2:]
         return Period(
@@ -159,13 +175,17 @@ def resolve_period(raw: Any) -> Period:
 
     if kind == "month_range":
         try:
-            year = int(raw["year"])
             from_month = int(raw["from_month"])
             to_month = int(raw["to_month"])
         except (KeyError, TypeError, ValueError):
             raise _invalid(
                 "Invalid period: 'year', 'from_month' and 'to_month' are required for a month range"
             )
+        if "year" not in raw:
+            raise _invalid(
+                "Invalid period: 'year', 'from_month' and 'to_month' are required for a month range"
+            )
+        year = _checked_year(raw["year"])
         if not 1 <= from_month <= 12 or not 1 <= to_month <= 12 or from_month > to_month:
             raise _invalid(f"Invalid period: months {from_month} to {to_month}")
         start = date(year, from_month, 1)
@@ -191,7 +211,9 @@ def resolve_period(raw: Any) -> Period:
         if last < start:
             raise _invalid("Invalid period: 'to' is before 'from'")
         end = last + timedelta(days=1)
-        label = f"{start.isoformat()} to {last.isoformat()}"
+        # DD/MM/YYYY, the way the CRM writes a date everywhere else. The ISO form leaked
+        # into the title block and into the SUMMARY's own closing line.
+        label = f"{start.strftime('%d/%m/%Y')} to {last.strftime('%d/%m/%Y')}"
         return Period(
             kind, start, end, label, _months_between(start, end), label.upper()
         )
