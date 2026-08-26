@@ -494,3 +494,42 @@ def test_the_route_passes_the_ticks_through_to_the_service(scm_app):
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["demand_links"] and body["demand_links"][0]["qty"] == 40
+
+
+# --------------------------------------------------------------------------- #
+# Review finding 5 - an SPO take is subtracted ONCE
+# --------------------------------------------------------------------------- #
+
+
+def test_an_spo_take_does_not_come_off_the_line_twice():
+    """`create` advances the source line's own `qty_received` by what it pulls, so the take
+    is already out of `outstanding`. Counting it as `allocated` too took it off a second
+    time and reported a line with 40 still to come as having nothing free."""
+    from app.models.procurement import PurchaseOrder as PO
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        po = w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 60, supplier)])
+
+        svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 60,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 60}],
+            )],
+        )
+        db.flush()
+
+        block = PurchaseOrderService(db)._allocations_for(
+            db.query(PO).filter(PO.id == po.id).one()
+        )[0]
+
+        assert block["outstanding"] == 40
+        assert block["allocated"] == 0
+        assert block["free"] == 40
+        # And the take is still ON the panel - it is how the buyer learns where the 60 went.
+        assert [p["spo_number"] for p in block["placements"] if p["kind"] == "spo"]

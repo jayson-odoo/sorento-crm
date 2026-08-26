@@ -514,9 +514,13 @@ class PurchaseOrderService:
                 ),
             })
 
+        # NOT added to `allocated`. `spo_conversion_service.create` advances the source
+        # line's own `qty_received` by exactly what it pulls - the same write a shipment
+        # drawing down a PO makes - so the take is ALREADY out of `outstanding`. Counting
+        # it here as well took it off a second time: a 100-line with a 60 take read
+        # outstanding 40, allocated 60, free 0, when 40 is free. The row is still shown,
+        # because where the 60 went is the thing the buyer came here to learn.
         for line_id, spo_rows in self._spo_takes_of(list(lines)).items():
-            for spo_row in spo_rows:
-                allocated[line_id] = allocated.get(line_id, 0.0) + spo_row["qty"]
             placements.setdefault(line_id, []).extend(spo_rows)
 
         # In the order the DOCUMENT numbers its lines, so the panel reads down the same way
