@@ -519,17 +519,18 @@ function applyFrozen(contribution: BoardContribution): void {
 }
 
 /**
- * The ladder as the server states it, ladder v2's own order (section E of
- * `PLAN-demo-followups-19aug-ladder-v2.md`, S4 of the 19 August review): the read-only own
- * location, then Incoming, Pool, Group take, Group borrow, Cross-group borrow, Buy. The
- * own-location Reserve rung is GONE AS A SOURCE (rule 7) but stays as a read-only first
- * rung, because it is the one place the queue ahead of THIS line at ITS OWN pile is named -
- * `BoardTrailPopover`'s `QueueLink` opens exactly `fulfilment_warehouse_id`, which is this
- * rung's own location and nowhere else's.
+ * The proof as the server states it: LADDER V5's four questions plus Buy
+ * (`PLAN-scm-cs-planning-uat.md` section 1e), in the captain's own order - our own location,
+ * the pool, another location, the same agent's other order, Buy.
  *
- * This fixture only ever models one pool and one cross-group donor, so `group_take` and
- * `group_borrow` are always empty - which is exactly the case worth having in the tests,
- * because "checked and had nothing" is the reading the screen must not silently drop.
+ * Question 1 carries the QUEUE at this line's own pile (`ahead_*`), because the read-only
+ * `reserve_own` strip that used to name it is folded into it: `BoardTrailPopover`'s
+ * `QueueLink` opens exactly `fulfilment_warehouse_id`, which is that location and nowhere
+ * else's. There is no Incoming row at all - an SPO is inside question 1's own net.
+ *
+ * This fixture only ever models one pool and no cross-group donor, so questions 3 and 4 are
+ * always No - which is exactly the case worth having in the tests, because "checked and had
+ * nothing" is the reading the screen must not silently drop.
  */
 function trailFor(input: {
   location: string;
@@ -544,32 +545,21 @@ function trailFor(input: {
   buy: number;
 }): BoardTrailStep[] {
   const steps: BoardTrailStep[] = [];
-  let remaining = input.need;
 
   const add = (
     kind: BoardTrailStep['kind'],
-    fields: Omit<
-      Partial<BoardTrailStep>,
-      'step' | 'kind' | 'offered' | 'taken' | 'remaining_after'
-    > & { offered: number; taken: number },
+    question: string,
+    fields: Omit<Partial<BoardTrailStep>, 'step' | 'kind' | 'question' | 'took' | 'answer'> & {
+      took: number;
+    },
   ) => {
-    const wanted = remaining;
-    remaining = Math.max(remaining - fields.taken, 0);
-    const outcome: BoardTrailStep['outcome'] =
-      fields.outcome ??
-      (fields.taken > 0
-        ? 'took'
-        : wanted <= 0
-          ? 'none_needed'
-          : 'nothing_left');
     steps.push({
       ...fields,
       step: steps.length + 1,
       kind,
-      offered: fromMinor(fields.offered),
-      taken: fromMinor(fields.taken),
-      remaining_after: fromMinor(remaining),
-      outcome,
+      question,
+      answer: fields.took > 0 ? 'yes' : 'no',
+      took: fromMinor(fields.took),
     });
   };
 
@@ -579,66 +569,41 @@ function trailFor(input: {
     const key = leadingFactorOf(other, input.mine);
     byFactor[key] = (byFactor[key] ?? 0) + 1;
   }
-  // 0. Read-only: this line's own location. Never taken (rule 7), but the ONE rung that
-  // names the queue ahead of it, exactly as the real backend's `reserve_own` rung does.
-  add('reserve_own', {
+  add('own', 'Can we use our location?', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
-    opening: fromMinor(input.opening),
     ahead_qty: fromMinor(input.ahead.qty),
     ahead_lines: input.ahead.lines,
     ahead: named,
     ahead_more: Math.max(input.aheadLines.length - named.length, 0),
     ahead_by_factor: byFactor,
-    offered: input.offered,
-    taken: 0,
-    outcome: 'not_eligible',
-    why:
-      input.ahead.lines > 0
-        ? `${fromMinor(input.offered)} left at ${input.location} after ${fromMinor(input.ahead.qty)} outstanding to ${input.ahead.lines} line${input.ahead.lines === 1 ? '' : 's'} ranked ahead of this line. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`
-        : `${fromMinor(input.offered)} at ${input.location}, nothing ranked ahead of this line there. Never reserved: stock at ${input.location} is committed to whichever sales order is queued for it - borrow from another sales order instead.`,
+    took: 0,
+    why: 'This location carries no ownership group, so there is no group to take from.',
   });
-  add('incoming', {
+  add('pool', 'Can we take from the pool?', {
     location: input.location,
     warehouse_id: `wh-${input.location}`,
-    opening: '0',
-    offered: 0,
-    taken: 0,
-    why: 'No supplier PO arrives by 3 Sep 2026.',
-  });
-  add('pool', {
-    location: input.location,
-    warehouse_id: `wh-${input.location}`,
-    opening: fromMinor(input.opening),
-    offered: input.offered,
-    taken: input.reserved,
+    took: input.reserved,
+    from: input.reserved > 0 ? input.location : null,
     why:
       input.reserved > 0
         ? `${input.location} offers ${fromMinor(input.offered)}; this line takes ${fromMinor(input.reserved)}.`
         : input.offered > 0
           ? `${input.location} offers ${fromMinor(input.offered)}, but nothing is left for this line.`
-          : `No shared pool for this product.`,
+          : `No shared pool holds this product.`,
   });
-  add('group_take', {
-    offered: 0,
-    taken: 0,
-    note: 'no ownership group',
-    why: 'This location carries no ownership group, so there are no siblings to take from.',
+  add('cross_group_borrow', 'Can we borrow from another location?', {
+    took: 0,
+    why: 'No location outside this ownership group holds any of this item.',
   });
-  add('group_borrow', {
-    offered: 0,
-    taken: 0,
-    why: 'No other sales order in this ownership group is ranked below this line.',
+  add('group_borrow', "Can we borrow from the same agent's other order in this group?", {
+    took: 0,
+    why:
+      'No other sales order in this ownership group holds any of this item, so there is ' +
+      "nothing to borrow from a person's pick either.",
   });
-  add('cross_group_borrow', {
-    opening: '0',
-    offered: 0,
-    taken: 0,
-    why: 'No other location holds this product free.',
-  });
-  add('buy', {
-    offered: input.buy,
-    taken: input.buy,
+  add('buy', 'Buy the rest?', {
+    took: input.buy,
     why:
       input.buy > 0
         ? 'Nothing left to take, so the remainder is bought.'

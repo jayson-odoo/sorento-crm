@@ -229,8 +229,8 @@ describe('segmentsOf', () => {
     ]);
 
     expect(segments).toEqual([
-      { kind: 'buy', qty: '3' },
       { kind: 'own', qty: '721' },
+      { kind: 'buy', qty: '3' },
     ]);
   });
 
@@ -254,7 +254,7 @@ describe('describe', () => {
         { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' },
         { kind: 'buy', rung: 'buy', qty: '12' },
       ]),
-    ).toBe('Buy 12 · Shared 71 (BRW)');
+    ).toBe('Shared 71 (BRW) · Buy 12');
   });
 
   it('reads a SupplyComponent, which spells its warehouse source_location', () => {
@@ -285,7 +285,7 @@ describe('suggestionBreakdown', () => {
       ]),
     );
 
-    expect(rows.map((entry) => entry.label)).toEqual(['Buy', 'Use shared stock']);
+    expect(rows.map((entry) => entry.label)).toEqual(['Use shared stock', 'Buy']);
   });
 
   it('says nothing at all for a cell the ladder proposes nothing for', () => {
@@ -655,8 +655,8 @@ describe('what the bar is drawn from', () => {
     const half = cellSupply(cell([a, b]), { a: { verdict: 'approved' } });
     expect(half.decided).toBe(false);
     expect(half.segments).toEqual([
-      { kind: 'buy', qty: '10' },
       { kind: 'shared', qty: '30' },
+      { kind: 'buy', qty: '10' },
     ]);
 
     const whole = cellSupply(cell([a, b]), {

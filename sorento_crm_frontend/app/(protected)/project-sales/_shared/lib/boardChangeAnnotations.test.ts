@@ -190,7 +190,7 @@ describe('decisionWords', () => {
         ],
         'BRW-IB',
       ),
-    ).toBe('Buy 25 · Use own location 40 from BRW-IB');
+    ).toBe('Use own location 40 from BRW-IB · Buy 25');
   });
 });
 

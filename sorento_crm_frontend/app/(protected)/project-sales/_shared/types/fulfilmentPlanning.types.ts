@@ -623,63 +623,71 @@ export interface BoardDateBucket {
 export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
 
 /**
- * The rungs of the source ladder, in the order the engine walks them - ladder v2
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E, amended by review finding S4): the
- * read-only own location (`reserve_own`), then incoming, the pool, group take, group
- * borrow, cross-group borrow, then buy. The own-location rung is gone AS A SOURCE (rule
- * 7 - a line's own stock is never reserved), but it stays as the first rung, read-only:
- * it is the one place the queue ahead of THIS line at ITS OWN pile is named, because
- * `QueueLink`'s dialog opens exactly this rung's own location and nowhere else's.
- * `reserve_pool` / plain `borrow` are pre-v2 spellings, kept only so a stale cached trail
- * does not fail to render.
+ * The five rows of the proof, as INTERNAL KEYS - ladder v5
+ * (`PLAN-scm-cs-planning-uat.md` section 1e). Nothing renders these: the reader is shown
+ * `question`. `own` is question 1, the ownership group read as one pile, with the old
+ * read-only `reserve_own` strip folded into it (it existed to name the queue, which is one
+ * of that question's facts rather than a question of its own, and `QueueLink`'s dialog
+ * still opens exactly that location).
+ *
+ * `incoming` / `group_take` / `reserve_own` / `reserve_pool` / plain `borrow` are retired
+ * spellings, kept only so a stale cached trail does not fail to render.
  */
 export type BoardTrailKind =
-  | 'reserve_own'
-  | 'incoming'
+  | 'own'
   | 'pool'
-  | 'group_take'
-  | 'group_borrow'
   | 'cross_group_borrow'
+  | 'group_borrow'
   | 'buy'
+  | 'incoming'
+  | 'group_take'
+  | 'reserve_own'
   | 'reserve_pool'
   | 'borrow';
 
 /**
- * What happened at one rung.
+ * Did this question supply anything? One word, five times, so the proof can be scanned.
  *
- *   took          the source gave something
- *   nothing_left  it was checked and had nothing to give
- *   not_eligible  a RULE skipped it (hot-selling protects dealer stock; no shared pool exists)
- *   offered       found, and deliberately not taken - Borrow needs a donor and a person's reason
- *   none_needed   the line was already covered before the ladder reached it
+ * It replaced a five-valued `outcome` (`took` / `nothing_left` / `not_eligible` /
+ * `offered` / `none_needed`), which was five shades of the same two answers and put the
+ * reasoning in a pill instead of in the sentence. The distinction survives where it
+ * matters, in `why`.
  */
-export type BoardTrailOutcome =
-  | 'took'
-  | 'nothing_left'
-  | 'not_eligible'
-  | 'offered'
-  | 'none_needed';
+export type BoardTrailAnswer = 'yes' | 'no';
 
 /**
- * One rung of the ladder, as it was walked for one line (the captain: "can you justify how you
- * arrive at the buy, like what's the process you have gone through ... need more justification",
- * and then "the justification needs to be STRUCTURED instead of plain text").
+ * One of the four questions ladder v5 asks about a line, or Buy (the captain: "can you
+ * justify how you arrive at the buy ... need more justification", then "the justification
+ * needs to be STRUCTURED instead of plain text", then, on 26 August: "our thought process
+ * is simpler now").
  *
- * EVERY rung arrives, including the ones that gave nothing: "the pool was checked and had none"
- * is the answer to that question, and a step the server omitted would read as a step nobody took.
- * A line that cannot be planned carries an empty trail, because no ladder was walked for it.
+ * FIVE ROWS arrive, always, and every one is answered - "the pool was checked and had none"
+ * is the answer to that question, and a row the server omitted would read as a question
+ * nobody asked. A line that cannot be planned carries an empty trail, because no ladder was
+ * walked for it.
+ *
+ * THE FIGURES ARE INSIDE `why`: the group's net, the pile's net, the donor group's net, the
+ * cap. That is what retired `opening`, `offered` and `remaining_after` - eight columns of
+ * arithmetic a reader had to do themselves.
  */
 export interface BoardTrailStep {
-  /** 1-based, in the order the ladder walked. */
+  /** 1-based, in the order the questions are asked. */
   step: number;
+  /** The internal rung key. Addressing and test ids only - never rendered. */
   kind: BoardTrailKind;
+  /** The question, in the words a planner would ask it. */
+  question: string;
+  /** Whether this question supplied anything. */
+  answer: BoardTrailAnswer;
+  /** What the line took from it. */
+  took: string;
+  /** The warehouses it came from, comma-joined, or null on a No. */
+  from?: string | null;
   /** The source's warehouse code. Null for Buy, which is held nowhere, and for Borrow. */
   location?: string | null;
   /** The same warehouse by id. Addressing only, never rendered. */
   warehouse_id?: string | null;
-  /** What the source held when the ladder reached this line, before the demand ahead of it. */
-  opening?: string | null;
-  /** Own location only: what the queue in front of this line wants, and how long it is. */
+  /** Question 1 only: what the queue in front of this line wants, and how long it is. */
   ahead_qty?: string | null;
   ahead_lines?: number | null;
   /**
@@ -693,13 +701,6 @@ export interface BoardTrailStep {
   ahead?: BoardAheadLine[];
   ahead_more?: number;
   ahead_by_factor?: Record<string, number>;
-  /** What this source could give THIS line once its own rules were applied. */
-  offered: string;
-  /** What the line actually took. Always 0 for Borrow, which is offered and never proposed. */
-  taken: string;
-  /** Still uncovered after this step. Zero on the last one. */
-  remaining_after: string;
-  outcome: BoardTrailOutcome;
   /**
    * WHY it ended that way, in one plain sentence from the server. Never assembled here: the side
    * that walked the ladder is the side that knows, and a sentence written on the client would
@@ -1123,14 +1124,14 @@ export interface BoardSource {
   kind: BoardSourceKind;
   qty: string;
   /**
-   * WHICH LADDER composed this component, on a proposal frozen at confirm (`"v4"`).
+   * WHICH LADDER composed this component (`"v5"` today).
    *
    * A frozen suggestion outlives the rule that made it: "MWH-IB has 30 available in the IB
    * group" is a v3 sentence about ONE warehouse's availability, and under v4 that reading
-   * does not exist. Absent means the snapshot predates the stamp, which is exactly
-   * "suggested before ladder v4" - the screen labels it rather than passing it off as
-   * today's answer. Never set on the live ladder's own sources, which are today's by
-   * definition.
+   * does not exist. A LIVE source carries today's version, because it is today's answer by
+   * definition; a FROZEN one carries what was stamped when it was frozen, and is absent
+   * only on a snapshot older than the stamp itself. The screen labels anything that is not
+   * today's rather than passing it off as today's answer (AC-V8).
    */
   ladder?: string | null;
   /** Warehouse code for a Reserve; null for Buy, which has no location by definition. */

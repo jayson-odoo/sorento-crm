@@ -34,6 +34,7 @@ import {
   takenByLocation,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
+import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -145,18 +146,23 @@ export function BoardCellBreakdownDialog({
    *
    * A frozen proposal outlives the rule that made it, and its sentences say so - "MWH-IB
    * has 30 available in the IB group" is v3 reading ONE warehouse's availability, which
-   * under v4 is not a reading anybody makes. Shown as a short label on the card's own title
-   * rather than a sentence beside it: what a planner needs is to know they are looking at
-   * history, and a paragraph explaining ladder versions is a feature explanation in the UI.
+   * under v4 is not a reading anybody makes, and v5 has no Incoming rung for a sentence
+   * about an SPO to belong to. Shown as a short label on the card's own title rather than a
+   * sentence beside it: what a planner needs is to know they are looking at history, and a
+   * paragraph explaining ladder versions is a feature explanation in the UI.
    *
-   * Only a FROZEN proposal can be old. A live one is today's by definition, so an undecided
-   * cell never carries the label.
+   * ONLY A DECIDED LINE CAN CARRY IT (AC-V8). An undecided line shows the LIVE suggestion,
+   * which is today's answer by definition, and this used to appear on those too: the test
+   * was "no `ladder` key", the backend stamped the key on neither the live nor the frozen
+   * source, so every line on the board read as history.
    */
-  const suggestionIsPreV4 = React.useMemo(
+  const suggestionIsStale = React.useMemo(
     () =>
       cell.contributions.some(
         (entry) =>
-          entry.proposed?.components?.some((part) => !part.ladder) ?? false,
+          entry.covered &&
+          (entry.proposed?.components?.some((part) => part.ladder !== LADDER_VERSION) ??
+            false),
       ),
     [cell.contributions],
   );
@@ -574,7 +580,9 @@ export function BoardCellBreakdownDialog({
             <CompositionCard
               testId="cell-suggestion"
               rowTestId="suggestion"
-              title={suggestionIsPreV4 ? 'Suggestion (before ladder v4)' : 'Suggestion'}
+              title={
+                suggestionIsStale ? `Suggestion (before ladder ${LADDER_VERSION})` : 'Suggestion'
+              }
               rows={suggestion}
               empty={
                 suggestionRecorded

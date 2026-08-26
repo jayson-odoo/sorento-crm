@@ -462,7 +462,7 @@ describe('amendSummary: what the decided row reads', () => {
         },
         'BRW-BB',
       ),
-    ).toBe('Buy 13 · Own 20 BRW-BB · Borrow (other) 10 BRW-IB');
+    ).toBe('Own 20 BRW-BB · Borrow (other) 10 BRW-IB · Buy 13');
   });
 
   it('splits a reserve that draws on two different kinds of stock', () => {
@@ -481,7 +481,7 @@ describe('amendSummary: what the decided row reads', () => {
         },
         'BRW-BB',
       ),
-    ).toBe('Shared 71 BRW · Own 454 DC1-BB');
+    ).toBe('Own 454 DC1-BB · Shared 71 BRW');
   });
 
   it('names a borrow that states its donor order as a borrow from another order', () => {

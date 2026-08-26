@@ -133,16 +133,21 @@ describe('decisionStripTotals', () => {
     });
   });
 
-  it('carries a card per kind in the reading order, whether or not it has a quantity', () => {
-    // Fixed order, always five: what makes two boards comparable is that Buy is in the same
-    // place whether it is 300 or absent. A card that appeared and disappeared would move
-    // every card beside it.
+  it('carries a card per kind in ladder v5 own reading order (AC-V7)', () => {
+    // The order the engine asks its questions in: our own location, the pool, borrowing
+    // from another location, borrowing from another order, then Buy. It used to lead with
+    // Buy, which put the answer in front of the questions. `incoming` trails as history -
+    // nothing composed today is that kind, and a decided pre-v5 line still totals into it.
+    //
+    // Fixed, and always six: what makes two boards comparable is that each kind is in the
+    // same place whether it is 300 or absent. A card that came and went would move every
+    // card beside it.
     expect(decisionStripTotals([], {}).map((entry) => entry.kind)).toEqual([
-      'buy',
-      'shared',
       'own',
-      'borrow_order',
+      'shared',
       'borrow_other',
+      'borrow_order',
+      'buy',
       'incoming',
     ]);
   });

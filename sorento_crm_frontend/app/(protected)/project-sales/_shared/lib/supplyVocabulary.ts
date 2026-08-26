@@ -13,8 +13,8 @@
  * | -------------------- | -------------------------- | ------- |
  * | `group_take`         | Use own location           | emerald |
  * | `pool`               | Use shared stock           | sky     |
- * | `group_borrow`       | Borrow from another order  | amber   |
  * | `cross_group_borrow` | Borrow other location      | amber   |
+ * | `group_borrow`       | Borrow from another order  | amber   |
  * | `buy`                | Buy                        | rose    |
  * | `incoming`           | Incoming supply            | violet  |
  *
@@ -28,9 +28,24 @@
  * `fallbackRung`. A BORROW that carries no rung is read as a borrow instead - the group
  * reading would call a same-group donor "Use own location", and a borrow is never that.
  *
- * INCOMING IS ITS OWN KIND and is never folded into Buy: it is already bought and on its way,
- * so adding it to Buy would propose buying it twice.
+ * INCOMING IS HISTORY under ladder v5 (`PLAN-scm-cs-planning-uat.md` section 1e): the engine
+ * proposes no such component any more, because an SPO is inside the ownership group's net
+ * where AutoCount already counts it. The kind stays, and stays its own rather than being
+ * folded into Buy, because decisions frozen under v3 and v4 carry it and the board renders
+ * those: a snapshot is evidence of what was promised, and adding it to Buy would report a
+ * past promise as a purchase nobody made.
  */
+
+/**
+ * The ladder writing today's proposals, mirroring
+ * `app.services.project_supply_service.LADDER_VERSION`.
+ *
+ * Its one job is to tell a FROZEN suggestion apart from a live one: a snapshot stamped with
+ * anything else - or with nothing, from before the stamp existed - was composed under a rule
+ * that no longer runs, and the screen labels it as history rather than passing it off as
+ * today's answer (AC-V8).
+ */
+export const LADDER_VERSION = 'v5';
 import { fromMinor, toMinor } from './supplyComposition';
 import type {
   BoardCell,
@@ -89,15 +104,25 @@ export const COLOURS: Record<SupplyKind, { bar: string; text: string }> = {
 };
 
 /**
- * The fixed reading order. What keeps a card or a bar comparable between two cells is that
- * Buy is always in the same place, whether it is 300 or absent.
+ * The fixed reading order: LADDER V5's own (`PLAN-scm-cs-planning-uat.md` section 1e, AC-V7),
+ * so the cards read in the order the engine asks its questions - our own location, the pool,
+ * borrowing from another location, borrowing from another order, then Buy. It used to lead
+ * with Buy, which put the answer before the questions.
+ *
+ * `incoming` trails the five because it is HISTORY: nothing the engine composes today is that
+ * kind, and a board with no decided pre-v5 line on it shows the card at 0 and 0, disabled. It
+ * is not dropped, because a decided line frozen under an older ladder does carry the kind and
+ * a strip that omitted it would quietly stop totalling part of what was promised.
+ *
+ * What keeps a card or a bar comparable between two cells is that each kind is always in the
+ * same place, whether it is 300 or absent.
  */
 export const ORDER: SupplyKind[] = [
-  'buy',
-  'shared',
   'own',
-  'borrow_order',
+  'shared',
   'borrow_other',
+  'borrow_order',
+  'buy',
   'incoming',
 ];
 

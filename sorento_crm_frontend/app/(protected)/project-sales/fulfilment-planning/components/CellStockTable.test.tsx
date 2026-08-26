@@ -731,6 +731,52 @@ describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
     ).toBeNull();
   });
 
+  it('lists a donor group whole, with its own net as the subtotal (AC-V3)', () => {
+    // Ladder v5, section 1e. The ladder drew from DC1-NTC; the offer was the NTC GROUP's
+    // net, so BRW-NTC comes with it even though no proposal named it. Each row keeps its
+    // OWN signed available, and the subtotal is the group's net - which is what a reader
+    // needs to check "why only 100" against.
+    renderTable([
+      position({ location: 'BRW-BB', where: 'own', net: '-969', net_of: 'BB' }),
+      position({
+        location: 'DC1-NTC',
+        warehouse_id: 'wh-dc1-ntc',
+        where: 'other_group',
+        qty: '0',
+        qty_demand: '0',
+        qty_on_hand: '100',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '100',
+        net: '166',
+        net_of: 'NTC',
+      }),
+      position({
+        location: 'BRW-NTC',
+        warehouse_id: 'wh-brw-ntc',
+        where: 'other_group',
+        qty: '0',
+        qty_demand: '0',
+        qty_on_hand: '80',
+        so_qty: '14',
+        spo_qty: '0',
+        available_qty: '66',
+        net: '166',
+        net_of: 'NTC',
+      }),
+    ]);
+
+    // Both sites of the donor group are on screen, each with its own signed available.
+    expect(cellsOf('DC1-NTC')).toContain('100');
+    expect(cellsOf('BRW-NTC')).toContain('66');
+    // ONE subtotal for the group, carrying the group's net rather than the two rows added.
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-NTC').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('NTC group subtotal');
+    expect(screen.getByTestId('stock-subtotal-available-NTC').textContent).toBe('166');
+  });
+
   it('prints the site pools net rather than the pools on screen', () => {
     renderTable(ibGroup());
 

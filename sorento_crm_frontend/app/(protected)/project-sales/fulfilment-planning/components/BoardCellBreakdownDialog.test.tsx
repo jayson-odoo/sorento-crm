@@ -198,8 +198,9 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
     const labels = [...screen.getByTestId('cell-suggestion').querySelectorAll('[data-testid^="suggestion-"]')]
       .map((node) => node.textContent ?? '');
     expect(labels).toHaveLength(2);
-    expect(labels[0]).toContain('Buy');
-    expect(labels[1]).toContain('Use own location');
+    // Ladder v5's own order (AC-V7): the questions first, Buy last.
+    expect(labels[0]).toContain('Use own location');
+    expect(labels[1]).toContain('Buy');
   });
 
   it('splits the cell between what is taken and what is bought, and says from where', () => {
@@ -829,7 +830,7 @@ describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
     });
 
     expect(
-      screen.getByText('Buy 13 · Own 20 BRW-BB · Borrow (other) 10 BRW-IB'),
+      screen.getByText('Own 20 BRW-BB · Borrow (other) 10 BRW-IB · Buy 13'),
     ).toBeInTheDocument();
   });
 
@@ -1475,7 +1476,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     ].map((node) => node.textContent);
   }
 
-  it('walks every rung in order, including the ones that gave nothing', () => {
+  it('asks the four questions in order, and then Buy (AC-V1)', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
@@ -1484,54 +1485,40 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(button).toHaveAttribute('aria-label', 'How this decision was reached');
     openTrail(key);
 
-    const sources = [
+    const questions = [
       ...screen.getByTestId(`trail-${key}`).querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
-    expect(sources).toEqual([
-      'This location (BRW-BB)',
-      'Incoming (SPO)',
-      'Pool BRW-BB',
-      'Group take',
-      'Group borrow',
-      'Cross-group borrow',
-      'Buy',
+    expect(questions).toEqual([
+      'Can we use our location?',
+      'Can we take from the pool?',
+      'Can we borrow from another location?',
+      "Can we borrow from the same agent's other order in this group?",
+      'Buy the rest?',
     ]);
   });
 
-  it('states what each rung held, offered, gave, and what was still owed after it', () => {
-    // Ladder v2's whole-line rule (section E rule 6): the pool holds exactly what is owed, so
-    // it is proposed in full and the buy rung shows "Not needed" rather than a partial mix.
+  it('answers each question with a word, a quantity and a place', () => {
+    // The whole-line rule: the pool holds exactly what is owed, so it is proposed in full
+    // and Buy answers No rather than showing a partial mix.
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    // # | Source | Had | Ahead | For this line | Took | Still owed | Outcome
+    // # | Question | Answer | Took | From
     expect(stepCells(key, 'pool')).toEqual([
-      '3',
-      'Pool BRW-BB',
+      '2',
+      'Can we take from the pool?',
+      'Yes',
       '100',
-      '-',
-      '100',
-      '100',
-      '0',
-      'Took',
+      'BRW-BB',
     ]);
-    expect(stepCells(key, 'buy')).toEqual([
-      '7',
-      'Buy',
-      '-',
-      '-',
-      '0',
-      '0',
-      '0',
-      'Not needed',
-    ]);
+    expect(stepCells(key, 'buy')).toEqual(['5', 'Buy the rest?', 'No', '0', '-']);
   });
 
-  it('names the queue that was ahead of the line at its own location', () => {
-    // S4 of the 19 August review: the queue is named on the READ-ONLY own-location rung,
-    // never on the pool - the pool nets its own (different) book before it is offered.
+  it('carries the queue on question 1, and on no other question', () => {
+    // The read-only own-location strip is folded into question 1 under ladder v5: it is the
+    // one question with a queue, and the one `QueueLink`'s dialog can open.
     const lines = [
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
       demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
@@ -1541,28 +1528,26 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const second = cell.contributions[1].key;
     openTrail(second);
 
-    expect(stepCells(second, 'reserve_own')).toEqual([
-      '1',
-      'This location (BRW-BB)',
-      '70',
-      '60 across 1 line',
-      '10',
-      '0',
-      '40',
-      'Not eligible',
+    expect(stepCells(second, 'own').slice(1, 3)).toEqual([
+      'Can we use our location?',
+      'No',
     ]);
-    // The pool rung itself carries no queue of its own in this fixture.
-    expect(stepCells(second, 'pool')[3]).toBe('-');
+    expect(screen.getByTestId(`trail-queue-${second}`).textContent).toBe(
+      'View the queue (1 ahead)',
+    );
+    expect(screen.getAllByTestId(`trail-queue-${second}`)).toHaveLength(1);
   });
 
-  it('says a rung was skipped by a rule rather than leaving it out', () => {
+  it('answers a question a rule skipped rather than leaving it out', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     const key = cell.contributions[0].key;
     openTrail(key);
 
-    expect(stepCells(key, 'group_take')).toContain('Nothing left');
-    expect(screen.getByText('no ownership group')).toBeInTheDocument();
+    expect(stepCells(key, 'own')).toContain('No');
+    expect(
+      screen.getByTestId(`trail-why-${key}-own`).textContent,
+    ).toContain('no ownership group');
   });
 
   it('says there is no plan at all for a line whose order states no location', () => {
@@ -1619,38 +1604,29 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     );
   }
 
-  it('says in words why each rung ended the way it did', () => {
-    // S4 of the 19 August review: the queue's own sentence lives on the READ-ONLY own
-    // location rung, the one rung `BoardTrailPopover` opens the whole queue from.
+  it('says in words why each question ended the way it did', () => {
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
     const last = cell.contributions[cell.contributions.length - 1].key;
     openTrail(last);
 
-    const trail = screen.getByTestId(`trail-${last}`);
-    expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
-    );
-    expect(trail.textContent).toContain(
-      'stock at BRW-BB is committed to whichever sales order is queued for it',
+    expect(screen.getByTestId(`trail-why-${last}-own`).textContent).toContain(
+      'no ownership group',
     );
     expect(screen.getByTestId(`trail-why-${last}-buy`).textContent).toBe(
       'Nothing left to take, so the remainder is bought.',
     );
   });
 
-  it('does not repeat the queue as a list - the rung sentence already gave the count', () => {
+  it('does not repeat the queue as a list - the link already gives the count', () => {
     // The captain: "the explanation ... Ahead of this line ... is not needed, cause you already
-    // told me how many lines ahead, that's fine" - the sentence stays, the repeated list goes.
+    // told me how many lines ahead, that's fine" - the count stays, the repeated list goes.
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
     const last = cell.contributions[cell.contributions.length - 1].key;
     openTrail(last);
 
     const trail = screen.getByTestId(`trail-${last}`);
-    expect(trail.textContent).toContain(
-      '0 left at BRW-BB after 400 outstanding to 4 lines ranked ahead of this line.',
-    );
     expect(trail.textContent).not.toContain('Ahead of this line');
     expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
     expect(screen.queryByTestId(`trail-ahead-${last}`)).not.toBeInTheDocument();
@@ -1684,9 +1660,6 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const contribution = cell.contributions[0];
     const borrow = contribution.trail?.find((step) => step.kind === 'cross_group_borrow');
     Object.assign(borrow ?? {}, {
-      opening: '25',
-      offered: '25',
-      outcome: 'offered',
       note: 'MWH-IB 20 · BRW 5',
       why: 'Borrowing is never automatic: a person names the donor and the reason. Use Amend to borrow.',
     });
@@ -1843,10 +1816,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     Object.assign(pool ?? {}, {
       location: 'BRW',
       warehouse_id: 'wh-BRW',
-      opening: '0',
-      offered: '0',
-      taken: '0',
-      outcome: 'nothing_left',
+      answer: 'no',
+      took: '0',
+      from: null,
       note: null,
       why: "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
       pool: {
@@ -1868,7 +1840,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    expect(stepCells(contribution.key, 'pool').slice(1, 3)).toEqual(['Pool BRW', '0']);
+    expect(stepCells(contribution.key, 'pool').slice(1, 4)).toEqual([
+      'Can we take from the pool?',
+      'No',
+      '0',
+    ]);
     expect(screen.getByTestId(`trail-why-${contribution.key}-pool`).textContent).toBe(
       "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
     );
@@ -1886,7 +1862,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(key);
 
     expect(screen.getByTestId(`trail-why-${key}-pool`).textContent).toBe(
-      'No shared pool for this product.',
+      'No shared pool holds this product.',
     );
     expect(screen.queryByTestId(`trail-pool-${key}`)).not.toBeInTheDocument();
   });
@@ -1989,7 +1965,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     renderDialog([covered()]);
 
     expect(
-      screen.getByText('Confirmed rev 1 · Buy 33 · Borrow (other) 10 MWH-IB'),
+      screen.getByText('Confirmed rev 1 · Borrow (other) 10 MWH-IB · Buy 33'),
     ).toBeInTheDocument();
   });
 
@@ -2185,8 +2161,8 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
 
   it('labels a frozen suggestion that a ladder no longer in use composed', () => {
     // "MWH-IB has 30 available in the IB group" is v3 reading ONE warehouse's own
-    // availability; under v4 that is not a reading anybody makes. The stamp's ABSENCE is
-    // what says so, because a snapshot written before the stamp existed cannot carry it.
+    // availability; under v4 that is not a reading anybody makes, and v5 has no Incoming
+    // rung at all. A stamp that is not today's - absent, or an older version - says so.
     const base = cellOf([demand({ qty: '60' })]);
     const stale: BoardContribution['sources'] = [
       {
@@ -2218,7 +2194,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     );
 
     const card = screen.getByTestId('cell-suggestion');
-    expect(card).toHaveTextContent('Suggestion (before ladder v4)');
+    expect(card).toHaveTextContent('Suggestion (before ladder v5)');
     // One short label and no sentence: what a planner needs is to know they are reading
     // history, not a paragraph about ladder versions.
     expect(card).not.toHaveTextContent(/no longer/);
@@ -2226,10 +2202,56 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
 
   it('leaves a suggestion the current ladder composed unlabelled', () => {
     renderWithSources([
-      { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+      {
+        kind: 'reserve',
+        rung: 'pool',
+        qty: '71',
+        location: 'BRW',
+        ladder: 'v5',
+        reason: 'The pool covers it.',
+      },
     ]);
 
-    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder v4');
+    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder');
+  });
+
+  it('never labels an UNDECIDED line, whatever its suggestion carries (AC-V8)', () => {
+    // A line with no decision shows the LIVE suggestion, which is today's answer by
+    // definition. This is the bug the criterion is about: the test used to be "no `ladder`
+    // key", the server stamped the key on neither the live nor the frozen source, and the
+    // label therefore appeared on every line on the board.
+    const base = cellOf([demand({ qty: '60' })]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={{
+            ...base,
+            contributions: base.contributions.map((entry) => ({
+              ...entry,
+              covered: false,
+              proposed: {
+                components: [
+                  {
+                    kind: 'reserve',
+                    rung: 'group_take',
+                    qty: '60',
+                    location: 'MWH-IB',
+                    reason: 'The IB group nets 60.',
+                  },
+                ],
+              },
+            })),
+          }}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder');
   });
 
   it('tells the two borrows apart by rung (AC-A3)', () => {
