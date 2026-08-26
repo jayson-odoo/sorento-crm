@@ -6598,6 +6598,9 @@ class ConversationSLATrackingService:
             upload_chat_attachment,
         )
         from app.services.respond_messaging_service import get_window_state
+        from app.services.conversation_thread_service import (
+            mirror_outgoing_send as _mirror_outgoing_send,
+        )
 
         clean_text = (text or "").strip()
         if not clean_text and not files:
@@ -6635,6 +6638,13 @@ class ConversationSLATrackingService:
                 )
                 first_respond_response = caption_result.get("response")
                 anything_delivered = True
+                _mirror_outgoing_send(
+                    self.db,
+                    identifier=identifier,
+                    respond_contact_id=respond_contact_id,
+                    response=caption_result.get("response"),
+                    message={"type": "text", "text": caption_result.get("rendered_text") or clean_text},
+                )
 
             # Sequential, never all-or-nothing: a failure on file N must not
             # undo files 1..N-1, which already reached the contact. Stop at
@@ -6668,6 +6678,20 @@ class ConversationSLATrackingService:
                         first_respond_response = (
                             response if isinstance(response, dict) else None
                         )
+                    _mirror_outgoing_send(
+                        self.db,
+                        identifier=identifier,
+                        respond_contact_id=respond_contact_id,
+                        response=sent.get("response"),
+                        message={
+                            "type": "attachment",
+                            "attachment": {
+                                "type": uploaded["kind"],
+                                "url": uploaded["url"],
+                                "fileName": filename,
+                            },
+                        },
+                    )
                 except AppException as e:
                     # AppException.detail is always the {message, detail, code}
                     # dict (see error_handler.AppException.__init__) - prefer
@@ -6719,6 +6743,13 @@ class ConversationSLATrackingService:
             window_state = result["window_state"]
             first_respond_response = result.get("response")
             anything_delivered = True
+            _mirror_outgoing_send(
+                self.db,
+                identifier=identifier,
+                respond_contact_id=respond_contact_id,
+                response=result.get("response"),
+                message={"type": "text", "text": rendered_text or clean_text},
+            )
 
         return {
             "sent_as": sent_as,

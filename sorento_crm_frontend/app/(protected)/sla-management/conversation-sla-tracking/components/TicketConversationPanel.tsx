@@ -336,11 +336,25 @@ export default function TicketConversationPanel({
           }
           sendAdapter={
             ticket
-              ? (payload) =>
-                  sendMutation.mutateAsync({
+              ? async (payload) => {
+                  // Optimistic send: the bubble is on screen before the
+                  // request completes; the backend writes the outgoing row at
+                  // send time, so the refetch swaps it for the real message.
+                  const pendingKey = thread.addPending({
                     text: payload.text,
-                    attachments: payload.files,
-                  })
+                    files: payload.files,
+                  });
+                  try {
+                    const result = await sendMutation.mutateAsync({
+                      text: payload.text,
+                      attachments: payload.files,
+                    });
+                    await threadQuery.refetch();
+                    return result;
+                  } finally {
+                    thread.removePending(pendingKey);
+                  }
+                }
               : undefined
           }
           notAvailableMessage={notAvailableMessage}
