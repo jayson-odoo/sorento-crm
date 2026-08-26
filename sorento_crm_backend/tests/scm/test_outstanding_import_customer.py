@@ -30,14 +30,22 @@ from app.models.order import Customer
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
-from tests.scm._outstanding_workbooks import Codes, make_codes, seed_catalogue
+from tests.scm._outstanding_workbooks import (
+    Codes,
+    make_codes,
+    seed_catalogue,
+    so_headers,
+    so_row,
+)
 
 MARKER = "ZZTCUS"
 
 #: The columns this file needs: the document, who it is for, the line, and the SO DATE
 #: whose fill is under test.
-HEADERS = ("S/O NO", "SO DATE", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
-           "STOCK LOCATION")
+# The ORDER TYPE column comes from `so_headers`: since QP1 an SO upload naming an order
+# nothing can classify is refused outright, and these debtor codes are invented per run.
+HEADERS = so_headers("S/O NO", "SO DATE", "DEBTOR CODE", "ITEM CODE", "QTY",
+                     "DELIVERY DATE", "STOCK LOCATION")
 
 
 @pytest.fixture()
@@ -76,8 +84,8 @@ def _upload(codes: Codes, debtor: str, *, so_date=date(2026, 5, 4), qty: float =
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.append(list(HEADERS))
-    ws.append([doc or codes.project_so, so_date, debtor, codes.item_rl, qty,
-               date(2026, 7, 1), codes.loc_project])
+    ws.append(list(so_row(doc or codes.project_so, so_date, debtor, codes.item_rl, qty,
+                          date(2026, 7, 1), codes.loc_project)))
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()

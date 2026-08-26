@@ -25,6 +25,7 @@ from sqlalchemy import text
 from app.models.access import MarketSegment
 from app.models.order import Customer, SalesOrder
 from app.services.scm import outstanding_import_service as svc
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
 from tests.scm._outstanding_workbooks import (
@@ -95,7 +96,7 @@ def _demand_class(db, so_number: str):
 def _customer_with_segment(db, stem: str) -> str:
     """A customer whose market segment code carries `stem`, returning its customer code.
 
-    `_demand_class_for` matches "project" / "contract" as a substring of the segment code,
+    `_class_of` matches "project" / "contract" as a substring of the segment code,
     so a marker-prefixed code classifies exactly as a production one does while still
     belonging to this test.
     """
@@ -155,7 +156,7 @@ def test_a_dealer_order_is_stamped_the_default_class_from_its_order_type(db, see
     out = svc.apply(db, _upload(seeded, seeded.dealer_so, "300-A031"), SO)
 
     assert out["ok"]
-    assert _demand_class(db, seeded.dealer_so) == svc.DEFAULT_DEMAND_CLASS
+    assert _demand_class(db, seeded.dealer_so) == DEFAULT_DEMAND_CLASS
 
 
 # --------------------------------------------------------------------------- #
@@ -235,14 +236,15 @@ def test_a_demand_class_already_set_survives_an_upload_that_cannot_resolve_one(d
 # --------------------------------------------------------------------------- #
 
 def test_a_customer_carrying_a_project_segment_still_reads_as_project(db, seeded):
-    """The fallback is a demotion of this function, not a rewrite of it.
+    """The fallback is a demotion of this rule, not a rewrite of it.
 
-    `_demand_class_for` is the only place the segment vocabulary lives, and it stays the
-    fallback's implementation. Green before the change and after: if it goes red, the
-    fallback's meaning moved rather than its priority.
+    `_class_of` over `_segment_of` is the only place the segment vocabulary lives, and it
+    stays the fallback's implementation. Green before the change and after: if it goes red,
+    the fallback's meaning moved rather than its priority. There is no defaulting wrapper
+    to call here any more (QP1): the import refuses what it cannot classify.
     """
     project = _customer_with_segment(db, "PROJECT")
     retail = _customer_with_segment(db, "RETAIL")
 
-    assert svc._demand_class_for(db, project) == "project"
-    assert svc._demand_class_for(db, retail) == svc.DEFAULT_DEMAND_CLASS
+    assert svc._class_of(svc._segment_of(db, project)) == "project"
+    assert svc._class_of(svc._segment_of(db, retail)) == "retail"

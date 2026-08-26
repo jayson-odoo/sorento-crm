@@ -27,9 +27,20 @@ from sqlalchemy import text
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
-from tests.scm._outstanding_workbooks import Codes, make_codes, seed_catalogue, workbook
+from tests.scm._outstanding_workbooks import (
+    Codes,
+    make_codes,
+    seed_catalogue,
+    so_headers,
+    so_row,
+    workbook,
+)
 
-HEADERS = ("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION")
+# `so_headers` / `so_row` append the ORDER TYPE column and its value: since QP1 an SO
+# upload naming an order nothing can classify is refused outright, and this file's
+# debtor carries no market segment.
+HEADERS = so_headers("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
+                     "STOCK LOCATION")
 
 DUE = date(2026, 7, 1)
 
@@ -50,7 +61,7 @@ def seeded(db):
 def _file(codes: Codes, *quantities: float) -> bytes:
     """One document, one item, one location, one date - stated once per quantity given."""
     return workbook(
-        [(codes.project_so, "300-T012", codes.item_rl, qty, DUE, codes.loc_project)
+        [so_row(codes.project_so, "300-T012", codes.item_rl, qty, DUE, codes.loc_project)
          for qty in quantities],
         headers=HEADERS,
     )
