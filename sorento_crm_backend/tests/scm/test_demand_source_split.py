@@ -5,10 +5,17 @@
 >  company should buy ... order inquiry is only for project side. So for dealer side is
 >  exactly based on the sales order."
 
-The engine sits in purchasing's chair. CS has already turned project sales orders into an
-Order Inquiry, so a project SO the inquiry never named is CS saying "not yet" - it is NOT
-demand, and it is SET ASIDE AND COUNTED (user decision, 2026-08-10) rather than silently
-dropped. Retail carries no such filter: the outstanding book is the demand.
+The engine sits in purchasing's chair. CS turns project sales orders into an Order Inquiry,
+so a project SO CS has not decided on is CS saying "not yet" - it is NOT demand, and it is
+SET ASIDE AND COUNTED (user decision 2026-08-10, widened by P3 on 26 Aug 2026) rather than
+silently dropped. Retail carries no such filter: the outstanding book is the demand.
+
+P3 made "the inquiry named it" mean the inquiry's own RAISED ROW rather than the
+`demand_origin` stamp. The old sheet leg counted an order the legacy feed created even
+while nobody had decided it on the fulfilment board, which is how M310-CR-PJ showed 16
+units of Project demand with every one of its inquiry rows already placed. So a
+sheet-origin order is now set aside exactly like any other undecided project order, and the
+stamp survives only as provenance.
 
 ## Why origin is its own column
 
@@ -41,11 +48,13 @@ def _committed(db, product_id: str) -> float:
 # what counts as demand
 # --------------------------------------------------------------------------- #
 
-def test_a_project_order_the_inquiry_created_is_demand(world):
+def test_a_sheet_origin_project_order_is_not_demand_either(world):
+    """P3: the origin stamp is provenance, not a decision. Only a raised Order Inquiry row
+    makes project demand, and this order has none."""
     db = world["db"]
     world["order"]("SO-OI", demand_class="project", demand_origin="scm_order_inquiry", qty=40)
 
-    assert _committed(db, world["product"].id) == 40
+    assert _committed(db, world["product"].id) == 0
 
 
 def test_a_project_order_no_inquiry_named_is_not_demand(world):
@@ -63,9 +72,10 @@ def test_a_retail_order_is_demand_straight_from_the_book(world):
     assert _committed(db, world["product"].id) == 25
 
 
-def test_an_unclassified_order_still_counts_rather_than_vanishing(world):
-    """demand_class NULL means "nobody said", and the importer already reports it. Making
-    it also silently non-demand would punish the same gap twice, the second time invisibly."""
+def test_an_order_with_no_class_counts_as_retail_rather_than_vanishing(world):
+    """demand_class NULL means "nobody said", and it reads as retail (P4) - the book-direct
+    channel. Making it silently non-demand would punish the same gap twice, the second time
+    invisibly; giving it a column of its own gave the plan a figure nobody could act on."""
     db = world["db"]
     world["order"]("SO-NULL", demand_class=None, demand_origin=None, qty=7)
 
@@ -74,9 +84,12 @@ def test_an_unclassified_order_still_counts_rather_than_vanishing(world):
 
 def test_adoption_moves_ownership_without_deleting_the_demand(world):
     """The CS book adopts an inquiry order: `source_system` flips to scm_upload, and the
-    demand MUST survive, because origin is its own column."""
+    demand MUST survive, because origin is its own column.
+
+    Read on a RETAIL order since P3 - a project one contributes nothing either way now, so
+    it could no longer tell the adoption bug apart from the split working."""
     db = world["db"]
-    so = world["order"]("SO-ADOPT", demand_class="project",
+    so = world["order"]("SO-ADOPT", demand_class="retail",
                         demand_origin="scm_order_inquiry", qty=40)
     before = _committed(db, world["product"].id)
 
@@ -104,11 +117,12 @@ def test_set_aside_project_demand_is_counted_and_named(world):
 
     report = set_aside_project_demand(db, product_ids=[str(world["product"].id)])
 
-    assert report["orders"] == 2
-    assert report["quantity"] == 42
+    # All three, since P3: the sheet-origin order is awaiting CS exactly like the two the
+    # inquiry never named. Before, it was netted and this report said 2 / 42.
+    assert report["orders"] == 3
+    assert report["quantity"] == 51
     numbers = {s["so_number"] for s in report["sample"]}
-    assert f"{MARKER}-SO-RAW1" in numbers and f"{MARKER}-SO-RAW2" in numbers
-    assert f"{MARKER}-SO-OI1" not in numbers
+    assert {f"{MARKER}-SO-RAW1", f"{MARKER}-SO-RAW2", f"{MARKER}-SO-OI1"} <= numbers
 
 
 def test_a_clean_book_reports_zero_rather_than_failing(world):
