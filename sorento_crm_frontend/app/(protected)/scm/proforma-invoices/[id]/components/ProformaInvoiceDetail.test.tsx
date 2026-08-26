@@ -42,8 +42,18 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The WHOLE surface the components under test call. `ConfirmDeleteDialog` reports through
+// `toast.custom`, and a mock without it threw inside react-query's own error path - which
+// surfaced as an unhandled rejection that failed no test and hid any real one behind it.
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
+  },
 }));
 
 const state = {
@@ -377,6 +387,11 @@ describe('F5 - volume, and adjusting the invoice to fit the container', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(writes.removeLine).toHaveBeenCalledWith('line-1'));
+    // And the dialog has finished with it - otherwise a rejection lands after the test
+    // ends, where it fails nothing and hides the next real one.
+    await waitFor(() =>
+      expect(screen.queryByText(/This removes ITEM-1 from/)).not.toBeInTheDocument(),
+    );
   });
 
   it('offers no Edit on an invoice already in a packing list', () => {

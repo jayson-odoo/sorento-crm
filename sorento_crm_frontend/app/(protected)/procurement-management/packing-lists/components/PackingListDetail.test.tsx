@@ -19,8 +19,17 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => searchParams.value,
 }));
 
+// `ConfirmDeleteDialog` reports through `toast.custom`; a mock without it threw inside
+// react-query's error path and surfaced as an unhandled rejection that failed no test.
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
+  },
 }));
 
 const state = {
@@ -419,6 +428,11 @@ describe('F9 - the packing list edits in place', () => {
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() =>
       expect(screen.queryByLabelText('Quantity for SRTWT7443')).not.toBeInTheDocument(),
+    );
+    // The dialog has closed, so its mutation has settled - a rejection after the test ends
+    // fails nothing and hides the next real one.
+    await waitFor(() =>
+      expect(screen.queryByText(/This removes SRTWT7443 from/)).not.toBeInTheDocument(),
     );
     expect(updatePackingList).not.toHaveBeenCalled();
   });
