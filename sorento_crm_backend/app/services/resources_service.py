@@ -468,6 +468,12 @@ class AttachmentTypeService:
         return attachment_type
 
 
+# Form/entity attachments stay company-less on purpose so they remain readable
+# from every company (AC-G3). Everything else uploaded under one active company
+# belongs to that company, folder or not.
+_SHARED_FORM_ENTITY_TYPES = frozenset({"complaint", "purchase_request", "stock_inquiry"})
+
+
 class AttachmentService:
     """Service for attachment operations."""
     
@@ -1805,24 +1811,22 @@ class AttachmentService:
         else:
             attachment_dict["full_directory_path"] = None
 
-        # Multi-company: stamp the ACTIVE company on a positively-owned attachment.
-        # Attachments are ``__company_shared__``, so the before_insert auto-stamp
-        # deliberately skips them entirely - every upload, in every company, landed
-        # with company_id NULL. For attachments NULL means SHARED (the predicate is
-        # ``company_id IS NULL OR company_id IN (scope)``), so a file uploaded while
-        # switched into Mocha was visible from Sorento too, and - because
+        # Multi-company: stamp the ACTIVE company on the upload. Attachments are
+        # ``__company_shared__``, so the before_insert auto-stamp deliberately skips
+        # them entirely and every upload, in every company, landed with company_id
+        # NULL. For attachments NULL is not neutral, it means SHARED (the predicate
+        # is ``company_id IS NULL OR company_id IN (scope)``), so a file uploaded
+        # while switched into Mocha was visible from Sorento too, and because
         # ``scope_to_attachment_company`` pins the n8n binding scope off this column
-        # - the packing list n8n created from it stamped the incumbent company
-        # instead of Mocha.
+        # the packing list n8n created from it stamped the incumbent company instead
+        # of Mocha.
         #
-        # "Positively owned" mirrors migration 302's own backfill predicate
-        # (directory_id present, or a product/promotion attachment) translated to
-        # what is knowable at upload time. Form/entity attachments (complaint, PR,
-        # stock inquiry) keep NULL so they stay shared across companies (AC-G3).
+        # Anything uploaded while exactly one company is active belongs to that
+        # company, folder or not: a file dropped at the root of All files is just as
+        # owned as one filed away. Only the shared form entity types keep NULL.
         if attachment_dict.get("company_id") is None:
             entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
-            positively_owned = bool(directory_id) or entity_type in {"promotion", "product"}
-            if positively_owned:
+            if entity_type not in _SHARED_FORM_ENTITY_TYPES:
                 scope = get_company_scope(self.db)
                 # Only an unambiguous single active company may be stamped; UNSET /
                 # all-companies / multi-company stay NULL rather than guess.
