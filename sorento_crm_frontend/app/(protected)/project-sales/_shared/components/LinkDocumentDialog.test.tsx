@@ -27,10 +27,15 @@ vi.mock('../services/orderInquiryService', async (importOriginal) => {
   };
 });
 
-import { PlaceOnPoDialog } from './PlaceOnPoDialog';
+import { LinkDocumentDialog } from './LinkDocumentDialog';
 
 const EARLY: OrderInquiryPoCandidate = {
+  kind: 'po',
   po_line_id: 'po-line-early',
+  tier: 1,
+  location: 'BRW-IB',
+  issue_date: '2026-08-01',
+  cited: false,
   po_number: 'ZZT-PO-0001',
   supplier_name: 'Dafuyuan',
   expected_date: '2026-09-01',
@@ -45,7 +50,12 @@ const EARLY: OrderInquiryPoCandidate = {
 };
 
 const LATER: OrderInquiryPoCandidate = {
+  kind: 'po',
   po_line_id: 'po-line-later',
+  tier: 3,
+  location: 'BRW',
+  issue_date: '2026-08-05',
+  cited: false,
   po_number: 'ZZT-PO-0002',
   supplier_name: 'Another Factory',
   expected_date: '2026-09-15',
@@ -72,12 +82,12 @@ beforeEach(() => {
   placeOrderInquiryRowOnPoAllocations.mockReset();
 });
 
-describe('PlaceOnPoDialog: loading, empty and error states', () => {
+describe('LinkDocumentDialog: loading, empty and error states', () => {
   it('shows a skeleton while the candidates are loading', () => {
     getOrderInquiryPoCandidates.mockReturnValue(new Promise(() => {}));
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     expect(screen.queryByTestId('po-candidates-table')).not.toBeInTheDocument();
@@ -88,33 +98,33 @@ describe('PlaceOnPoDialog: loading, empty and error states', () => {
     getOrderInquiryPoCandidates.mockResolvedValue([]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     expect(await screen.findByTestId('po-candidates-empty')).toHaveTextContent(
-      'No outstanding purchase order line holds this item.',
+      'No outstanding purchase order line or SPO allocation holds this item.',
     );
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 
   it('shows the error rather than an empty table when the candidates fail to load', async () => {
-    getOrderInquiryPoCandidates.mockRejectedValue(new Error('Failed to load purchase order lines'));
+    getOrderInquiryPoCandidates.mockRejectedValue(new Error('Failed to load candidate lines'));
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
-    expect(await screen.findByText('Could not load purchase order lines')).toBeInTheDocument();
-    expect(screen.getByText('Failed to load purchase order lines')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load candidate lines')).toBeInTheDocument();
+    expect(screen.getByText('Failed to load candidate lines')).toBeInTheDocument();
   });
 });
 
-describe('PlaceOnPoDialog: the cascade preview', () => {
+describe('LinkDocumentDialog: the cascade preview', () => {
   it('opens with each line pre-filled at its own cascade take', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
@@ -122,90 +132,90 @@ describe('PlaceOnPoDialog: the cascade preview', () => {
     const laterInput = screen.getByLabelText('Take off ZZT-PO-0002') as HTMLInputElement;
     expect(earlyInput.value).toBe('15');
     expect(laterInput.value).toBe('10');
-    expect(screen.getByTestId('po-allocation-summary')).toHaveTextContent('25 of 25 taken');
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeEnabled();
+    expect(screen.getByTestId('po-allocation-summary')).toHaveTextContent('25 of 25 linked');
+    expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
   });
 
   it('names the cascade take on the candidate the pass would use', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
-    const early = await screen.findByTestId('po-candidate-po-line-early');
+    const early = await screen.findByTestId('po-candidate-po:po-line-early');
     expect(early).toHaveTextContent('Cascade take 15');
   });
 
-  it('reports the leftover as still-raised when the cascade only partly covers the row', async () => {
+  it('reports the leftover as still demand when the cascade only partly covers the row', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
     expect(screen.getByTestId('po-allocation-summary')).toHaveTextContent(
-      '15 of 25 taken - 10 stays raised',
+      '15 of 25 linked - 10 stays demand',
     );
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
   });
 });
 
-describe('PlaceOnPoDialog: editing the take', () => {
+describe('LinkDocumentDialog: editing the take', () => {
   it('refuses to confirm when a line is edited past its own remaining balance', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     const input = await screen.findByLabelText('Take off ZZT-PO-0001');
     fireEvent.change(input, { target: { value: '20' } });
 
     expect(screen.getByText("A line's take is more than it has left")).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 
   it('refuses to confirm when the total taken is more than the row needs', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     const laterInput = await screen.findByLabelText('Take off ZZT-PO-0002');
     fireEvent.change(laterInput, { target: { value: '20' } });
 
     expect(screen.getByText('10 more than this row needs')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 
   it('refuses to confirm with nothing taken at all', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     const input = await screen.findByLabelText('Take off ZZT-PO-0001');
     fireEvent.change(input, { target: { value: '0' } });
 
-    expect(screen.getByRole('button', { name: 'Place on PO' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 });
 
-describe('PlaceOnPoDialog: confirming', () => {
+describe('LinkDocumentDialog: confirming', () => {
   it('posts the whole allocation in one call and closes on success', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
-    fireEvent.click(screen.getByRole('button', { name: 'Place on PO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
       expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
@@ -221,12 +231,12 @@ describe('PlaceOnPoDialog: confirming', () => {
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     const input = await screen.findByLabelText('Take off ZZT-PO-0001');
     fireEvent.change(input, { target: { value: '12' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Place on PO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
       expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
@@ -240,12 +250,12 @@ describe('PlaceOnPoDialog: confirming', () => {
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     const laterInput = await screen.findByLabelText('Take off ZZT-PO-0002');
     fireEvent.change(laterInput, { target: { value: '0' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Place on PO' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
       expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
@@ -258,7 +268,7 @@ describe('PlaceOnPoDialog: confirming', () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
@@ -269,36 +279,36 @@ describe('PlaceOnPoDialog: confirming', () => {
   });
 });
 
-describe('PlaceOnPoDialog: the candidate expand (section G, unchanged by G2)', () => {
+describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)', () => {
   it('the chevron toggles the nested line/claims panel, collapsed by default', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
-    expect(screen.queryByTestId('po-candidate-expand-po-line-early')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('po-candidate-expand-po:po-line-early')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    expect(screen.getByTestId('po-candidate-expand-po-line-early')).toBeInTheDocument();
+    expect(screen.getByTestId('po-candidate-expand-po:po-line-early')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
-    expect(screen.queryByTestId('po-candidate-expand-po-line-early')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('po-candidate-expand-po:po-line-early')).not.toBeInTheDocument();
   });
 
   it('names an empty result rather than showing a blank claims table', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
 
     expect(
-      screen.getByText('No other row is tagged to this line yet.'),
+      screen.getByText('No other row is linked to this line yet.'),
     ).toBeInTheDocument();
   });
 
@@ -315,13 +325,13 @@ describe('PlaceOnPoDialog: the candidate expand (section G, unchanged by G2)', (
     getOrderInquiryPoCandidates.mockResolvedValue([priced]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="10" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="10" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
 
-    const panel = screen.getByTestId('po-candidate-expand-po-line-early');
+    const panel = screen.getByTestId('po-candidate-expand-po:po-line-early');
     expect(panel).toHaveTextContent('MYR 12.75');
     expect(panel).toHaveTextContent('SO2026001');
     expect(panel).toHaveTextContent('SO2026002');
@@ -333,7 +343,7 @@ describe('PlaceOnPoDialog: the candidate expand (section G, unchanged by G2)', (
     getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
 
     renderDialog(
-      <PlaceOnPoDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
     );
 
     await screen.findByTestId('po-candidates-table');

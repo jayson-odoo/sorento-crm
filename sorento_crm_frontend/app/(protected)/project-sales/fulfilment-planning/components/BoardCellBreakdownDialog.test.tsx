@@ -2110,7 +2110,7 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
     // The worklist's own wording, so "Placed" cannot mean two things on two screens.
-    expect(within(row).getByText('Placed')).toBeInTheDocument();
+    expect(within(row).getByText('Linked')).toBeInTheDocument();
   });
 
   it('prints a dash for a line nobody has been told anything about', () => {

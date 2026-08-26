@@ -316,6 +316,29 @@ export interface SalesOrderLine {
    */
   supply_decided?: SalesOrderLineSupplyComponent[] | null;
   supply_proposed?: SalesOrderLineSupplyComponent[] | null;
+  /**
+   * Where this line's Buy actually sits (AC-I9): every link on the order inquiry row that
+   * covers the line, PO or SPO, with the quantity each holds. Read off the SAME child
+   * table (`projects.order_inquiry_links`) the worklist's "Linked to" column and the PO
+   * occupancy panel read, so the three cannot disagree.
+   *
+   * `[]` when the row exists and nothing has been linked yet; absent when no inquiry row
+   * covers the line at all - the two are different answers and the column says so.
+   */
+  linked_to?: SalesOrderLineLink[] | null;
+}
+
+/** One link on the order inquiry row covering a sales order line. Never an id on screen. */
+export interface SalesOrderLineLink {
+  /** Which book the document lives in. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. */
+  document: string;
+  /** `L3` when the book numbered the line. Absent when it did not - never invented. */
+  line_label?: string | null;
+  qty: string;
+  location?: string | null;
+  expected_date?: string | null;
 }
 
 /**
@@ -337,8 +360,9 @@ export interface SalesOrderLineSupplyComponent {
 export interface SalesOrderLineInquiry {
   /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
   inquiry_no?: string | null;
-  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`), not the
-   *  header's: "purchasing placed this line" is the question the column answers. */
+  /** The ROW's own state (`raised` / `partly_linked` / `placed` / `actioned` /
+   *  `cancelled`), not the header's: "has purchasing linked this line" is the question
+   *  the column answers. `placed` reads "Linked". */
   state: string;
 }
 

@@ -107,56 +107,56 @@ export async function markOrderInquiryRows(
   return response.json();
 }
 
-/* --------------------------------------------------------- Place on PO (section G, G2)
+/* -------------------------------------------------- Link PO / Link SPO (section 3.I)
  *
- * API CONTRACT (backend section G, reworked G2 20 Aug - placements happen automatically;
- * this dialog is override + audit).
+ * API CONTRACT (PLAN-scm-cs-planning-uat.md section 3.I, AC-I1 to AC-I10). The ROUTE
+ * PATHS are unchanged on purpose - the plan renames the verb, not the URLs - so
+ * `place-on-po` is the link endpoint and `unplace` is the unlink one.
  *
  *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
- *        -> OrderInquiryPoCandidate[], soonest expected_date first, ties by document
- *        sequence. Each candidate carries `default_take` - the cascade's own preview of
- *        what it would take off that line. 409 when the row is not a raised
- *        ORDER/RESERVE & ORDER row.
+ *        -> OrderInquiryPoCandidate[], in the walk's own order: the cited document first,
+ *        then SPO allocations before PO lines on an ORDER BACK row, then location tier
+ *        (Q5), then the PO's issue date, then the line's expected date, then the document
+ *        number (Q7). Every candidate carries BOTH dates and its tier; location never
+ *        filters a candidate out. `default_take` is the cascade's own preview of what it
+ *        would take off that line. 409 when the row is not linkable.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
- *        -> OrderInquiryRowOut, state 'placed'. The original single-line shape,
- *        unchanged: one line, no split. 409 naming the shortfall when the line's
- *        remaining balance cannot cover the row.
+ *        -> OrderInquiryRowOut. One PO line, the single-target shape.
  *
- *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { allocations: [{po_line_id, qty}] }
- *        -> OrderInquiryRowOut, the FIRST row the call touched (the row reused on full
- *        coverage, the first new split row on a partial one). A row several lines cover
- *        SPLITS server-side - refetch the rows list to see every row the call wrote.
- *        409 `order_inquiry_over_allocated` when the allocations total more than the
- *        row's own quantity; 409 `order_inquiry_po_line_short` naming the line that
- *        cannot cover what was asked of it.
+ *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po
+ *        { allocations: [{po_line_id | spo_allocation_id, qty}] }
+ *        -> OrderInquiryRowOut - the SAME row, with one link per allocation. The row is
+ *        never split any more (AC-I6): it keeps its full quantity and reads linked or
+ *        partly linked. 409 `order_inquiry_over_allocated` when the allocations total
+ *        more than the row's own quantity; 409 `order_inquiry_po_line_short` naming the
+ *        line that cannot cover what was asked of it; 409
+ *        `order_inquiry_spo_not_order_back` when a non-ORDER BACK row names an SPO.
  *
- *   POST {BASE}/order-inquiry-rows/{rowId}/unplace
- *        -> OrderInquiryRowOut, state back to 'raised'. 409 when the row is not placed.
- *        Works on a split row exactly as on an unsplit one.
+ *   POST {BASE}/order-inquiry-rows/{rowId}/unplace  { link_id? }
+ *        -> OrderInquiryRowOut. With a `link_id` that ONE link goes; without one every
+ *        link the row holds goes. The row's state is re-derived either way. 409 when the
+ *        row holds no links at all.
  *
  *   POST {BASE}/order-inquiries/auto-place  { product_ids? }
  *        -> AutoPlaceResult { placed_rows, allocations, products_touched }. Runs the
- *        cascade now, over every raised row of the named products (or of every product
- *        carrying one, when `product_ids` is omitted). Idempotent - a second call with
- *        the same products places nothing further.
+ *        cascade now, over every raised or partly linked row of the named products (or of
+ *        every product carrying one, when `product_ids` is omitted). Idempotent - a
+ *        second call links nothing further.
  *
  *   GET  {BASE}/order-inquiries/unplace-all-preview  { query?, delivery_month?,
- *        raised_date?, project_id?, supplier_id? }
+ *        raised_date?, project_id?, supplier_id?, raised_by? }
  *        -> UnplaceAllPreview { count, product_code?, product_name? }. The confirm
- *        dialog's own numbers, resolved server-side against the SAME filters `unplace-all`
- *        itself reads - never off whatever page of the worklist happens to be loaded.
- *        `product_code`/`product_name` are set only when every matching row resolves to
- *        the same product.
+ *        dialog's own numbers, resolved server-side against the SAME filters
+ *        `unplace-all` itself reads - never off whatever page of the worklist happens to
+ *        be loaded. `product_code`/`product_name` are set only when every matching row
+ *        resolves to the same product.
  *
- *   POST {BASE}/order-inquiries/unplace-all  { query?, delivery_month?, raised_date?,
- *        project_id?, supplier_id? }
- *        -> UnplaceAllResult { unplaced }. Every PLACED row matching the CURRENT worklist
- *        scope - the SAME filter shape `GET /order-inquiries` takes, `state` always
- *        forced to placed - reverts to raised. No filter at all means every placed row in
- *        the company. A row a cascade split into several stays split; each sibling goes
- *        raised at its own quantity. Never `product_ids`: the worklist paginates
- *        server-side, so a client-derived product list would miss rows behind page 1.
+ *   POST {BASE}/order-inquiries/unplace-all  { ...the same filters }
+ *        -> UnplaceAllResult { unplaced }. Every LINKED or partly linked row matching the
+ *        CURRENT worklist scope loses its links. No filter at all means every linked row
+ *        in the company. Never `product_ids`: the worklist paginates server-side, so a
+ *        client-derived product list would miss rows behind page 1.
  *
  * Permission is the same as `mark`: `projects.order_inquiry.action`.
  */
@@ -166,12 +166,11 @@ export async function getOrderInquiryPoCandidates(
 ): Promise<OrderInquiryPoCandidate[]> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/po-candidates`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load purchase order lines'));
+    throw new Error(await extractApiError(response, 'Failed to load candidate lines'));
   return response.json();
 }
 
-/** Tag a raised row onto one outstanding PO line - the captain's "quantity to be ordered
- * is deducted". The original single-line shape. */
+/** Link a row to ONE outstanding PO line - the single-target shape. */
 export async function placeOrderInquiryRowOnPo(
   rowId: string,
   poLineId: string,
@@ -182,14 +181,14 @@ export async function placeOrderInquiryRowOnPo(
     body: JSON.stringify({ po_line_id: poLineId }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+    throw new Error(await extractApiError(response, 'Failed to link this row to a document'));
   return response.json();
 }
 
 /**
- * Tag a raised row across one or more outstanding PO lines - the cascade shape (G2), one
- * call. The row may split server-side; the caller reads back the FIRST row the call
- * touched and refetches the rows list to see the rest.
+ * Link a row across one or more document lines - PO lines, or SPO allocations on an
+ * ORDER BACK row - in one call. The row keeps its full quantity and gains one link per
+ * allocation, so the response is that same row.
  */
 export async function placeOrderInquiryRowOnPoAllocations(
   rowId: string,
@@ -201,25 +200,30 @@ export async function placeOrderInquiryRowOnPoAllocations(
     body: JSON.stringify({ allocations }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+    throw new Error(await extractApiError(response, 'Failed to link this row to a document'));
   return response.json();
 }
 
-/** Untag: the row goes back to raised. Works on a split row exactly as on an unsplit one. */
-export async function unplaceOrderInquiryRow(rowId: string): Promise<OrderInquiryRow> {
+/** Unlink: one link when `linkId` names it, every link the row holds when it does not. */
+export async function unplaceOrderInquiryRow(
+  rowId: string,
+  linkId?: string,
+): Promise<OrderInquiryRow> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/unplace`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(linkId ? { link_id: linkId } : {}),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unplace this row'));
+    throw new Error(await extractApiError(response, 'Failed to unlink this row'));
   return response.json();
 }
 
 /**
- * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Every raised
- * ORDER/RESERVE & ORDER row of the named products, or of every product carrying one when
- * `product_ids` is omitted, tagged to its own open PO lines, earliest expected date
- * first. Idempotent: a second call with the same products places nothing further.
+ * Run the cascade now - the worklist's "Auto-link". Every raised or partly linked row of
+ * the named products, or of every product carrying one when `product_ids` is omitted,
+ * linked to its own open document lines in the walk's order. Idempotent: a second call
+ * links nothing further.
  */
 export async function autoPlaceOrderInquiryRows(
   params: AutoPlaceRequest = {},
@@ -230,7 +234,7 @@ export async function autoPlaceOrderInquiryRows(
     body: JSON.stringify(params),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to run the auto-place pass'));
+    throw new Error(await extractApiError(response, 'Failed to run the auto-link pass'));
   return response.json();
 }
 
@@ -260,15 +264,14 @@ export async function getUnplaceAllPreview(
     `${BASE}/order-inquiries/unplace-all-preview${qs ? `?${qs}` : ''}`,
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load the unplace count'));
+    throw new Error(await extractApiError(response, 'Failed to load the unlink count'));
   return response.json();
 }
 
 /**
- * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED row
- * matching the SAME filters the worklist list reads (state forced to placed) reverts to
- * raised in one call, so Auto-place can re-deal them earliest-first. No filter at all
- * means every placed row in the company.
+ * "Unlink all" for the CURRENT worklist scope: every linked or partly linked row matching
+ * the SAME filters the worklist list reads loses its links in one call, so Auto-link can
+ * re-deal them. No filter at all means every linked row in the company.
  */
 export async function unplaceAllOrderInquiryRows(
   params: UnplaceAllRequest = {},
@@ -279,7 +282,7 @@ export async function unplaceAllOrderInquiryRows(
     body: JSON.stringify(params),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unplace those rows'));
+    throw new Error(await extractApiError(response, 'Failed to unlink those rows'));
   return response.json();
 }
 

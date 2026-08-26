@@ -1,6 +1,6 @@
 /**
- * The row action for "Place on PO" (section G): a raised ORDER/RESERVE & ORDER row offers
- * Place on PO; a placed row offers Unplace; every other row (already actioned, cancelled,
+ * The row action for "Link PO" (section G): a raised ORDER/RESERVE & ORDER row offers
+ * Link PO; a placed row offers Unlink; every other row (already actioned, cancelled,
  * or a verb this never applies to) renders nothing.
  */
 import React from 'react';
@@ -35,20 +35,20 @@ beforeEach(() => {
 });
 
 describe('OrderInquiryRowActions: placeable raised rows', () => {
-  it('offers Place on PO for a raised ORDER row', () => {
+  it('offers Link PO for a raised ORDER row', () => {
     renderActions(
       <OrderInquiryRowActions rowId="row-1" verb="ORDER" state="raised" qty="10" />,
     );
 
-    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Link PO/ })).toBeInTheDocument();
   });
 
-  it('offers Place on PO for a raised RESERVE_AND_ORDER row too', () => {
+  it('offers Link PO for a raised RESERVE_AND_ORDER row too', () => {
     renderActions(
       <OrderInquiryRowActions rowId="row-1" verb="RESERVE_AND_ORDER" state="raised" qty="10" />,
     );
 
-    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Link PO/ })).toBeInTheDocument();
   });
 
   it('opens the candidates dialog on click', () => {
@@ -56,14 +56,14 @@ describe('OrderInquiryRowActions: placeable raised rows', () => {
       <OrderInquiryRowActions rowId="row-1" verb="ORDER" state="raised" qty="10" itemCode="BASIN-001" />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Place on PO/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Link PO/ }));
 
-    expect(screen.getByText('Place on a purchase order')).toBeInTheDocument();
+    expect(screen.getByText('Link to a document')).toBeInTheDocument();
     expect(getOrderInquiryPoCandidates).toHaveBeenCalledWith('row-1');
   });
 });
 
-describe('OrderInquiryRowActions: rows Place on PO does not apply to', () => {
+describe('OrderInquiryRowActions: rows Link PO does not apply to', () => {
   it('renders nothing for a raised row of a non-placeable verb', () => {
     renderActions(
       <OrderInquiryRowActions rowId="row-1" verb="ALREADY_INBOUND" state="raised" qty="10" />,
@@ -96,8 +96,8 @@ describe('OrderInquiryRowActions: rows Place on PO does not apply to', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('renders no Place on PO action when the row carries hasOpenPoLine=false', () => {
-    // The backend's own `has_open_po_line` says nothing is left to tag - a "Place on PO"
+  it('renders no Link PO action when the row carries hasOpenPoLine=false', () => {
+    // The backend's own `has_open_po_line` says nothing is left to tag - a "Link PO"
     // that opens on an empty dialog reads as a bug, not an empty state, so the row offers
     // nothing at all rather than an offer with nothing behind it.
     renderActions(
@@ -110,18 +110,18 @@ describe('OrderInquiryRowActions: rows Place on PO does not apply to', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: /Place on PO/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Link PO/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('offers Place on PO when hasOpenPoLine is left unstated (default true)', () => {
+  it('offers Link PO when hasOpenPoLine is left unstated (default true)', () => {
     // An omitted flag never HIDES the offer - only an explicit false does.
     renderActions(<OrderInquiryRowActions rowId="row-1" verb="ORDER" state="raised" qty="10" />);
 
-    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Link PO/ })).toBeInTheDocument();
   });
 
-  it('offers Place on PO when hasOpenPoLine is explicitly true', () => {
+  it('offers Link PO when hasOpenPoLine is explicitly true', () => {
     renderActions(
       <OrderInquiryRowActions
         rowId="row-1"
@@ -132,12 +132,12 @@ describe('OrderInquiryRowActions: rows Place on PO does not apply to', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /Place on PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Link PO/ })).toBeInTheDocument();
   });
 });
 
 describe('OrderInquiryRowActions: a placed row', () => {
-  it('offers Unplace instead of Place on PO', () => {
+  it('offers Unlink instead of Link PO', () => {
     renderActions(
       <OrderInquiryRowActions
         rowId="row-1"
@@ -148,11 +148,11 @@ describe('OrderInquiryRowActions: a placed row', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /Unplace/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Place on PO/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Unlink/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Link PO/ })).not.toBeInTheDocument();
   });
 
-  it('opens the confirm naming the tagged purchase order', () => {
+  it('opens the confirm naming the linked purchase order', () => {
     renderActions(
       <OrderInquiryRowActions
         rowId="row-1"
@@ -163,11 +163,11 @@ describe('OrderInquiryRowActions: a placed row', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Unplace/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Unlink/ }));
 
     expect(
       screen.getByText(
-        'Remove the tag to ZZT-PO-0001? This row goes back to raised, and the next reorder suggestion counts it again.',
+        'Remove the link to ZZT-PO-0001? That quantity goes back to demand, and the next reorder suggestion counts it again.',
       ),
     ).toBeInTheDocument();
   });

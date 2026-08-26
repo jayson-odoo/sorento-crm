@@ -201,10 +201,10 @@ export function useOrderInquiryPlacementMutations() {
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
-    // Another raised row on the same product may now cover less (or more) of the PO
-    // line this one just tagged or freed.
+    // Another raised row on the same product may now cover less (or more) of the
+    // document line this one just linked or freed.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
-    // A single place/unplace moves the placed count "Unplace all" reads too.
+    // A single link/unlink moves the linked count "Unlink all" reads too.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
   }
 
@@ -213,12 +213,15 @@ export function useOrderInquiryPlacementMutations() {
       placeOrderInquiryRowOnPo(rowId, poLineId),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Placed on the purchase order');
+      toast.success('Linked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  /** The G2 cascade shape: one or more `{po_line_id, qty}` lines in one call. */
+  /**
+   * The cascade shape: one or more `{po_line_id | spo_allocation_id, qty}` lines in one
+   * call. The row keeps its full quantity and gains one link per allocation (AC-I6).
+   */
   const placeAllocations = useMutation({
     mutationFn: ({
       rowId,
@@ -229,16 +232,18 @@ export function useOrderInquiryPlacementMutations() {
     }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Placed on the purchase order');
+      toast.success('Linked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** Unlink: one link when `linkId` names it, every link the row holds when it does not. */
   const unplace = useMutation({
-    mutationFn: (rowId: string) => unplaceOrderInquiryRow(rowId),
+    mutationFn: ({ rowId, linkId }: { rowId: string; linkId?: string }) =>
+      unplaceOrderInquiryRow(rowId, linkId),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Unplaced');
+      toast.success('Unlinked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -247,8 +252,8 @@ export function useOrderInquiryPlacementMutations() {
 }
 
 /**
- * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Invalidates the same
- * query families a single placement does, since a bulk pass can touch any of them.
+ * Run the cascade now - the worklist's "Auto-link". Invalidates the same query families a
+ * single link does, since a bulk pass can touch any of them.
  */
 export function useAutoPlaceOrderInquiryRows() {
   const queryClient = useQueryClient();
@@ -264,8 +269,8 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
       toast.success(
-        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} placed across ` +
-          `${result.allocations} allocation${result.allocations === 1 ? '' : 's'}`,
+        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
+          `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`,
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -273,9 +278,9 @@ export function useAutoPlaceOrderInquiryRows() {
 }
 
 /**
- * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED
- * row matching the filters passed in reverts to raised, ready for a clean Auto-place
- * re-deal. Invalidates the same query families a single unplace does.
+ * "Unlink all" for the CURRENT worklist scope (the captain, 20-21 Aug): every linked or
+ * partly linked row matching the filters passed in loses its links, ready for a clean
+ * Auto-link re-deal. Named after its route, which the plan deliberately left unrenamed.
  */
 export function useUnplaceAllOrderInquiryRows() {
   const queryClient = useQueryClient();
@@ -291,7 +296,7 @@ export function useUnplaceAllOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
       toast.success(
-        `${result.unplaced} row${result.unplaced === 1 ? '' : 's'} unplaced`,
+        `${result.unplaced} row${result.unplaced === 1 ? '' : 's'} unlinked`,
       );
     },
     onError: (error: Error) => toast.error(error.message),

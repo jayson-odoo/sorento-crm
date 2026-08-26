@@ -43,8 +43,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { AutoPlaceOrderInquiryDialog } from '../../_shared/components/AutoPlaceOrderInquiryDialog';
-import { UnplaceAllOrderInquiryDialog } from '../../_shared/components/UnplaceAllOrderInquiryDialog';
+import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
+import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
@@ -65,9 +65,22 @@ import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
 const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
+  { value: 'partly_linked', label: 'Partly linked' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'placed', label: 'Placed' },
+  // Stored as `placed`; read as Linked everywhere (AC-I1).
+  { value: 'placed', label: 'Linked' },
+];
+
+/**
+ * WHERE the row is linked (AC-I5), which is a different question from what state it is
+ * in: a buyer asking "what have I still not put on anything" wants `none`, and one
+ * chasing shipping orders wants `spo`.
+ */
+const LINKED_OPTIONS = [
+  { value: 'po', label: 'A purchase order' },
+  { value: 'spo', label: 'An SPO' },
+  { value: 'none', label: 'Nothing yet' },
 ];
 
 type OrderInquiryView = 'list' | 'schedule';
@@ -166,6 +179,7 @@ export function OrderInquiriesClient() {
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
+  const [linkedFilter, setLinkedFilter] = React.useState('');
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
@@ -224,6 +238,7 @@ export function OrderInquiriesClient() {
     projectFilter,
     raisedDate,
     raisedByFilter,
+    linkedFilter,
   ]);
 
   const filters = React.useMemo(
@@ -235,6 +250,7 @@ export function OrderInquiriesClient() {
       supplier_id: supplierFilter || undefined,
       project_id: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
+      linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
     }),
     [
       debounced,
@@ -244,6 +260,7 @@ export function OrderInquiriesClient() {
       supplierFilter,
       projectFilter,
       raisedByFilter,
+      linkedFilter,
     ],
   );
 
@@ -303,7 +320,8 @@ export function OrderInquiriesClient() {
       supplierFilter ||
       projectFilter ||
       raisedDate ||
-      raisedByFilter,
+      raisedByFilter ||
+      linkedFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -393,7 +411,8 @@ export function OrderInquiriesClient() {
     (supplierFilter ? 1 : 0) +
     (projectFilter ? 1 : 0) +
     (raisedDate ? 1 : 0) +
-    (raisedByFilter ? 1 : 0);
+    (raisedByFilter ? 1 : 0) +
+    (linkedFilter ? 1 : 0);
 
   const openCellRow = openCell
     ? matrix.rows.find((row) => row.key === openCell.row_key)
@@ -416,7 +435,7 @@ export function OrderInquiriesClient() {
             {`${formatInquiryQty(summary.data?.total_qty) || '0'} qty`}
           </Badge>
           <Badge variant="warning" appearance="light">
-            {`${(summary.data?.by_state.raised ?? 0).toLocaleString()} still to place`}
+            {`${(summary.data?.by_state.raised ?? 0).toLocaleString()} still to link`}
           </Badge>
         </div>
       </header>
@@ -629,6 +648,16 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Linked</Label>
+                        <SearchableSelect
+                          value={linkedFilter}
+                          onChange={setLinkedFilter}
+                          clearable
+                          options={LINKED_OPTIONS}
+                          placeholder="Anywhere"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">Supplier</Label>
                         <SearchableSelect
                           value={supplierFilter}
@@ -690,6 +719,7 @@ export function OrderInquiriesClient() {
                             setProjectFilter('');
                             setRaisedDate('');
                             setRaisedByFilter('');
+                            setLinkedFilter('');
                           }}
                         >
                           Clear filters
@@ -705,13 +735,13 @@ export function OrderInquiriesClient() {
                 secondaryActions={[
                   {
                     key: 'auto-place',
-                    label: 'Auto-place',
+                    label: 'Auto-link',
                     icon: Wand2,
                     onClick: () => setAutoPlacing(true),
                   },
                   {
                     key: 'unplace-all',
-                    label: 'Unplace all',
+                    label: 'Unlink all',
                     icon: Undo2,
                     onClick: () => setUnplacingAll(true),
                     // N1: a lacking action grant, or the preview call failing for any
@@ -720,11 +750,11 @@ export function OrderInquiriesClient() {
                     disabled:
                       !canActOnOrderInquiry || unplacePreview.isError || unplaceCount === 0,
                     disabledReason: !canActOnOrderInquiry
-                      ? "You don't have permission to unplace rows"
+                      ? "You don't have permission to unlink rows"
                       : unplacePreview.isError
-                        ? 'Could not check placed rows - try again'
+                        ? 'Could not check linked rows - try again'
                         : unplaceCount === 0
-                          ? 'No placed rows to unplace'
+                          ? 'No linked rows to unlink'
                           : undefined,
                   },
                 ]}
@@ -765,8 +795,8 @@ export function OrderInquiriesClient() {
         </DataGrid>
       )}
 
-      <AutoPlaceOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
-      <UnplaceAllOrderInquiryDialog
+      <AutoLinkOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
+      <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}
         filters={unplaceAllFilters}

@@ -827,6 +827,9 @@ export interface BoardLineDecision {
   buy_reason?: string | null;
   /** Why the composition was not the engine's, in the planner's own words. */
   amend_reason?: string | null;
+  /** The frozen Buy was an ORDER BACK, and the document CS cited for it (part 2 4b). */
+  order_back?: boolean;
+  cited_document?: string | null;
 }
 
 /**
@@ -1476,6 +1479,22 @@ export interface BoardDecision {
    * person made by hand has to say why, or the snapshot cannot explain itself later.
    */
   reason?: string;
+  /**
+   * This Buy is an ORDER BACK, not a fresh purchase (part 2 section 4b, captain 25 Aug):
+   * the quantity is a shortfall against something already ordered or already shipped. The
+   * order inquiry row is raised with verb `ORDER_BACK`, which is the ONE verb whose links
+   * may name an SPO allocation as well as a purchase order line.
+   *
+   * Only meaningful with `buy_qty > 0`; an amendment that buys nothing has no row to mark.
+   */
+  order_back?: boolean;
+  /**
+   * The document CS named on the order back, if they named one. It is not a link by
+   * itself - it is what the auto-link walk tries FIRST, before any tier or date
+   * (`ProjectOrderInquiryService` candidate order). Free text on purpose: CS types what
+   * the form says, and a document we do not hold is recorded rather than refused.
+   */
+  cited_document?: string | null;
 }
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */

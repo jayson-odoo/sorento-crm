@@ -1303,9 +1303,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The same pill wording the order-inquiry worklist uses, so "Placed" cannot mean two
+    // The same pill wording the order-inquiry worklist uses, so "Linked" cannot mean two
     // things on two screens.
-    expect(within(row).getByText('Placed')).toBeInTheDocument();
+    expect(within(row).getByText('Linked')).toBeInTheDocument();
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 

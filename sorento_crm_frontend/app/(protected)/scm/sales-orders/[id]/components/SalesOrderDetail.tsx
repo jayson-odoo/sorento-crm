@@ -877,6 +877,44 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Order inquiry' },
       },
       {
+        // AC-I9: WHERE this line's Buy actually sits. The same child table the order
+        // inquiry worklist's "Linked to" column and the PO occupancy panel read, so the
+        // three surfaces answer with one voice. A line whose inquiry row exists but holds
+        // no link reads "Not linked"; a line with no inquiry row at all reads "-", which
+        // is the difference between "nothing has been linked" and "nobody was told".
+        id: 'linked_to',
+        accessorFn: (row) => row.linked_to ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
+        cell: ({ row }) => {
+          const links = row.original.linked_to;
+          if (!links) return <span className="text-muted-foreground">-</span>;
+          if (links.length === 0)
+            return <span className="text-muted-foreground">Not linked</span>;
+          return (
+            <div className="min-w-0 space-y-0.5">
+              {links.map((link, index) => {
+                const where = link.line_label || link.location || null;
+                const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}`;
+                return (
+                  <span
+                    key={`${link.kind}-${link.document}-${where ?? index}`}
+                    className="flex min-w-0 items-center gap-1"
+                    title={label}
+                  >
+                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                      {link.kind}
+                    </span>
+                    <span className="truncate tabular-nums">{label}</span>
+                  </span>
+                );
+              })}
+            </div>
+          );
+        },
+        size: 240,
+        meta: { headerTitle: 'Linked to' },
+      },
+      {
         // AC-D4: the board's two compositions, on the order they belong to. The SECONDARY
         // surface for the same question - the board is where the decision is taken, this is
         // where somebody looking at the order alone can see what was taken.
