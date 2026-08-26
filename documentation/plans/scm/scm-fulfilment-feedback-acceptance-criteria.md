@@ -1,0 +1,105 @@
+# UAC - Fulfilment feedback: loading plan, proforma invoice, SPO planner
+
+Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purchase_orders.issue_date`). Prior r5 GO WITH CHANGES, Q9 ruled yes (Q1-Q8 ruled, three review additions, board-vocabulary layout, F0 dropdowns). Contract for `PLAN-scm-fulfilment-feedback.md`. Every AC names the screen and a number a tester can check against the three Drive files (JINBAICHUAN stock list 27 Jul, pre-load list 31 Jul, KAILU PI 17 Jul).
+
+## A0. Dropdowns (global)
+
+- AC-A0.1 `SearchableSelect` / `SearchableMultiSelect` render the selected option in full: "CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD" is readable on the loading plan supplier picker at 1280px; at 375px it wraps to two lines, never an ellipsis.
+- AC-A0.2 Menu items wrap long text; the menu is never narrower than the trigger.
+- AC-A0.3 Guard test: no `truncate` class on the selected-label element of either component.
+
+## A. Loading plan builds with or without a stock list
+
+- AC-A1 With no stock list and no PI for the supplier, the table lists every product the supplier is linked to (`product_suppliers`) that has open SO need, ranked; "They hold" reads "-"; the empty-state card is gone.
+- AC-A2 With a PI uploaded and not yet converted, "They hold" reads the newest such PI's qty with a "PI 31/07" badge; the freshness strip shows "PI 31/07/2026".
+- AC-A3 With a stock list uploaded, "They hold" reads packed / unfinished; the PI is not consulted for that column.
+- AC-A4 A product on the stock list or PI with no open need still gets a row (`has_demand: false`, unranked).
+
+## A2. Loading plan layout (board vocabulary)
+
+- AC-A2.1 Five stat cards above the grid: Need, From pool stock, From SPO, To ask (with estimated cbm), They can pack now; To ask follows the Ask edits live.
+- AC-A2.2 Grid columns: Rank, Product, Suggested (editable), Need, Project, Retail, On hand, SPO, Incoming PL, PO, Earliest need-by, Open SOs, They hold, Ordered 12 months. No Unclassified column. No legend row: the cards carry the swatches.
+- AC-A2.3 Clicking the product opens the row popover: Quantity needed box, Suggestion box, location table (BRW / MWH / WH3 / DC1 / RSW + one muted group-locations row), Ordered 12 months box (two series), Incoming-for-reference box, contributing SO lines earliest first.
+- AC-A2.4 Legend and colours match the fulfilment board: pool stock emerald, SPO violet, ask rose.
+- AC-A2.5 Usable at 375px and 1280px: the grid scrolls inside its container, the popover becomes a full-height sheet on mobile.
+
+## B. The numbers on the row
+
+- AC-B1 On hand = sum over site pools only (`segment <> 'project'`). 200 at BRW + 50 at BRW-BB reads 200; popover lists BRW 200 and "In group locations 50".
+- AC-B2 SPO = open `spo_allocations` at site pools only; an allocation bound for BRW-BB is excluded from the cell and listed muted in the popover.
+- AC-B3 Popovers per site: BRW / MWH / WH3 / DC1 / RSW rows, zero rows shown.
+- AC-B4 Column "Incoming PL" = unreceived packing-list qty across shipments not yet arrived; popover lists shipment (or "draft"), ETA, qty. It is never subtracted.
+- AC-B5 Suggested qty = Need - On hand (pool) - SPO (pool), floored at 0; the cell title states the formula and says Incoming PL is a reference.
+- AC-B6 History cell per product reads "P peak {Mon yy} {qty} / R peak {Mon yy} {qty}" from the last 12 full months of `sales_order_lines.qty_ordered` by `order_date`, project vs retail by warehouse segment; no orders reads "No orders in 12 months".
+- AC-B7 History popover per row: two bar series (project, retail), 12 months zero-filled, labelled "Ordered qty (SO booked)", each series' peak highlighted, avg and total per series. SRTWB241, SRTWB243 and SRTWB246 each open their own.
+- AC-B8 The history sidecar is fetched for the visible page's product ids only.
+
+## C. Send to supplier
+
+- AC-C1 Send produces three things in one email: the PDF, `container-request-{supplier}-{stamp}.xlsx`, and a link `/c/{company}/supplier-request/{token}`.
+- AC-C2 The xlsx has the supplier's own header row as uploaded (序号 / 型号 / 商标 / 规格 / 品名 / 包装好库存 / 空瓷 / 体积(cbm) / 总体积(cbm) / 备注) plus `需装数量 / Qty to load`; every stock-list row in their order; requested rows not on their list appended below.
+- AC-C3 Rows with Suggested qty 0 carry an empty Qty-to-load cell.
+- AC-C4 "Requests sent" card: PDF, XLSX and "Copy link" per notice.
+- AC-C5 With no stock list, the xlsx falls back to item code / product name / packed / unfinished / qty to load.
+- AC-C6 The public page shows, without login: supplier name, request date, the lines (item code, name, qty to load, their packed / unfinished), zh + en labels, PDF and XLSX download. No prices, no other suppliers, no navigation.
+- AC-C7 Unknown token and expired token (30 days) return the same "This link is no longer available" page; resending the request issues a new token and the old one expires.
+
+## D. Proforma invoice carries volume
+
+- AC-D1 Importing the pre-load list stores per line cartons, cbm per unit, total cbm; the KAILU PI stores nulls, never 0.
+- AC-D2 PI detail header: "Volume {Σ cbm_total} cbm of 65 ({pct}% full)" with the container size named; null cbm lines counted as "N unmeasured".
+- AC-D3 The five JINBAICHUAN blocks read 69.36 / 67.68 / 67.82 / 67.4 / 27.1 cbm; the first four read over capacity in rose.
+- AC-D4 Container size defaults to 40HQ 65 after the migration and is changeable on the PI; a loading plan built before the migration keeps its stored capacity.
+
+## E. Sorento adjusts the PI
+
+- AC-E1 PI detail edits in place (same layout as view): qty per line editable, a line removable (confirm dialog); "Supplier: 408" shown beside once the figures differ.
+- AC-E2 Saving stamps adjusted by / at; `supplier_qty` never changes.
+- AC-E3 Fill bar recomputes on save; over capacity reads "over by N cbm".
+- AC-E4 "Export adjusted PI" downloads an xlsx in the pre-load block layout with the adjusted qty, cartons, total cbm and amount recomputed, and the supplier's qty in 备注 where it differs.
+- AC-E5 Convert on an over-capacity PI is refused with the figures unless "Convert anyway" + reason.
+
+## E2. PI revisions
+
+- AC-E6 Uploading a file whose supplier matches and whose item codes overlap an un-converted PI by >= 50% offers "Revision of PI-x" in the dialog, pre-selected; the user may choose "New PI" instead.
+- AC-E7 A revision supersedes the prior: prior `status = superseded`, read-only, still listed under the current one as "Revision 1 of 2".
+- AC-E8 PI detail shows a diff vs the previous revision: qty, unit price, amount per line; added and removed lines; header "Price changed on N lines".
+- AC-E9 "Last incoming cost" (MCP cost answer, PO worklist) reads the current revision's unit price only; a superseded price never surfaces.
+- AC-E10 Convert to packing list uses the current revision; a superseded PI cannot be converted.
+- AC-E11 "Mark as revision of" on a PI detail links a wrongly-created new PI to its predecessor.
+
+## F. Packing list carries volume and edits in place
+
+- AC-F1 Converting PIs to a draft shipment copies each line's total cbm into `inbound_shipment_lines.cbm`.
+- AC-F2 Lines tab shows a CBM column and a footer total; null reads "-".
+- AC-F3 `/procurement-management/packing-lists/{id}/edit` no longer exists; the Details tab and the Lines tab carry a primary Edit CTA that swaps values for inputs in place, same field order; Save calls `PUT /{id}`; Cancel restores.
+- AC-F4 Lines tab edit: qty, supplier, cartons, cbm per line; add line via the searchable product select; remove with confirm.
+- AC-F5 `/new` still uses the create form.
+
+## F2. PI and packing list see each other
+
+- AC-F6 PI list has a "Packing list" column: Not converted / PL number with "n of n" and shipment status / Split with each packing list and qty / Superseded (faded revision rows); a filter "Packing list" defaults to Not converted.
+- AC-F7 A converted PI's checkbox is disabled with the tooltip "In FSCU8103365"; Convert on a mixed selection names the ones skipped.
+- AC-F8 PI detail header reads In packing list PL-x n of n (link), or Split with each; every line shows "In packing list" qty and remainder.
+- AC-F9 Packing list Details tab carries "Source proforma invoices": PI, supplier, invoice date, revision, lines, qty from this PI of its total, amount, Open; Lines tab has "From PI"; Timeline has "Created from PI-x, PI-y by {user}"; Documents tab lists the PI files.
+- AC-F10 Convert dialog pre-fills each line with its remaining qty  and offers "Add to existing draft packing list" listing this supplier's draft shipments; the link row stores the qty; a PI with any remainder reads Split, none reads converted.
+
+## G. SPO planner: choose the PO and the SO
+
+- AC-G1 PO covers drill lists takes ordered by `purchase_orders.issue_date` ascending, then line expected date, then PO number; each has a checkbox, default ticked.
+- AC-G2 Unticking a take lowers "PO covers" and the qty clamp; the cell reads "n of m POs".
+- AC-G3 SO covered drill lists open demand lines with a checkbox each: project lines by required date, then retail by required date; default ticks in that order until packed is consumed.
+- AC-G4 The location split derives from the ticked lines; the remainder sits at the suggested warehouse labelled "Unassigned".
+- AC-G5 SPO qty = min(packed, PO covers, ticked + unassigned); Create SPO disabled when ticked exceeds packed, figures shown.
+- AC-G6 `POST /spo` receives `po_take_ids` and `so_line_ids`; the create writes link rows on the part 2 I links table: one per (source PO line, SPO allocation, qty) and one per (SO line, SPO allocation, qty).
+- AC-G7 PO detail "Allocated to" (part 1 G table) shows an SPO row per take: document pill SPO, SPO number, packing list, qty, landing warehouses with qty, arrival date, Unlink. SO detail Lines tab "Linked to" (part 1 I column) lists the SPO under the PO it fulfils with qty and arrival date, Unlink. Unlink confirms, removes the link row and reverses the qty on the SPO planner.
+- AC-G8 Schedule view's "SO coverage" mode reflects the ticks.
+- AC-G9 The worksheet export lists the chosen SOs per line.
+
+## H. Unchanged (guard tests)
+
+- AC-H1 Rank order and the priority policy call unchanged (existing `test_container_request_*` green).
+- AC-H2 Outstanding PO still shown, still not subtracted.
+- AC-H3 Existing PI import / list / detail / bulk delete / convert tests green; a PI without cbm converts as before.
+- AC-H4 Existing SPO creation with no ticks changed produces the same allocations as today (golden fixture shipment).
+- AC-H5 Existing public tokenised pages (quotation sign, purchase request view) unchanged.
