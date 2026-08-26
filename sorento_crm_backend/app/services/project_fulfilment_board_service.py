@@ -754,6 +754,11 @@ class FulfilmentBoardService:
                 "supplier_name": ref.supplier_name,
                 "expected_date": ref.arrival_date,
                 "spo_qty": qty_text(ref.qty),
+                # A promise whose date has passed is still supply and is still counted
+                # (captain, 26 Aug: trust the book). It is STATED as overdue so the buyer
+                # can see which one to chase, rather than silently dropped or silently
+                # read as fresh. Same number the engine's trail names.
+                "overdue_days": ref.overdue_days,
             }
             for ref in sorted(
                 incoming_rows,

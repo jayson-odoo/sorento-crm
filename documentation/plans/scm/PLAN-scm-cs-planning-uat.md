@@ -75,7 +75,7 @@ Section 4 item 4's first half, **K (SPO documents live in `spo_allocations`)**, 
 `purchase_orders`, and `on_order_v` plus the two incoming readers stop dropping a row that has
 no shipment. AC-K1/K2/K3/K4 pass on the scratch schema. See the BUILT block under section K
 for the ways the build differs from the paragraphs above, the `order_link_claim` decision,
-the STALE SUPPLY ruling and the open gap (no feed refreshes a live SPO balance). Migration 420
+the TRUST THE BOOK ruling and the open gap (no feed refreshes a live SPO balance). Migration 420
 has been applied to the shared dev database once; the review added two guarded steps to it
 (`add_claim_spo_side`, `repoint_spo_claims`), so it must be re-applied, and until it is every
 `pg_session` test touching `scm.order_link_claim` reads `UndefinedColumn`.
@@ -279,33 +279,26 @@ above:
   `outstanding_reader` already SKIPS every `SPO-` row of the purchase book ("this book does not
   carry them") and the history channel writes closed rows, so after this migration the 715 open
   lines are a snapshot that no upload updates. Whoever takes section I should decide which feed
-  owns them. Until then the staleness rule below is what stops that snapshot being read as
-  supply: those 715 lines are ALL past-dated, so the honest answer today is that the module has
-  no unshipped incoming supply at all, and the fix for that is a feed, not a filter.
-- **RULING TO CONFIRM (captain), shipped in this PR because the alternative is a plan that
-  suppresses purchases: STALE SUPPLY.** An SPO allocation with NO booked shipment whose
-  `expected_date` is before today is STALE and is not supply. It is excluded from rung 1,
-  from the order inquiry's inbound pool, from the coverage screen's already-on-order figure
-  and from `scm.on_order_v`. A shipment-backed row is NEVER stale, because once a container
-  exists the arrival is tracked and a late container is late rather than imaginary. A row
-  with no date at all is not stale either (nothing says its date has passed), and it can
-  never be timely, so it covers nobody. The boundary is inclusive: a row dated today arrives
-  today, and today is supply. One copy of the rule in
-  `app/services/scm/spo_supply.py`, repeated in SQL by the view, so the popover's SPO qty
-  column and the engine's decision cannot differ. Why it had to ship: all 715 open SPO lines
-  (39,110 units) carry a past `expected_date`, the oldest 2024-06-28, and nothing refreshes
-  them, so counted as supply they suppress real purchases for ever on two-year-old promises.
-- **What the stale rule costs on the dev copy, measured before re-applying: `scm.on_order_v`
-  goes from 292 rows / 39,110 units to ZERO.** Every one of those units is an unshipped SPO
-  line whose promised date has passed, and there is no shipment-backed allocation with a
-  balance on that database at all. That is the honest number and it is why the rule is worth
-  shipping, but it is also a visible change to every net position, so the captain confirms
-  the ruling before the re-apply. **AC-K3 is affected**: SPO-2026/08-0061's lines are dated
-  2026-08-01, which is in the past, so its quantity does NOT appear in `on_order_v` under
-  this rule. Either the UAT fixture (section J) restates that document with a live date, or
-  AC-K3 is re-worded to say "an SPO whose promised date has not passed". If the ruling is
-  rejected, the change to undo is one `AND` clause in the view and
-  `spo_supply.not_stale_clause`; nothing else moves.
+  owns them. Under the ruling below that snapshot IS the position - 39,110 units on 292
+  (product, location) pairs, every one of them overdue - which is the honest reading of a book
+  nobody has restated, and the fix is a feed that restates it, not a filter that hides it.
+- **RULING (captain, 26 Aug): TRUST THE BOOK.** An open SPO allocation - allocated minus
+  received above zero, a receipt status that is not `fully_received`, a line that is not
+  closed - IS incoming supply, and it stays supply until the re-uploaded PO and SPO book
+  shows it received. **A promised date in the past does not remove it.** The book is the
+  record of what was bought and what is still owed; a date is a promise about when, and a
+  supplier being late is not evidence that the goods stopped existing. Dropping the 715
+  past-dated open lines would have told the planner to buy 39,110 units a second time.
+  Rung 1 is unchanged: it still requires `expected_date <= required_date`, which a past date
+  always satisfies, and a row with no date is never timely, so it covers nobody. What a
+  passed date changes is the WORDING: the trail, the reason and the cell popover read
+  "SPO-2026/08-0061 arrives on 1 Aug 2026 (overdue 25 days)", so the buyer can see which
+  promise is being leaned on and go and chase it, instead of the row being silently dropped
+  or silently read as fresh. One copy of the rule in `app/services/scm/spo_supply.py`
+  (`open_incoming_clauses`, `overdue_days`), repeated in SQL by `on_order_v`, so
+  `_spo_rows`, `_inbound_pools`, the coverage screen's already-on-order figure and the view
+  cannot come to disagree. Supply that cannot be PLACED is still counted nowhere: a row with
+  no warehouse is not incoming at any location.
 - **The claim gained an SPO side, `scm.order_link_claim.spo_allocation_id`.** Clearing
   `po_line_id` was not enough: 12,393 claims naming 2,989 sales orders would have been
   permanently unresolvable, `sales_order_service.with_links` would have shown every one of

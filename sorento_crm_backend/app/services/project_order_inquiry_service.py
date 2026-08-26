@@ -808,8 +808,10 @@ class ProjectOrderInquiryService:
         had one. A row with no shipment offers its own `expected_date` as the arrival, and a
         CLOSED line offers nothing - history is written closed for exactly that reason.
 
-        `spo_supply.open_incoming_clauses` is the shared rule, staleness included: an
-        unshipped promise whose date has passed is not a pool anything can be covered from.
+        `spo_supply.open_incoming_clauses` is the shared rule. A promise whose date has
+        passed is still a pool (captain, 26 Aug: trust the book) - the goods are owed until
+        the book says they arrived - so what a past date changes is the wording elsewhere,
+        not whether this pool exists.
         """
         rows = (
             self.db.query(
@@ -831,7 +833,7 @@ class ProjectOrderInquiryService:
                 # per location, so a row naming a location we do not hold counts nowhere,
                 # exactly as `on_order_v` treats it.
                 SPOAllocation.warehouse_id.isnot(None),
-                *spo_supply.open_incoming_clauses(date.today()),
+                *spo_supply.open_incoming_clauses(),
             )
             .all()
         )

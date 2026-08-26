@@ -61,6 +61,7 @@ export function StockDocumentsPanel({
         project_label: order.project_label ?? null,
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
+        overdue_days: null,
         qty: order.so_qty,
         is_covered: Boolean(order.is_covered),
         line_id: order.line_id ?? null,
@@ -78,6 +79,7 @@ export function StockDocumentsPanel({
         project_label: null,
         doc_date: null,
         due_date: leg.expected_date ?? null,
+        overdue_days: leg.overdue_days ?? null,
         qty: leg.spo_qty,
         is_covered: false,
         line_id: null,
@@ -220,6 +222,12 @@ export function StockDocumentsPanel({
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.due_date ? formatDateInMalaysia(row.original.due_date) : 'Not stated'}
+            {row.original.overdue_days ? (
+              <span className="text-amber-600 ms-1">
+                (overdue {row.original.overdue_days}{' '}
+                {row.original.overdue_days === 1 ? 'day' : 'days'})
+              </span>
+            ) : null}
           </span>
         ),
         size: 150,
@@ -328,6 +336,8 @@ interface StockDetailRow {
   project_label: string | null;
   doc_date: string | null;
   due_date: string | null;
+  /** Days late, on a purchase document whose promised arrival has passed. */
+  overdue_days: number | null;
   qty: string;
   is_covered: boolean;
   line_id: string | null;

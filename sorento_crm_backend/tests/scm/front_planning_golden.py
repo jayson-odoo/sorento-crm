@@ -324,7 +324,7 @@ TWO_LINE_ATTRIBUTION_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0011 arrives on 2027-03-01, by the required date",
+                reason="SPO 202703-S0011 arrives on 1 Mar 2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),
@@ -380,7 +380,7 @@ CONFIRMED_COVER_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0012 arrives on 2027-03-01, by the required date",
+                reason="SPO 202703-S0012 arrives on 1 Mar 2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),

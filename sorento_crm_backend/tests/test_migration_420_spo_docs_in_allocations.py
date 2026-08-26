@@ -492,25 +492,18 @@ def test_a_line_that_would_collide_stops_the_move_before_anything_is_deleted():
             PurchaseOrder.po_number.like("SPO-%")).count() == 2
 
 
-def test_on_order_drops_a_past_dated_promise_and_keeps_a_shipped_one():
-    """The staleness rule in the view, the same sentence `spo_supply` states in Python.
+def test_on_order_counts_a_past_dated_promise_and_drops_a_received_one():
+    """TRUST THE BOOK (captain, 26 August 2026), in the view every planning figure reads.
 
-    Both rows below are open, unreceived and at a real warehouse. The difference is that one
-    has a container booked, so its arrival is tracked and being late is a fact rather than a
-    two-year-old promise nobody has restated.
+    Both rows below are open at a real warehouse and both are overdue. What decides is what
+    is still TO COME: the received one is out, the other is supply, and no date removes it.
     """
-    from app.models.procurement import InboundShipment
-
     with blank_session() as db:
         world = _book(db)
         migration = _migration()
         migration.move_spo_documents(db.connection())
         db.expire_all()
 
-        # The document's two BRW-IB lines for this product, 160 and 170. Selected by
-        # product and location rather than by position: a document whose export states no
-        # line numbers gets them assigned in creation order, and every line of one import
-        # shares a `created_at`, so position is not something to assert on.
         rows = sorted(
             (
                 row for row in _allocations(db, "SPO-2026/08-0061")
@@ -520,29 +513,20 @@ def test_on_order_drops_a_past_dated_promise_and_keeps_a_shipped_one():
             key=lambda row: row.allocated_quantity,
         )
         assert [row.allocated_quantity for row in rows] == [160, 170]
-        rows[0].expected_date = LONG_PAST          # stale: no container, date passed
-        rows[1].expected_date = LONG_PAST
-        shipment = InboundShipment(
-            id=_uid(), shipment_number=f"{MARKER}-{uuid.uuid4().hex[:8]}",
-            shipment_date=date.today(), estimated_arrival_date=SOON,
-            shipment_status="in_transit",
-        )
-        db.add(shipment)
-        db.flush()
-        rows[1].inbound_shipment_id = shipment.id  # tracked, so never stale
+        for row in rows:
+            row.expected_date = LONG_PAST
+        rows[0].quantity_received = 160
+        rows[0].receipt_status = "fully_received"
         db.flush()
 
         db.execute(text(migration.on_order_from_spo_documents(db.connection())))
         db.flush()
 
-        # 170 of the 330, which is the shipped line's half.
+        # The 170 that is still owed, overdue by more than a year and still owed.
         assert _on_order(db, world["product"].id, world["brw_ib"].id) == 170.0
 
 
-def test_a_promise_dated_today_is_still_on_order():
-    """Inclusive boundary: `expected_date == CURRENT_DATE` means it arrives today, and today
-    is supply. An exclusive test would drop a whole day of it and look like a rounding
-    detail."""
+def test_a_promise_dated_today_is_on_order_like_any_other():
     with blank_session() as db:
         world = _book(db)
         migration = _migration()
