@@ -709,9 +709,9 @@ def test_build_with_a_malformed_supplier_id_is_a_404_not_a_500(scm_app):
 
 
 def test_build_splits_project_and_retail_qty(scm_app):
-    # The two channels, from the two books that own them (P3, captain 26 Aug): retail off the
-    # sales-order book, project off `projects.order_inquiry_rows`. `so_count` counts the
-    # BOOK's orders, which is what the "Open SOs" drill lists - an inquiry row is not one.
+    # The two channels, both off the sales-order book and told apart by `demand_class`
+    # (R15, captain 27 Aug), the project half net of what CS already placed. `so_count`
+    # counts the orders behind BOTH, which is what the "Open SOs" drill lists.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -727,7 +727,7 @@ def test_build_splits_project_and_retail_qty(scm_app):
     assert row["project_qty"] == 80
     assert row["retail_qty"] == 40
     assert row["unclassified_qty"] == 0
-    assert row["so_count"] == 1
+    assert row["so_count"] == 2
 
 
 def test_build_a_project_row_outranks_a_retail_row_at_equal_dates(scm_app):
@@ -744,7 +744,7 @@ def test_build_a_project_row_outranks_a_retail_row_at_equal_dates(scm_app):
     w.stock("B", packed=1, cbm=0.5)
     same_date = date(2026, 9, 1)
     _so(db, w, "A", 10, demand_class="retail", required_date=same_date, order_date=same_date)
-    project_need(db, w, "B", 10, delivery=same_date)
+    project_need(db, w, "B", 10, required=same_date)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -767,11 +767,10 @@ def test_build_a_sooner_required_date_outranks_within_the_same_class(scm_app):
     )
     w.stock("A", packed=1, cbm=0.5)
     w.stock("B", packed=1, cbm=0.5)
-    # Both project, both dated, and the date is read off the inquiry row's own delivery date
-    # (`_project_need_dates`) rather than off a sales-order line - which is the whole reason
-    # that helper reads the form leg as well as the confirmed one.
-    project_need(db, w, "A", 10, delivery=date(2026, 9, 4))
-    project_need(db, w, "B", 10, delivery=date(2027, 5, 15))
+    # Both project, both dated off `sales_order_lines.required_date` - the same column the
+    # retail half ranks on since R15, so the two classes cannot rank on different clocks.
+    project_need(db, w, "A", 10, required=date(2026, 9, 4))
+    project_need(db, w, "B", 10, required=date(2027, 5, 15))
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 

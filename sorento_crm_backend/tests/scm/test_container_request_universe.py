@@ -1,4 +1,4 @@
-"""F1 - the loading plan builds with or without a stock list, and project need is the OI.
+"""F1 - the loading plan builds with or without a stock list, and what project need reads off.
 
 `PLAN-scm-fulfilment-feedback.md` section 2 (row 1), AC-A1 / A2 / A3 / A4. Two changes, and
 they are both about a screen that used to go blank:
@@ -8,10 +8,12 @@ they are both about a screen that used to go blank:
   say what to ask them for. It is now what we buy from them (`product_suppliers`) crossed with
   what customers are owed, plus whatever their stock list or their newest un-converted
   proforma names.
-* Project demand no longer comes from the sales-order book. P3 (captain, 26 Aug) put it in
-  ONE place - `projects.order_inquiry_rows` - and `demand.PLAN_DEMAND_ORDER_SQL` excludes
-  project class from the book outright, so a plan that read the book for it counted zero.
-  This file seeds the Order Inquiry, which is where the number actually lives.
+* Project demand on THIS screen is the open project sales-order book, less what CS has
+  already placed on a purchase order or an SPO (R15, captain 27 Aug). It read
+  `projects.order_inquiry_rows` alone for one day (R1), and on the dev copy 22,238 open
+  project SO lines carry no inquiry row at all, so purchasing was shown nothing to ask for.
+  The fulfilment board keeps P3 - `demand.py` and `scm.committed_v` are untouched - and only
+  the loading plan reads the book for project class.
 
 Postgres, marker-prefixed, every chain seeded here (CI's database is empty).
 """
@@ -24,6 +26,7 @@ import pytest
 
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import ProductSupplier
+from app.models.product import Product
 from app.models.project_so import OrderInquiry, OrderInquiryRow, ProjectSalesOrder
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
 from app.services.scm import container_request_service as svc
@@ -77,36 +80,76 @@ def _retail_need(db, w: World, key: str, qty: float, *, required=None) -> SalesO
     return so
 
 
-def _project_need(db, w: World, key: str, qty: float, *, delivery=None) -> OrderInquiryRow:
-    """Project demand: an un-linked ORDER row the CS form raised - `committed_v`'s FORM leg.
+def _project_need(db, w: World, key: str, qty: float, *, required=None) -> SalesOrderLine:
+    """Project demand: an open project-class SO line, which is what R15 reads.
 
-    The lightest of the two project legs to seed (no supply decision, no mirror line), and
-    the one that proves the point: the quantity is read off the Order Inquiry, never off a
-    project-class sales order.
+    The same book the retail leg reads, told apart by `demand_class` alone - so a project
+    requirement is seeded exactly like a retail one and the only difference on the row is the
+    column it lands in.
     """
-    # The FORM leg joins `products` on (product_code, company_id), so every row of this chain
-    # has to carry the company the PRODUCT was stamped with - which is the caller's company,
-    # not a constant. Hard-coding Sorento here made the leg join nothing under `scm_app`,
-    # whose fixture user belongs to a company of its own.
-    company_id = str(w.product(key).company_id)
-    core = SalesOrder(
+    so = SalesOrder(
         id=_uid(),
         so_number=f"{MARKER}-PSO-{uuid.uuid4().hex[:8]}",
         status="open",
         demand_class="project",
         order_date=date(2026, 1, 1),
     )
-    db.add(core)
+    db.add(so)
     db.flush()
+    line = SalesOrderLine(
+        id=_uid(),
+        sales_order_id=so.id,
+        product_id=w.product(key).id,
+        qty_ordered=qty,
+        qty_delivered=0,
+        line_status="open",
+        purchasing_status="not_reviewed",
+        required_date=required,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _place(db, w: World, line: SalesOrderLine, qty: float) -> None:
+    """CS puts `qty` of a project SO line on a purchase order - the netting R15 subtracts.
+
+    The whole chain, because that is the chain the netting walks: the project mirror of the
+    order (`projects.sales_orders` / `projects.sales_order_lines`, reconciled to the core line
+    by `core_sales_order_line_id`), the Order Inquiry row CS raised against that mirror line,
+    and the `projects.order_inquiry_links` row the placement wrote. A link is what says "this
+    requirement is already bought"; anything short of one leaves the line asking to be packed.
+    """
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+    from app.models.project_so import (
+        OrderInquiryLink,
+        ProjectSalesOrderLine,
+    )
+
+    # The company the PRODUCT was stamped with, which is the caller's - not a constant.
+    product = db.query(Product).filter(Product.id == line.product_id).one()
+    company_id = str(product.company_id)
+    core_so = db.query(SalesOrder).filter(SalesOrder.id == line.sales_order_id).one()
     pso = ProjectSalesOrder(
         id=_uid(),
         company_id=company_id,
         project_id=None,
-        so_id=core.id,
+        so_id=core_so.id,
         provisional_ref=f"{MARKER}-PR-{uuid.uuid4().hex[:8]}",
         status="published",
     )
     db.add(pso)
+    db.flush()
+    psl = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=pso.id,
+        core_sales_order_line_id=line.id,
+        line_no=1,
+        product_id=line.product_id,
+        qty=line.qty_ordered,
+    )
+    db.add(psl)
     db.flush()
     inquiry = OrderInquiry(
         id=_uid(),
@@ -121,16 +164,44 @@ def _project_need(db, w: World, key: str, qty: float, *, delivery=None) -> Order
         id=_uid(),
         company_id=company_id,
         order_inquiry_id=inquiry.id,
-        so_line_id=None,
-        item_code=w.product(key).product_code,
-        qty=qty,
-        delivery_date=delivery,
+        so_line_id=psl.id,
+        item_code=None,
+        qty=line.qty_ordered,
         verb="ORDER",
         state="raised",
     )
     db.add(row)
     db.flush()
-    return row
+    po = PurchaseOrder(
+        id=_uid(),
+        po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
+        supplier_id=w.supplier.id,
+        issue_date=date(2026, 1, 1),
+        status="active",
+    )
+    db.add(po)
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_uid(),
+        purchase_order_id=po.id,
+        product_id=line.product_id,
+        qty_ordered=qty,
+        qty_received=0,
+        line_status="open",
+    )
+    db.add(po_line)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=row.id,
+            po_line_id=po_line.id,
+            document=po.po_number,
+            qty=qty,
+        )
+    )
+    db.flush()
 
 
 def _proforma(
@@ -352,11 +423,14 @@ def test_a_proforma_line_with_no_open_need_is_an_unranked_row():
 
 
 # --------------------------------------------------------------------------- #
-# project demand is the Order Inquiry (P3, captain 26 Aug)
+# project demand is the SO book less what CS placed (R15, captain 27 Aug)
 # --------------------------------------------------------------------------- #
 
 
-def test_project_need_is_read_off_the_order_inquiry():
+def test_an_open_project_sales_order_line_is_project_need():
+    # R15. The line is the requirement; nothing else has to exist for purchasing to be told
+    # about it - which is the whole point, since 22,238 open project lines carry no inquiry
+    # row at all.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
@@ -369,30 +443,77 @@ def test_project_need_is_read_off_the_order_inquiry():
         assert row["open_so_need"] == 25
 
 
-def test_a_project_class_sales_order_line_is_not_project_demand():
-    # P3's whole point: the book speaks for retail alone. A project-class line becomes demand
-    # when CS raises an Order Inquiry row for it, and this line has none.
+def test_a_partly_placed_project_line_counts_only_its_remainder():
+    # 30 of the 100 is already on a purchase order, so 70 is what is left to ask for. The
+    # netting is per LINE and per link quantity, never per row state.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
-        so = SalesOrder(
+        line = _project_need(db, w, "A", 100)
+        _place(db, w, line, 30)
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["project_qty"] == 70
+        assert row["open_so_need"] == 70
+
+
+def test_a_fully_placed_project_line_counts_nothing():
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        line = _project_need(db, w, "A", 100)
+        _place(db, w, line, 100)
+
+        assert _build(db, w)["rows"] == []
+
+
+def test_an_inquiry_row_with_no_sales_order_line_is_not_loading_plan_demand():
+    # R15's accepted edge: the loading plan reads the BOOK, so a form-only inquiry row (one
+    # naming no SO line) is invisible here. None exist on the dev copy; when one does, this
+    # test is the record of the decision that has to be revisited.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        core = SalesOrder(
             id=_uid(),
-            so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
+            so_number=f"{MARKER}-PSO-{uuid.uuid4().hex[:8]}",
             status="open",
             demand_class="project",
             order_date=date(2026, 1, 1),
         )
-        db.add(so)
+        db.add(core)
+        db.flush()
+        company_id = str(w.product("A").company_id)
+        pso = ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=None,
+            so_id=core.id,
+            provisional_ref=f"{MARKER}-PR-{uuid.uuid4().hex[:8]}",
+            status="published",
+        )
+        db.add(pso)
+        db.flush()
+        inquiry = OrderInquiry(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=pso.id,
+            inquiry_no=f"{MARKER}{uuid.uuid4().hex[:8]}"[:20],
+            state="raised",
+        )
+        db.add(inquiry)
         db.flush()
         db.add(
-            SalesOrderLine(
+            OrderInquiryRow(
                 id=_uid(),
-                sales_order_id=so.id,
-                product_id=w.product("A").id,
-                qty_ordered=99,
-                qty_delivered=0,
-                line_status="open",
-                purchasing_status="not_reviewed",
+                company_id=company_id,
+                order_inquiry_id=inquiry.id,
+                so_line_id=None,
+                item_code=w.product("A").product_code,
+                qty=25,
+                verb="ORDER",
+                state="raised",
             )
         )
         db.flush()
@@ -415,74 +536,57 @@ def test_project_and_retail_need_add_up_on_one_row():
 
 
 def test_the_horizon_narrows_project_need_the_same_way_it_narrows_retail():
+    # The SAME cutoff, off the SAME column as retail (`sales_order_lines.required_date`): a
+    # line due past "Plan until" is not this container's problem.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
-        _project_need(db, w, "A", 25, delivery=date(2027, 6, 1))
-        _project_need(db, w, "A", 10, delivery=date(2026, 6, 1))
+        _project_need(db, w, "A", 25, required=date(2027, 6, 1))
+        _project_need(db, w, "A", 10, required=date(2026, 6, 1))
 
         out = svc.build(
             db, supplier_id=str(w.supplier.id), plan_horizon_date=date(2026, 12, 31)
         )
 
-        assert _row(out, w, "A")["project_qty"] == 10
+        row = _row(out, w, "A")
+        assert row["project_qty"] == 10
+        assert row["earliest_required_date"] == "2026-06-01"
 
 
-def test_the_open_so_lines_foot_to_the_retail_half_of_the_need():
-    # The invariant `build` states, corrected for P3: the flat lines are the sales-order
-    # book, and the book is retail. Project need has no book line to list.
+def test_the_project_need_by_date_is_the_earliest_line_the_plan_counts():
+    # Quantity and date come off the SAME lines: a requirement already bought must not make
+    # the product rank as urgent on a date nobody is still waiting on.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        placed = _project_need(db, w, "A", 7, required=date(2026, 1, 5))
+        _place(db, w, placed, 7)
+        _project_need(db, w, "A", 10, required=date(2026, 9, 4))
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["project_qty"] == 10
+        assert row["earliest_required_date"] == "2026-09-04"
+
+
+def test_the_open_so_lines_foot_to_the_whole_need():
+    # The invariant `build` states, back where it was before R1: project lines ARE sales-order
+    # lines again, so every unit of `open_so_need` has a line behind it - and a placed project
+    # line is listed at its remainder, the same figure the column shows.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
         _retail_need(db, w, "A", 40)
-        _project_need(db, w, "A", 25)
+        line = _project_need(db, w, "A", 100)
+        _place(db, w, line, 30)
 
         out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
 
         row = _row(out, w, "A")
         listed = sum(ln["qty"] for ln in out["lines"] if ln["product_id"] == row["product_id"])
-        assert listed == row["retail_qty"] == 40
-
-
-def _fully_linked(db, w: World, row: OrderInquiryRow) -> None:
-    """Place the whole of an inquiry row on a purchase-order line.
-
-    A row netted to nothing by its links is no longer demand - `committed_v` states it as
-    `oir.qty > COALESCE(linked, 0)` - so neither its quantity NOR its date may reach the plan.
-    """
-    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
-    from app.models.project_so import OrderInquiryLink
-
-    po = PurchaseOrder(
-        id=_uid(),
-        po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
-        supplier_id=w.supplier.id,
-        issue_date=date(2026, 1, 1),
-        status="active",
-    )
-    db.add(po)
-    db.flush()
-    line = PurchaseOrderLine(
-        id=_uid(),
-        purchase_order_id=po.id,
-        product_id=w.product("A").id,
-        qty_ordered=row.qty,
-        qty_received=0,
-        line_status="open",
-    )
-    db.add(line)
-    db.flush()
-    db.add(
-        OrderInquiryLink(
-            id=_uid(),
-            company_id=row.company_id,
-            row_id=row.id,
-            po_line_id=line.id,
-            document=po.po_number,
-            qty=row.qty,
-        )
-    )
-    db.flush()
+        assert listed == row["open_so_need"] == 110
+        assert {ln["demand_class"] for ln in out["lines"]} == {"retail", "project"}
+        assert row["so_count"] == 2
 
 
 def test_a_row_with_packed_zero_but_unfinished_stock_is_still_a_row():
@@ -498,37 +602,3 @@ def test_a_row_with_packed_zero_but_unfinished_stock_is_still_a_row():
         assert row["has_demand"] is False
         assert row["qty_unfinished"] == 500
         assert row["holding_source"] == "stock_list"
-
-
-def test_a_fully_linked_inquiry_row_gives_the_plan_neither_quantity_nor_date():
-    # The date and the quantity must come off the SAME rows. A row already placed on a
-    # purchase order is not demand, and dating the plan from it would rank a product as
-    # urgent on the strength of need somebody has already bought.
-    with pg_session() as db:
-        w = World(db)
-        _linked(db, w, "A")
-        placed = _project_need(db, w, "A", 7, delivery=date(2026, 1, 5))
-        _fully_linked(db, w, placed)
-        _project_need(db, w, "A", 10)
-
-        row = _row(_build(db, w), w, "A")
-
-        assert row["project_qty"] == 10
-        assert row["earliest_required_date"] is None
-
-
-def test_a_dated_inquiry_row_past_the_horizon_dates_nothing_either():
-    # Same rule through the other predicate the quantity leg applies.
-    with pg_session() as db:
-        w = World(db)
-        _linked(db, w, "A")
-        _project_need(db, w, "A", 25, delivery=date(2027, 6, 1))
-        _project_need(db, w, "A", 10)
-
-        out = svc.build(
-            db, supplier_id=str(w.supplier.id), plan_horizon_date=date(2026, 12, 31)
-        )
-
-        row = _row(out, w, "A")
-        assert row["project_qty"] == 10
-        assert row["earliest_required_date"] is None

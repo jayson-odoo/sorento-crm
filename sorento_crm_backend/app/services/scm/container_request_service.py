@@ -65,10 +65,7 @@ from app.services.scm import priority, supplier_notice_service
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import (
     PLAN_DEMAND_LINE_SQL,
-    PLAN_DEMAND_ORDER_SQL,
     demand_qty,
-    horizon_committed_select_sql,
-    horizon_project_need_dates_sql,
     is_open_demand,
     is_plan_demand_line,
     is_plan_demand_order,
@@ -229,21 +226,56 @@ def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
     }
 
 
+#: The quantity still owed on a sales-order line - `demand.demand_qty()`, spelled in SQL for
+#: this module's raw queries so the project leg, the line list and `_open_need` cannot drift
+#: from one another.
+_OPEN_QTY_SQL = (
+    "GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
+    "       - COALESCE(sol.qty_delivered, 0), 0)"
+)
+
+#: What CS has already placed against a core sales-order LINE - a purchase order or an SPO,
+#: which is the same thing to this screen: supply somebody has already committed to.
+#:
+#: The walk is core line -> its project mirror (`projects.sales_order_lines`, unique on
+#: `core_sales_order_line_id`) -> the Order Inquiry rows CS raised against that mirror line ->
+#: their `projects.order_inquiry_links`. The link IS the placement (`order_inquiry_links.qty`,
+#: one row per document), so a half-placed requirement nets by half, exactly as
+#: `scm.committed_v` nets its own project legs. Never matched on a document number or an item
+#: code.
+_PLACED_ON_LINE_SQL = """
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS placed
+        FROM projects.order_inquiry_links l
+        JOIN projects.order_inquiry_rows oir ON oir.id = l.row_id
+        JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+        WHERE psl.core_sales_order_line_id = sol.id
+    ) lk ON TRUE
+"""
+
+
 def _project_open_need(
     db: Session, product_ids: set[str], *, horizon: Optional[date] = None
-) -> dict[str, float]:
-    """Project need per product, off `projects.order_inquiry_rows` - P3, captain 26 Aug.
+) -> dict[str, dict]:
+    """Project need per product: the open project SO book, less what CS already placed.
 
-    "Project demand has ONE source: `projects.order_inquiry_rows`" (`demand.py`, near line
-    216). The sales-order book speaks for the retail side and for nothing else, which
-    `PLAN_DEMAND_ORDER_SQL` enforces - so a loading plan that read the book for project need
-    would count zero for every project product, which is exactly what it did.
+    R15 (captain, 27 Aug), and it supersedes R1 for THIS screen only. Project demand used to
+    be read here off `projects.order_inquiry_rows` alone, the way the fulfilment board reads
+    it (P3) - but on the dev copy 22,238 open project sales-order lines carry no inquiry row
+    at all, so purchasing opened the loading plan and was shown nothing to ask for. So the
+    loading plan reads the ONE book that has the requirement in it, the same book the retail
+    leg reads, and nets each line by the placements against it (`_PLACED_ON_LINE_SQL`) so a
+    requirement already on a PO or an SPO is not asked for twice.
 
-    REUSED, never re-derived: `demand.horizon_committed_select_sql()` is the same expression
-    `scm.committed_v` carries and the reorder run reads, with the horizon bind already in
-    each leg. Restating its two project legs here would be a second definition of project
-    demand, and the first symptom of the two disagreeing is a container ordered for a
-    quantity the fulfilment board does not recognise.
+    `demand.py`, `scm.committed_v` and the fulfilment board are untouched: they keep P3, where
+    CS confirms per inquiry row. The two screens answer different questions - "what is still
+    to buy" here, "what has CS decided" there - and only this one may read the book.
+
+    The openness predicate is the retail leg's, condition for condition (`_open_need` /
+    `_open_lines`): open order, open line, not covered, something still owed, and the same
+    "Plan until" cutoff on `sales_order_lines.required_date`. The DATE comes off the same
+    rows as the quantity - `MIN(required_date)` over the lines that survived the netting - so
+    a requirement somebody has already bought cannot make the product rank as urgent.
 
     No company predicate of its own: `product_ids` was resolved company-scoped upstream
     (`_linked_products` / `_stock_list` / `_standin_proforma`), and a product id belongs to
@@ -252,51 +284,39 @@ def _project_open_need(
     if not product_ids:
         return {}
     sql = f"""
-        SELECT product_id::text AS product_id, SUM(project_committed) AS qty
-        FROM ({horizon_committed_select_sql()}) c
-        WHERE product_id::text = ANY(:pids)
-        GROUP BY 1
-        HAVING SUM(project_committed) > 0
+        SELECT product_id, SUM(qty) AS qty, MIN(required_date) AS needed,
+               COUNT(DISTINCT so_id) AS so_count
+        FROM (
+            SELECT sol.product_id::text AS product_id,
+                   so.id AS so_id,
+                   sol.required_date AS required_date,
+                   GREATEST({_OPEN_QTY_SQL} - COALESCE(lk.placed, 0), 0) AS qty
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            {_PLACED_ON_LINE_SQL}
+            WHERE sol.product_id::text = ANY(:pids)
+              AND so.demand_class = 'project'
+              AND so.status = 'open'
+              AND sol.line_status = 'open'
+              AND sol.purchasing_status <> 'covered'
+              AND {_OPEN_QTY_SQL} > 0
+              AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date <= CAST(:horizon AS date))
+        ) p
+        WHERE qty > 0
+        GROUP BY product_id
     """
     rows = db.execute(
         text(sql), {"pids": list(product_ids), "horizon": horizon}
     ).mappings().all()
-    return {r["product_id"]: float(r["qty"] or 0) for r in rows}
-
-
-def _project_need_dates(
-    db: Session, product_ids: list[str], *, horizon: Optional[date] = None
-) -> dict[str, Any]:
-    """When the project need on each product is owed, off the SAME rows as its quantity.
-
-    `demand.horizon_project_need_dates_sql()` is the date companion of the two project legs
-    `_project_open_need` sums, condition for condition and with the same `:horizon` bind, so
-    a row the quantity leg excludes - already placed on a purchase order, or due past the
-    cutoff - cannot date the plan either. It used to: the date came off
-    `summary_order_service._earliest_project_need_dates`, which answers the Order Summary's
-    question under the Order Summary's rules (`state = 'raised'` alone, no remainder test, no
-    horizon), and a product could therefore rank as urgent on the strength of need somebody
-    had already bought.
-
-    The plan RANKS on this date, which is why it is read at all: a form-raised project row
-    that looks undated scores as no urgency under every priority policy.
-
-    No company predicate of its own, for the reason `_project_open_need` states: the ids were
-    resolved company-scoped upstream and a product id belongs to exactly one company.
-    """
-    if not product_ids:
-        return {}
-    rows = db.execute(
-        text(
-            f"""
-            SELECT product_id::text AS pid, needed
-            FROM ({horizon_project_need_dates_sql()}) d
-            WHERE product_id = ANY(CAST(:pids AS uuid[]))
-            """
-        ),
-        {"pids": [str(p) for p in product_ids], "horizon": horizon},
-    ).mappings().all()
-    return {r["pid"]: r["needed"] for r in rows if r["needed"] is not None}
+    return {
+        r["product_id"]: {
+            "qty": float(r["qty"] or 0),
+            "needed": r["needed"],
+            "so_count": int(r["so_count"] or 0),
+        }
+        for r in rows
+    }
 
 
 def _earliest_need_by(need_row: Any, project_date: Any) -> Any:
@@ -472,14 +492,21 @@ def _open_lines(
 ) -> list[dict]:
     """The open SO lines behind the demand rows, at line grain - CHANGE 2.
 
-    Same predicates `_open_need` aggregates - `is_open_demand()` (open line, not covered,
-    positive net qty), `SalesOrder.status == 'open'`, AND `is_plan_demand_order()` /
-    `is_plan_demand_line()` - raw SQL rather than the ORM only because the customer label
-    needs `customer_label.py`'s shared COALESCE fragment, which is written as SQL. Keeping
-    the predicates textually identical to `_open_need` is what keeps `sum(qty)` per product
-    here equal to that product's `open_so_need` (the invariant `build`'s docstring states) -
-    a second, drifting definition of "open" would break it silently, and that now includes
-    the horizon predicate below.
+    Same predicates `_open_need` and `_project_open_need` aggregate - `is_open_demand()`
+    (open line, not covered, positive net qty) and `SalesOrder.status == 'open'` on both
+    channels, `is_plan_demand_line()` on the retail one and the placement netting on the
+    project one - raw SQL rather than the ORM only because the customer label needs
+    `customer_label.py`'s shared COALESCE fragment, which is written as SQL. Keeping the
+    predicates textually identical to those two is what keeps `sum(qty)` per product here
+    equal to that product's `open_so_need` (the invariant `build`'s docstring states) - a
+    second, drifting definition of "open" would break it silently, and that includes both
+    the horizon predicate and the netting below.
+
+    BOTH channels since R15: a project requirement is a sales-order line again, so it has a
+    line to list here, and it is listed at its REMAINDER - the same figure the Project column
+    counts, net of what CS already placed. `PLAN_DEMAND_LINE_SQL` (the active-decision test)
+    stays on the retail half alone, because on the project half the placement links are what
+    say a requirement is already handled.
 
     Raw SQL bypasses the ORM's automatic company-scope loader criteria, so the predicate is
     reproduced by hand via `company_sql_predicate` (same pattern as
@@ -493,35 +520,40 @@ def _open_lines(
     if not product_ids:
         return []
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crl")
-    qty = (
-        "GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
-        "       - COALESCE(sol.qty_delivered, 0), 0)"
-    )
-    # `demand.py`'s two SQL fragments, unmodified: they are already written for the aliases
-    # `so`/`sol` this query uses, so using them (rather than restating the rule) keeps this
-    # in lockstep with `is_plan_demand_order()`/`is_plan_demand_line()` above.
+    qty = _OPEN_QTY_SQL
+    # `demand.py`'s line fragment, unmodified: it is already written for the aliases
+    # `so`/`sol` this query uses, so using it (rather than restating the rule) keeps this in
+    # lockstep with `is_plan_demand_line()` above.
     sql = f"""
-        SELECT sol.product_id::text AS product_id, so.so_number, so.demand_class,
-               so.order_date, sol.required_date,
-               {CUSTOMER_LABEL_SQL} AS customer_label,
-               {qty} AS qty
-        FROM sales_order_lines sol
-        JOIN sales_orders so ON so.id = sol.sales_order_id
-        LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
-        WHERE sol.product_id::text = ANY(:pids)
-          AND so.status = 'open'
-          AND sol.line_status = 'open'
-          AND sol.purchasing_status <> 'covered'
-          AND {qty} > 0
-          AND {PLAN_DEMAND_ORDER_SQL}
-          AND {PLAN_DEMAND_LINE_SQL}
-          -- Planning horizon (captain, 20 Aug): same shape as
-          -- `demand.horizon_committed_select_sql`'s sheet leg - a stated required_date past
-          -- the cutoff is excluded, no date at all is always in, a NULL horizon is a no-op.
-          AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
-               OR sol.required_date <= CAST(:horizon AS date))
-          {("AND " + co) if co else ""}
-        ORDER BY sol.required_date NULLS LAST, so.so_number
+        SELECT * FROM (
+            SELECT sol.product_id::text AS product_id, so.so_number, so.demand_class,
+                   so.order_date, sol.required_date,
+                   {CUSTOMER_LABEL_SQL} AS customer_label,
+                   CASE WHEN so.demand_class = 'project'
+                        THEN GREATEST({qty} - COALESCE(lk.placed, 0), 0)
+                        ELSE {qty} END AS qty
+            FROM sales_order_lines sol
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            {_PLACED_ON_LINE_SQL}
+            WHERE sol.product_id::text = ANY(:pids)
+              AND so.status = 'open'
+              AND sol.line_status = 'open'
+              AND sol.purchasing_status <> 'covered'
+              AND {qty} > 0
+              AND (so.demand_class = 'project' OR {PLAN_DEMAND_LINE_SQL})
+              -- Planning horizon (captain, 20 Aug): same shape as
+              -- `demand.horizon_committed_select_sql`'s sheet leg - a stated required_date
+              -- past the cutoff is excluded, no date at all is always in, a NULL horizon is
+              -- a no-op.
+              AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date <= CAST(:horizon AS date))
+              {("AND " + co) if co else ""}
+        ) l
+        -- A project line placed in full has nothing left to ask for, so it is not a line on
+        -- this request either - the same `> 0` test the Project column applies.
+        WHERE qty > 0
+        ORDER BY required_date NULLS LAST, so_number
     """
     rows = db.execute(
         text(sql), {"pids": product_ids, "horizon": horizon, **co_params}
@@ -909,13 +941,13 @@ def build(
     exactly rather than inventing a second one.
 
     INVARIANT this endpoint guarantees when `include_lines` is set: for every demand row,
-    `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["retail_qty"]`.
-    The flat lines are the sales-order BOOK, and since P3 the book speaks for the retail side
-    alone - project need comes off `projects.order_inquiry_rows`, which has no book line to
-    list. Before P3 this footed to `open_so_need`; that is now the sum of the two channels and
-    only its retail half has lines behind it. Both numbers still come off the identical
-    predicate (`_open_need` aggregates it, `_open_lines` emits it at line grain), and the
-    horizon does not disturb it: both sides apply it identically.
+    `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["open_so_need"]`.
+    The flat lines are the sales-order BOOK, and since R15 both channels are read off it - a
+    project requirement is a sales-order line again, listed at the remainder the Project column
+    counts. It footed to `retail_qty` alone for one day (R1, when project need was the Order
+    Inquiry and had no book line to list). Every number still comes off the identical predicate
+    (`_open_need` / `_project_open_need` aggregate it, `_open_lines` emits it at line grain),
+    and the horizon does not disturb it: every side applies it identically.
     """
     _supplier(db, supplier_id)
     as_of, stock = _stock_list(db, supplier_id)
@@ -945,32 +977,19 @@ def build(
     catalogue = _product_catalogue(db, demand_ids + no_demand_ids)
     stock_context = _stock_context(db, demand_ids + no_demand_ids)
 
-    # Only where there IS project need: a date read off an inquiry row whose quantity this
-    # plan did not count would make a retail row look more urgent than it is.
-    project_dates = (
-        {
-            pid: d
-            for pid, d in _project_need_dates(
-                db, sorted(project), horizon=plan_horizon_date
-            ).items()
-            if pid in project
-        }
-        if project
-        else {}
-    )
-
     prepared: list[dict] = []
     if demand_ids:
         demand_rows = []
         for pid in demand_ids:
             n = need.get(pid)
-            project_qty = project.get(pid, 0.0)
+            p = project.get(pid)
+            project_qty = p["qty"] if p else 0.0
             retail_qty = float(getattr(n, "retail_qty", 0) or 0) if n else 0.0
             klass = "project" if project_qty > 0 else "retail" if retail_qty > 0 else "unclassified"
             demand_rows.append(
                 {
                     "row_key": pid,
-                    "required_date": _earliest_need_by(n, project_dates.get(pid)),
+                    "required_date": _earliest_need_by(n, p["needed"] if p else None),
                     "order_date": getattr(n, "oldest_order_date", None) if n else None,
                     # Absent, per the module's own rule: a product row spans every customer
                     # behind it, so no single payment-terms figure applies (priority.py's
@@ -988,16 +1007,17 @@ def build(
             info = catalogue.get(pid, {})
             held = holdings.get(pid) or _empty_holding()
             ctx = stock_context.get(pid) or _empty_context()
-            # The two channels, from the two places that own them (P3): retail off the
-            # sales-order book, project off `projects.order_inquiry_rows`.
+            # The two channels, both off the sales-order book since R15, told apart by
+            # `demand_class` - the project half net of what CS already placed.
+            p = project.get(pid)
             retail_qty = float(getattr(n, "retail_qty", 0) or 0) if n else 0.0
             unclassified_qty = float(getattr(n, "unclassified_qty", 0) or 0) if n else 0.0
-            project_qty = project.get(pid, 0.0)
+            project_qty = p["qty"] if p else 0.0
             open_so_need = retail_qty + unclassified_qty + project_qty
             # Site pools only, and neither the packing list nor the outstanding PO is
             # subtracted - `_stock_context`'s docstring is the record of that rule.
             suggested_qty = max(open_so_need - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
-            need_by = _earliest_need_by(n, project_dates.get(pid))
+            need_by = _earliest_need_by(n, p["needed"] if p else None)
             prepared.append(
                 {
                     "product_id": pid,
@@ -1013,7 +1033,12 @@ def build(
                     "retail_qty": retail_qty,
                     "unclassified_qty": unclassified_qty,
                     "earliest_required_date": need_by.isoformat() if need_by else None,
-                    "so_count": int(getattr(n, "so_count", 0) or 0) if n else 0,
+                    # Both channels, because since R15 both are sales orders: the "Open SOs"
+                    # cell drills into `lines`, and a count that named the retail half alone
+                    # would disagree with the list it opens. An order carries one
+                    # `demand_class`, so the two counts cannot overlap.
+                    "so_count": (int(getattr(n, "so_count", 0) or 0) if n else 0)
+                    + (p["so_count"] if p else 0),
                     **held,
                     "rank_score": scores[pid],
                     "rank_factors": [f.as_dict() for f in factors_by_row[pid]],
