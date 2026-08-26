@@ -95,3 +95,21 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-I12 A cell whose rows are all unlinked shows one rose segment and reads "Buy N"; a row linked 5 of 8 to a PO shows sky 5 / rose 3 and reads "PO 5 · Buy 3"; a row linked to an SPO shows violet.
 - AC-I13 Confirming a plan-generated PO that links a raised row flips its cell from Buy to Use PO without a reload of the filter.
 - AC-I14 The list view's Linked to column carries the same bar; there is no legend row on either view.
+
+## Part 3. A changed sales order (ruled 25 Aug, UAC written 26 Aug)
+
+Fixture: SO381895 re-uploaded with form (3): SRTWCX7405-RL-S-PJ 10 + 10 + 5 on 25 Aug / 5 Sep / 10 Sep becomes 25 on 19 Aug; C-FH14 advanced to 19 Aug.
+
+- AC-P3-1 The trigger is the SO re-upload. The Planning changes list row's Plan action and the SO list's "Changed" badge both open the board at `/project-sales/fulfilment-planning?orders=<so_number>&batch=<batch_id>`. The separate `/project-sales/planning-changes/[batchId]` page is retired (route and nav entry gone); the list stays as the entry point.
+- AC-P3-2 With `batch` set, every changed line's cell shows a small Was / Now table with three rows (Qty, Date, Decision), not a sentence. A line closed in the book reads "Closed" in the Now column. Lines the batch does not touch keep their decision and show no table.
+- AC-P3-3 A changed line's cell arrives pre-marked with the batch row's suggested decision in board words only (Buy 25, Use own location ...). The words Keep, Release, Replan, Reduce, Retire never appear on screen. Links are not shown on the board.
+- AC-P3-4 Approve on a changed line takes the batch row's decision; Confirm with `batch` set applies the batch and writes a new revision in one call. The batch reads applied with actor and time; a second Confirm on the same batch is refused with a message, not a duplicate revision.
+- AC-P3-5 One OI row per SO line, always: apply never creates a second raised row for a line that already has one. The 25 line's existing OI row keeps its id, reads qty 25 and required date 19 Aug, and keeps every link it had. The previous value travels with the row (was 10 on 25 Aug) so purchasing can see what moved.
+- AC-P3-6 The two lines closed in the book have their OI rows cancelled, never deleted. Their links move first to the surviving raised row of the same product on the same SO; whatever that row cannot take goes back through the cascade. No link is dropped silently.
+- AC-P3-7 A link (kept or shifted) whose document arrives after the row's new required date stays linked and reads "arrives late" wherever the link is shown (Linked to column, popover, OI detail). Purchasing decides; nothing is unlinked for lateness.
+- AC-P3-8 Qty down with more linked than the new quantity: the excess is unlinked from the latest-dated link first until linked qty <= new qty. No CANCEL_BALANCE row is written for the drop; the row is reduced in place.
+- AC-P3-9 A transfer already MOVED for a line now closed is flagged on the change row ("10 moved BRW -> BRW-IB, line cancelled") and on the board cell. No reverse transfer is created.
+- AC-P3-10 RELEASE on a wholly-Buy line delayed beyond the reserve window: if its ORDER row carries links, the row moves to the pool warehouse with its links kept and a note naming the delay; if it carries none, the row gets DELAY with the previous date, as today. RELEASE never raises a new OI row.
+- AC-P3-11 After apply, the board cell and the Order Inquiries page agree: SO381895 shows one raised row of 25 for SRTWCX7405-RL-S-PJ and two cancelled rows; `committed_v` for the product counts 25 and nothing else for that SO.
+- AC-P3-12 Tests land in the same PR: pytest for apply (update in place with id kept, link shift to the survivor then cascade, late flag, over-cover unlink latest-dated first, release to pool with links, transfer flag, second apply refused); vitest for the Was / Now cell, the pre-marked decision words, Confirm carrying `batch`, the retired page's entry points.
+- AC-P3-13 Browser evidence on the lane: form (3) re-upload of SO381895, board opened from the Planning changes list, three annotated cells, Confirm, OI page showing the 25 row with its links and the two cancelled rows.

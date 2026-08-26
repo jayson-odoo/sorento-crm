@@ -634,6 +634,8 @@ All ruled. Go/no-go on the order in section 4.
 
 ## Part 3. A changed sales order (captain, 25 Aug: SO381895 forms (2) -> (3), SRTWCX7405-RL-S-PJ 10 + 10 + 5 on 25 Aug / 5 Sep / 10 Sep becomes 25 on 19 Aug)
 
+**Status:** UAC AC-P3-1..P3-13 written 26 Aug (acceptance criteria file, section Part 3); build started 26 Aug on `feat/scm-uat-so-change` stacked on I2 (#331). RELEASE ruling (26 Aug): kept for wholly-Buy lines; a linked ORDER row moves to the pool on a far delay with its links, an unlinked one gets DELAY.
+
 **What exists:** `planning_change_service` + `/project-sales/planning-changes` (18-19 Aug). A batch is born when a re-uploaded SO book changes a PLANNED line: one row per line with what changed, what the decision holds, and a suggested reaction (Keep / Release / Replan / Reduce / Retire, rule table in `PLAN-so-book-diff-replanning.md` section 0). The planner accepts per row on a separate page and presses Apply; OI rows get DELAY / ADVANCE / CANCEL_BALANCE / RELEASE.
 
 **Captain's idea:** same interface as normal ordering, change annotated, decision remade per change, then it flows to OI. Agreed, with these corrections:
