@@ -245,6 +245,13 @@ reads.
   `collapseDetailColumns` and covered by a vitest. Hiding one member of a group now hides
   none of them: the group is one choice, which is also what makes a view written in 2026
   still mean "show the delivery years" in 2027 (the S1 contract point).
+- **A column id survives its column.** Switching the period from 2026 (which has a ticked
+  delivery year) to 2025 (which has none) leaves the user's column ORDER naming
+  `expected_delivery_year__2026`, and TanStack logs "Column with id ... does not exist" on
+  every render. `ReportPage` now filters the order to the ids the CURRENT result holds. Two
+  transient warnings still appear on the frame where the switch lands, from the shared
+  DataGrid's own prefs hook; the grid renders correctly and the steady state is clean, so
+  the shared component is left alone.
 - **`REPORT_EXPORT_QUEUE` (`settings.report_export_queue`, default `imports`).** The
   default IS the production queue the deployed worker drains; the knob exists because RQ
   workers are SHARED across worktrees on this machine, so a lane verifying an export needs

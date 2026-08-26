@@ -249,6 +249,19 @@ export function ReportPage({
   const effectiveGrid =
     gridOverride && state && gridOverride.token === state.token ? gridOverride : desiredGrid;
 
+  /**
+   * The order, minus any id the CURRENT result has no column for.
+   *
+   * Tick columns are data-dependent: 2026 has an `expected_delivery_year__2026`, 2025 has
+   * none at all. Switching the period keeps the user's order, so without this the table is
+   * handed an id it cannot resolve and logs "Column with id ... does not exist" on every
+   * render.
+   */
+  const columnOrder = useMemo(() => {
+    const present = new Set((detailLayout?.columns ?? []).map((column) => column.key));
+    return (effectiveGrid?.order ?? []).filter((id) => present.has(id));
+  }, [detailLayout, effectiveGrid]);
+
   const table = useReactTable({
     data: (detailLayout?.rows ?? []) as ReportRow[],
     columns,
@@ -257,7 +270,7 @@ export function ReportPage({
       sorting,
       pagination,
       columnVisibility: effectiveGrid?.visibility ?? {},
-      columnOrder: effectiveGrid?.order ?? [],
+      columnOrder,
     },
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
