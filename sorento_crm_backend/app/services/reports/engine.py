@@ -665,8 +665,8 @@ class WorkbookData:
     period_label: str
     summary: ReportPivotLayout
     sheets: List[WorkbookSheet]
-    #: How the company writes its own name on a document. System settings when it is set,
-    #: else the definition's (AC-G7).
+    #: How the company writes its own name on a document: the DEFINITION's name when it
+    #: has one, and system settings only for a definition that names none (AC-G7).
     company_name: str = ""
     #: "JAN-DEC'25", for the labelled total rows the client's SUMMARY closes with.
     period_compact_label: str = ""

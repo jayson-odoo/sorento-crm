@@ -172,7 +172,8 @@ screen (AC-C5 stands).
 - **AC-G6 [BE].** The catalog carries the sheet's OTHERS column (the form's `purpose` free
   text), labelled Others and hidden by default, so a user can show it and export it.
 - **AC-G7 [BE].** Every exported sheet opens with the client's title block: row 2 the
-  company legal name (system settings' company name when it is set, else the definition's),
+  company legal name (the DEFINITION's `company_name`; `system_settings.name` only when the
+  definition names none, which is where report #2 gets a letterhead from),
   row 3 the report title, row 4 a real date cell formatted `mmm-yy` on a monthly sheet or
   the period label on SUMMARY, row 5 `DEPARTMENT:` and the department. Rows 2-4 are merged
   across the table, centred and bold.

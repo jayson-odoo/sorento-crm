@@ -270,7 +270,9 @@ class WorkbookSpec:
     uppercased, which is the plain version of the same layout (AC-G7, AC-G8, AC-G10).
     """
 
-    #: The fallback company name. The live one comes from system settings when set.
+    #: The name printed on the letterhead, and it WINS: the client's legal name belongs to
+    #: the report, not to a settings row (the live install's still says "Metronic").
+    #: `system_settings.name` is the fallback, for a report that names no company (AC-G7).
     company_name: str
     department: Optional[str] = None
     #: What the SHEET calls this report. The client's own file says SPONSORSHIP where the

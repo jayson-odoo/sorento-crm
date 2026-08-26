@@ -468,10 +468,11 @@ Z..AA, `TOTAL SALES` on row 26 and two labelled year-total rows on 28 and 29.
 7. **The sheet's OTHERS column is the form's `purpose`,** hidden by default, and it keeps
    the catalog key `purpose` so a view saved before S6 still resolves. The LABEL is what
    the user reads, and it reads Others.
-8. **The company name comes from system settings** (`system_settings.name`), falling back
-   to the definition's `company_name` when it is blank. The local copy still carries the
-   Metronic template name, so a local export says METRONIC until that setting is corrected;
-   the definition's own value is `SORENTO SDN BHD`.
+8. **The company name comes from the DEFINITION** (`WorkbookSpec.company_name`, here
+   `SORENTO SDN BHD`), and `system_settings.name` is the fallback ONLY for a definition
+   that names no company (report #2 may name none). Settings wins nothing: the live
+   install's `system_settings.name` still reads the template's `Metronic`, and a letterhead
+   is the legal name the client puts on the paper, not a setting nobody has corrected.
 9. **The display fonts are not reproduced.** The client's file uses Bell MT and Algerian
    for the two title lines. Neither is a font this system ships, and a missing font
    substitutes silently per machine, so the export mirrors the SIZES, the weight, the
@@ -490,7 +491,7 @@ Z..AA, `TOTAL SALES` on row 26 and two labelled year-total rows on 28 and 29.
 | G4 | Single-level headers span both header rows | `data-grid-table.tsx`, `data-grid-table-dnd.tsx` |
 | G5 | Zero money reads "-"; sponsor subject drops the prefix | `ReportPage.tsx`, `datasets/sponsorship_forms.py` |
 | G6 | `purpose` is labelled Others | `datasets/sponsorship_forms.py` |
-| G7 | Title block rows 2-5, real date cell, DEPARTMENT row | `xlsx_renderer.py`, `WorkbookSpec` |
+| G7 | Title block rows 2-5, real date cell, DEPARTMENT row; the letterhead is the definition's company name, settings only when it names none | `xlsx_renderer.py`, `WorkbookSpec`, `engine.company_name` |
 | G8 | Uppercase configured headers, vertical + horizontal merges, widths | `xlsx_renderer.py`, `WorkbookSpec.headers` / `column_widths` |
 | G9 | Accounting RM format, "-" for missing, labelled GRAND TOTAL | `xlsx_renderer.py` |
 | G10 | SUMMARY: TOTAL SALES + one labelled year-total row per measure | `xlsx_renderer.py`, `WorkbookSpec` labels |
