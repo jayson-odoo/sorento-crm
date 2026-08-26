@@ -206,7 +206,7 @@ export function ReorderStatTiles({
         >
           <Tile
             label="Awaiting acknowledgement"
-            value={awaitingRows.toLocaleString()}
+            value={fmtInt(awaitingRows)}
             icon={ClipboardCheck}
             valueClass="text-amber-600"
             iconClass="bg-amber-100 text-amber-700"
