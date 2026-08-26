@@ -432,9 +432,21 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     />
   );
 
+  /**
+   * How much of this line's quantity no tick claims (AC-G4, Q4).
+   *
+   * It rides at the suggested warehouse, which is often the SAME warehouse a ticked order
+   * needs - so the split reads "BRW 70" whether 40 of it is spoken for or none of it is,
+   * and unticking an order moved no number on the screen at all. The figure has to be
+   * stated, because it is the difference between goods promised to an order and free stock.
+   */
+  const unassignedFor = (ln: SpoSuggestionLine) =>
+    Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), qtyFor(ln)), 0);
+
   const renderLocationCell = (ln: SpoSuggestionLine) => {
     const splits = splitsFor(ln);
     const qty = qtyFor(ln);
+    const unassigned = unassignedFor(ln);
     const disabled = ln.cannot_convert || qty <= 0 || ln.location_options.length === 0;
     const label =
       splits.length === 0
@@ -445,18 +457,25 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           : `${splits.length} locations`;
     const mismatch = splitMismatch.has(ln.shipment_line_id);
     return (
-      <div className="flex items-center gap-1">
-        <LocationSplitPopover
-          line={ln}
-          splits={splits}
-          qty={qty}
-          disabled={disabled}
-          triggerLabel={label}
-          mismatch={mismatch}
-          onChange={(next) => setSplits(ln, next)}
-        />
-        {ln.location_options.length > 0 && !ln.cannot_convert ? (
-          <SoCoveredDrillPopover line={ln} splits={splits} />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <LocationSplitPopover
+            line={ln}
+            splits={splits}
+            qty={qty}
+            disabled={disabled}
+            triggerLabel={label}
+            mismatch={mismatch}
+            onChange={(next) => setSplits(ln, next)}
+          />
+          {ln.location_options.length > 0 && !ln.cannot_convert ? (
+            <SoCoveredDrillPopover line={ln} splits={splits} />
+          ) : null}
+        </div>
+        {unassigned > 0 && !ln.cannot_convert ? (
+          <span className="text-2xs text-muted-foreground">
+            {fmtInt(unassigned)} unassigned
+          </span>
         ) : null}
       </div>
     );

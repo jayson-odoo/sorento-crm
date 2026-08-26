@@ -369,8 +369,9 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openSoDrill();
 
-    // 100 packed, 40 + 30 ticked - the remaining 30 is free stock.
-    expect(screen.getByText(/30 unassigned/)).toBeInTheDocument();
+    // 100 packed, 40 + 30 ticked - the remaining 30 is free stock. Said in the drill, and
+    // again on the location cell, because that is where it decides where goods land.
+    expect(screen.getAllByText(/30 unassigned/).length).toBeGreaterThanOrEqual(2);
   });
 
   it('the ticks drive the location split (AC-G4)', async () => {
@@ -618,5 +619,55 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
 
     // Their 50 survives the round trip - it was a decision, not a derived default.
     expect(qtyInput()).toHaveValue(50);
+  });
+});
+
+/**
+ * Browser pass 3, finding 3 - the split has to SAY what no tick claims.
+ *
+ * Untick an order whose warehouse is also the suggested one and the arithmetic does not
+ * move: 40 ticked + 30 unassigned at BRW reads exactly like 70 unassigned at BRW. The
+ * quantity is right either way; what the screen never said is how much of it is nobody's.
+ */
+describe('F7 - unticking an SO line shows up as Unassigned', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  it('states the unassigned share on the location cell', async () => {
+    renderTable();
+    await screen.findByTitle(/which demand this spo is for/i);
+
+    // 40 + 30 ticked of 100: the other 30 is free stock at the suggested warehouse.
+    expect(screen.getAllByText(/30 unassigned/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('moves the unassigned share when a tick is dropped', async () => {
+    renderTable();
+    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+
+    // SI26-0100 is at BRW, which is also the suggested warehouse - so the SPLIT is
+    // unchanged and only the unassigned reading can tell the two apart.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SI26-0100' }));
+
+    expect(await screen.findByText(/70 unassigned/)).toBeInTheDocument();
+  });
+
+  it('says nothing about unassigned when every piece is spoken for', async () => {
+    state.suggestion = suggestion({
+      lines: [plannerLine({ packed_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
+    });
+    renderTable();
+    await screen.findByTitle(/which demand this spo is for/i);
+
+    expect(screen.queryByText(/unassigned/)).not.toBeInTheDocument();
   });
 });
