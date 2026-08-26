@@ -252,3 +252,22 @@ def test_history_does_not_count_another_companys_orders(scm_app):
 
     assert r.status_code == 200, r.text
     assert r.json()["products"][0]["project"]["total"] == 0
+
+
+def test_history_with_a_malformed_product_id_answers_zeros_not_a_500(scm_app):
+    # The ids reach this route off a query string, so "nope" is a caller's typo rather than a
+    # server error - the same rule `list_for_supplier` follows. It matters now because the
+    # filter casts to `uuid[]` for the index, and a cast is a good deal less forgiving than
+    # the text comparison it replaced.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+
+    r = _get(app, str(w.supplier.id), ["nope", str(w.product("A").id)])
+
+    assert r.status_code == 200, r.text
+    assert [p["product_id"] for p in r.json()["products"]] == [
+        "nope",
+        str(w.product("A").id),
+    ]
+    assert r.json()["products"][0]["project"]["total"] == 0
