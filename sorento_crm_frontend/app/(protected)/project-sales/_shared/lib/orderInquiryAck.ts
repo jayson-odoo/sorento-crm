@@ -57,21 +57,22 @@ export function isRejectable(row: OrderInquiryAckFields): boolean {
 }
 
 /**
- * What the previous value was, off the note part 3's settle-in-place writes:
- * `Was 10 on 2026-08-25`, or `Was 10, no previous delivery date`.
+ * What the row said before CS last amended it - the Was half of the Was / Now table.
  *
- * Parsed rather than stored a second time. The settle writes exactly one such phrase per
- * change and appends it, so the LAST match is the most recent one; anything that does not
- * match returns nothing at all rather than a guess, and the cell then prints the state
- * without a table.
+ * Read off the row's own `previous_qty` / `previous_delivery_date`, which the settle-in-place
+ * writes (`project_order_inquiry_service._settle_row_in_place`). It used to be parsed back
+ * out of the note beside them, and the note is a sentence for a person: "Was 10, no previous
+ * delivery date" gave up the quantity as `10,` - the sentence's own comma read as part of
+ * the number. A figure the screen prints is asked for as a figure.
+ *
+ * A row with no previous quantity returns nothing at all rather than a guess, and the cell
+ * then prints the state without a table.
  */
-export function previousValueOf(note: string | null | undefined): {
+export function previousValueOf(row: OrderInquiryAckFields): {
   qty: string;
   date: string | null;
 } | null {
-  if (!note) return null;
-  const matches = [...note.matchAll(/Was ([\d.,]+)(?: on (\d{4}-\d{2}-\d{2}))?/g)];
-  const last = matches[matches.length - 1];
-  if (!last) return null;
-  return { qty: last[1], date: last[2] ?? null };
+  const qty = row.previous_qty;
+  if (qty === null || qty === undefined || qty === '') return null;
+  return { qty: String(qty), date: row.previous_delivery_date ?? null };
 }

@@ -84,42 +84,37 @@ describe('isRejectable', () => {
 });
 
 describe('previousValueOf', () => {
-  it('reads qty and date off the settle-in-place note', () => {
-    expect(previousValueOf('Was 10 on 2026-08-25')).toEqual({
-      qty: '10',
-      date: '2026-08-25',
-    });
+  it('reads qty and date off the row the settle-in-place wrote', () => {
+    expect(
+      previousValueOf({ previous_qty: '10', previous_delivery_date: '2026-08-25' }),
+    ).toEqual({ qty: '10', date: '2026-08-25' });
   });
 
-  // DEFECT, reported not fixed: `previousValueOf`'s qty character class is
-  // `[\d.,]+`, which is greedy across the comma the backend's own note format writes
-  // right after the quantity in the no-previous-date case
-  // (`app/services/project_order_inquiry_service.py:711`,
-  // `f"Was {_qty_str(previous_qty)}, no previous delivery date"`). The capture group
-  // therefore reads `"10,"` - comma included - rather than `"10"`, and the Was / Now
-  // table (`OrderInquiryAckCell` -> `BoardChangeTable`) would print the trailing
-  // comma on any CHANGED row whose line has no delivery date. Left `.fails` per the
-  // tester's brief - report only, do not fix here.
-  it.fails('reads a qty-only phrase with no previous delivery date', () => {
-    expect(previousValueOf('Was 10, no previous delivery date')).toEqual({
+  it('reads a quantity whose line had no previous delivery date', () => {
+    // The case the old note-parsing got wrong: the backend's own sentence for it is
+    // "Was 10, no previous delivery date", and the qty character class swallowed the
+    // comma, so the Was / Now table printed `10,`. The figure is a figure now.
+    expect(previousValueOf({ previous_qty: '10', previous_delivery_date: null })).toEqual({
       qty: '10',
       date: null,
     });
   });
 
-  it('takes the LAST match when a row carries more than one change', () => {
+  it('reads the LATEST change, because that is the only value the row keeps', () => {
+    // Each settle overwrites these two columns, so a row amended twice states what it
+    // said before the SECOND amendment - "what changed since I looked", not a history.
     expect(
-      previousValueOf('Was 10 on 2026-08-10; later: Was 20 on 2026-08-20'),
+      previousValueOf({ previous_qty: '20', previous_delivery_date: '2026-08-20' }),
     ).toEqual({ qty: '20', date: '2026-08-20' });
   });
 
-  it('returns nothing for a note with no such phrase, rather than guessing', () => {
-    expect(previousValueOf('Auto: decision_confirm')).toBeNull();
+  it('returns nothing for a row that has never been amended, rather than guessing', () => {
+    expect(previousValueOf({})).toBeNull();
+    expect(previousValueOf({ previous_qty: null })).toBeNull();
+    expect(previousValueOf({ previous_qty: '' })).toBeNull();
   });
 
-  it('returns nothing for a blank or absent note', () => {
-    expect(previousValueOf(null)).toBeNull();
-    expect(previousValueOf(undefined)).toBeNull();
-    expect(previousValueOf('')).toBeNull();
+  it('ignores the note entirely - it is prose, not a value', () => {
+    expect(previousValueOf({ note: 'Was 10 on 2026-08-25' } as never)).toBeNull();
   });
 });

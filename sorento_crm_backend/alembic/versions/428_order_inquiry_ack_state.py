@@ -15,6 +15,13 @@ acknowledged | rejected | changed - where the HANDSHAKE stands). A row can be wh
 linked and still be one CS has amended since; a row can be rejected and still carry the
 links a buyer made before refusing the rest.
 
+Two more columns ride with them and are not part of the handshake's own state:
+`previous_qty` / `previous_delivery_date`, what the row said before the last
+settle-in-place restated it. The CHANGED cell prints a Was / Now table off them. They
+exist because the previous value used to live only in the row's note, as prose, and a
+screen that parsed the sentence back into a number read its own comma as part of the
+quantity ("Was 10, no previous delivery date" -> `10,`).
+
 NO BACKFILL, deliberately. The feature is not live: nobody has acknowledged anything, so
 every existing row starts `awaiting`, which is the truth about it. That is also why the
 column is `NOT NULL DEFAULT 'awaiting'` rather than nullable - a NULL here would be a
@@ -414,6 +421,19 @@ def upgrade() -> None:
         sa.Column("changed_at", sa.DateTime(timezone=False), nullable=True),
         schema="projects",
     )
+    # What the row said before the last settle-in-place restated it. The Was / Now table
+    # the CHANGED cell prints reads these two columns; the note beside them keeps the same
+    # sentence for a person, and is never parsed back into a number.
+    op.add_column(
+        "order_inquiry_rows",
+        sa.Column("previous_qty", sa.Numeric(15, 4), nullable=True),
+        schema="projects",
+    )
+    op.add_column(
+        "order_inquiry_rows",
+        sa.Column("previous_delivery_date", sa.Date(), nullable=True),
+        schema="projects",
+    )
     op.create_foreign_key(
         "fk_order_inquiry_rows_acknowledged_by",
         "order_inquiry_rows",
@@ -516,6 +536,8 @@ def downgrade() -> None:
         type_="foreignkey",
     )
     for column in (
+        "previous_delivery_date",
+        "previous_qty",
         "changed_at",
         "rejected_reason",
         "rejected_at",

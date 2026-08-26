@@ -517,6 +517,12 @@ class ProjectOrderInquiryService:
             ):
                 settled_in_place.append(str(line.id))
                 continue
+            # Read BEFORE the loop below cancels anything: what purchasing had already
+            # taken on for this line, off the rows that are still LIVE. Taken afterwards it
+            # would read the rows this loop has just cancelled, which is every superseded
+            # row this line ever carried, so a line whose acknowledgement had long since
+            # been superseded would keep promoting its replacements to `changed` forever.
+            prior_ack = self._live_handshake(rows)
             linked = self._linked_qty_by_row([row.id for row in rows])
             placed = _ZERO
             for row in rows:
@@ -555,12 +561,23 @@ class ProjectOrderInquiryService:
                         else f"Remainder superseded by revision {decision.revision_no}"
                     )
 
-            # Did purchasing already take this line's instruction on? The replacement
-            # row inherits it as a CHANGE (AC-H9): a supersede is still the same line
-            # moving under them, and raising the replacement plain `awaiting` would hide
-            # from the buyer that this is one they had already acknowledged.
-            was_acknowledged = any(
-                row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED) for row in rows
+            # Did purchasing already take this line's instruction on, and is this
+            # confirmation actually changing it?
+            #
+            # A CARRIED line is not a change at all (13.4): this confirmation named other
+            # lines, and this one's still-raised row is moved under the new revision by a
+            # cancel and a re-raise purely so `confirmed_unplaced_buy_rows` keeps finding
+            # it. Promoting it to `changed` there told the buyer, on every confirm of any
+            # OTHER line of the same order, that a row they had acknowledged had moved -
+            # with no Was and no Now to show for it, because nothing had. So the carried
+            # row inherits the handshake verbatim, stamps included.
+            #
+            # A NAMED line IS a change (AC-H9): a supersede is the same line moving under
+            # them, and raising the replacement plain `awaiting` would hide from the buyer
+            # that this is one they had already read. The acknowledgement stamps travel
+            # with it, so the cell can still say who had taken it on.
+            ack_state, acknowledged_by, acknowledged_at, changed_at = self._handshake_for_raise(
+                prior_ack, carried=carried
             )
             outstanding = need - placed
             if outstanding > _ZERO:
@@ -588,8 +605,10 @@ class ProjectOrderInquiryService:
                         covered_by=None,
                         supply_decision_id=decision.id,
                         state=INQUIRY_RAISED,
-                        ack_state=ACK_CHANGED if was_acknowledged else ACK_AWAITING,
-                        changed_at=datetime.utcnow() if was_acknowledged else None,
+                        ack_state=ack_state,
+                        acknowledged_by=acknowledged_by,
+                        acknowledged_at=acknowledged_at,
+                        changed_at=changed_at,
                     )
                 )
                 raised += 1
@@ -652,6 +671,56 @@ class ProjectOrderInquiryService:
             "settled_in_place": settled_in_place,
         }
 
+    @staticmethod
+    def _live_handshake(
+        rows: Sequence[OrderInquiryRow],
+    ) -> Optional[OrderInquiryRow]:
+        """The row of this line purchasing has actually taken on, if there is one.
+
+        LIVE rows only - raised, partly linked, placed. A cancelled row is a superseded
+        instruction and an actioned one was answered elsewhere; neither is what purchasing
+        is holding now, so neither may decide what the next row says about them. Rejected
+        is deliberately not a match either: a refusal sends the line back to CS, and what
+        CS raises next is a fresh instruction nobody has read (AC-H6).
+        """
+        for row in rows:
+            if row.state not in (
+                INQUIRY_RAISED,
+                INQUIRY_PARTLY_LINKED,
+                INQUIRY_PLACED,
+            ):
+                continue
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                return row
+        return None
+
+    @staticmethod
+    def _handshake_for_raise(
+        prior: Optional[OrderInquiryRow], *, carried: bool
+    ) -> Tuple[str, Optional[str], Optional[datetime], Optional[datetime]]:
+        """What the row about to be raised says about the handshake.
+
+        Three answers, and the middle one is the whole point: nobody had read this line
+        (`awaiting`, no stamps); this confirmation is only CARRYING the line, so its row
+        says exactly what the row it replaces said; this confirmation is CHANGING a line
+        purchasing had read, so the replacement reads `changed` from today.
+        """
+        if prior is None:
+            return ACK_AWAITING, None, None, None
+        if carried:
+            return (
+                prior.ack_state,
+                prior.acknowledged_by,
+                prior.acknowledged_at,
+                prior.changed_at,
+            )
+        return (
+            ACK_CHANGED,
+            prior.acknowledged_by,
+            prior.acknowledged_at,
+            datetime.utcnow(),
+        )
+
     def _settle_row_in_place(
         self,
         inquiry: OrderInquiry,
@@ -671,8 +740,10 @@ class ProjectOrderInquiryService:
 
         Three things this writes and the supersede path does not:
 
-        * the PREVIOUS value, on the row's own note - "Was 10 on 2026-08-25". A DELAY that
-          does not say what it was is not actionable, and the same is true of a quantity;
+        * the PREVIOUS value, in `previous_qty` / `previous_delivery_date` AND as prose on
+          the row's own note ("Was 10 on 2026-08-25"). A DELAY that does not say what it
+          was is not actionable, and the same is true of a quantity. The columns are what
+          the Was / Now table reads; the note is for a person, and is never parsed back;
         * the OVER-COVER unlink (AC-P3-8): more linked than the new quantity gives the
           excess back, LATEST-dated document first, because the earliest arrival is the one
           the line still needs. No `CANCEL_BALANCE` exception is written for a drop the row
@@ -768,6 +839,12 @@ class ProjectOrderInquiryService:
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
         row.note = f"{row.note}; {moved}" if row.note else moved
+        # The same two facts as figures, for the Was / Now table (the note above is the
+        # sentence a person reads, and stays one). Written on every settle, not only on a
+        # row purchasing has read: the question they answer is "what did this row say
+        # before", which has the same answer either way.
+        row.previous_qty = previous_qty
+        row.previous_delivery_date = previous_date
         # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md` section
         # 3). A row purchasing had already taken on has just been amended under them, so it
         # reads CHANGED until they acknowledge it again - with its links kept, because the
@@ -1635,6 +1712,14 @@ class ProjectOrderInquiryService:
                     "rejected_at": row.rejected_at,
                     "rejected_reason": row.rejected_reason,
                     "changed_at": row.changed_at,
+                    # What the row said before the last settle restated it. The Was / Now
+                    # table reads these, never the note's own sentence.
+                    "previous_qty": (
+                        _qty_str(_dec(row.previous_qty))
+                        if row.previous_qty is not None
+                        else None
+                    ),
+                    "previous_delivery_date": row.previous_delivery_date,
                 }
             )
         return out

@@ -26,7 +26,7 @@ import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.t
  */
 export function OrderInquiryAckCell({ row }: { row: OrderInquiryWorklistRow }) {
   const state = ackStateOf(row);
-  const previous = state === 'changed' ? previousValueOf(row.note) : null;
+  const previous = state === 'changed' ? previousValueOf(row) : null;
 
   if (state === 'rejected') {
     const reason = (row.rejected_reason ?? '').trim();

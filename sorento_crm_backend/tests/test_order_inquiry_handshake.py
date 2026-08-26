@@ -629,6 +629,42 @@ def test_an_amend_after_acknowledgement_reads_changed_and_keeps_its_links(api):
     assert Decimal(str(row.qty)) == Decimal("25")
     assert _links_of(world, row), "a change keeps what the buyer already arranged"
     assert "Was 10" in (row.note or ""), "the previous value travels with the row"
+    # As FIGURES, beside the sentence. The screen prints the Was / Now table off these;
+    # it used to parse them back out of the note, where "Was 10, no previous delivery
+    # date" gave up the quantity as `10,`.
+    assert Decimal(str(row.previous_qty)) == Decimal("10")
+    assert row.previous_delivery_date == WAS
+
+
+def test_the_previous_value_reaches_the_wire_as_two_figures(api):
+    """AC-H14 for the Was half: the list states `previous_qty` / `previous_delivery_date`,
+    so nothing downstream has to read the note's prose to draw the change."""
+    _client, world = api
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+    _settle(world, fixture, qty="25")
+
+    listed = _client.get(LIST, params={"query": str(fixture["core_so"].so_number)})
+    assert listed.status_code == 200, listed.text
+    wire = next(
+        entry for entry in listed.json()["data"] if entry["id"] == str(row.id)
+    )
+    assert wire["ack_state"] == ACK_CHANGED
+    assert wire["previous_qty"] == "10"
+    assert wire["previous_delivery_date"] == WAS.isoformat()
+    assert wire["qty"] == "25", "and the Now half is the row's own quantity"
+
+
+def test_a_row_nobody_amended_states_no_previous_value(api):
+    """No guess and no zero: a row that has never been settled says nothing was."""
+    _client, world = api
+    fixture = _raise_one_row(api)
+    assert fixture["row"].previous_qty is None
+    assert fixture["row"].previous_delivery_date is None
 
 
 def test_re_acknowledging_a_changed_row_returns_it_and_links_the_remainder(api):
@@ -676,6 +712,140 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     replacement = _order_row(world, fixture["line"])
     assert str(replacement.id) != str(row.id)
     assert replacement.ack_state == ACK_CHANGED
+
+
+def _raise_two_rows(api, *, first_qty="10", second_qty="6"):
+    """One order, TWO lines, both confirmed wholly as Buy: two raised inquiry rows.
+
+    What the single-line fixture cannot express: a confirmation that names ONE line of an
+    order carries the other, and a carried line's row is cancelled and re-raised under the
+    new revision (13.4). That is the seam the handshake has to survive.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    first_core = _core_line(
+        db, core_so, world.product, world.warehouse, qty_ordered=first_qty,
+        required_date=WAS,
+    )
+    second_core = _core_line(
+        db, core_so, world.product, world.warehouse, qty_ordered=second_qty,
+        required_date=WAS,
+    )
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    first = _project_line(db, order, line_no=1, product=world.product, core_line=first_core)
+    second = _project_line(db, order, line_no=2, product=world.product, core_line=second_core)
+    db.commit()
+
+    response = _confirm(
+        client,
+        order.id,
+        [
+            _line_payload(first.id, buy_qty=first_qty),
+            _line_payload(second.id, buy_qty=second_qty),
+        ],
+    )
+    assert response.status_code == 200, response.text
+    db.commit()
+    return {
+        "order": order,
+        "first": {"line": first, "core_line": first_core, "row": _order_row(world, first)},
+        "second": {"line": second, "core_line": second_core, "row": _order_row(world, second)},
+    }
+
+
+def test_confirming_one_line_leaves_the_other_lines_acknowledgement_alone(api):
+    """B1 (review). Both rows are acknowledged; CS then re-confirms line 2 alone.
+
+    Line 2 is a change and reads as one. Line 1 was CARRIED - this confirmation said
+    nothing about it - so its row must come out the far side still Acknowledged, with the
+    same person and the same time on it. It did not: the carry cancels and re-raises the
+    row, and the re-raise read the acknowledgement off rows it had just cancelled and
+    promoted every one of them to `changed` - so every confirm of any other line of the
+    order told the buyer that a row they had read had moved, with no Was and no Now,
+    because nothing had.
+    """
+    _client, world = api
+    fixture = _raise_two_rows(api)
+    first_row, second_row = fixture["first"]["row"], fixture["second"]["row"]
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL, json={"row_ids": [str(first_row.id), str(second_row.id)]}
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+    world.db.refresh(first_row)
+    stamped_by, stamped_at = first_row.acknowledged_by, first_row.acknowledged_at
+    assert stamped_by and stamped_at
+
+    # CS confirms line 2 again, and names nothing else. (The same quantity: what makes
+    # line 2 a change here is that this revision restates it, not the figure.)
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["second"]["line"].id, buy_qty="6")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    carried = _order_row(world, fixture["first"]["line"])
+    assert carried.ack_state == ACK_ACKNOWLEDGED, (
+        "the carried line was not changed by a confirmation that never named it"
+    )
+    assert str(carried.acknowledged_by) == str(stamped_by)
+    assert carried.acknowledged_at == stamped_at
+    assert carried.changed_at is None
+
+    amended = _order_row(world, fixture["second"]["line"])
+    assert amended.ack_state == ACK_CHANGED, "the line that DID change still says so"
+    assert amended.changed_at is not None
+
+
+def test_a_carried_line_that_nobody_acknowledged_stays_awaiting(api):
+    """The other half of the same rule: a carry says nothing about a row nobody read."""
+    _client, world = api
+    fixture = _raise_two_rows(api)
+
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["second"]["line"].id, buy_qty="6")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    carried = _order_row(world, fixture["first"]["line"])
+    assert carried.ack_state == ACK_AWAITING
+    assert carried.acknowledged_by is None and carried.changed_at is None
+
+
+def test_a_rejected_line_re_decided_raises_a_fresh_awaiting_row(api):
+    """AC-H6's last clause, pinned against the inheritance rule above: what CS raises
+    after a refusal is a NEW instruction nobody has read, never the refused one's state."""
+    _client, world = api
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+        world.db.commit()
+        reject = buyer.post(
+            f"{LIST}/{row.id}/reject", json={"reason": "Factory closed until November"}
+        )
+        assert reject.status_code == 200, reject.text
+    world.db.commit()
+
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    fresh = _order_row(world, fixture["line"])
+    assert str(fresh.id) != str(row.id)
+    assert fresh.ack_state == ACK_AWAITING
+    assert fresh.acknowledged_by is None and fresh.changed_at is None
+    world.db.refresh(row)
+    assert row.ack_state == ACK_REJECTED, "the refusal itself stays readable"
 
 
 # ---------------------------------------------------------------------------
