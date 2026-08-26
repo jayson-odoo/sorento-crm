@@ -241,6 +241,26 @@ class OrderInquiryStateCounts(BaseModel):
     total: int = 0
 
 
+class OrderInquiryKindTotals(BaseModel):
+    """The three cards above the schedule and the list (section 3.I2, AC-I11).
+
+    Quantity, not row count: what a buyer acts on is how much is still to buy, and two
+    rows of one and one row of two are the same day's work. Decimal STRINGS, like every
+    quantity on this screen - a float round trip loses the tail of a quantity somebody
+    signed for.
+
+    Declared here rather than left to the dict the service returns, because
+    `response_model` silently drops a key it has not been told about.
+    """
+
+    #: On SPO allocations already on their way.
+    spo: str = "0"
+    #: On purchase order lines.
+    po: str = "0"
+    #: Raised and on nothing - what still flows to reorder planning.
+    buy: str = "0"
+
+
 class OrderInquiryWorklistSummary(BaseModel):
     """The strip above the list, and the controls beside it.
 
@@ -260,6 +280,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: revision) - the "Raised by" filter's own list. Never every user in the company: a
     #: picker whose entries mostly return nothing is a picker nobody uses twice.
     raised_by: List[OrderInquiryFacet] = []
+    #: What the rows in view still need, per kind (AC-I11) - the cards' own figures.
+    #: Computed with the `kind` filter dropped, like every other control here, so
+    #: pressing one card leaves the other two readable.
+    kinds: OrderInquiryKindTotals = OrderInquiryKindTotals()
 
 
 class MarkInquiryRowsRequest(BaseModel):
