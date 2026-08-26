@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ContainerRequestRow, ContainerRequestSources } from '../../services/fulfilmentService';
 
@@ -93,6 +93,9 @@ const state = {
 
 vi.mock('../../hooks/useFulfilment', () => ({
   useContainerRequestBuild: () => state.build,
+  // The sales-history sidecar (F3) is its own query, off by default here: this suite is about
+  // the request table, and `ContainerRequestHistory.test.tsx` owns the series itself.
+  useContainerRequestHistory: () => ({ data: undefined, isFetching: false }),
   useSendContainerRequest: () => state.send,
   useSupplierNotices: () => ({ data: state.notices }),
   useUnfinishedStock: () => ({ data: state.unfinished }),
@@ -108,8 +111,15 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     open_so_need: 10,
     suggested_qty: 10,
     on_hand: 0,
+    on_hand_group: 0,
     incoming_spo: 0,
+    incoming_spo_group: 0,
+    incoming_pl: 0,
+    incoming_pl_shipments: [],
     outstanding_po: 0,
+    outstanding_po_lines: [],
+    sites: [],
+    group_locations: { count: 0, on_hand: 0, incoming_spo: 0, warehouse_codes: [] },
     project_qty: 6,
     retail_qty: 4,
     unclassified_qty: 0,
@@ -205,19 +215,72 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.getByText('2')).toBeInTheDocument(); // so_count
   });
 
-  it('the Unclassified column only appears when a row actually carries one', () => {
-    renderSection();
-    expect(screen.queryByText('Unclassified')).not.toBeInTheDocument();
-  });
-
-  it('the Unclassified column appears once a row carries a nonzero unclassified qty', () => {
+  // AC-A2.2: the column is gone for good, unclassified demand or not - it goes with part 2's
+  // P4 classification work, and the figure still travels on the row for the breakdown.
+  it('has no Unclassified column, even when a row carries an unclassified qty', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ unclassified_qty: 3 })],
       sources: EMPTY_SOURCES,
     };
     renderSection();
-    expect(screen.getByText('Unclassified')).toBeInTheDocument();
+    expect(screen.queryByText('Unclassified')).not.toBeInTheDocument();
+  });
+
+  it('shows the five cards above the grid, decomposing the need (AC-A2.1)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 100, on_hand: 30, incoming_spo: 20, suggested_qty: 50 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    const cards = screen.getByTestId('container-request-stat-cards');
+    expect(within(cards).getByTestId('stat-need')).toHaveTextContent('100');
+    expect(within(cards).getByTestId('stat-pool')).toHaveTextContent('30');
+    expect(within(cards).getByTestId('stat-spo')).toHaveTextContent('20');
+    expect(within(cards).getByTestId('stat-ask')).toHaveTextContent('50');
+    expect(within(cards).getByTestId('stat-packed')).toHaveTextContent('3');
+  });
+
+  it('the To ask card follows an edited quantity', async () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 100, suggested_qty: 100 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '7' } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('stat-ask')).toHaveTextContent('7'),
+    );
+  });
+
+  it('carries an Incoming PL column that is never part of the suggestion (AC-B4/B5)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 10, incoming_pl: 600, suggested_qty: 10 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('Incoming PL')).toBeInTheDocument();
+    expect(screen.getByText('600')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('10')).toBeInTheDocument(); // the ask, untouched by it
+  });
+
+  it('clicking the product opens the row breakdown (AC-A2.3)', async () => {
+    renderSection();
+
+    expect(screen.queryByTestId('container-request-row-dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /ITEM-1/ }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('container-request-row-dialog')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('row-quantity-needed')).toBeInTheDocument();
   });
 
   it('the suggested qty is editable, and edits are what Send sends', async () => {

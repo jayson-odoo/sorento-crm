@@ -50,16 +50,22 @@ import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import {
   useContainerRequestBuild,
+  useContainerRequestHistory,
   useSendContainerRequest,
   useSupplierNotices,
   useUnfinishedStock,
 } from '../../hooks/useFulfilment';
 import {
   getNoticeDocumentUrl,
+  type ContainerRequestHistoryProduct,
   type ContainerRequestRow,
   type ContainerRequestSoLine,
   type SupplierNotice,
 } from '../../services/fulfilmentService';
+import { ContainerRequestHistoryCell } from './ContainerRequestHistory';
+import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
+import { ContainerRequestStatCards } from './ContainerRequestStatCards';
+import { summariseContainerRequest } from './containerRequestSummary';
 import { RankFactorsPopover } from './RankFactorsPopover';
 import { SoLinesDrillPopover } from './SoLinesDrillPopover';
 import { ContainerRequestScheduleMatrix } from './ContainerRequestScheduleMatrix';
@@ -174,6 +180,9 @@ export function ContainerRequestSection({
   const [matrixGranularity, setMatrixGranularity] =
     useState<ContainerRequestMatrixGranularity>('week');
   const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+  // The product whose breakdown is open. Held as an id, not the row object, so a refresh
+  // behind an open dialog shows the NEW numbers rather than the ones it opened on.
+  const [openProductId, setOpenProductId] = useState<string | null>(null);
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
@@ -225,9 +234,10 @@ export function ContainerRequestSection({
   const overridesRef = useRef(overrides);
   overridesRef.current = overrides;
 
-  const qtyFor = (row: ContainerRequestRow) => overrides[row.product_id] ?? row.suggested_qty;
+  const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
+  const historyLoadingRef = useRef(false);
 
-  const showUnclassified = rows.some((r) => r.unclassified_qty !== 0);
+  const qtyFor = (row: ContainerRequestRow) => overrides[row.product_id] ?? row.suggested_qty;
 
   const lines = useMemo(
     () =>
@@ -248,7 +258,7 @@ export function ContainerRequestSection({
         min={0}
         className="h-8 w-24 tabular-nums"
         value={qty}
-        title="need - on hand - SPO, floored at 0 (outstanding PO shown but not deducted)"
+        title="need - on hand at site pools - SPO at site pools, floored at 0. Incoming PL and outstanding PO are references and are not deducted."
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
@@ -291,7 +301,17 @@ export function ContainerRequestSection({
           const original = row.original;
           const muted = original.has_demand === false;
           return (
-            <div className={cn('flex min-w-0 flex-col', muted && 'opacity-70')}>
+            <button
+              type="button"
+              // The grid is the scan surface; the breakdown behind it is one click away, the
+              // same move the fulfilment board's cell makes.
+              onClick={() => setOpenProductId(original.product_id)}
+              title="What this row is made of"
+              className={cn(
+                'flex min-w-0 flex-col text-start underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                muted && 'opacity-70',
+              )}
+            >
               <span className="truncate font-medium" title={original.item_code ?? ''}>
                 {original.item_code ?? EM_DASH}
               </span>
@@ -301,7 +321,7 @@ export function ContainerRequestSection({
               >
                 {original.product_name ?? EM_DASH}
               </span>
-            </div>
+            </button>
           );
         },
         size: 210,
@@ -356,26 +376,17 @@ export function ContainerRequestSection({
         enableSorting: false,
         meta: { headerTitle: 'Retail' },
       },
-      ...(showUnclassified
-        ? [
-            {
-              accessorKey: 'unclassified_qty',
-              header: ({ column }) => (
-                <DataGridColumnHeader title="Unclassified" column={column} />
-              ),
-              cell: ({ row }) => (
-                <span className="tabular-nums">{fmtInt(row.original.unclassified_qty)}</span>
-              ),
-              size: 100,
-              enableSorting: false,
-              meta: { headerTitle: 'Unclassified' },
-            } as ColumnDef<ContainerRequestRow>,
-          ]
-        : []),
       {
         accessorKey: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{fmtInt(row.original.on_hand)}</span>,
+        cell: ({ row }) => (
+          <span
+            className="tabular-nums"
+            title="site pools only; group locations are in the breakdown"
+          >
+            {fmtInt(row.original.on_hand)}
+          </span>
+        ),
         size: 90,
         enableSorting: false,
         meta: { headerTitle: 'On hand' },
@@ -384,13 +395,30 @@ export function ContainerRequestSection({
         accessorKey: 'incoming_spo',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums" title="SPO already on the water">
+          <span className="tabular-nums" title="SPO on the water, landing at a site pool">
             {fmtInt(row.original.incoming_spo)}
           </span>
         ),
         size: 80,
         enableSorting: false,
         meta: { headerTitle: 'SPO' },
+      },
+      {
+        accessorKey: 'incoming_pl',
+        header: ({ column }) => <DataGridColumnHeader title="Incoming PL" column={column} />,
+        // Muted because it is a reference: a packing list names no destination, so it can be
+        // read beside the ask but never subtracted from it (Q1).
+        cell: ({ row }) => (
+          <span
+            className="tabular-nums text-muted-foreground"
+            title="unreceived packing-list qty, reference only - never deducted"
+          >
+            {fmtInt(row.original.incoming_pl)}
+          </span>
+        ),
+        size: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Incoming PL' },
       },
       {
         accessorKey: 'outstanding_po',
@@ -468,8 +496,27 @@ export function ContainerRequestSection({
         sortDescFirst: true,
         meta: { headerTitle: 'They hold' },
       },
+      {
+        id: 'ordered_12m',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Ordered 12 months" column={column} />
+        ),
+        // Read through a ref for the same reason the editable qty cell does: the sidecar is
+        // fetched for the page THIS table decides, which is not known until the table exists,
+        // so the column cannot depend on it without a cycle. Cell functions run on every
+        // render, so an arriving sidecar still paints.
+        cell: ({ row }) => (
+          <ContainerRequestHistoryCell
+            history={historyRef.current.get(row.original.product_id)}
+            loading={historyLoadingRef.current}
+          />
+        ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Ordered 12 months' },
+      },
     ],
-    [showUnclassified, renderQtyCell, linesByProduct],
+    [renderQtyCell, linesByProduct],
   );
 
   const table = useReactTable({
@@ -485,6 +532,34 @@ export function ContainerRequestSection({
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // AC-B8: the sidecar is asked for the products ON SCREEN, never the whole supplier. A
+  // 120-product stock list would otherwise pay for 240 monthly series to read 25 rows.
+  const pageProductIds = useMemo(
+    () => table.getRowModel().rows.map((r) => r.original.product_id),
+    // The row model is rebuilt when any of these move; `table` itself is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [table, rows, pagination, sorting],
+  );
+  const history = useContainerRequestHistory(supplierId, pageProductIds);
+  historyRef.current = useMemo(() => {
+    const map = new Map<string, ContainerRequestHistoryProduct>();
+    for (const p of history.data?.products ?? []) map.set(p.product_id, p);
+    return map;
+  }, [history.data]);
+  historyLoadingRef.current = history.isFetching;
+
+  const summary = useMemo(
+    () => summariseContainerRequest(rows, qtyFor),
+    // `qtyFor` reads `overrides`, so the cards follow her edits - which is the whole point of
+    // putting them above the grid.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, overrides],
+  );
+
+  const openRow = openProductId
+    ? (rows.find((r) => r.product_id === openProductId) ?? null)
+    : null;
 
   const requestNotices = (notices.data ?? []).filter(
     (n) => n.notice_type === 'container_request',
@@ -679,6 +754,16 @@ export function ContainerRequestSection({
 
   return (
     <div className="space-y-4">
+      {/* The cards carry the swatches, which is why there is no legend row under them (r4). */}
+      <ContainerRequestStatCards
+        summary={summary}
+        horizonDate={
+          build.data.plan_horizon_date
+            ? formatDateInMalaysia(build.data.plan_horizon_date)
+            : null
+        }
+      />
+
       <DataGrid
         table={table}
         recordCount={rows.length}
@@ -834,6 +919,17 @@ export function ContainerRequestSection({
           a state she needs to see, not infer from an absent section. Shared with the early
           returns above so every branch of this component shows the same fact. */}
       {noticesCard}
+
+      {openRow ? (
+        <ContainerRequestRowDialog
+          row={openRow}
+          askQty={qtyFor(openRow)}
+          soLines={linesByProduct.get(openRow.product_id) ?? []}
+          history={historyRef.current.get(openRow.product_id)}
+          historyLoading={history.isFetching}
+          onClose={() => setOpenProductId(null)}
+        />
+      ) : null}
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
