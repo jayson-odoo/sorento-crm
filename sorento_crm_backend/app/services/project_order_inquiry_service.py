@@ -2579,6 +2579,94 @@ class ProjectOrderInquiryService:
             )
         return out
 
+    def rows_needed_at(
+        self, cells: Sequence[Tuple[str, Optional[str]]]
+    ) -> List[str]:
+        """The ids of raised rows whose demand sits at these `(product_id, warehouse_id)`
+        cells - the rows that SIZED a plan line, in other words.
+
+        `PLAN-scm-purchasing-uat-journey.md` P7. A purchase order confirmed off the plan is
+        a buy for particular plan rows, and a plan row is a `(product, location)` cell whose
+        Project figure is exactly the un-linked remainder of the inquiry rows this returns.
+        Handing those ids to `auto_place_for_products` first is what makes the confirm link
+        back to the rows that asked for it, rather than to whichever open row happens to
+        have the earliest date somewhere else in the country.
+
+        The "needed at" location is read the way `scm.committed_v` reads it, because that is
+        the figure the plan row shows:
+
+          * a row with a supply decision lands at the reconciled core line's warehouse -
+            except an ORDER BACK, which lands at the DONOR location its own
+            `stock_location` names (the row hangs off the borrowing line, so the core line's
+            warehouse would put the hole in a warehouse that never had one);
+          * a row with no decision (the CS form's own instructions) lands at the location
+            the ROW states, which is the only location it has.
+
+        A cell whose warehouse is None matches a row that resolves to no location at all -
+        the same NULL the view emits and no reader joins to.
+        """
+        wanted = {(str(pid), str(wid) if wid else None) for pid, wid in cells if pid}
+        if not wanted:
+            return []
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+                OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
+            )
+            .all()
+        )
+        if not rows:
+            return []
+        product_by_row = self._resolve_product_ids_bulk(rows)
+
+        # The core line's fulfilment warehouse, one query for the whole set.
+        so_line_ids = [row.so_line_id for row in rows if row.so_line_id]
+        core_warehouse: Dict[str, Optional[str]] = {}
+        if so_line_ids:
+            for psl_id, warehouse_id in (
+                self.db.query(ProjectSalesOrderLine.id, SalesOrderLine.warehouse_id)
+                .join(
+                    SalesOrderLine,
+                    SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+                )
+                .filter(ProjectSalesOrderLine.id.in_(so_line_ids))
+                .all()
+            ):
+                core_warehouse[str(psl_id)] = str(warehouse_id) if warehouse_id else None
+
+        # The warehouse each stated stock location names. By CODE, which is what the row
+        # carries; company scoping is the query's own, exactly as everywhere else here.
+        codes = {
+            (row.stock_location or "").strip()
+            for row in rows
+            if (row.stock_location or "").strip()
+        }
+        warehouse_by_code: Dict[str, str] = {}
+        if codes:
+            warehouse_by_code = {
+                str(code): str(wid)
+                for code, wid in self.db.query(
+                    Warehouse.warehouse_code, Warehouse.id
+                ).filter(Warehouse.warehouse_code.in_(list(codes)))
+            }
+
+        out: List[str] = []
+        for row in rows:
+            product_id = product_by_row.get(row.id)
+            if not product_id:
+                continue
+            stated = warehouse_by_code.get((row.stock_location or "").strip())
+            if row.supply_decision_id is None:
+                warehouse_id = stated
+            elif row.verb == IV_ORDER_BACK:
+                warehouse_id = stated or core_warehouse.get(str(row.so_line_id or ""))
+            else:
+                warehouse_id = core_warehouse.get(str(row.so_line_id or ""))
+            if (str(product_id), warehouse_id) in wanted:
+                out.append(str(row.id))
+        return out
+
     def auto_place_for_products(
         self,
         product_ids: Optional[Sequence[str]],

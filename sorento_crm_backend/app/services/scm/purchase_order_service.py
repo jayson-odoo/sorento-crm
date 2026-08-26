@@ -882,6 +882,16 @@ class PurchaseOrderService:
         turn that success into a 500 the retry cannot repair (CLAUDE.md - post-commit
         side effects are best-effort, never raise).
 
+        The cascade runs in TWO passes (P7, captain 26 Aug 2026). A purchase order raised
+        off the plan is a buy for particular plan ROWS, and a plan row is a
+        `(product, location)` cell whose Project figure is the un-linked remainder of the
+        inquiry rows sitting at it. Pass one names exactly those rows
+        (``rows_needed_at``), so the confirm links back to the rows that asked for it; pass
+        two is the ordinary product-wide cascade, which finishes anything left over. Before
+        this, one pass walked the earliest open row by expected date, so a confirm could
+        satisfy a row at the other end of the country while the row that sized the buy
+        stayed raised and the PO's "Allocated to" panel named a stranger.
+
         ``actor`` (a real user id) is REQUIRED for the auto-place pass, never
         substituted: ``OrderInquiryRow.actioned_by`` is a genuine FK to ``users.id``,
         so a placeholder like ``"system"`` would violate the constraint, the
@@ -893,6 +903,10 @@ class PurchaseOrderService:
         confirmed = 0
         numbering = NumberingService(self.db)
         product_ids: set[str] = set()
+        # The plan cells this confirm bought for: the (product, warehouse) of every line it
+        # lifted. A line with no warehouse contributes a None, which matches an inquiry row
+        # that resolves to no location either - the same NULL `scm.committed_v` emits.
+        cells: set[tuple[str, str | None]] = set()
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -912,6 +926,8 @@ class PurchaseOrderService:
                 ln.line_status = "open"
                 if ln.product_id:
                     product_ids.add(str(ln.product_id))
+                    cells.add((str(ln.product_id),
+                               str(ln.warehouse_id) if ln.warehouse_id else None))
             confirmed += 1
         self.db.commit()
 
@@ -930,7 +946,17 @@ class PurchaseOrderService:
                 ProjectOrderInquiryService,
             )
 
-            ProjectOrderInquiryService(self.db).auto_place_for_products(
+            service = ProjectOrderInquiryService(self.db)
+            # Pass one: the rows that sized these plan cells, first claim on the lines
+            # this confirm just opened.
+            sized_by = service.rows_needed_at(sorted(cells))
+            if sized_by:
+                service.auto_place_for_products(
+                    None, actor_user_id=actor, trigger="po_confirm", row_ids=sized_by,
+                )
+            # Pass two: everybody else waiting on these products. Idempotent - a row pass
+            # one fully linked is no longer raised, so it drops out of this query.
+            service.auto_place_for_products(
                 list(product_ids), actor_user_id=actor, trigger="po_confirm",
             )
             self.db.commit()
