@@ -494,3 +494,26 @@ def test_without_the_untick_the_same_file_still_lands_in_place():
         assert out["documents_created"] == 0
         assert out["documents_updated"] == 1
         assert len(_invoices(db, w)) == 1
+
+
+def test_two_identical_candidates_resolve_to_the_newest_document():
+    """The tester left a duplicate carrying the same codes as another invoice, and the offer
+    went to whichever the dict happened to yield first. A tie is decided by the document's
+    own date, then by when it was read - the supplier's latest word is the thing a new send
+    revises."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w, pi_number="KL-OLDER"), source_ref="older.xlsx")
+        older = next(i for i in _invoices(db, w) if i.pi_number == "KL-OLDER")
+        older.invoice_date = date(2026, 7, 1)
+        _apply(db, w, _kailu(w, pi_number="KL-NEWER"), source_ref="newer.xlsx")
+        newer = next(i for i in _invoices(db, w) if i.pi_number == "KL-NEWER")
+        newer.invoice_date = date(2026, 8, 1)
+        db.flush()
+
+        preview = svc.preview(
+            db, _kailu(w, price_factor=1.1), supplier_id=str(w.supplier.id),
+            source_ref="third.xlsx",
+        )
+
+        assert preview["documents"][0]["revision_candidate"]["pi_number"] == "KL-NEWER"

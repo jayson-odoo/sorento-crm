@@ -251,7 +251,7 @@ def _revision_candidates(
 
     rows = (
         db.query(ProformaInvoice.id, ProformaInvoice.pi_number, ProformaInvoice.invoice_date,
-                 ProformaInvoiceLine.item_code)
+                 ProformaInvoice.created_at, ProformaInvoiceLine.item_code)
         .join(ProformaInvoiceLine, ProformaInvoiceLine.invoice_id == ProformaInvoice.id)
         .filter(
             ProformaInvoice.supplier_id == str(supplier_id),
@@ -272,26 +272,35 @@ def _revision_candidates(
         return {}
 
     codes_by_invoice: dict[str, set[str]] = {}
-    meta: dict[str, tuple[str, Any]] = {}
-    for inv_id, number, invoice_date, item_code in rows:
+    meta: dict[str, tuple[str, Any, Any]] = {}
+    for inv_id, number, invoice_date, created_at, item_code in rows:
         codes_by_invoice.setdefault(str(inv_id), set()).add((item_code or "").upper())
-        meta.setdefault(str(inv_id), (number, invoice_date))
+        meta.setdefault(str(inv_id), (number, invoice_date, created_at))
 
     out: dict[int, dict] = {}
     for doc in parsed.documents:
         wanted = {ln.item_code.upper() for ln in doc.lines}
         if not wanted:
             continue
-        best: Optional[tuple[float, str]] = None
-        for inv_id, held in codes_by_invoice.items():
-            overlap = len(wanted & held) / len(wanted)
-            if overlap < _REVISION_OVERLAP:
-                continue
-            if best is None or overlap > best[0]:
-                best = (overlap, inv_id)
-        if best is None:
+        # Ranked, never "whichever the dict yielded first": two invoices carrying the
+        # same codes are a real state (the tester left a duplicate), and the offer has to
+        # land on the same one every time. Best overlap, then the supplier's LATEST word -
+        # its own document date, then when it was read, then the id as the final tiebreak.
+        ranked = [
+            (
+                len(wanted & held) / len(wanted),
+                meta[inv_id][1] or _date.min,
+                meta[inv_id][2] or datetime.min,
+                inv_id,
+            )
+            for inv_id, held in codes_by_invoice.items()
+            if len(wanted & held) / len(wanted) >= _REVISION_OVERLAP
+        ]
+        if not ranked:
             continue
-        number, invoice_date = meta[best[1]]
+        ranked.sort(reverse=True)
+        best = (ranked[0][0], ranked[0][3])
+        number, invoice_date, _created_at = meta[best[1]]
         out[doc.index] = {
             "invoice_id": best[1],
             "pi_number": number,
