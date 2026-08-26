@@ -404,6 +404,10 @@ _COLUMNS = (
     OrderInquiryRow.rejected_at.label("rejected_at"),
     OrderInquiryRow.rejected_reason.label("rejected_reason"),
     OrderInquiryRow.changed_at.label("changed_at"),
+    # The Was half of a CHANGED row's Was / Now table, as figures. The row's note carries
+    # the same fact as a sentence for a person; nothing parses that sentence.
+    OrderInquiryRow.previous_qty.label("previous_qty"),
+    OrderInquiryRow.previous_delivery_date.label("previous_delivery_date"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
 )
@@ -869,6 +873,10 @@ class OrderInquiryWorklistService:
             "rejected_at": row.rejected_at,
             "rejected_reason": row.rejected_reason,
             "changed_at": row.changed_at,
+            "previous_qty": (
+                _qty_str(_dec(row.previous_qty)) if row.previous_qty is not None else None
+            ),
+            "previous_delivery_date": row.previous_delivery_date,
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             "verb": row.verb,

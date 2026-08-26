@@ -119,6 +119,10 @@ class OrderInquiryRowOut(BaseModel):
     rejected_reason: Optional[str] = None
     #: When CS last amended a row purchasing had already acknowledged.
     changed_at: Optional[datetime] = None
+    #: What the row said BEFORE that amendment - the Was half of the Was / Now table. Two
+    #: figures rather than a sentence the screen has to parse back.
+    previous_qty: Optional[str] = None
+    previous_delivery_date: Optional[date] = None
 
 
 class OrderInquiryDetail(BaseModel):
@@ -243,6 +247,10 @@ class OrderInquiryWorklistRow(BaseModel):
     rejected_reason: Optional[str] = None
     #: When CS last amended a row purchasing had already acknowledged.
     changed_at: Optional[datetime] = None
+    #: What the row said BEFORE that amendment - the Was half of the Was / Now table. Two
+    #: figures rather than a sentence the screen has to parse back.
+    previous_qty: Optional[str] = None
+    previous_delivery_date: Optional[date] = None
 
 
 class OrderInquiryMonthTotal(BaseModel):

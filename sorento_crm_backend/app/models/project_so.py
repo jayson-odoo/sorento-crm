@@ -1009,6 +1009,15 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     #: a reading of some general updated-at: every other write to the row would move that,
     #: and "what has changed since I looked" is the only question this answers.
     changed_at = Column(DateTime(timezone=False), nullable=True)
+    #: What the row said BEFORE the last settle-in-place restated it: the two facts the
+    #: Was / Now table prints. Columns rather than a reading of the note beside them - the
+    #: note is prose for a person ("Was 10, no previous delivery date"), and a screen that
+    #: had to parse it back into a quantity read the sentence's own comma as part of the
+    #: number. Written by `_settle_row_in_place`, the one writer that knows what the row
+    #: was, and overwritten by each further settle: the question is "what changed since I
+    #: looked", not "every value this row ever held".
+    previous_qty = Column(Numeric(15, 4), nullable=True)
+    previous_delivery_date = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (

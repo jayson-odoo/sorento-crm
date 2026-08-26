@@ -65,13 +65,14 @@ describe('OrderInquiryAckCell', () => {
     expect(screen.getByText('Purchasing')).toBeInTheDocument();
   });
 
-  it('reads Changed with the date, and draws the Was / Now table when the note parses', () => {
+  it('reads Changed with the date, and draws the Was / Now table off the row itself', () => {
     render(
       <OrderInquiryAckCell
         row={row({
           ack_state: 'changed',
           changed_at: '2026-08-27',
-          note: 'Was 10 on 2026-08-10',
+          previous_qty: '10',
+          previous_delivery_date: '2026-08-10',
           qty: '20',
           delivery_date: '2026-08-20',
         })}
@@ -85,10 +86,12 @@ describe('OrderInquiryAckCell', () => {
     expect(screen.getByText('20')).toBeInTheDocument();
   });
 
-  it('reads plain Changed with no table when the note carries nothing to parse', () => {
+  it('reads plain Changed with no table for a row that states no previous value', () => {
+    // A supersede raises its replacement CHANGED (AC-H9) and that row has never been
+    // settled in place, so there is no Was to draw - the state alone is the whole truth.
     render(
       <OrderInquiryAckCell
-        row={row({ ack_state: 'changed', changed_at: null, note: 'Auto: decision_confirm' })}
+        row={row({ ack_state: 'changed', changed_at: null, previous_qty: null })}
       />,
     );
     expect(screen.getByText('Changed')).toBeInTheDocument();

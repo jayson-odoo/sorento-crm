@@ -106,6 +106,13 @@ export interface OrderInquiryAckFields {
   rejected_reason?: string | null;
   /** When CS last amended a row purchasing had already acknowledged. */
   changed_at?: string | null;
+  /**
+   * What the row said BEFORE that amendment - the Was half of the Was / Now table. Two
+   * figures off the row itself; the note beside them says the same thing as prose for a
+   * person, and nothing parses it back.
+   */
+  previous_qty?: string | null;
+  previous_delivery_date?: string | null;
 }
 
 export interface OrderInquiryRow extends OrderInquiryAckFields {
