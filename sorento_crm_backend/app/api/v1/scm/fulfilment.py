@@ -36,6 +36,7 @@ from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
     allocation_suggestion_service,
     consolidated_packing_list,
+    supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
     spo_conversion_service,
@@ -196,6 +197,57 @@ def get_supplier_stock_list_file(
 # --------------------------------------------------------------------------- #
 # loading plan
 # --------------------------------------------------------------------------- #
+
+
+class SupplierCodeAliasWrite(BaseModel):
+    supplier_id: str
+    #: The supplier's spelling, verbatim - it is what their file says.
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+    product_id: str
+
+
+@router.get("/supplier-code-aliases")
+def list_supplier_code_aliases(
+    supplier_id: str = Query(..., description="Whose codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What this supplier's codes have been ruled to mean - automatic and by hand (R16)."""
+    return {"data": supplier_code_alias_service.list_for_supplier(db, supplier_id)}
+
+
+@router.post("/supplier-code-aliases", status_code=status.HTTP_201_CREATED)
+def create_supplier_code_alias(
+    body: SupplierCodeAliasWrite,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"This code is that product." Replaces any earlier ruling and RE-BINDS the rows already
+    uploaded under it, so the loading plan and the PI convert show the answer today rather
+    than after the next upload."""
+    out = supplier_code_alias_service.create(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        product_id=body.product_id,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+@router.delete("/supplier-code-aliases/{alias_id}")
+def delete_supplier_code_alias(
+    alias_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Forget the ruling, and put the rows back to whatever the ladder says now."""
+    out = supplier_code_alias_service.delete(
+        db, alias_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
 
 
 @router.get("/container-sizes")

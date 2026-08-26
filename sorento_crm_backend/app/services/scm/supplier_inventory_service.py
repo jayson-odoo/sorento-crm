@@ -50,15 +50,37 @@ def _parse(db: Session, data: bytes) -> InventoryReadResult:
     return read_workbook(data, db=db)
 
 
-def _products_by_code(db: Session, codes: set[str]) -> dict[str, str]:
+def _products_by_code(
+    db: Session, codes: set[str], *, supplier_id: Optional[str] = None,
+    remember: bool = True, actor: Optional[str] = None,
+) -> dict[str, str]:
+    """Which of OUR products each supplier code means (R16).
+
+    Through the shared ladder rather than an exact match: the supplier writes their own
+    spelling - reordered tokens, a trap size ours omits - and 79 codes on the uploaded
+    JINBAICHUAN list bound to nothing until this went through `supplier_code_matcher`.
+    `supplier_id` is what makes an alias readable at all, since an alias belongs to the
+    supplier who wrote the code; without one this falls back to exact, which is what a
+    preview with no supplier chosen can honestly answer.
+    """
     if not codes:
         return {}
-    rows = (
-        db.query(Product.product_code, Product.id)
-        .filter(Product.product_code.in_(list(codes)))
-        .all()
-    )
-    return {str(code): str(pid) for code, pid in rows}
+    if not supplier_id:
+        rows = (
+            db.query(Product.product_code, Product.id)
+            .filter(Product.product_code.in_(list(codes)))
+            .all()
+        )
+        return {str(code): str(pid) for code, pid in rows}
+
+    from app.services.scm.supplier_code_matcher import resolve
+
+    return {
+        code: match.product_id
+        for code, match in resolve(
+            db, supplier_id, codes, remember=remember, actor=actor
+        ).items()
+    }
 
 
 def _supplier_label(db: Session, supplier_id: str) -> Optional[str]:
@@ -68,9 +90,11 @@ def _supplier_label(db: Session, supplier_id: str) -> Optional[str]:
     return row[0] if row else None
 
 
-def _summarise(db: Session, parsed: InventoryReadResult) -> dict[str, Any]:
+def _summarise(
+    db: Session, parsed: InventoryReadResult, supplier_id: Optional[str] = None
+) -> dict[str, Any]:
     codes = {r.item_code for r in parsed.rows}
-    known = _products_by_code(db, codes)
+    known = _products_by_code(db, codes, supplier_id=supplier_id, remember=False)
     unmatched = sorted(c for c in codes if c not in known)
     unmeasured = [r.item_code for r in parsed.rows if r.cbm_per_unit is None]
     packed = sum(r.qty_packed for r in parsed.rows)
@@ -102,7 +126,7 @@ def _summarise(db: Session, parsed: InventoryReadResult) -> dict[str, Any]:
 def preview(db: Session, data: bytes, *, supplier_id: str) -> dict:
     """What the file says, and what it would replace, before anything is written."""
     parsed = _parse(db, data)
-    summary = _summarise(db, parsed) if parsed.ok else {}
+    summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held = (
         db.query(SupplierInventory)
         .filter(SupplierInventory.supplier_id == supplier_id)
@@ -142,7 +166,7 @@ def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
         problems = [reason] + [f"row {p.row_number}: {p.reason}" for p in parsed.problems[:5]]
         return envelope(ok=False, problems=problems, warnings=[], summary={})
 
-    summary = _summarise(db, parsed)
+    summary = _summarise(db, parsed, supplier_id)
     warnings = [
         named(
             summary["items_unmatched"],
@@ -198,9 +222,11 @@ def apply(
             "summary": {},
         }
 
-    summary = _summarise(db, parsed)
+    summary = _summarise(db, parsed, supplier_id)
     stamp = as_of or datetime.now().date()
-    known = _products_by_code(db, {r.item_code for r in parsed.rows})
+    known = _products_by_code(
+        db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
+    )
 
     replaced = (
         db.query(SupplierInventory)

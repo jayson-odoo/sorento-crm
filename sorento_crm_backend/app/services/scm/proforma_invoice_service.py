@@ -29,6 +29,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+from app.models.product import Product
 from app.models.scm import (
     ContainerSize,
     ProformaInvoice,
@@ -121,7 +122,9 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
 
     Raw SQL bypasses the ORM's company filter, and product codes are NOT unique across
     companies - so unscoped, an invoice line could resolve to another company's product.
-    Exact and case-insensitive: no fuzzy match and no alias table (AC-P1.3).
+    Exact and case-insensitive on this rung. Since R16 the CALLER hands the supplier in and
+    the ladder (`supplier_code_matcher`) answers the codes this one cannot - the supplier's
+    own spelling, remembered - so what stays unmatched here is genuinely unmatched.
     """
     if not codes:
         return {}
@@ -135,6 +138,46 @@ def _products_by_code(db: Session, codes: set[str]) -> dict[str, dict]:
         {"codes": [c.upper() for c in codes], **params},
     ).mappings().all()
     return {str(r["product_code"]).upper(): dict(r) for r in rows}
+
+
+def _with_supplier_codes(
+    db: Session,
+    known: dict[str, dict],
+    *,
+    supplier_id: Optional[str],
+    codes: set[str],
+    actor: Optional[str] = None,
+    remember: bool = True,
+) -> dict[str, dict]:
+    """Fill the gaps in an exact-match lookup with the supplier-code ladder (R16).
+
+    The exact answers are kept as they are: a rung that agrees with the catalogue outranks
+    every derivation, and re-deriving a code that already matched would be a chance to
+    disagree with it. Only the codes nothing answered are asked about.
+    """
+    if not supplier_id:
+        return known
+    missing = {c for c in codes if c.upper() not in known}
+    if not missing:
+        return known
+
+    from app.services.scm.supplier_code_matcher import resolve
+
+    found = resolve(db, supplier_id, missing, remember=remember, actor=actor)
+    if not found:
+        return known
+    rows = (
+        db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_([m.product_id for m in found.values()]))
+        .all()
+    )
+    by_id = {str(pid): {"id": str(pid), "product_code": code} for pid, code in rows}
+    out = dict(known)
+    for code, match in found.items():
+        product = by_id.get(match.product_id)
+        if product:
+            out[code.upper()] = product
+    return out
 
 
 def _currencies(
@@ -726,6 +769,14 @@ def apply(
 
     known = _products_by_code(
         db, {ln.item_code for d in parsed.documents for ln in d.lines}
+    )
+    # The supplier's own spelling, worked out and remembered (R16). Keyed like `known` -
+    # upper-cased - so the line binding below reads one map and cannot prefer the looser
+    # answer where the exact one exists.
+    known = _with_supplier_codes(
+        db, known, supplier_id=supplier_id,
+        codes={ln.item_code for d in parsed.documents for ln in d.lines},
+        actor=actor,
     )
     # Built here, from the catalogue lookup and the currencies this apply is about to use,
     # rather than re-read afterwards: the summary then describes exactly what was written.
