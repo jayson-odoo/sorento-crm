@@ -415,3 +415,74 @@ def test_a_converted_invoice_can_no_longer_be_adjusted():
         with pytest.raises(AppException) as exc:
             svc.adjust_line(db, str(invoice.id), str(line.id), qty=1, actor="Ms Tee")
         assert exc.value.status_code == 409
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 1 - a plain re-upload must not walk over work already done
+# --------------------------------------------------------------------------------- #
+
+
+def test_re_uploading_over_an_adjusted_invoice_is_refused():
+    """`apply` replaces every line of the invoice it lands on. On an ADJUSTED one that
+    throws away the quantities Ms Tee trimmed, silently, on a nervous second Confirm."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        line = _lines(db, invoice.id)[0]
+        svc.adjust_line(db, str(invoice.id), str(line.id), qty=380, actor="Ms Tee")
+
+        with pytest.raises(AppException) as exc:
+            _apply_preloading(db, w)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "already_adjusted"
+        assert invoice.pi_number in exc.value.detail["message"]
+        db.refresh(line)
+        assert float(line.qty) == 380
+
+
+def test_re_uploading_over_a_converted_invoice_is_refused():
+    """Worse than losing an adjustment: replacing the lines CASCADES the shipment links
+    away, and the invoice reads not-converted again while its goods sit on a container."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoices = _apply_preloading(db, w)
+        invoice = invoices[4]
+        svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        with pytest.raises(AppException) as exc:
+            _apply_preloading(db, w)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "already_converted"
+
+
+def test_re_uploading_over_a_superseded_revision_is_refused():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        invoice.status = "superseded"
+        db.flush()
+
+        with pytest.raises(AppException) as exc:
+            _apply_preloading(db, w)
+
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "superseded"
+
+
+def test_a_plain_re_upload_of_an_untouched_invoice_still_replaces_its_lines():
+    """The idempotency AC-P1.4 rests on (the same file uploaded twice lands on the same
+    invoices) - untouched means untouched, and that path is not narrowed."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        first = _apply_preloading(db, w)
+
+        again = _apply_preloading(db, w)
+
+        assert len(again) == len(first) == 5
+        assert {i.id for i in again} == {i.id for i in first}

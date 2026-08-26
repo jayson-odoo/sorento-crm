@@ -718,6 +718,8 @@ def apply(
                     id=_uuid(), supplier_id=supplier_id, pi_number=number
                 )
                 db.add(invoice)
+            else:
+                _replaceable_or_409(db, invoice)
 
         invoice.invoice_date = doc.invoice_date
         # A PRICED document without a currency never reaches here - it was refused above. An
@@ -1811,6 +1813,83 @@ def _fit(
         "fill_pct": round(fill, 2) if fill is not None else None,
         "over_by_cbm": over,
     }
+
+
+def _placed_invoice_ids(db: Session, invoice_ids: list[str]) -> dict[str, str]:
+    """Of these invoices, the ones whose goods are actually ON a container, and where.
+
+    The ONE definition of "placed", shared by every reader and every guard: a link row that
+    names a real shipment LINE. A row with a NULL `inbound_shipment_line_id` is not a
+    placement - it is either a SKIP (a line that matched no product, recorded so the detail
+    page can say what happened to it) or a link whose shipment line has since been deleted
+    and the FK set null. The placement readers have always counted it that way; the guards
+    counted any row at all, so an invoice whose only link was a skip refused every write for
+    ever and read as converted on a container that never held it.
+    """
+    ids = [str(i) for i in invoice_ids if i]
+    if not ids:
+        return {}
+    rows = (
+        db.query(
+            ProformaInvoiceShipmentLink.proforma_invoice_id, InboundShipment.shipment_number
+        )
+        .join(
+            InboundShipment,
+            InboundShipment.id == ProformaInvoiceShipmentLink.inbound_shipment_id,
+        )
+        .filter(
+            ProformaInvoiceShipmentLink.proforma_invoice_id.in_(ids),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .all()
+    )
+    out: dict[str, str] = {}
+    for invoice_id, number in rows:
+        out.setdefault(str(invoice_id), number or "?")
+    return out
+
+
+def _replaceable_or_409(db: Session, invoice: ProformaInvoice) -> None:
+    """May a plain re-upload REPLACE this invoice's lines?
+
+    `apply` is idempotent by identity: the same file uploaded twice lands on the same
+    invoices and replaces their lines, which is what stops a nervous second Confirm doubling
+    a document (AC-P1.4). That is only harmless while nobody has done anything to the
+    invoice since. Three states make it harmful, and all three were reachable:
+
+      * ADJUSTED - the replacement throws away the quantities Ms Tee trimmed to fit the box,
+        with nothing on screen saying so;
+      * PLACED - the line delete CASCADES `proforma_invoice_shipment_link` away, so the
+        invoice reads not-converted again while its goods sit on a container;
+      * SUPERSEDED - it is what the supplier sent on a day that has passed, and rewriting it
+        rewrites the diff the current revision is read against.
+
+    Each refusal names the invoice and points at the revision path, because that IS the
+    supported way to bring a supplier's second send in (AC-E6).
+    """
+    number = invoice.pi_number
+    if (invoice.status or "current") == "superseded":
+        raise AppException(
+            409,
+            f"'{number}' has been superseded by a newer revision and cannot be replaced. "
+            "Upload the new file as a revision of the current one instead.",
+            code="superseded",
+        )
+    placed = _placed_invoice_ids(db, [str(invoice.id)])
+    if placed:
+        raise AppException(
+            409,
+            f"'{number}' is already in packing list '{placed[str(invoice.id)]}', so this "
+            "file cannot replace it. Upload it as a revision instead.",
+            code="already_converted",
+        )
+    if invoice.adjusted_at is not None:
+        raise AppException(
+            409,
+            f"'{number}' has been adjusted since it was uploaded, so this file cannot "
+            "replace it. Upload it as a revision instead.",
+            code="already_adjusted",
+        )
 
 
 def _editable_or_409(db: Session, invoice: ProformaInvoice) -> None:
