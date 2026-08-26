@@ -262,6 +262,57 @@ class _World:
         self.db.flush()
         return allocation
 
+    def stock(self, location: str, qty) -> None:
+        """On hand at a location, for ladder v4's group net (section 1d)."""
+        self.db.execute(
+            text(
+                "INSERT INTO stock (id, company_id, product_id, warehouse_id, "
+                "quantity_on_hand, quantity_reserved, synced_to_excel) "
+                "VALUES (:i, :c, :p, :w, :q, 0, false)"
+            ),
+            {
+                "i": _uid(),
+                "c": self.company_id,
+                "p": self.product,
+                "w": self.warehouses[location],
+                "q": Decimal(str(qty)),
+            },
+        )
+        self.db.flush()
+
+    def demand(self, location: str, qty) -> None:
+        """An OPEN core sales-order line somebody else already owes at a location.
+
+        What makes a group's net negative, and the only thing that can: the netting reads
+        the book, never a planning record.
+        """
+        so = _uid()
+        self.db.execute(
+            text(
+                "INSERT INTO sales_orders (id, company_id, so_number, order_date, "
+                "status, demand_class) VALUES (:i, :c, :n, current_date, 'open', "
+                "'project')"
+            ),
+            {"i": so, "c": self.company_id, "n": f"{MARKER}-{_uid()[:6].upper()}"},
+        )
+        self.db.execute(
+            text(
+                "INSERT INTO sales_order_lines (id, company_id, sales_order_id, "
+                "product_id, warehouse_id, qty_ordered, qty_delivered, line_status, "
+                "required_date) VALUES (:i, :c, :so, :p, :w, :q, 0, 'open', :d)"
+            ),
+            {
+                "i": _uid(),
+                "c": self.company_id,
+                "so": so,
+                "p": self.product,
+                "w": self.warehouses[location],
+                "q": Decimal(str(qty)),
+                "d": SOON,
+            },
+        )
+        self.db.flush()
+
     def row(self, verb: str, qty, *, location="BRW-IB", cited=None, so_line=True):
         rid = _uid()
         self.db.execute(
@@ -1058,3 +1109,106 @@ def test_a_partly_linked_order_back_is_netted_half_on_the_next_revision(world):
         ).fetchall()
     )
     assert [entry[0] for entry in fresh] == [Decimal("5.0000")]
+
+
+# ------------------------------------------------------- ladder v4 (AC-L11, section 1d)
+
+
+def test_a_group_in_deficit_offers_none_of_its_purchase_order_lines(world):
+    """AC-L11, `B2155-NL-BLUE` measured 26 August 2026.
+
+    The IB group nets -15514 and its own open purchase orders come to 860, so every unit on
+    order is already owed to demand the group carries. Linking a raised row to one of those
+    lines says a quantity is covered while the group is 14,654 short of covering what it
+    already owes - so the lines are not offered and the row stays raised and buys.
+
+    The POOL line is offered in the same breath, which is what makes this a rule about the
+    group rather than a rule about purchase orders: a pool belongs to no ownership group,
+    so nobody's backlog has a prior claim on it.
+    """
+    world.stock("BRW-IB", 5290)
+    world.demand("BRW-IB", 27804)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 860, SOON, "3")]
+    )
+    world.purchase_order("202607-S0039", date(2026, 7, 2), [("BRW", 9, SOON, "1")])
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60))
+
+    assert [c["location"] for c in candidates] == ["BRW"]
+    assert [c["document"] for c in candidates] == ["202607-S0039"]
+
+
+def test_the_same_group_offers_its_lines_again_once_the_orders_cover_its_backlog(world):
+    """The control for AC-L11: it is the DEFICIT that withholds the line, not the location.
+
+    Same book, same row, same purchase order - the group's backlog is the only thing that
+    moves, and the BRW-IB line comes back the moment what is on order covers it.
+    """
+    world.stock("BRW-IB", 5290)
+    world.demand("BRW-IB", 5000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 860, SOON, "3")]
+    )
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60))
+
+    assert [c["location"] for c in candidates] == ["BRW-IB"]
+
+
+def test_a_deficit_group_line_is_withheld_from_the_auto_link_cascade_too(world):
+    """The dialog and the cascade walk ONE list, so the cascade cannot place what the
+    dialog refuses to offer."""
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60)
+
+    world.svc.auto_place_for_products(
+        [world.product], actor_user_id=None, trigger="test"
+    )
+
+    world.db.refresh(row)
+    assert row.state == "raised"
+
+
+def test_has_link_candidate_applies_the_same_deficit_rule(world):
+    """AC-L11 on the LISTING: the row action must not offer a Link the dialog would then
+    show as empty, which is what a flag computed by a different rule would do."""
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+
+    withheld = world.svc.link_candidate_products([world.product])
+    assert world.product not in withheld["po"]
+
+    # One pool line, and the same product answers yes again. No cache to clear: the netting
+    # is over stock and the book, and a new purchase order moves neither.
+    world.purchase_order("202607-S0039", date(2026, 7, 2), [("BRW", 9, SOON, "1")])
+    offered = world.svc.link_candidate_products([world.product])
+    assert world.product in offered["po"]
+
+
+def test_a_person_may_still_link_a_deficit_group_line_by_hand(world):
+    """The deficit rule governs what is OFFERED, not what a person may insist on.
+
+    `manual` already lets a hand-made link reach a purchase order that is not yet active,
+    for the same reason: this dialog is override and audit rather than the workflow. A
+    person who types the line has looked at it, and refusing them would be a narrowing
+    nobody asked for.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    (line_id,) = world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60)
+
+    assert world.svc._candidates_for_row(row) == []
+    by_hand = world.svc._candidates_for_row(row, manual=True)
+
+    assert [c["target_id"] for c in by_hand] == [line_id]

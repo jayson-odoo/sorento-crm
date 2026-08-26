@@ -25,6 +25,10 @@ import pytest
 
 from tests.scm.front_planning_golden import (
     ATTRIBUTION_CASES,
+    GROUP_NET_NEGATIVE_BUYS_CASE,
+    GROUP_SIBLING_IB_LOCATION,
+    INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE,
+    POOLS_NET_NEGATIVE_CASE,
     BALANCE_INVARIANT_CASE,
     BALANCE_INVARIANT_STATED,
     BUY,
@@ -134,6 +138,55 @@ def test_a_proposed_line_balances(case):
     quantities = [Decimal(str(c.qty)) for c in proposed]
     assert all(q >= Decimal("0") for q in quantities)
     assert sum(quantities, Decimal("0")) == case.open_qty
+
+
+# ------------------------------------------------------- AC-L7 / AC-L8 / AC-L10
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        GROUP_NET_NEGATIVE_BUYS_CASE,
+        POOLS_NET_NEGATIVE_CASE,
+        INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE,
+    ),
+    ids=lambda c: c.ac,
+)
+def test_ladder_v4_proposes_exactly_the_golden_composition(case):
+    """The three ladder-v4 cases, component for component and reason for reason."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(propose_line(**case.inputs))
+
+    assert tuple(_as_tuple(c) for c in proposed) == tuple(
+        _as_tuple(c) for c in case.components
+    )
+
+
+def test_a_sibling_holding_stock_is_never_offered_behind_a_negative_group_net():
+    """AC-L7 said in the negative: MWH-IB's 7000 is real, and it is not on the table.
+
+    The bound is the CALLER's, so what this pins is that the engine adds nothing of its
+    own - handed an empty group rung it proposes an empty group rung, rather than reaching
+    for a location it can see in some other argument.
+    """
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(propose_line(**GROUP_NET_NEGATIVE_BUYS_CASE.inputs))
+
+    assert not any(
+        c.source_location == GROUP_SIBLING_IB_LOCATION for c in proposed
+    )
+
+
+def test_the_site_pools_net_as_one_pile_so_a_lone_positive_pool_is_not_offered():
+    """AC-L8: DC1 holds 1 and BRW is 103 short, so the pile has nothing to give."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(propose_line(**POOLS_NET_NEGATIVE_CASE.inputs))
+
+    assert [c.kind for c in proposed] == [BUY]
+    assert not any(c.source_location == "DC1" for c in proposed)
 
 
 # ------------------------------------------------------------------- AC-B02

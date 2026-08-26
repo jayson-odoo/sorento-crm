@@ -7,7 +7,7 @@ so the expected answers cannot quietly drift to match whatever the implementatio
 doing, and so the same cases can be read by a route test, a service test or a fixture
 builder later without any of them owning the numbers.
 
-Seven cases, each traced to the criterion it comes from in
+Every case is traced to the criterion it comes from in
 `documentation/plans/scm/UAC-scm-front-planning.md` and, for the last two, in
 `documentation/plans/scm/scm-cs-planning-uat-acceptance-criteria.md`:
 
@@ -29,6 +29,11 @@ Seven cases, each traced to the criterion it comes from in
   STOCK rung however much sits beside it, but rung 1 is unchanged, so supply already on its
   way still covers it; incoming short of the whole line is dropped and the line is bought
   entire. Under v2 such a line still walked the two surplus rungs.
+* **AC-L7 / AC-L8 / AC-L10** ladder v4 (26 August 2026): availability is the OWNERSHIP
+  GROUP's and the five site pools' respectively, never one warehouse's. A group that nets
+  negative offers nothing however much sits at one of its sites; the pools net as one pile,
+  so `BRW -103` beside `DC1 +1` offers nothing rather than the 1; and an SPO inside a
+  negative group net is owed to that backlog, so it covers no line of it.
 
 Quantities are `Decimal`, never float: these numbers are compared for exact equality and a
 binary-float 0.1 does not survive that.
@@ -420,9 +425,15 @@ GROUP_BEFORE_POOL_CASE = ProposalCase(
             {"location": GROUP_OWN_LOCATION, "qty": Decimal("40")},
             {"location": GROUP_SIBLING_LOCATION, "qty": Decimal("30")},
         ],
+        # Ladder v4 (26 August 2026): the two bounds the rungs obey. The group can cover 70
+        # of this line and the pools hold 1000 between them, so the SHAPE of the answer is
+        # what it always was - what changed is that both numbers are now the set's, and the
+        # reason beside each quantity says whose.
+        "group_offer": Decimal("70"),
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("1000"), "available": Decimal("1000")}
         ],
+        "pools_net": Decimal("1000"),
         "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
@@ -430,20 +441,20 @@ GROUP_BEFORE_POOL_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("40"),
-            reason="BRW-BB has 40 available in the BB group",
+            reason="BRW-BB gives 40 of the 70 the BB group can cover this line with",
             source_location=GROUP_OWN_LOCATION,
         ),
         Component(
             kind=RESERVE,
             qty=Decimal("30"),
-            reason="DC1-BB has 30 available in the BB group",
+            reason="DC1-BB gives 30 of the 70 the BB group can cover this line with",
             source_location=GROUP_SIBLING_LOCATION,
         ),
         # Only what the group could not meet reaches the shared pile.
         Component(
             kind=RESERVE,
             qty=Decimal("30"),
-            reason="Pool BRW has 1000 available",
+            reason="Pool BRW lends 30 of the 1000 the site pools net between them",
             source_location=POOL_LOCATION,
         ),
     ),
@@ -516,6 +527,115 @@ BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
 )
 
 
+#: The ownership group `B2155-NL-BLUE` is booked in, and the site the stock sits at.
+GROUP_OWN_IB_LOCATION = "BRW-IB"
+GROUP_SIBLING_IB_LOCATION = "MWH-IB"
+
+
+GROUP_NET_NEGATIVE_BUYS_CASE = ProposalCase(
+    ac="AC-L7",
+    title=(
+        "ladder v4: the IB group nets -15514, so nothing is offered and the line buys - "
+        "MWH-IB's 7000 is never on the table"
+    ),
+    inputs={
+        # B2155-NL-BLUE on SO381895, measured on the dev copy 26 August 2026: BRW-IB holds
+        # 5290 against 27,804 owed, MWH-IB holds 7000 against nothing, and the group nets
+        # -15514. The CALLER applies that bound, so what the engine is handed for rung 2 is
+        # an EMPTY list - which is the contract this case pins: a group in deficit produces
+        # no candidate, not a candidate of zero.
+        "open_qty": Decimal("60"),
+        "line_no": 20,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_IB_LOCATION,
+        "group_code": "IB",
+        "group_take_candidates": [],
+        "group_offer": Decimal("0"),
+        # The pools are 9 short too, so nothing comes from there either.
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("1"), "available": Decimal("-9")}
+        ],
+        "pools_net": Decimal("-9"),
+        "timely_spo_qty": Decimal("0"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("60"),
+            reason="Only 0 of 60 can be covered from stock - buy the whole line",
+        ),
+    ),
+)
+
+
+POOLS_NET_NEGATIVE_CASE = ProposalCase(
+    ac="AC-L8",
+    title=(
+        "ladder v4: the five site pools are ONE pile - BRW -103 beside DC1 +1 nets -102, "
+        "and the +1 is not offered"
+    ),
+    inputs={
+        # SRTWCY8605-PJ, measured 26 August 2026. Per-pool arithmetic alone would offer the
+        # single unit at DC1; it is stock the shared book already owes at BRW.
+        "open_qty": Decimal("10"),
+        "line_no": 22,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_IB_LOCATION,
+        "group_code": "IB",
+        "group_take_candidates": [],
+        "group_offer": Decimal("0"),
+        "pools": [
+            {"location": "BRW", "free": Decimal("0"), "available": Decimal("-103")},
+            {"location": "DC1", "free": Decimal("1"), "available": Decimal("1")},
+        ],
+        "pools_net": Decimal("-102"),
+        "timely_spo_qty": Decimal("0"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("10"),
+            reason="Only 0 of 10 can be covered from stock - buy the whole line",
+        ),
+    ),
+)
+
+
+INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE = ProposalCase(
+    ac="AC-L10",
+    title=(
+        "ladder v4: an SPO of 110 at BRW-IB is owed to a group that nets -1893 with it "
+        "counted, so it covers no line of that group and this one buys"
+    ),
+    inputs={
+        # SRTWC7405-SC, measured 26 August 2026: BRW 2, BRW-IB 2 on hand against 2335 owed
+        # with the SPO's 110 already inside it, MWH-IB 330. The CALLER nets rung 1 against
+        # the group before handing it over, which is why `timely_spo_qty` is zero here and
+        # not 110 - the document exists and is named on the trail; what it is not is free.
+        "open_qty": Decimal("10"),
+        "line_no": 24,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_IB_LOCATION,
+        "group_code": "IB",
+        "timely_spo_qty": Decimal("0"),
+        "group_take_candidates": [],
+        "group_offer": Decimal("0"),
+        "pools": [],
+        "pools_net": Decimal("637"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("10"),
+            reason="Only 0 of 10 can be covered from stock - buy the whole line",
+        ),
+    ),
+)
+
+
 PROPOSAL_CASES = (
     HOT_SELLING_WORKED_CASE,
     PROJECT_HOT_SELLING_WORKED_CASE,
@@ -523,5 +643,8 @@ PROPOSAL_CASES = (
     GROUP_BEFORE_POOL_CASE,
     BEYOND_THE_WINDOW_CASE,
     BEYOND_THE_WINDOW_SHORT_CASE,
+    GROUP_NET_NEGATIVE_BUYS_CASE,
+    POOLS_NET_NEGATIVE_CASE,
+    INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE,
 )
 ATTRIBUTION_CASES = (TWO_LINE_ATTRIBUTION_CASE, CONFIRMED_COVER_CASE)
