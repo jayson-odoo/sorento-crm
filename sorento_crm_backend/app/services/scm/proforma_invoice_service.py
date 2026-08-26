@@ -355,7 +355,12 @@ def _revision_targets(
 
 
 def _available_number(
-    db: Session, supplier_id: str, base: str, attempt: int, marker: str = "R"
+    db: Session,
+    supplier_id: str,
+    base: str,
+    attempt: int,
+    marker: str = "R",
+    always_suffix: bool = False,
 ) -> str:
     """A document number free for THIS supplier, starting from what the file derived.
 
@@ -364,9 +369,13 @@ def _available_number(
     is revising. `-R2` is appended rather than a random suffix, because the number is read by
     people and "PI-预装清单-1-R2" says what it is. `marker` is empty for a document filed as
     NEW rather than as a revision: it is not revision 2 of anything, it is a second
-    document, and "-2" is what says so.
+    document, and "-2" is what says so. `always_suffix` starts the search AT the suffix
+    rather than trying the bare base first: a document filed as new is never the stem on its
+    own, it is the next ordinal after it.
     """
-    number = base
+    number = f"{base[:90]}-{marker}{attempt}" if always_suffix else base
+    if always_suffix:
+        attempt += 1
     while (
         db.query(ProformaInvoice)
         .filter(
@@ -750,12 +759,20 @@ def apply(
             prior.status = "superseded"
             existed = False
         elif str(doc.index) in filed_as_new:
+            # The STEM is the base, not the number the file derived. A derived number is
+            # `PI-<file stem>-<block>`, so appending to it produced `<stem>-1-2` and then
+            # `<stem>-1-3`; the ordinal after the stem is which document this is, and the
+            # search skips the ones already taken. A STATED number is not an ordinal and is
+            # never chopped - `202605-S0060` would become `202605`.
+            base = number if doc.pi_number else re.sub(r"-\d+$", "", number)
             invoice = ProformaInvoice(
                 id=_uuid(),
                 supplier_id=supplier_id,
                 # The next free number for this supplier: `-2`, `-3`. Not `-R2` - it is a
                 # second document rather than a second version of one.
-                pi_number=_available_number(db, supplier_id, number, 2, marker=""),
+                pi_number=_available_number(
+                    db, supplier_id, base, 2, marker="", always_suffix=True
+                ),
             )
             db.add(invoice)
             existed = False

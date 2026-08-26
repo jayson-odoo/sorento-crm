@@ -517,3 +517,43 @@ def test_two_identical_candidates_resolve_to_the_newest_document():
         )
 
         assert preview["documents"][0]["revision_candidate"]["pi_number"] == "KL-NEWER"
+
+
+def test_a_document_filed_as_new_is_numbered_from_the_file_stem():
+    """`_available_number` appends to what it is given, and it was given the number the file
+    already derived - `<stem>-1` - so the second document came out `<stem>-1-2` and the
+    third `<stem>-1-3`. The stem is the base; the ordinal after it is which document."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w, pi_number=""), source_ref="jinbaichuan_rev.xlsx")
+        first = _invoices(db, w)[0]
+        assert first.pi_number.endswith("-1"), first.pi_number
+        stem = first.pi_number[:-2]
+
+        second = _apply(
+            db, w, _kailu(w, pi_number=""), source_ref="jinbaichuan_rev.xlsx",
+            file_as_new=["1"],
+        )["results"][0]["pi_number"]
+        third = _apply(
+            db, w, _kailu(w, pi_number=""), source_ref="jinbaichuan_rev.xlsx",
+            file_as_new=["1"],
+        )["results"][0]["pi_number"]
+
+        assert second == f"{stem}-2"
+        assert third == f"{stem}-3"
+
+
+def test_a_stated_document_number_is_never_chopped_up_to_make_a_new_one():
+    """`202605-S0060` ends in digits and is not a derived ordinal. Stripping it would file
+    the new document under a number the supplier never wrote."""
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w), source_ref="kailu.xlsx")
+        first = _invoices(db, w)[0]
+        assert not first.pi_number.endswith("-1")
+
+        created = _apply(
+            db, w, _kailu(w), source_ref="kailu.xlsx", file_as_new=["1"]
+        )["results"][0]["pi_number"]
+
+        assert created == f"{first.pi_number}-2"
