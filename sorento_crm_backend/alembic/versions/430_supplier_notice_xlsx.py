@@ -1,7 +1,7 @@
 """F4: a container request keeps the supplier's own sheet beside its PDF.
 
 Revision ID: 430_supplier_notice_xlsx
-Revises: 429_scm_pi_link_qty
+Revises: 431_supplier_code_alias
 Create Date: 2026-08-26
 
 The notice already stores ONE document (`document_filename` / `storage_provider` /
@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "430_supplier_notice_xlsx"
-down_revision = "429_scm_pi_link_qty"
+down_revision = "431_supplier_code_alias"
 branch_labels = None
 depends_on = None
 
