@@ -1,14 +1,8 @@
 'use client';
 
 import { StatCard } from '@/components/scm/StatCard';
-import { fmtInt } from '../../lib/format';
+import { fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 import type { ContainerRequestSummary } from './containerRequestSummary';
-
-/** Two decimals, the way the stock list states a volume. */
-const cbmFmt = new Intl.NumberFormat('en-MY', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
 
 /**
  * The five figures above the grid (PLAN section 2b, AC-A2.1) - the same cards the fulfilment
@@ -62,8 +56,8 @@ export function ContainerRequestStatCards({
         tone="text-rose-700"
         sub={
           summary.askCbmUnmeasured > 0
-            ? `est. ${cbmFmt.format(summary.askCbm)} cbm, ${summary.askCbmUnmeasured} unmeasured`
-            : `est. ${cbmFmt.format(summary.askCbm)} cbm`
+            ? `est. ${fmtTrimmedDecimal(summary.askCbm)} cbm, ${summary.askCbmUnmeasured} unmeasured`
+            : `est. ${fmtTrimmedDecimal(summary.askCbm)} cbm`
         }
       />
       <StatCard
