@@ -169,6 +169,22 @@ Engine change is confined to `propose_line` (rung order + the rung-0 short-circu
 Covered today: rung 4 group borrow. Amend -> BorrowAddDialog lists donor lines at the group's locations; a donor sharing the line's sales agent is offered at ANY rank ("she can authorise"), another agent's order only when ranked below. Confirm writes `so_line_allocations` source `order` and raises the order-back for the donor line as an OI row (verb `BORROW_SHORTFALL`, due = donor's date). Same location, so no transfer.
 Align with the rest of this plan: (1) manual only, never auto-proposed (ruled); (2) the order-back verb becomes `ORDER_BACK` (one verb with part 2 4b; `BORROW_SHORTFALL` renamed), so it links to SPO/PO like any order-back - BUILT as a DISPLAY rename only ("ORDER BACK" on screen), the column value waiting for section I's migration so no live row is stranded; (3) Amend requires a reason "Authorised by agent ..." on a same-agent borrow, stored in `so_line_allocations.reason`; (4) the donor's board cell reads "71 lent to SO415472". Mockup M2b.
 
+## 1d. Ladder v4: availability is the GROUP's, not the warehouse's (captain, 26 Aug)
+
+Sorento books every sales order at `BRW-<group>` while the stock sits at any `<site>-<group>`, so a per-warehouse "available" misleads twice: BRW-IB reads -22514 while MWH-IB reads +7000 for one pile of IB stock. The unit of availability is the OWNERSHIP GROUP.
+
+| Rung / reader | v3 | v4 |
+| --- | --- | --- |
+| own group (rung 2) | own location capped at `available_to_this_line` (the rank queue), siblings at signed available each | `group_net = sum(on hand) + sum(SPO) - sum(SO)` over every `*-<group>` location (AutoCount's signed available, summed). Nothing is offered when the net is not positive; the offer is the net, drawn own location first then siblings by site. The rank queue no longer decides availability |
+| site pools (rung 3) | own-site pool first, each pool's own signed available | ALL FIVE pools as one pile: `pools_net = sum(signed available)` over BRW, DC1, MWH, RSW, WH3; nothing when not positive; drawn own site first |
+| cross-group borrow (rung 4) | a donor warehouse's free stock, capped | the DONOR GROUP's net as a whole (all `*-IR`), capped as before; a single warehouse's on hand means nothing if its group nets negative |
+| incoming (rung 1) | SPO at the line's location arriving by the required date | SPO counts INSIDE the group net (an SPO to BRW-IB is owed to the IB backlog first); what is incoming for this line is the positive remainder, same overdue wording |
+| PO link candidates (section I) | tiers, never filtered | a group-location PO line is free only to the extent `group_net + sum(open PO at the group) > 0`; in deficit the group's lines are spoken for and only pool-location lines link; the row otherwise stays raised and buys |
+| popover table (section B) | per-row figures with subtotals | same rows; the subtotal IS the number that matters, and Taken appears only where the net allows |
+| order back | same-agent borrow only | a borrow from another `-xx` group or from another order raises an ORDER BACK row against the donor; a pool draw raises nothing (ruled 26 Aug) |
+
+One function, `group_net(product, group)` (and `pools_net(product)`), is the only reader of availability for the engine, the popover, the PO candidate walk and the WhatsApp stock answer (S12), so none of them can disagree. The line's own SO quantity is already inside `sum(SO)`, so nothing is double counted. Golden set changes again with the captain's sign-off. Status: RULED 26 Aug, build queued ahead of part 3.
+
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 
 Decided by the engine's `rung`, never by comparing warehouse codes:
@@ -439,6 +455,9 @@ where it differs from the paragraphs above:
 - **SO detail shows the links too:** `/scm/sales-orders/{id}` Lines tab gains a **Linked to** column (PO / SPO document + line + qty per link, via the SO line's OI row and its `order_inquiry_links`), beside Order inquiry and the Suggested / Decided columns. Same data as the worklist and the PO occupancy panel, one reader.
 - `committed_v` nets the unlinked remainder of every ORDER row; a fully linked row leaves confirmed demand exactly as `placed` does today.
 - Worklist: "PO no" column becomes **Linked to** (document + kind badge PO / SPO); filter Linked = po | spo | none.
+
+### I2. Order inquiries read like the board (captain, 26 Aug)
+The schedule (matrix) view and the list view show the row's state the way the board shows a cell: a `SupplyBar` under the quantity and a decision strip of cards above. Three kinds only: **Use SPO** (violet, quantity linked to SPO allocations), **Use PO** (sky, quantity linked to PO lines), **Buy** (rose, raised and unlinked). A partly linked row is a split bar ("PO 5 · Buy 3"). Cards sum the current filter and click to filter, same component as the board's strip. No new endpoint: rows carry `links[]` and `linked_qty`; the summary gains one facet for the three totals. When a PO is confirmed and the cascade links the row, the cell flips from Buy to Use PO by itself. Legend: none (the cards carry the labels). Queued after ladder v4, one PR.
 
 ### J. UAT fixture: SO381895 with the three CS forms (data, half a day)
 - The UAT basis is SO381895 (YOTU BUILDER / LOT 2752, agent Cyndi), whose three Order Inquiry Forms of 12 Aug (ADDITIONAL ORDER, BRW-IB), 19 Aug 10:25 (amended: stock location BRW-IB) and 19 Aug 17:23 (ADVANCE ITEM) sit in `Sorento/phase-2/User Requirements/purchasing/order_example_files/`. SO381895 (76 lines), SO414033 (112) and SO414050 (63) are already in the core `sales_orders` book; the cited POs 202604-S0083, 202606-S0082, 202607-S0031, 202607-S0067, 202608-S0015 and SPO-2026/08-0061 are in `purchase_orders` with open lines at BRW / BRW-BB / BRW-IB. SPO-2026/08-0046 and 202606-S0019's cited items are NOT present; note on the UAT sheet.

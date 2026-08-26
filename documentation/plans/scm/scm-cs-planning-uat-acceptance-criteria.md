@@ -18,7 +18,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-C2 Ticking Amend from Buy to Shared flips the bar to sky before confirm; clearing the tick returns it.
 - AC-C3 A confirmed cell's bar is solid; an undecided cell's is faded.
 - AC-C4 A past-date column tints its header only; cell bodies carry no date tint.
-- AC-C5 The legend is on the fulfilment-planning page above the grid, visible without scrolling at 1280px, with six swatches and labels; the list view shows the same legend.
+- AC-C5 RETIRED 26 Aug: the decision strip cards carry the labels and colours, so there is no legend row; the board shows no "N of M lines are already past their delivery date" banner (the column headers say it).
 
 ## D. Suggested vs decided (board page)
 - AC-D1 Confirming writes `proposed_components` per line snapshot; decided `components` unchanged.
@@ -79,3 +79,18 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-L4 Singleton-pool parity test unchanged byte for byte.
 - AC-L5 Amend refuses a composition mixing stock sources and Buy on one line (422 with the reason); the dialog's Buy switch clears the stock rows.
 - AC-L6 Amend on SO415472 L1 offers SO394803 L2 (same agent) as a donor regardless of rank, requires an authorisation reason, and on confirm raises an Order back OI row for SO394803 L2 with the donor's date; the donor cell reads "71 lent to SO415472".
+
+## Ladder v4 (group netting, ruled 26 Aug)
+- AC-L7 B2155-NL-BLUE on SO381895 (24 Aug, 60): with BRW-IB 5290 / 27804 SO and MWH-IB 7000 / 0 SO, the group net is -15514 and the suggestion is Buy 60; MWH-IB's 7000 is never offered.
+- AC-L8 SRTWCY8605-PJ: pools net -102 (BRW -103, DC1 +1) offers nothing from any pool.
+- AC-L9 A cross-group donor (MWH-IR, on hand 100) is offered only when the whole -IR group nets positive, capped by that net; confirming the borrow raises an ORDER BACK row against MWH-IR.
+- AC-L10 SRTWC7405-SC (31 Aug, 10): SPO 110 at BRW-IB with group net (2 + 330 + 110 - 2335) negative proposes no Incoming; the line buys.
+- AC-L11 B2155-NL-BLUE's raised row does not link to 202607-S0067 BRW-IB while the IB group is in deficit; SRTWC8605-SC-RL links to 202607-S0039 BRW 9 (pool) and not to 202603-S0109 BRW-IB 11.
+- AC-L12 The popover's Group subtotal, Site pool subtotal and Other group rows read the nets the engine used; Taken is 0 on every row of a non-positive net.
+- AC-L13 A pool draw raises no ORDER BACK row.
+
+## I2. Order inquiries read like the board (ruled 26 Aug)
+- AC-I11 The schedule view shows three cards above the matrix: Use SPO, Use PO, Buy, with totals over the current filter; clicking one narrows the matrix; a second click clears.
+- AC-I12 A cell whose rows are all unlinked shows one rose segment and reads "Buy N"; a row linked 5 of 8 to a PO shows sky 5 / rose 3 and reads "PO 5 · Buy 3"; a row linked to an SPO shows violet.
+- AC-I13 Confirming a plan-generated PO that links a raised row flips its cell from Buy to Use PO without a reload of the filter.
+- AC-I14 The list view's Linked to column carries the same bar; there is no legend row on either view.
