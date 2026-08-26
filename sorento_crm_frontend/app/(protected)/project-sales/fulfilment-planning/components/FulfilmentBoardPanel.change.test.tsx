@@ -96,13 +96,16 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   } as BoardDemandLine;
 }
 
-function renderPanel(batchId: string | null = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id) {
+function renderPanel(
+  batchId: string | null = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id,
+  soNumbers: string[] = ['SO381895'],
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <FulfilmentBoardPanel soNumbers={['SO381895']} batchId={batchId} onBack={vi.fn()} />
+      <FulfilmentBoardPanel soNumbers={soNumbers} batchId={batchId} onBack={vi.fn()} />
     </QueryClientProvider>,
   );
 }
@@ -190,6 +193,44 @@ describe('the pre-marked decision, and Confirm', () => {
     const [, body] = confirmSupply.mock.calls[0];
     expect(body.batch_id).toBe(MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id);
     expect(body.lines.length).toBe(1);
+  });
+
+  it('blocks only the order the batch has already been applied to', async () => {
+    // One press confirms ONE order (B1). While another order of the same upload is still
+    // waiting, the batch itself is not applied - so a batch-wide block would put a wall in
+    // front of a change nobody has decided yet.
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      applied_at: null,
+      applied_by_name: null,
+      orders: MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders.map((order) => ({
+        ...order,
+        rows: order.rows.map((row) => ({ ...row, applied_state: 'applied' as const })),
+      })),
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand(),
+          demand({
+            sales_order_id: 'so-999999',
+            so_number: 'SO999999',
+            project_line_id: 'pl-999999-1',
+            item_code: 'SRTWC287A-RL',
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    renderPanel(MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id, ['SO381895', 'SO999999']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const changed = await screen.findByTestId('commit-row-SO381895');
+    expect(within(changed).getByTestId('commit-blocked')).toHaveTextContent(
+      'This planning change was already applied to this sales order.',
+    );
+    const other = screen.getByTestId('commit-row-SO999999');
+    expect(within(other).queryByTestId('commit-blocked')).toBeNull();
   });
 
   it('refuses a second Confirm on a batch already applied, and says when it was', async () => {

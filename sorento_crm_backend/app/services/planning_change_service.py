@@ -1014,6 +1014,17 @@ def _exc_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _exc_failing_lines(exc: Exception) -> List[dict]:
+    """The lines a refusal named, or nothing.
+
+    `SupplyLinesRefused` carries them on `detail["failing_lines"]` (line number, item code
+    and the reason that line was refused) precisely because a sentence cannot tell a sheet
+    which row to mark. A caller that re-raises only the sentence throws that away."""
+    if isinstance(exc, AppException) and isinstance(exc.detail, dict):
+        return list(exc.detail.get("failing_lines") or [])
+    return []
+
+
 def _batch_or_404(db: Session, batch_id: str) -> PlanningChangeBatch:
     batch = (
         db.query(PlanningChangeBatch).filter(PlanningChangeBatch.id == batch_id).one_or_none()
@@ -2391,6 +2402,7 @@ def apply(
     *,
     extra_confirm_lines: Optional[Dict[str, List[dict]]] = None,
     refuse_if_applied: bool = False,
+    only_pso_ids: Optional[Sequence[str]] = None,
 ) -> dict:
     """AC-R05: one new revision per affected order, atomic per order. Applying twice is a
     no-op (`already_applied`).
@@ -2400,6 +2412,14 @@ def apply(
     rather than answer 200 with a revision number that belongs to the first press.
     `extra_confirm_lines` carries the lines that same press decided that this batch does
     not carry, keyed by project sales order.
+
+    `only_pso_ids` NARROWS the apply to the orders named, and the board's own Confirm is
+    why it exists: a book upload moves many orders at once, and the board's Confirm is
+    pressed per order (`OrderCommitRow`). Applying the whole batch off one press wrote
+    revisions for orders nobody had confirmed, skipped the per-order permission check
+    those orders would have had, and locked every remaining order's rows behind
+    `applied_at` - so the planner could neither decide nor confirm them afterwards. An
+    apply with no `only_pso_ids` is the whole batch, exactly as before.
     """
     from app.services.project_supply_service import ProjectSupplyService
 
@@ -2444,9 +2464,13 @@ def apply(
             "outcomes": {},
         }
 
+    wanted = {str(pso_id) for pso_id in only_pso_ids} if only_pso_ids is not None else None
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
     for r in rows:
-        by_order[str(r.project_sales_order_id)].append(r)
+        pso_id = str(r.project_sales_order_id)
+        if wanted is not None and pso_id not in wanted:
+            continue
+        by_order[pso_id].append(r)
 
     supply = ProjectSupplyService(db)
 
@@ -2507,7 +2531,17 @@ def apply(
                 ):
                     r.applied_state = PLANNING_CHANGE_STATE_FAILED
                     r.applied_reason = reason
-            failed_orders.append({"so_number": so_number, "reason": reason})
+            # The lines the refusal NAMED, beside the sentence that summarises them: a
+            # `SupplyLinesRefused` says which line and why ("Borrowing takes a reason"),
+            # and the board's own Confirm has to be able to say the same thing an
+            # ordinary Confirm does rather than "N lines cannot be confirmed" alone.
+            failed_orders.append(
+                {
+                    "so_number": so_number,
+                    "reason": reason,
+                    "failing_lines": _exc_failing_lines(exc),
+                }
+            )
             continue
 
         applied_orders.append(so_number)
@@ -2533,7 +2567,19 @@ def apply(
     # "done" on nothing more than a harmless retry. Left pending instead, the rows keep
     # their `failed` state and reasons, decisions stay editable, and this same call can
     # simply be retried once the cause is fixed.
-    if orders_revised:
+    #
+    # AND only once no order this apply LEFT OUT is still pending. `applied_at` is the
+    # batch-wide lock (`set_row_decision` and a retry of this call both gate on it), so
+    # stamping it after a narrowed apply froze every other order of the same upload at
+    # `pending` with no way to decide or confirm them - the planner saw `Applied ...` and
+    # `pending: 2` on the same row. An apply that visited every order is unchanged: there
+    # is nothing left out, so the stamp lands exactly as it did before.
+    left_out_pending = wanted is not None and any(
+        str(r.project_sales_order_id) not in wanted
+        and r.applied_state == PLANNING_CHANGE_STATE_PENDING
+        for r in rows
+    )
+    if orders_revised and not left_out_pending:
         batch.applied_at = datetime.utcnow()
         batch.applied_by = actor
         batch.result_json = {

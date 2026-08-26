@@ -495,10 +495,18 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
     confirmation beside the batch's rows: the planner pressed one button and is entitled
     to have it mean what the screen said.
 
+    **THIS ORDER, AND NO OTHER.** A book upload moves many orders at once and the board
+    presses Confirm per order, so the apply is narrowed to this one (`only_pso_ids`).
+    Applying the whole batch off one press wrote revisions for orders nobody had
+    confirmed, skipped the per-order permission check `_assert_can_act_on` gives this one,
+    and stamped `applied_at`, which locked every remaining order's rows.
+
     A second press is REFUSED (409), not answered with the first press's revision number.
     """
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
+    from app.services.project_supply_service import SupplyLinesRefused
 
     batch_id = payload.batch_id
     validate_uuid_path(batch_id, resource="Planning change batch")
@@ -510,6 +518,14 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
         )
         .all()
     )
+    if rows and all(r.applied_state == PLANNING_CHANGE_STATE_APPLIED for r in rows):
+        # This ORDER is done even though the batch as a whole may not be: another order of
+        # the same upload can still be waiting, so `applied_at` is not the thing to read.
+        raise AppException(
+            status_code=409,
+            message="This planning change was already applied to this sales order.",
+            code="planning_change_batch_applied",
+        )
     by_line = {str(row.project_line_id): row for row in rows if row.project_line_id}
 
     extra: list[dict] = []
@@ -518,6 +534,13 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
         row = by_line.get(str(line.project_line_id))
         if row is None:
             extra.append(composition)
+            continue
+        if row.suggested in ("release", "retire"):
+            # Approving one of these on the board means "yes, do what the book did" - it
+            # is not an amendment of the line's supply. Posting it as an `amend` sent it
+            # down the confirm branch instead, so the RELEASE rule (AC-P3-10) and the
+            # retire-and-shift never fired from the board at all. The row already carries
+            # `accept` from `build_batch`, and the board offers no way to change it.
             continue
         planning_change_service.set_row_decision(
             db, batch_id, str(row.id), "amend", composition
@@ -529,6 +552,7 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
         actor_user_id,
         extra_confirm_lines={str(order.id): extra},
         refuse_if_applied=True,
+        only_pso_ids={str(order.id)},
     )
     failed = [
         entry for entry in result["failed_orders"]
@@ -537,13 +561,25 @@ def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:
     outcome = (result.get("outcomes") or {}).get(str(order.id))
     confirmed = (outcome or {}).get("confirm_result")
     if confirmed is None:
+        message = (
+            failed[0]["reason"]
+            if failed
+            else "Nothing on this planning change could be confirmed."
+        )
+        # WHICH line, and why. An ordinary Confirm answers with `failing_lines` beside the
+        # sentence and the sheet marks the row; the batch path dropped them, so the same
+        # refusal read as "1 line cannot be confirmed" with nothing to act on.
+        failing_lines = failed[0].get("failing_lines") if failed else None
+        if failing_lines:
+            raise SupplyLinesRefused(
+                status_code=422,
+                message=message,
+                failing_lines=failing_lines,
+                code="planning_change_not_confirmed",
+            )
         raise AppException(
             status_code=422,
-            message=(
-                failed[0]["reason"]
-                if failed
-                else "Nothing on this planning change could be confirmed."
-            ),
+            message=message,
             code="planning_change_not_confirmed",
         )
     return confirmed
