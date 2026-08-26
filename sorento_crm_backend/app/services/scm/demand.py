@@ -322,6 +322,47 @@ legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
       AND oir.qty > COALESCE(lk.linked, 0)
+    UNION ALL
+    -- The FORM leg: an instruction the CS Order Inquiry Form raised that the sales-order
+    -- book carries no line for (`PLAN-scm-cs-planning-uat.md` section 3.I; the fixture
+    -- sheet's `[NL]` rows). CS writes `ORDER BACK` where a delivery date belongs and the
+    -- line that quantity came from was closed in AutoCount, so there is no `so_line_id` to
+    -- read a product or a warehouse off - the ROW states both, and those are what this leg
+    -- reads. Without it the fourteen instructions on SO381895's first two forms are raised,
+    -- shown to purchasing, and invisible to the plan that decides what to buy.
+    --
+    -- Joined on the CODE and the company together, which is exactly what
+    -- `uq_products_company_product_code` / `uq_warehouses_company_warehouse_code` make
+    -- unique - a code alone would multiply the row once per company holding the same SKU.
+    -- INNER on both, so a row naming an item or a location this system does not hold is
+    -- counted nowhere rather than everywhere.
+    --
+    -- `supply_decision_id IS NULL` keeps the two confirmed legs disjoint: a decision's own
+    -- Buy residual is counted above, at the reconciled core line's product and location.
+    SELECT fp.id AS product_id,
+           fw.id AS warehouse_id,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
+           0 AS retail_qty,
+           0 AS unclassified_qty
+    FROM projects.order_inquiry_rows oir
+    JOIN products fp
+      ON fp.product_code = oir.item_code
+     AND fp.company_id = oir.company_id
+    JOIN warehouses fw
+      ON fw.warehouse_code = oir.stock_location
+     AND fw.company_id = oir.company_id
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) flk ON TRUE
+    WHERE oir.so_line_id IS NULL
+      AND oir.supply_decision_id IS NULL
+      AND oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
+      AND oir.qty > 0
+      AND oir.qty > COALESCE(flk.linked, 0)
 )
 SELECT product_id,
        warehouse_id,
@@ -428,6 +469,51 @@ legs AS (
       AND oir.qty > COALESCE(lk.linked, 0)
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
+      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+           OR oir.delivery_date <= CAST(:horizon AS date))
+    UNION ALL
+    -- The FORM leg: an instruction the CS Order Inquiry Form raised that the sales-order
+    -- book carries no line for (`PLAN-scm-cs-planning-uat.md` section 3.I; the fixture
+    -- sheet's `[NL]` rows). CS writes `ORDER BACK` where a delivery date belongs and the
+    -- line that quantity came from was closed in AutoCount, so there is no `so_line_id` to
+    -- read a product or a warehouse off - the ROW states both, and those are what this leg
+    -- reads. Without it the fourteen instructions on SO381895's first two forms are raised,
+    -- shown to purchasing, and invisible to the plan that decides what to buy.
+    --
+    -- Joined on the CODE and the company together, which is exactly what
+    -- `uq_products_company_product_code` / `uq_warehouses_company_warehouse_code` make
+    -- unique - a code alone would multiply the row once per company holding the same SKU.
+    -- INNER on both, so a row naming an item or a location this system does not hold is
+    -- counted nowhere rather than everywhere.
+    --
+    -- `supply_decision_id IS NULL` keeps the two confirmed legs disjoint: a decision's own
+    -- Buy residual is counted above, at the reconciled core line's product and location.
+    SELECT fp.id AS product_id,
+           fw.id AS warehouse_id,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS project_confirmed_qty,
+           0 AS retail_qty,
+           0 AS unclassified_qty
+    FROM projects.order_inquiry_rows oir
+    JOIN products fp
+      ON fp.product_code = oir.item_code
+     AND fp.company_id = oir.company_id
+    JOIN warehouses fw
+      ON fw.warehouse_code = oir.stock_location
+     AND fw.company_id = oir.company_id
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) flk ON TRUE
+    WHERE oir.so_line_id IS NULL
+      AND oir.supply_decision_id IS NULL
+      AND oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
+      AND oir.qty > 0
+      AND oir.qty > COALESCE(flk.linked, 0)
+      -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no
+      -- date at all, so it is always in - unscheduled demand is still demand.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
 )
