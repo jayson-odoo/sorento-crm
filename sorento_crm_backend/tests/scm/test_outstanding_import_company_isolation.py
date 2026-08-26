@@ -160,7 +160,7 @@ class World:
     def segment(self, stem: str) -> str:
         """A market segment whose CODE carries the word the demand class keys off.
 
-        `_demand_class_for` matches "project" / "contract" as a substring of the code, so a
+        `_class_of` matches "project" / "contract" as a substring of the code, so a
         marker-prefixed code still classifies exactly as the production ones do.
         """
         code = f"{MARKER}-{stem}-{uuid.uuid4().hex[:6]}".lower()
@@ -467,19 +467,19 @@ def test_the_demand_class_reads_a_customer_of_the_active_company_only(world):
 
     _act_as(db, world.a)
 
-    assert svc._demand_class_for(db, code) == "retail"
+    assert svc._class_of(svc._segment_of(db, code)) == "retail"
 
 
 def test_a_customer_owned_only_by_another_company_does_not_set_the_demand_class(world):
-    """The deterministic half: company A has no such debtor, so the class falls back to the
-    default. A raw lookup finds company B's project customer and promotes the order."""
+    """The deterministic half: company A has no such debtor, so the segment answers
+    nothing. A raw lookup finds company B's project customer and promotes the order."""
     db = world.db
     code = _code("CUST")[:50]
     world.customer(code, f"{MARKER} B debtor", world.b, world.segment("project"))
 
     _act_as(db, world.a)
 
-    assert svc._demand_class_for(db, code) == svc.DEFAULT_DEMAND_CLASS
+    assert svc._class_of(svc._segment_of(db, code)) is None
 
 
 # The SO book now LINKS that customer (`sales_orders.customer_id`), not just reads their

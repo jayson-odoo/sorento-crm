@@ -28,18 +28,24 @@ from sqlalchemy import text
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
-from tests.scm._outstanding_workbooks import Codes, make_codes, seed_catalogue
+from tests.scm._outstanding_workbooks import (
+    Codes,
+    DEALER_ORDER_TYPE,
+    make_codes,
+    seed_catalogue,
+    so_headers,
+)
 
 MARKER = "ZZTPRC"
 
 #: The document, the line, and the money column under test.
-HEADERS = ("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "UNIT PRICE", "DELIVERY DATE",
-           "STOCK LOCATION")
+HEADERS = so_headers("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "UNIT PRICE",
+                     "DELIVERY DATE", "STOCK LOCATION")
 
 #: The same file without the money column at all, so an absent price is absent rather
 #: than blank-in-a-column-that-exists.
-HEADERS_NO_PRICE = ("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
-                    "STOCK LOCATION")
+HEADERS_NO_PRICE = so_headers("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY",
+                              "DELIVERY DATE", "STOCK LOCATION")
 
 
 @pytest.fixture()
@@ -64,7 +70,9 @@ def _upload(codes: Codes, price, *, qty: float = 40, headers=HEADERS) -> bytes:
     row = [codes.project_so, f"{MARKER}-{uuid.uuid4().hex[:6]}".upper(), codes.item_rl, qty]
     if headers is HEADERS:
         row.append(price)
-    row += [date(2026, 7, 1), codes.loc_project]
+    # The class the file has to state since QP1, or the whole upload is refused - this
+    # file's debtor code is invented per run and resolves to no customer.
+    row += [date(2026, 7, 1), codes.loc_project, DEALER_ORDER_TYPE]
     ws.append(row)
     buf = BytesIO()
     wb.save(buf)

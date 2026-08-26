@@ -440,8 +440,7 @@ def _abc_class_qty_totals(db: Session, as_of: date) -> tuple[dict[tuple, float],
     `DEMAND_CLASSES` vocabulary) already guarantees NULL / 'project' / 'retail' and
     nothing else.
 
-    Silence is NOT retail (S3, `outstanding_import_service._segment_of`/
-    `_demand_class_for` docstrings): a key whose demand_class resolves to neither
+    Silence is NOT retail (S3, `outstanding_import_service._segment_of` docstring): a key whose demand_class resolves to neither
     (unclassified agent AND no/blank market segment) is dropped from BOTH partitions in
     Python below - unknown counts for neither letter, never a computed retail default.
     """
