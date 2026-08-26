@@ -1,11 +1,11 @@
 /* -------------------------------------------------------------------------------------
- * reportService - PLAN-reporting-foundation, slice S1 (Phase 1, mocked).
+ * reportService - PLAN-reporting-foundation.
  *
  * One service for EVERY report. The report key is a parameter, never a code path: the
  * sponsorship report is report #1 and report #2 must reach this file unchanged.
  *
  * ===================================================================================
- * API CONTRACT (backend lands in S2; every function below is a one-line swap)
+ * API CONTRACT (live since S3; the S1 mock is deleted)
  * ===================================================================================
  *
  * All routes are mounted under `require_module_enabled_with_api_key("procurement")`
@@ -72,31 +72,10 @@
  * `col_dim.value_labels` map supplied by the engine; the frontend falls back to the
  * raw value when it is absent. Recorded in PLAN-reporting-foundation.md.
  *
- * ===================================================================================
- * PHASE 1 STATUS - THIS FILE SERVES A MOCK. DEBT until S2 swaps it. (DoD gate item 1)
- * ===================================================================================
- *
- * Every function below returns fixture data from
- * `@/components/reports/__mocks__/sponsorshipReport.fixtures`. The filters really do
- * filter and the totals really are recomputed there, so the states on screen are the
- * states the engine will produce. Two states cannot be reached by filtering; they are
- * forced with a `?mock=` query parameter that goes away with the mock:
- *
- *   ?mock=error    the run fails
- *   ?mock=capped   the run answers 422 capped
- *   ?mock=loading  the run never resolves
- *   ?mock=nopublish   meta reports `can_publish: false`
  * ----------------------------------------------------------------------------------- */
 
-import {
-  MOCK_SCENARIO_KEYS,
-  mockExportReport,
-  mockReportMeta,
-  mockReportViewMutation,
-  mockReportViews,
-  mockRunReport,
-  type MockScenario,
-} from '@/components/reports/__mocks__/sponsorshipReport.fixtures';
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 /** A column as the dataset catalog describes it, and as a layout returns it. */
 export type ReportColumnType = 'text' | 'money' | 'integer' | 'date' | 'bool';
@@ -283,51 +262,66 @@ export function reportLayoutListingKey(permission: string, layoutKey: string): s
   return `${permission}::${layoutKey}`;
 }
 
-/** Phase 1 only: which forced state the URL asks for. Removed with the mock. */
-export function readMockScenario(search: string): MockScenario | null {
-  const value = new URLSearchParams(search).get('mock');
-  return value && (MOCK_SCENARIO_KEYS as readonly string[]).includes(value)
-    ? (value as MockScenario)
-    : null;
+const base = (key: string) => `/api/v1/reports/${encodeURIComponent(key)}`;
+
+const jsonInit = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+});
+
+async function failed(response: Response, fallback: string): Promise<Error> {
+  return new Error(await extractApiError(response, fallback));
 }
 
-export async function fetchReportMeta(
-  key: string,
-  scenario: MockScenario | null = null,
-): Promise<ReportMeta> {
-  return mockReportMeta(key, scenario);
+export async function fetchReportMeta(key: string): Promise<ReportMeta> {
+  const response = await apiFetch(base(key));
+  if (!response.ok) throw await failed(response, 'Failed to load the report');
+  return response.json();
 }
 
 export async function runReport(
   key: string,
   params: ReportParamValues,
   view: ReportViewConfig,
-  scenario: MockScenario | null = null,
 ): Promise<ReportResult> {
-  try {
-    return await mockRunReport(key, params, view, scenario);
-  } catch (error) {
-    // S2 reads this off the 422 body (`detail.capped`); the mock flags it by name.
-    if (error instanceof Error && error.name === 'ReportCappedError') {
-      throw new ReportCappedError(error.message);
+  const response = await apiFetch(`${base(key)}/run`, jsonInit('POST', { params, view }));
+  if (!response.ok) {
+    // The capped 422 is an answer, not a failure, and it is FLAT: the backend's
+    // AppException handler serialises `exc.detail` as the whole body, so `capped` sits
+    // beside `message`. The MESSAGE still comes from extractApiError; the clone is read
+    // only for that one flag, because extractApiError consumes the body.
+    let body: { capped?: boolean; code?: string } | null = null;
+    try {
+      body = await response.clone().json();
+    } catch {
+      body = null;
     }
-    throw error;
+    const message = await extractApiError(response, 'Failed to run the report');
+    if (body?.capped || body?.code === 'REPORT_CAPPED') throw new ReportCappedError(message);
+    throw new Error(message);
   }
+  return response.json();
 }
 
 export async function fetchReportViews(key: string): Promise<ReportViews> {
-  return mockReportViews(key);
+  const response = await apiFetch(`${base(key)}/views`);
+  if (!response.ok) throw await failed(response, 'Failed to load the saved views');
+  return response.json();
 }
 
 export async function createReportView(
   key: string,
   body: { name: string; view: ReportViewConfig },
 ): Promise<ReportView> {
-  return mockReportViewMutation(key, { action: 'create', ...body });
+  const response = await apiFetch(`${base(key)}/views`, jsonInit('POST', body));
+  if (!response.ok) throw await failed(response, 'Failed to save the view');
+  return response.json();
 }
 
 export async function deleteReportView(key: string, id: string): Promise<void> {
-  await mockReportViewMutation(key, { action: 'delete', id });
+  const response = await apiFetch(`${base(key)}/views/${id}`, jsonInit('DELETE'));
+  if (!response.ok) throw await failed(response, 'Failed to delete the view');
 }
 
 export async function publishReportView(
@@ -335,11 +329,18 @@ export async function publishReportView(
   id: string,
   isShared: boolean,
 ): Promise<ReportView> {
-  return mockReportViewMutation(key, { action: 'publish', id, is_shared: isShared });
+  const response = await apiFetch(
+    `${base(key)}/views/${id}/publish`,
+    jsonInit('POST', { is_shared: isShared }),
+  );
+  if (!response.ok) throw await failed(response, 'Failed to publish the view');
+  return response.json();
 }
 
 export async function setDefaultReportView(key: string, id: string): Promise<ReportView> {
-  return mockReportViewMutation(key, { action: 'set-default', id });
+  const response = await apiFetch(`${base(key)}/views/${id}/set-default`, jsonInit('POST'));
+  if (!response.ok) throw await failed(response, 'Failed to set the default view');
+  return response.json();
 }
 
 export async function exportReport(
@@ -347,5 +348,7 @@ export async function exportReport(
   params: ReportParamValues,
   view: ReportViewConfig,
 ): Promise<ReportExportResult> {
-  return mockExportReport(key, params, view);
+  const response = await apiFetch(`${base(key)}/export`, jsonInit('POST', { params, view }));
+  if (!response.ok) throw await failed(response, 'Failed to queue the export');
+  return response.json();
 }

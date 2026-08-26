@@ -22,19 +22,16 @@ import {
   type ReportViewConfig,
   type ReportViews,
 } from '@/services/reportService';
-import type { MockScenario } from '@/components/reports/__mocks__/sponsorshipReport.fixtures';
 
 /**
  * Report hooks (PLAN-reporting-foundation). The report KEY is a parameter throughout:
  * report #2 reuses these unchanged, which is the whole point of the foundation.
- *
- * `scenario` is Phase 1 only (the `?mock=` forced states) and goes away with the mock.
  */
 
-export function useReportMeta(reportKey: string, scenario: MockScenario | null = null) {
+export function useReportMeta(reportKey: string) {
   return useQuery<ReportMeta, Error>({
-    queryKey: [REPORT_META_KEY, reportKey, scenario],
-    queryFn: () => fetchReportMeta(reportKey, scenario),
+    queryKey: [REPORT_META_KEY, reportKey],
+    queryFn: () => fetchReportMeta(reportKey),
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
@@ -44,13 +41,12 @@ export function useReportRun(
   reportKey: string,
   params: ReportParamValues,
   view: ReportViewConfig | null,
-  scenario: MockScenario | null = null,
 ) {
   return useQuery<ReportResult, Error>({
     // The pivot shape is part of the request, so reconfiguring the summary refetches
     // rather than re-deriving on the client (the engine owns every total).
-    queryKey: [REPORT_RUN_KEY, reportKey, params, view?.pivot, scenario],
-    queryFn: () => runReport(reportKey, params, view!, scenario),
+    queryKey: [REPORT_RUN_KEY, reportKey, params, view?.pivot],
+    queryFn: () => runReport(reportKey, params, view!),
     enabled: Boolean(view),
     placeholderData: (previous) => previous,
     retry: 0,

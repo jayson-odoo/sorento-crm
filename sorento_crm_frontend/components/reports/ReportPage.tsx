@@ -1,7 +1,6 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import {
   type ColumnDef,
   type PaginationState,
@@ -37,7 +36,6 @@ import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/compone
 import { formatDateSafe, formatMoney2dp } from '@/lib/helpers';
 import { useReportExport, useReportMeta, useReportRun, useReportViews } from '@/hooks/useReports';
 import {
-  readMockScenario,
   reportLayoutListingKey,
   ReportCappedError,
   type ReportColumn,
@@ -163,13 +161,8 @@ export function ReportPage({
   reportKey: string;
   breadcrumb: { label: string; href?: string }[];
 }) {
-  const searchParams = useSearchParams();
-  const scenario = readMockScenario(searchParams.toString());
-
-  const { data: meta, isLoading: metaLoading, error: metaError, refetch: refetchMeta } = useReportMeta(
-    reportKey,
-    scenario,
-  );
+  const { data: meta, isLoading: metaLoading, error: metaError, refetch: refetchMeta } =
+    useReportMeta(reportKey);
   const { data: views } = useReportViews(reportKey);
   const exportMutation = useReportExport(reportKey);
 
@@ -224,7 +217,7 @@ export function ReportPage({
     error: runError,
     isFetching,
     refetch: refetchRun,
-  } = useReportRun(reportKey, state?.params ?? {}, runView, scenario);
+  } = useReportRun(reportKey, state?.params ?? {}, runView);
 
   const detailLayout = result?.layouts.detail;
   const columns = useMemo(() => (detailLayout ? buildColumns(detailLayout) : []), [detailLayout]);
