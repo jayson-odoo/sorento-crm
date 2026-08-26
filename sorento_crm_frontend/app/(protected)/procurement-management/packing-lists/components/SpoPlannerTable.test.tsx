@@ -671,3 +671,68 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
     expect(screen.queryByText(/unassigned/)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Browser pass 4, finding 2 - a typed quantity survives a round trip through the ticks.
+ *
+ * The recompute wrote the CLAMPED figure back into the quantity, so unticking the only
+ * take stored 0 and the re-tick had nothing left to restore.
+ */
+describe('F7 - the quantity the operator typed is theirs', () => {
+  const oneTake = () =>
+    plannerLine({
+      po_takes: [
+        {
+          po_line_id: 'pol-only',
+          po_number: '202605-S0060',
+          qty: 100,
+          expected_date: '2026-09-01',
+          po_date: '2026-05-02',
+          supplier_name: 'Kailu',
+          open_qty: 100,
+        },
+      ],
+    });
+
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [oneTake()] });
+  });
+
+  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  const toggle = async () => {
+    fireEvent.click(await screen.findByTitle(/which po covers this/i));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
+  };
+
+  it('gives back the typed figure after untick and re-tick, every time', async () => {
+    renderTable();
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.change(qtyInput(), { target: { value: '40' } });
+    expect(qtyInput()).toHaveValue(40);
+
+    await toggle();
+    expect(qtyInput()).toHaveValue(0);
+    await toggle();
+    expect(qtyInput()).toHaveValue(40);
+
+    // And again - the second round trip used to give back whatever the first one left.
+    await toggle();
+    expect(qtyInput()).toHaveValue(0);
+    await toggle();
+    expect(qtyInput()).toHaveValue(40);
+  });
+
+  it('never lets the typed figure exceed what is ticked', async () => {
+    state.suggestion = suggestion({
+      lines: [oneTake()],
+    });
+    renderTable();
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.change(qtyInput(), { target: { value: '90' } });
+
+    await toggle();
+    await toggle();
+
+    expect(qtyInput()).toHaveValue(90);
+  });
+});

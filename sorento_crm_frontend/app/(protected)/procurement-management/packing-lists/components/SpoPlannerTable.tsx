@@ -98,10 +98,12 @@ function fmtSigned(value: number): string {
 type SplitState = { warehouseId: string; qty: number };
 type LineState = {
   qty: number;
-  /** True once the operator typed a quantity themselves. Until then the quantity is a
-   *  DERIVED default and follows the ticked takes both ways - which is what re-ticking a
-   *  take could not do while the recompute only ever took `min(current, covered)`. */
-  qtyTouched: boolean;
+  /** What the operator TYPED, held apart from what is currently sendable. Null until they
+   *  type one, and the quantity is then a derived default that follows the ticked takes.
+   *  Kept separate because the sendable figure is clamped to what is ticked, and writing
+   *  that clamp back over the typed one is how unticking the only take stored 0 and the
+   *  re-tick had nothing left to give back. */
+  typedQty: number | null;
   splits: SplitState[];
   /** Which PO takes this line draws from. Every one, until somebody unticks one (AC-G1). */
   poTakeIds: string[];
@@ -238,7 +240,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       const soKeys = defaultSoKeys(ln, ln.suggested_qty);
       next[ln.shipment_line_id] = {
         qty: ln.suggested_qty,
-        qtyTouched: false,
+        typedQty: null,
         poTakeIds,
         soKeys,
         splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
@@ -256,7 +258,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const soKeys = defaultSoKeys(ln, ln.suggested_qty);
     return {
       qty: ln.suggested_qty,
-      qtyTouched: false,
+      typedQty: null,
       poTakeIds: ln.po_takes.map((t) => t.po_line_id),
       soKeys,
       splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
@@ -280,7 +282,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // on a screen where nothing looks wrong.
     patch(ln, {
       qty,
-      qtyTouched: true,
+      typedQty: qty,
       splits: splitsFromTicks(ln, current.soKeys, qty),
     });
   };
@@ -305,7 +307,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       ? [...current.poTakeIds, poLineId]
       : current.poTakeIds.filter((id) => id !== poLineId);
     const covered = poCoveredFor(ln, poTakeIds);
-    const qty = current.qtyTouched ? Math.min(current.qty, covered) : covered;
+    // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
+    // view of what can be sent right now, and storing it destroyed the decision behind it.
+    const qty = current.typedQty === null ? covered : Math.min(current.typedQty, covered);
     patch(ln, {
       poTakeIds,
       qty,
