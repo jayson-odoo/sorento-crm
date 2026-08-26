@@ -76,6 +76,27 @@ def _send_and_log(
             response = result["response"]
 
             if emit_outbound_webhook:
+                # The thread reads from chat_histories: write the row now
+                # (optimistic send) instead of waiting for the n8n echo. The
+                # same gate as the webhook - a system message that must stay
+                # out of the thread (OTP) stays out of the local mirror too.
+                try:
+                    from app.services.conversation_thread_service import mirror_outgoing_send
+
+                    mirror_outgoing_send(
+                        db,
+                        identifier=identifier,
+                        respond_contact_id=None,
+                        response=response,
+                        message={
+                            "type": "text",
+                            "text": result.get("rendered_text") or message_text,
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - the send already succeeded
+                    logger.warning(
+                        "local mirror failed for %s %s", business_table, business_id, exc_info=True
+                    )
                 enqueue_crm_chat_outbound_webhook(
                     db,
                     business_table=business_table,
@@ -108,6 +129,7 @@ def _send_and_log(
                 "business_id": business_id,
                 "status": "success",
                 "sent_as": result["sent_as"],
+                "response": response,
             }
         except Exception as e:
             logger.exception(
@@ -356,6 +378,85 @@ def deliver_manual_template(
 # on success AND failure and re-raises so RQ records the job FAILED. business_table
 # = "conversation_sla_tracking", business_id = the tracking id.
 # ---------------------------------------------------------------------------
+
+
+TICKET_RESOLVED_EXCERPT_CHARS = 120
+
+
+def _enquiry_excerpt(text: Optional[str]) -> str:
+    body = " ".join(str(text or "").split())
+    if len(body) <= TICKET_RESOLVED_EXCERPT_CHARS:
+        return body
+    return body[: TICKET_RESOLVED_EXCERPT_CHARS - 3].rstrip() + "..."
+
+
+def send_ticket_resolved_message(tracking_id: str) -> dict:
+    """Worker-side: tell the contact THIS enquiry is resolved
+    (PLAN-ticket-resolved-closing-message, one message per ticket).
+
+    The CRM is the only sender, on every resolve lane; n8n's respond-close-convo
+    keeps the contact-level housekeeping for the last open ticket and no longer
+    messages. Wording is the admin's ``ticket_resolved`` template use case
+    (in-window: the configured default body over these variables, or the
+    built-in fallback below; out-of-window: the mapped approved template).
+    Variables: ``contact_name`` (the contact), ``message`` (the enquiry excerpt),
+    ``entity_number`` (the contact name again - a conversation ticket has no
+    number, and a template mapped with the SLA convention still has to fill).
+    """
+    from app.database import SessionLocal
+    from app.models.sla import ConversationSLATracking
+
+    db = SessionLocal()
+    try:
+        tracking = (
+            db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if tracking is None:
+            return {"business_id": str(tracking_id), "status": "skipped", "reason": "no_tracking"}
+        contact = getattr(tracking, "contact", None)
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            return {
+                "business_id": str(tracking_id),
+                "status": "skipped",
+                "reason": "no_respond_contact",
+            }
+        contact_name = (
+            getattr(contact, "name", None)
+            or " ".join(
+                filter(None, [getattr(contact, "first_name", None), getattr(contact, "last_name", None)])
+            )
+            or getattr(contact, "phone_number", None)
+            or "there"
+        )
+        excerpt = _enquiry_excerpt(getattr(tracking, "source_message_text", None))
+        enquiry_words = f'your enquiry "{excerpt}"' if excerpt else "your enquiry"
+        fallback_text = (
+            f"Hi {contact_name}, {enquiry_words} has been resolved. "
+            "If there is anything else we can help with, just reply here."
+        )
+        resolved_by = str(getattr(tracking, "resolved_by", None) or "").strip() or None
+    finally:
+        db.close()
+
+    return _send_and_log(
+        use_case="ticket_resolved",
+        business_table="conversation_sla_tracking",
+        business_id=str(tracking_id),
+        identifier=identifier,
+        message_text=fallback_text,
+        respond_user_id="",
+        crm_sender_user_id=resolved_by,
+        space_id=None,
+        sla_entity_type="conversation_sla_tracking",
+        extra_context_vars={
+            "contact_name": contact_name,
+            "message": excerpt or "your enquiry",
+            "entity_number": contact_name,
+        },
+    )
 
 
 def _resolve_respond_io_id(db, tracking) -> Optional[str]:
