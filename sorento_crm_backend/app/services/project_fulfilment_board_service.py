@@ -2138,10 +2138,25 @@ class FulfilmentBoardService:
                 is_dealer_hot_selling=fact.is_dealer_hot_selling,
                 is_project_hot_selling=fact.is_project_hot_selling,
                 pools=pool_chain,
+                # Ladder v4 (section 1d): the five pools are one pile, so the trail's
+                # "offered" has to be what the LADDER offered. Left off, the rung reported
+                # an offer the engine had already refused.
+                pools_net=fact.pools_net,
             )
             capacity_by_location = {
                 location: amount for location, amount, _reason in capacity
             }
+            # What the pools would have offered read one at a time. The difference between
+            # this and the above is exactly what ladder v4 changed, and the sentence below
+            # names the net ONLY where the net is what refused the draw - everywhere else
+            # the per-pool reason is the true and more useful one.
+            pools_net_refused = bool(
+                pool_reserve_capacity(
+                    is_dealer_hot_selling=fact.is_dealer_hot_selling,
+                    is_project_hot_selling=fact.is_project_hot_selling,
+                    pools=pool_chain,
+                )
+            ) and not capacity
             pool_offered_total = sum(capacity_by_location.values(), _ZERO)
             pool_taken = sum(
                 (
@@ -2184,7 +2199,8 @@ class FulfilmentBoardService:
                     eligible=not fact.is_dealer_hot_selling,
                     note=note,
                     why=lambda outcome: self._pool_why(
-                        fact, outcome, pile, balance, pool_offered, took(RESERVE, pool_code)
+                        fact, outcome, pile, balance, pool_offered,
+                        took(RESERVE, pool_code), pools_net_refused,
                     ),
                     pool=pile,
                 )
@@ -2432,6 +2448,7 @@ class FulfilmentBoardService:
         balance: Decimal,
         offered: Decimal,
         taken: Decimal,
+        pools_net_refused: bool = False,
     ) -> str:
         """Why the pool rung ended where it did, with the pool's own numbers in the sentence.
 
@@ -2463,14 +2480,14 @@ class FulfilmentBoardService:
                 "pool is not offered."
             )
         # LADDER V4 (section 1d): the five site pools are ONE pile. `BRW -103` beside
-        # `DC1 +1` nets -102 and offers nothing, and the sentence has to be about the pile
-        # rather than about whichever pool this line happens to sit under - reading the +1
-        # alone is how a line came to be promised stock the shared book already owes.
-        pools_net = _dec(getattr(fact, "pools_net", _ZERO))
-        if pools_net <= _ZERO:
+        # `DC1 +1` nets -102, and the 1 at DC1 is stock the shared book already owes at
+        # BRW. Said ONLY where the net is what refused the draw: a pool that had nothing
+        # to give on its own terms already has a truer and more specific reason below, and
+        # replacing it with the pile's total would answer a question nobody asked.
+        if pools_net_refused:
             return (
-                f"The site pools net {qty_text(pools_net)} between them, so no pool is "
-                "offered."
+                f"The site pools net {qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} "
+                "between them, so no pool is offered."
             )
         available = _dec(pile.get("available"))
         if fact.is_project_hot_selling:
@@ -2559,19 +2576,20 @@ class FulfilmentBoardService:
                 "from."
             )
         net = _dec(getattr(fact, "group_net", _ZERO))
+        offer = _dec(getattr(fact, "group_offer", _ZERO))
         if not candidates:
             # LADDER V4 (section 1d): the group is ONE pile, so the sentence is about the
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
             # an answer to "why nothing" while `BRW-IB` owes 27,804 against 5,290.
-            if net <= _ZERO:
+            if offer <= _ZERO:
                 return (
                     f"The {fact.group_code} group nets {qty_text(net)}, so there is "
-                    "nothing to take - whatever sits at any one of its locations is "
-                    "already owed at another."
+                    "nothing left for this line - whatever sits at any one of its "
+                    "locations is already owed at another."
                 )
             return (
-                f"The {fact.group_code} group nets {qty_text(net)}, and none of it sits "
-                "free at a location this line can draw from."
+                f"The {fact.group_code} group nets {qty_text(net)}, and none of what it "
+                "could cover this line with sits free at a location it can draw from."
             )
         if outcome == "took":
             taken_at = ", ".join(c["location"] for c in candidates)

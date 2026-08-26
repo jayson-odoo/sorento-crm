@@ -24,7 +24,7 @@ quantity".
    the IB backlog first (section 1d);
 2. the OWNERSHIP GROUP, this line's own location included: the caller hands over the
    locations in draw order, already capped so that they total no more than
-   ``max(group_net, 0)`` - what the WHOLE group holds, never one warehouse's own reading
+   what the WHOLE GROUP's net leaves for this line, never one warehouse's own reading
    (ladder v4, section 1d). The rank queue no longer decides availability;
 3. the shared pool, own site first then the other site pools, all five netted as ONE pile
    (``pools_net``), with the dealer/project hot-selling gate of 3.3a retained;
@@ -315,7 +315,7 @@ def _pool_reason(location: str, qty: Decimal, pools_net: Optional[Decimal]) -> s
 
 
 def group_take_reason(
-    location: str, qty: Decimal, group_code: Optional[str], group_net: Optional[Decimal]
+    location: str, qty: Decimal, group_code: Optional[str], group_offer: Optional[Decimal]
 ) -> str:
     """Why this location may give this much (v4: it is the GROUP's number, not the
     location's own).
@@ -326,15 +326,15 @@ def group_take_reason(
 
     `BRW-BB has 40 available` was true while a location's own signed availability decided
     what it could lend. Under section 1d the group is one pile - `MWH-IB` holding 7000
-    lends nothing while the IB group nets -15514 - so the quantity is a share of the
-    group's net and the sentence has to say whose number it is.
+    lends nothing while the IB group nets -15514 - so the quantity is a share of what the
+    GROUP can cover this line with, and the sentence has to say whose number it is.
     """
-    if group_net is None or not group_code:
+    if group_offer is None or not group_code:
         where = f" in the {group_code} group" if group_code else ""
         return f"{location} has {qty_text(qty)} available{where}"
     return (
-        f"{location} gives {qty_text(qty)} of the {qty_text(group_net)} the {group_code} "
-        "group nets"
+        f"{location} gives {qty_text(qty)} of the {qty_text(group_offer)} the "
+        f"{group_code} group can cover this line with"
     )
 
 
@@ -380,7 +380,7 @@ def propose_line(
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     outside_reserve_window: bool = False,
-    group_net: Optional[Decimal] = None,
+    group_offer: Optional[Decimal] = None,
     pools_net: Optional[Decimal] = None,
 ) -> Tuple[Component, ...]:
     """The proposed composition for one line, ladder v3's own order (section 1b).
@@ -394,8 +394,8 @@ def propose_line(
     1. timely incoming, for supply arriving on or before the required date - `timely_spo_qty`
        is already netted against the group's own position by the caller (v4, section 1d);
     2. the ownership group: `group_take_candidates`, already capped by the caller to the
-       GROUP's net (`group_net`) and already in draw order - this line's own location
-       first, then its siblings by site;
+       GROUP's own position (`group_offer`) and already in draw order - this line's own
+       location first, then its siblings by site;
     3. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
        capped at `pools_net`;
     4. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
@@ -419,12 +419,13 @@ def propose_line(
     bought. The CALLER decides which side of the window a line falls on, because only it
     knows the product's lead time.
 
-    `group_net` and `pools_net` are ladder v4's own numbers (section 1d): what the ownership
-    group and the five site pools respectively hold BETWEEN their locations, signed.
-    `pools_net` caps rung 3's whole draw; `group_net` is the bound the caller has already
-    applied to `group_take_candidates`, passed here so each component's reason can name the
-    number it is a share OF. Both are `None` for a caller that states no net, and the rungs
-    then stand on their per-location caps alone.
+    `group_offer` and `pools_net` are ladder v4's own numbers (section 1d). `pools_net` is
+    what the five site pools hold BETWEEN them, signed, and it caps rung 3's whole draw.
+    `group_offer` is what the ownership group's pile leaves for THIS line (the group's
+    supply, less the demand ranked ahead of it across the group); it is the bound the caller
+    has already applied to `group_take_candidates`, and it travels here so each component's
+    reason can name the number it is a share OF. Both are `None` for a caller that states neither, and
+    the rungs then stand on their per-location caps alone.
     """
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
@@ -481,7 +482,7 @@ def propose_line(
             Component(
                 kind=RESERVE,
                 qty=take,
-                reason=group_take_reason(str(location), take, group_code, group_net),
+                reason=group_take_reason(str(location), take, group_code, group_offer),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
             )

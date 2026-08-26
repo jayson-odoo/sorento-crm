@@ -101,7 +101,15 @@ class NetPosition:
 
     @property
     def offer(self) -> Decimal:
-        """What may be drawn from the set: the net, or nothing."""
+        """What an OUTSIDE caller may draw from the set: the net, or nothing.
+
+        Right for a set this line is not itself booked in - a donor group, or the site
+        pools - where every unit of the demand in the net belongs to somebody else. A
+        line's OWN group is a different question, because its own quantity is inside that
+        net: the ladder answers it with the group's supply less what is queued ahead of the
+        line (`ProjectSupplyService._group_offer`), so the line at the front of a queue is
+        still served from a group that is short overall.
+        """
         return self.net if self.net > ZERO else ZERO
 
     def positive_locations(self) -> Tuple[LocationNet, ...]:
