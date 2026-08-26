@@ -12,6 +12,7 @@ import {
   cellKeyOf,
   decisionWords,
   preMarkedKeys,
+  uncoverChangedLines,
 } from './boardChangeAnnotations';
 import type { BoardCell, BoardContribution } from '../types/fulfilmentPlanning.types';
 import type { PlanningChangeBatch, PlanningChangeRow } from '../types/planningChange.types';
@@ -239,5 +240,58 @@ describe('preMarkedKeys', () => {
   it('never marks a line whose sales order states no location', () => {
     const contributions = [contribution({ key: 'k1', project_line_id: 'pl-1', unplannable: true })];
     expect(preMarkedKeys(batchOf([row({})]), contributions)).toEqual([]);
+  });
+});
+
+
+describe('uncoverChangedLines', () => {
+  /**
+   * The defect this pins, measured live on SO381895 (26 August 2026): a covered line's
+   * `sources` and `qty_proposed_*` are its FROZEN composition rebuilt, so uncovering it
+   * without carrying the batch's own proposal left the cell offering to confirm 10 against
+   * a line the book had opened for 25 - which the server refuses, at the last step, after
+   * the planner has pressed Confirm.
+   */
+  const frozen = contribution({
+    key: 'k1',
+    project_line_id: 'pl-1',
+    qty: '25',
+    covered: true,
+    decision: { revision_no: 2, components: [] },
+    sources: [{ kind: 'buy', qty: '10' }],
+    qty_proposed_buy: '10',
+  } as Partial<BoardContribution>);
+  const board = { cells: [cell({ contributions: [frozen] })], contributions: [frozen] };
+  const withProposal = batchOf([
+    row({
+      proposal: {
+        ...contribution({ key: 'built-earlier', project_line_id: 'pl-1', qty: '25' }),
+        sources: [{ kind: 'buy', qty: '25' }],
+        qty_proposed_buy: '25',
+      } as BoardContribution,
+    }),
+  ]);
+
+  it('carries the batch proposal onto the line and stops calling it covered', () => {
+    const out = uncoverChangedLines(board, withProposal);
+    const line = out.contributions[0];
+    expect(line.covered).toBe(false);
+    expect(line.decision).toBeNull();
+    expect(line.qty_proposed_buy).toBe('25');
+    expect(line.key).toBe('k1');
+    expect(out.cells[0].contributions[0].qty_proposed_buy).toBe('25');
+  });
+
+  it('leaves a line the batch never named exactly as it was', () => {
+    const other = contribution({ key: 'k9', project_line_id: 'pl-other', covered: true });
+    const out = uncoverChangedLines(
+      { cells: [cell({ contributions: [other] })], contributions: [other] },
+      withProposal,
+    );
+    expect(out.contributions[0].covered).toBe(true);
+  });
+
+  it('is the board itself without a batch', () => {
+    expect(uncoverChangedLines(board, null)).toBe(board);
   });
 });

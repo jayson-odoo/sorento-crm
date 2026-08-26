@@ -110,7 +110,14 @@ def _real_db_session():
     """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    # `autoflush=False`, the way `app.database.SessionLocal` is built. An autoflushing test
+    # session hides a whole class of defect: a service that mutates ORM state and then
+    # QUERIES for it sees its own pending write under the test and an empty result in
+    # production (measured live on SO381895, 26 August 2026 - both closed rows kept their
+    # links while this suite was green).
+    session = Session(
+        bind=connection, join_transaction_mode="create_savepoint", autoflush=False
+    )
     try:
         yield session
     finally:
