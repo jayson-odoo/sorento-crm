@@ -2027,7 +2027,14 @@ class ProjectOrderInquiryService:
             )
             .all()
         )
-        deficit = self._groups_in_deficit(product_id, po_rows, by_po)
+        # LADDER V4's group-deficit rule applies to what is OFFERED - the dialog's list and
+        # the cascade's walk. A PERSON naming a line by hand is let through, exactly as
+        # `manual` already lets them through to a purchase order that is not yet active:
+        # this dialog is override and audit rather than the workflow, and refusing a link
+        # somebody has deliberately typed would be a narrowing nobody asked for.
+        deficit = (
+            set() if manual else self._groups_in_deficit(product_id, po_rows, by_po)
+        )
         for line, po, supplier, warehouse in po_rows:
             remaining = (
                 _dec(line.qty_ordered)
