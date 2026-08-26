@@ -206,6 +206,10 @@ class SalesOrder(BaseModel):
     #: inquiries and nothing between them, so this is where an order says what has been
     #: done about it.
     order_inquiries: List[SalesOrderInquiry] = Field(default_factory=list)
+    #: The PENDING planning-change batch this order is in (AC-P3-1), when a re-uploaded
+    #: book moved one of its planned lines and nobody has applied the change yet. Present
+    #: on the LIST, which is where the Changed badge is; `None` on nearly every order.
+    planning_change_batch_id: Optional[str] = None
     created_at: str
 
 

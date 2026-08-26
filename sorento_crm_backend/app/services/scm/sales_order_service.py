@@ -786,6 +786,47 @@ class SalesOrderService:
                 inquiry.pop("_is_amendment", None)
         return rows
 
+    def with_planning_changes(self, rows: list[dict]) -> list[dict]:
+        """The PENDING planning-change batch each order is in, in ONE query for the page.
+
+        AC-P3-1: a re-uploaded book that moved a planned line puts a "Changed" badge on the
+        order, and the badge opens the board on that order and that batch - which is where
+        the change is decided. Pending only: an applied batch is history, and a badge for
+        it would send the reader to a board with nothing left to confirm.
+
+        The chain is `sales_orders.id` -> `projects.sales_orders.so_id` ->
+        `projects.planning_change_rows.project_sales_order_id`. `None` on every order with
+        nothing outstanding, which is nearly all of them.
+        """
+        by_id = {r["id"]: r for r in rows}
+        for row in rows:
+            row["planning_change_batch_id"] = None
+        if not by_id:
+            return rows
+
+        from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+
+        found = (
+            self.db.query(ProjectSalesOrder.so_id, PlanningChangeBatch.id)
+            .join(PlanningChangeRow,
+                  PlanningChangeRow.project_sales_order_id == ProjectSalesOrder.id)
+            .join(PlanningChangeBatch,
+                  PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+            .filter(
+                ProjectSalesOrder.so_id.in_(list(by_id)),
+                PlanningChangeBatch.applied_at.is_(None),
+            )
+            .order_by(PlanningChangeBatch.created_at.desc())
+            .all()
+        )
+        for so_id, batch_id in found:
+            row = by_id.get(str(so_id))
+            # The NEWEST pending batch wins: the order is sorted newest first and a second
+            # pass would only overwrite it with an older one.
+            if row is not None and row["planning_change_batch_id"] is None:
+                row["planning_change_batch_id"] = str(batch_id)
+        return rows
+
     def _get_or_404(self, so_id: str) -> SalesOrder:
         so = (
             self.db.query(SalesOrder)

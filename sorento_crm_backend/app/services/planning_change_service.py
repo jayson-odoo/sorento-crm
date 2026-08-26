@@ -62,6 +62,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
+from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.planning_change import (
     PLANNING_CHANGE_STATE_APPLIED,
@@ -79,7 +80,9 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     IV_ORDER,
+    IV_ORDER_BACK,
     IV_RESERVE_AND_ORDER,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -234,6 +237,22 @@ def suggest(kind: str, held: Optional[dict], facts: dict) -> Tuple[str, str]:
         )
 
     # No reserve: only Buy (or nothing measurable) is held.
+    #
+    # BEYOND THE WINDOW THIS RELEASES (captain, 26 August 2026, ruling on the dead
+    # `_release_rows` path named in `PLAN-scm-cs-planning-uat.md`'s "Open, found while
+    # building ladder v3"). `release` used to need a reserve AND a Buy on one composition,
+    # which the whole-line rule (AC-L5) abolished - so a wholly bought line delayed 197
+    # days suggested `keep` and purchasing was told nothing worth acting on. A purchase
+    # for a line that has moved most of a year out is a purchase for the POOL, and that is
+    # what a release says. Checked BEFORE `buy_actioned`, because a row already sitting on
+    # a document is exactly the case the ruling is about: it keeps its links and moves to
+    # the pool (AC-P3-10), rather than reading as "nothing to undo".
+    if not window.get("value"):
+        return (
+            "release",
+            f"New date is {days_moved} days out, beyond the {window_days}-day reserve "
+            "window; the purchase is for the pool rather than for this line.",
+        )
     if buy_actioned.get("value"):
         po_number = buy_actioned.get("po_number")
         po_text = f" ({po_number})" if po_number else ""
@@ -426,6 +445,7 @@ def build_batch(
         e["product_id"] = product_by_core.get(e["core_line_id"])
 
     product_ids = {e["product_id"] for e in entries if e["product_id"]}
+    moved_transfers = _moved_transfers(db, core_line_ids_all)
     dealer_where, project_where = _hot_selling_evidence(db, product_ids)
     discontinued_ids = _discontinued_products(db, product_ids)
     product_names = _product_names(db, product_ids)
@@ -473,6 +493,7 @@ def build_batch(
                 product_names,
                 board_cache,
                 so_number,
+                moved_transfers,
             )
             db.add(row)
     db.flush()
@@ -819,6 +840,54 @@ def _apply_placed_offset(
     return out
 
 
+def _moved_transfers(db: Session, core_line_ids: Sequence[str]) -> Dict[str, str]:
+    """Stock that has ALREADY physically moved for each of these lines, in one phrase.
+
+    AC-P3-9, the captain's own rule: "a Transfer already MOVED for a line now retired -
+    flag on the change row, no automatic reverse. Stock moves are physical; a person
+    decides." So this states the fact and nothing else writes anything because of it.
+
+    Only `moved` rows: a `proposed` or `approved` transfer is paperwork the confirmation
+    already supersedes on its own (`project_supply_service._write_transfers`), and saying
+    a warehouse moved something it has not is worse than saying nothing.
+    """
+    wanted = [str(line_id) for line_id in core_line_ids if line_id]
+    if not wanted:
+        return {}
+    # Two plain reads rather than one aliased join: the company-scope filter this session
+    # carries rewrites a joined `warehouses` predicate against the table name, and an
+    # ALIASED join then references a FROM entry that is not there (Postgres says so
+    # outright). The warehouse codes are a handful of rows either way.
+    rows = (
+        db.query(StockTransfer)
+        .filter(
+            StockTransfer.so_line_id.in_(wanted),
+            StockTransfer.state == TRANSFER_MOVED,
+        )
+        .order_by(StockTransfer.moved_at.asc().nullslast())
+        .all()
+    )
+    if not rows:
+        return {}
+    warehouse_ids = {str(t.from_warehouse_id) for t in rows} | {
+        str(t.to_warehouse_id) for t in rows
+    }
+    codes = {
+        str(wid): code
+        for wid, code in db.query(Warehouse.id, Warehouse.warehouse_code)
+        .filter(Warehouse.id.in_(list(warehouse_ids)))
+        .all()
+    }
+    out: Dict[str, List[str]] = defaultdict(list)
+    for transfer in rows:
+        source = codes.get(str(transfer.from_warehouse_id)) or "somewhere"
+        target = codes.get(str(transfer.to_warehouse_id)) or "somewhere"
+        out[str(transfer.so_line_id)].append(
+            f"{qty_text(_dec(transfer.qty))} moved {source} -> {target}"
+        )
+    return {line_id: ", ".join(parts) for line_id, parts in out.items()}
+
+
 def _build_row(
     db: Session,
     batch: PlanningChangeBatch,
@@ -832,6 +901,7 @@ def _build_row(
     product_names: Dict[str, str],
     board_cache: Dict[Tuple[str, Optional[str]], dict],
     so_number: str,
+    moved_transfers: Optional[Dict[str, str]] = None,
 ) -> PlanningChangeRow:
     c = entry["change"]
     project_line: Optional[ProjectSalesOrderLine] = entry["project_line"]
@@ -874,6 +944,16 @@ def _build_row(
         },
         "buy_actioned": buy_actioned,
     }
+
+    # AC-P3-9: stock that has already physically moved for this line. On `facts_json`
+    # rather than a column of its own - it is a fact the row states, exactly like the
+    # others here, and it needs no migration to say it. `row_out` lifts it to the wire,
+    # where a phrase reads better than a fact object nobody compares against anything.
+    moved = (moved_transfers or {}).get(str(entry["core_line_id"]))
+    if moved:
+        facts["moved_transfer"] = (
+            f"{moved}, line cancelled" if kind == "closed" else moved
+        )
 
     suggested, why = suggest(kind, held, facts)
 
@@ -978,6 +1058,7 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         applied_state = PLANNING_CHANGE_STATE_SUPERSEDED
     return {
         "id": str(row.id),
+        "project_line_id": str(row.project_line_id) if row.project_line_id else None,
         "line_no": row.line_no or 0,
         "item_code": row.item_code or "",
         "product_name": row.product_name,
@@ -989,6 +1070,7 @@ def row_out(db: Session, row: PlanningChangeRow) -> dict:
         "facts": row.facts_json,
         "suggested": row.suggested,
         "why": row.why,
+        "moved_transfer": (row.facts_json or {}).get("moved_transfer"),
         "proposal": row.proposal_json,
         "inquiry_rows": row.inquiry_rows_json or [],
         "decision": row.decision,
@@ -1072,15 +1154,31 @@ def get_batch(db: Session, batch_id: str) -> dict:
     }
 
 
+def _so_numbers_out(db: Session, pso_ids: set) -> dict:
+    """`{"so_numbers": [...]}` for a batch's own orders, in a stable order."""
+    if not pso_ids:
+        return {"so_numbers": []}
+    orders = (
+        db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
+        .all()
+    )
+    return {"so_numbers": sorted({_so_number(order) for order in orders})}
+
+
 def _summary_out(db: Session, batch: PlanningChangeBatch) -> dict:
     rows = (
-        db.query(PlanningChangeRow.applied_state)
+        db.query(PlanningChangeRow.applied_state, PlanningChangeRow.project_sales_order_id)
         .filter(PlanningChangeRow.batch_id == batch.id)
         .all()
     )
-    pending = sum(1 for (s,) in rows if s == PLANNING_CHANGE_STATE_PENDING)
-    failed = sum(1 for (s,) in rows if s == PLANNING_CHANGE_STATE_FAILED)
+    pending = sum(1 for (s, _pso) in rows if s == PLANNING_CHANGE_STATE_PENDING)
+    failed = sum(1 for (s, _pso) in rows if s == PLANNING_CHANGE_STATE_FAILED)
+    # The orders this batch moved, by NUMBER (AC-P3-1): the list row's Plan action opens
+    # the board on exactly these, and a second call per row to find that out would be one
+    # per row on a paged list.
     return {
+        **_so_numbers_out(db, {str(pso) for _s, pso in rows if pso}),
         "id": str(batch.id),
         "created_at": batch.created_at,
         "created_by_name": _user_name(db, batch.created_by),
@@ -1586,11 +1684,23 @@ def _release_note(so_number: str, line_no: Optional[int], from_date, to_date, po
 def _release_inquiry_rows(
     db: Session, project_line_id: Optional[str], note: str, pool_code: Optional[str]
 ) -> int:
-    """Every non-cancelled OI row the released line already raised: a non-`actioned`,
-    non-`placed` one moves to the pool location (it is no longer bought for this line);
-    an `actioned` or `placed` one (already bought) keeps its location and gets the note
-    only - a placed row is tagged to a real PO line for a specific warehouse, and
-    relocating it would disagree with the purchase order it is actually tagged to."""
+    """Move the released line's still-live rows to the pool, and say how many moved.
+
+    AC-P3-10, and this REVERSES what this function used to do to a linked row. It used to
+    leave a `placed` / `partly_linked` row exactly where it was, on the grounds that the
+    row is tagged to a purchase order for a specific warehouse - which read the tag as an
+    instruction about the row rather than the other way round. The captain's ruling of 26
+    August is the opposite one: the delay is real, the purchase is no longer for this
+    line, and the row moves to the pool WITH ITS LINKS. The buyer's arrangement is kept
+    whole; only who it is for changes.
+
+    An `actioned` row still keeps its location and gets the note only: that state is a
+    person's word that purchasing dealt with it, and a plan does not overrule one.
+
+    The count is what the caller decides on: a line whose rows all moved needs no DELAY
+    row beside them, and a line with none left (the confirmation cancelled the unlinked
+    one) is exactly the case that does.
+    """
     if not project_line_id:
         return 0
     rows = (
@@ -1604,20 +1714,51 @@ def _release_inquiry_rows(
     count = 0
     for row in rows:
         row.note = f"{row.note}\n{note}" if row.note else note
-        # A PARTLY LINKED row counts as placed here: part of its quantity already sits on
-        # a document bought FOR THIS LINE's location, and rewriting the row's location to
-        # the pool would leave that link pointing somewhere the row no longer claims to
-        # need. The unlinked half is still this line's, and the release note above says
-        # so; moving the location is the one thing that cannot be half done.
-        if row.state not in (INQUIRY_ACTIONED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED) and pool_code:
-            row.stock_location = pool_code
+        if row.state == INQUIRY_ACTIONED or not pool_code:
+            continue
+        row.stock_location = pool_code
         count += 1
     return count
 
 
+def _has_unlinked_row(db: Session, project_line_id: Optional[str]) -> bool:
+    """Does this line still have an inquiry row nobody has put on a document?
+
+    The question a release turns on (AC-P3-10). Read over EVERY state but `actioned`: the
+    confirmation may already have cancelled the raised row (the line left the revision),
+    and it is still the row purchasing was holding.
+    """
+    if not project_line_id:
+        return False
+    rows = (
+        db.query(OrderInquiryRow.id)
+        .outerjoin(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
+        .filter(
+            OrderInquiryRow.so_line_id == project_line_id,
+            OrderInquiryRow.state != INQUIRY_ACTIONED,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)),
+            OrderInquiryLink.id.is_(None),
+        )
+        .first()
+    )
+    return rows is not None
+
+
 def _oi_demand_rows(
-    db: Session, live_rows: Sequence[PlanningChangeRow], so_number: str
+    db: Session,
+    live_rows: Sequence[PlanningChangeRow],
+    so_number: str,
+    settled_line_ids: Sequence[str] = (),
 ) -> Tuple[List[dict], Dict[str, int]]:
+    """What purchasing is told, beyond what the rows themselves now say.
+
+    `settled_line_ids` are the lines whose OWN inquiry row this apply just updated in place
+    (AC-P3-5): it carries the new quantity, the new date and the previous value on its
+    note, so a separate DELAY / ADVANCE / CANCEL_BALANCE row beside it would be the same
+    instruction told twice - the duplicate "one row per sales-order line" exists to stop.
+    Those lines are skipped here. A line the plan did NOT carry still gets its change row,
+    because nothing else said anything about it.
+    """
     from app.services.project_order_inquiry_engine import (
         CHANGE_DATE_EARLIER,
         CHANGE_DATE_LATER,
@@ -1636,6 +1777,7 @@ def _oi_demand_rows(
             product_by_core[str(cid)] = str(pid) if pid else None
 
     pool_cache: Dict[str, Optional[str]] = {}
+    settled = {str(line_id) for line_id in (settled_line_ids or [])}
     out: List[dict] = []
     counts: Dict[str, int] = {}
     for r in live_rows:
@@ -1651,10 +1793,23 @@ def _oi_demand_rows(
         if r.suggested == "release":
             # A released line's claim is given up entirely (module docstring, section 6):
             # the reserve simply frees, no OI row for that; the Buy it held is no longer
-            # bought FOR THIS LINE, so the OI rows it already raised move to the pool and
-            # a RELEASE change row makes that visible in the worklist, the way a DELAY row
-            # does. Only a `delayed`/`advanced` release ever HAD an OI row to touch; a
-            # `qty_up`/`added` line never reaches `release` (section 0's table).
+            # bought FOR THIS LINE.
+            #
+            # WHAT HAPPENS TO THE BUY DEPENDS ON WHETHER A BUYER ALREADY ARRANGED IT
+            # (captain, 26 August 2026, ruling the open question in section "Open, found
+            # while building ladder v3"; AC-P3-10):
+            #
+            # * a row that CARRIES LINKS keeps every one of them and moves to the pool
+            #   location, with the note naming the delay. The quantity is on a real
+            #   purchase order; it is simply no longer for this line, and unlinking it
+            #   would give a buyer's arrangement back for nothing;
+            # * a row that carries none is what the confirmation has already cancelled
+            #   (the line left the revision), so purchasing is handed a DELAY carrying the
+            #   previous date - the same row shape a `keep` on a delayed line produces.
+            #
+            # A RELEASE verb row is never raised: it said "this is for the pool now" in a
+            # row of its own, beside the row it was about, which is the duplicate
+            # instruction one-row-per-line exists to stop.
             if r.kind not in ("delayed", "advanced") or not r.inquiry_rows_json:
                 continue
             pool_code = _pool_code_for_core_line(db, r.core_line_id, pool_cache)
@@ -1662,22 +1817,34 @@ def _oi_demand_rows(
             to_date = (r.to_json or {}).get("required_date")
             note = _release_note(so_number, r.line_no, from_date, to_date, pool_code)
             _release_inquiry_rows(db, r.project_line_id, note, pool_code)
-            buy_qty = _dec(held.get("buy_qty"))
-            if buy_qty <= _ZERO:
+            # A row a buyer already put on a document keeps it and is now for the pool -
+            # nothing further to tell purchasing. A row with none is the case that needs
+            # saying out loud, and a DELAY carrying the previous date is how this feature
+            # already says it.
+            if not _has_unlinked_row(db, r.project_line_id):
+                continue
+            qty = _dec((r.to_json or {}).get("qty")) or _dec(held.get("buy_qty"))
+            if qty <= _ZERO:
                 continue
             out.append(
                 {
                     "line_id": r.project_line_id,
                     "product_id": product_id,
                     "item_code": r.item_code,
-                    "qty": buy_qty,
+                    "qty": qty,
                     "delivery_date": _as_date(to_date),
                     "stock_location": pool_code or location,
-                    "change": CHANGE_RELEASE,
-                    "note": note,
+                    "change": CHANGE_DATE_LATER if r.kind == "delayed" else CHANGE_DATE_EARLIER,
+                    "note": f"Was {from_date}" if from_date else "No previous delivery date",
                 }
             )
-            counts["RELEASE"] = counts.get("RELEASE", 0) + 1
+            counts["DELAY" if r.kind == "delayed" else "ADVANCE"] = (
+                counts.get("DELAY" if r.kind == "delayed" else "ADVANCE", 0) + 1
+            )
+            continue
+
+        # The row itself now says what moved (AC-P3-5), so nothing more is raised for it.
+        if str(r.project_line_id) in settled:
             continue
 
         if r.kind in ("delayed", "advanced"):
@@ -1723,10 +1890,20 @@ def _oi_demand_rows(
 
 
 def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: str) -> int:
-    """`closed` (AC-R06): an `actioned` OR `placed` row is left alone bar a note - both are
-    real supply already bought, and cancelling a placed row would silently un-book it
-    while the purchase order it is tagged to (`po_ref`/`po_line_id`) still stands. Only a
-    still-raised row - nothing purchasing has acted on yet - is actually cancelled."""
+    """`closed` (AC-R06, amended by AC-P3-6): the line is gone from the book, so what it
+    asked purchasing for is cancelled - never deleted, because a cancelled row is still
+    what purchasing was told.
+
+    A LINKED row is cancelled too, and that is the correction part 3 makes. It used to be
+    left alone on the grounds that a placement is real supply already bought - but the
+    supply does not vanish with the row: `_shift_links_off_retired_lines` moves it to the
+    line that still needs it, and whatever no line needs is unlinked and free for the next
+    row waiting. Leaving the row raised instead would have told purchasing to buy for a
+    line the book has closed.
+
+    An `actioned` row is still left alone bar the note. That state is a PERSON's word that
+    purchasing dealt with it (`mark_rows` is its only writer), and a plan does not get to
+    overrule it."""
     if not project_line_id:
         return 0
     rows = (
@@ -1740,13 +1917,126 @@ def _retire_inquiry_rows(db: Session, project_line_id: Optional[str], reason: st
     count = 0
     for row in rows:
         note = f"{row.note}\n{reason}" if row.note else reason
-        if row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
+        if row.state == INQUIRY_ACTIONED:
             row.note = note
         else:
             row.state = INQUIRY_CANCELLED
             row.note = note
             count += 1
     return count
+
+
+def _shift_links_off_retired_lines(
+    db: Session,
+    order: ProjectSalesOrder,
+    retired_line_ids: Sequence[str],
+    actor: Optional[str],
+) -> int:
+    """A closed line's placements move to the row that still needs them (AC-P3-6).
+
+    The captain, 25 August 2026: "PO / SPO allocated to the 0 lines shift to the 25 line".
+    A closed line's row is cancelled rather than deleted, so its links would otherwise sit
+    on a row whose quantity nobody owes - real purchase-order quantity, arranged by a
+    buyer, attached to an instruction that has been withdrawn.
+
+    THE SURVIVOR IS THE SAME PRODUCT ON THE SAME SALES ORDER, and only as much as it can
+    hold: the sum of a row's links may never exceed its own quantity (`order_inquiry_links`
+    says so in a CHECK, and `committed_v` nets on it). What the survivor cannot take is
+    UNLINKED rather than left where it is - which is what "goes back through the cascade"
+    means: the purchase-order line becomes free again and the next raised row waiting for
+    that product can claim it. Nothing is dropped in silence; the removal writes its own
+    "Unlinked from ..." stamp on the cancelled row, exactly as a person's Unlink does.
+
+    Returns how many links moved.
+    """
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    service = ProjectOrderInquiryService(db)
+    line_ids = [str(line_id) for line_id in retired_line_ids if line_id]
+    if not line_ids:
+        return 0
+
+    cancelled_rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id.in_(line_ids),
+            OrderInquiryRow.state == INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    if not cancelled_rows:
+        return 0
+
+    # The product each retired line named, and every line of this order, so a survivor is
+    # found by PRODUCT rather than by item code (two codes can spell one product).
+    product_by_line: Dict[str, Optional[str]] = {}
+    order_lines = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
+        .all()
+    )
+    for line in order_lines:
+        product_by_line[str(line.id)] = str(line.product_id) if line.product_id else None
+
+    survivors_by_product: Dict[str, List[OrderInquiryRow]] = defaultdict(list)
+    live_rows = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id.in_([str(line.id) for line in order_lines]),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.verb.in_((IV_ORDER, IV_RESERVE_AND_ORDER)),
+        )
+        .order_by(OrderInquiryRow.delivery_date.asc().nullslast(),
+                  OrderInquiryRow.created_at.asc())
+        .all()
+    )
+    for row in live_rows:
+        product_id = product_by_line.get(str(row.so_line_id))
+        if product_id:
+            survivors_by_product[product_id].append(row)
+
+    moved = 0
+    touched: List[OrderInquiryRow] = []
+    for cancelled in cancelled_rows:
+        links = service._links_of(cancelled.id)
+        if not links:
+            continue
+        product_id = product_by_line.get(str(cancelled.so_line_id))
+        candidates = survivors_by_product.get(product_id or "", [])
+        leftover: List[Any] = []
+        for link in links:
+            taker = next(
+                (row for row in candidates if service._unlinked_need(row) >= _dec(link.qty)),
+                None,
+            )
+            if taker is None:
+                leftover.append(link)
+                continue
+            link.row_id = taker.id
+            db.flush()
+            service._invalidate_link_cache()
+            taker.note = (
+                f"{taker.note}; Took {qty_text(_dec(link.qty))} on "
+                f"{link.document or 'an unnamed document'} from a line the book closed"
+                if taker.note
+                else (
+                    f"Took {qty_text(_dec(link.qty))} on "
+                    f"{link.document or 'an unnamed document'} from a line the book closed"
+                )
+            )
+            if taker not in touched:
+                touched.append(taker)
+            moved += 1
+        if leftover:
+            # Back to the cascade: the document is free again for whoever needs it next.
+            service._remove_links(cancelled, leftover)
+        if cancelled not in touched:
+            touched.append(cancelled)
+
+    if touched:
+        service._refresh_link_state(touched)
+        db.flush()
+    return moved
 
 
 def _notify_purchasing(
@@ -1845,6 +2135,7 @@ def _apply_one_order(
     order_rows: Sequence[PlanningChangeRow],
     actor: Optional[str],
     batch: PlanningChangeBatch,
+    extra_lines: Sequence[dict] = (),
 ) -> dict:
     from app.schemas.project_supply import ConfirmSupplyBody
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -1887,8 +2178,9 @@ def _apply_one_order(
         "inquiry_counts": {},
         "notified": False,
         "returned_to_review": [],
+        "confirm_result": None,
     }
-    if not accepted:
+    if not accepted and not extra_lines:
         return empty_result
 
     live: List[PlanningChangeRow] = []
@@ -1902,7 +2194,7 @@ def _apply_one_order(
             )
         else:
             live.append(r)
-    if not live:
+    if not live and not extra_lines:
         return empty_result
 
     by_line_id = {r.project_line_id: r for r in live if r.project_line_id}
@@ -1920,6 +2212,13 @@ def _apply_one_order(
     # this one forward verbatim unless it is named here instead (seen live: SO403765 rev 5
     # kept line 12's old Buy and old date after an ADVANCE had been raised for it).
     uncover_line_ids: List[str] = []
+    # Part 3: the lines this apply is RE-STATING (their inquiry row is updated in place,
+    # AC-P3-5) and the lines it is closing (their rows are cancelled and their links move
+    # to the survivor, AC-P3-6). The retire runs AFTER the confirm, because the survivor
+    # only has its new quantity - and so the headroom to take those links - once the
+    # revision is written.
+    settle_line_ids: List[str] = []
+    retired_line_ids: List[str] = []
     for line_id, frozen_entry in frozen.items():
         row = by_line_id.get(line_id)
         if row is None:
@@ -1940,6 +2239,7 @@ def _apply_one_order(
         # never executed. `composition_json` is what `set_row_decision` already validated.
         if row.decision in ("confirm", "amend") and row.composition_json:
             confirm_lines.append(row.composition_json)
+            settle_line_ids.append(line_id)
             confirmed += 1
             if row.decision == "confirm":
                 _apply_placed_redirect(db, row, batch, so_number, pool_cache)
@@ -1955,15 +2255,15 @@ def _apply_one_order(
         if row.suggested == "retire":
             retired += 1
             uncover_line_ids.append(line_id)
-            _retire_inquiry_rows(
-                db, line_id, "The line was closed by a planning change batch."
-            )
+            retired_line_ids.append(line_id)
             continue
         if row.suggested == "reduce":
             new_qty = _dec((row.to_json or {}).get("qty"))
             confirm_lines.append(_confirm_payload_reduce(line_id, frozen_entry, new_qty))
+            settle_line_ids.append(line_id)
             continue
         confirm_lines.append(_confirm_payload(line_id, frozen_entry))  # keep
+        settle_line_ids.append(line_id)
 
     # A `confirm`/`amend` row whose line NO active decision covers - AC-R03's "Not
     # decided", the common case a `replan` row starts in - never appears in `frozen`
@@ -1973,18 +2273,40 @@ def _apply_one_order(
             continue
         if row.decision in ("confirm", "amend") and row.composition_json:
             confirm_lines.append(row.composition_json)
+            settle_line_ids.append(str(row.project_line_id))
             confirmed += 1
             if row.decision == "confirm":
                 _apply_placed_redirect(db, row, batch, so_number, pool_cache)
 
+    # A retired line whose order has NO active decision covering it never reached the loop
+    # above; the book still closed it, and its rows still have to be cancelled.
+    for row in live:
+        if row.suggested != "retire" or not row.project_line_id:
+            continue
+        if row.project_line_id in retired_line_ids:
+            continue
+        retired_line_ids.append(str(row.project_line_id))
+
+    # Lines the board decided that this batch does not carry (part 3, AC-P3-4): the press
+    # was ONE press, so dropping them would tell the planner they confirmed something they
+    # did not. Posted as an ordinary confirmation beside the batch's own rows.
+    for payload in extra_lines or ():
+        confirm_lines.append(payload)
+        confirmed += 1
+
     revised = False
     revision_no = current_revision
+    confirm_result: Optional[dict] = None
+    settled_in_place: List[str] = []
     if confirm_lines:
         body = ConfirmSupplyBody(lines=[_to_confirm_line(p) for p in confirm_lines])
         result = supply.confirm(
-            order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids
+            order, body, actor_user_id=actor, uncover_line_ids=uncover_line_ids,
+            settle_in_place_line_ids=settle_line_ids,
         )
         revision_no = result["revision_no"]
+        confirm_result = result
+        settled_in_place = list(result.get("settled_in_place") or [])
         revised = True
     elif active_decision is not None and (replanned or retired):
         supply.supersede_for_material_change(
@@ -1992,6 +2314,17 @@ def _apply_one_order(
             "Every covered line moved to Replan or Retire in a planning change batch.",
         )
         revised = True
+
+    # The book closed these lines. Their rows are CANCELLED, never deleted - they are what
+    # purchasing was told - and their links move to the surviving row of the same product
+    # on the same order first (AC-P3-6). After the confirm, so the survivor already carries
+    # its new quantity and has the headroom to take them.
+    for line_id in retired_line_ids:
+        _retire_inquiry_rows(
+            db, line_id, "The line was closed by a planning change batch."
+        )
+    if retired_line_ids:
+        _shift_links_off_retired_lines(db, order, retired_line_ids, actor)
 
     # Read the previous revision's OWN reason back by id, now that `confirm()`/
     # `supersede_for_material_change()` have run: the genuine drift reason
@@ -2009,7 +2342,7 @@ def _apply_one_order(
         previous_reason_for_report, handled_line_ids, revised,
     )
 
-    demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number)
+    demand_rows, inquiry_counts = _oi_demand_rows(db, live, so_number, settled_in_place)
     if demand_rows:
         ProjectOrderInquiryService(db).derive_for_book_change(
             order, demand_rows, batch_id=str(batch.id), actor_user_id=actor
@@ -2038,15 +2371,45 @@ def _apply_one_order(
         "inquiry_counts": inquiry_counts,
         "notified": notified,
         "returned_to_review": returned_to_review,
+        # What `ProjectSupplyService.confirm` itself answered, kept whole: the board's own
+        # Confirm posts through here now (AC-P3-4) and its caller needs the revision, the
+        # rows handed over and the transfers - not a summary of them.
+        "confirm_result": confirm_result,
     }
 
 
-def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
+def apply(
+    db: Session,
+    batch_id: str,
+    actor: Optional[str],
+    *,
+    extra_confirm_lines: Optional[Dict[str, List[dict]]] = None,
+    refuse_if_applied: bool = False,
+) -> dict:
     """AC-R05: one new revision per affected order, atomic per order. Applying twice is a
-    no-op (`already_applied`)."""
+    no-op (`already_applied`).
+
+    `refuse_if_applied` turns that no-op into a REFUSAL, which is what the board's own
+    Confirm needs (AC-P3-4): pressing Confirm twice must say the change is already applied
+    rather than answer 200 with a revision number that belongs to the first press.
+    `extra_confirm_lines` carries the lines that same press decided that this batch does
+    not carry, keyed by project sales order.
+    """
     from app.services.project_supply_service import ProjectSupplyService
 
     batch = _batch_or_404(db, batch_id)
+    if refuse_if_applied and batch.applied_at is not None:
+        who = _user_name(db, batch.applied_by)
+        when = batch.applied_at.date().isoformat()
+        raise AppException(
+            status_code=409,
+            message=(
+                f"This planning change was already applied on {when}"
+                + (f" by {who}" if who else "")
+                + "."
+            ),
+            code="planning_change_batch_applied",
+        )
     rows = db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id).all()
 
     pso_ids = sorted({str(r.project_sales_order_id) for r in rows})
@@ -2072,6 +2435,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             "failed_orders": [],
             "already_applied": True,
             "returned_to_review": (batch.result_json or {}).get("returned_to_review", []),
+            "outcomes": {},
         }
 
     by_order: Dict[str, List[PlanningChangeRow]] = defaultdict(list)
@@ -2088,6 +2452,21 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
     lines_confirmed = 0
     purchasing_notified = False
     returned_to_review: List[dict] = []
+    outcomes: Dict[str, dict] = {}
+    extra_by_order = dict(extra_confirm_lines or {})
+
+    # An order the batch never touched, whose lines the same press decided anyway.
+    for pso_id in extra_by_order:
+        if pso_id not in by_order:
+            by_order[pso_id] = []
+            if pso_id not in orders_map:
+                order = (
+                    db.query(ProjectSalesOrder)
+                    .filter(ProjectSalesOrder.id == pso_id)
+                    .one_or_none()
+                )
+                if order is not None:
+                    orders_map[pso_id] = order
 
     for pso_id, order_rows in by_order.items():
         order = orders_map.get(pso_id)
@@ -2106,7 +2485,10 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
 
         savepoint = db.begin_nested()
         try:
-            outcome = _apply_one_order(db, supply, order, order_rows, actor, batch)
+            outcome = _apply_one_order(
+                db, supply, order, order_rows, actor, batch,
+                extra_lines=extra_by_order.get(pso_id, ()),
+            )
             savepoint.commit()
         except Exception as exc:  # noqa: BLE001 - one order's failure must not sink the rest
             savepoint.rollback()
@@ -2123,6 +2505,7 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
             continue
 
         applied_orders.append(so_number)
+        outcomes[pso_id] = outcome
         if outcome["revised"]:
             orders_revised.append({"so_number": so_number, "revision_no": outcome["revision_no"]})
         lines_replanned += outcome["lines_replanned"]
@@ -2165,4 +2548,5 @@ def apply(db: Session, batch_id: str, actor: Optional[str]) -> dict:
         "failed_orders": failed_orders,
         "already_applied": False,
         "returned_to_review": returned_to_review,
+        "outcomes": outcomes,
     }
