@@ -220,8 +220,8 @@ COLUMNS: Tuple[reg.Column, ...] = (
     reg.Column("request_number", "PS No", "text", "dimension", lambda c: _PR.c.request_number, size=114),
     reg.Column("sales_agent", "Sales agent", "text", "dimension", lambda c: _SALES_AGENT, size=92),
     reg.Column("customer_name", "Customer", "text", "dimension", lambda c: _PR.c.customer_name, size=98),
-    reg.Column("project_title", "Project title", "text", "dimension", lambda c: _PROJECT_TITLE, size=114),
-    reg.Column("sponsor_subject", "Sponsor project", "text", "dimension", lambda c: _SPONSOR_SUBJECT, size=96),
+    reg.Column("project_title", "Project title", "text", "dimension", lambda c: _PROJECT_TITLE, size=104),
+    reg.Column("sponsor_subject", "Sponsor", "text", "dimension", lambda c: _SPONSOR_SUBJECT, size=96),
     reg.Column("project_value", "Project value", "money", "measure", lambda c: _PR.c.total_project_value, size=118),
     reg.Column(
         "project_value_text",
