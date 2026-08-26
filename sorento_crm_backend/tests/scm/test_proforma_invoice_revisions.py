@@ -14,6 +14,9 @@ the same item codes and a different price, and the question the screen has to an
 """
 from __future__ import annotations
 
+import uuid
+from datetime import date
+
 import pytest
 
 from app.models.scm import ProformaInvoice
@@ -377,3 +380,62 @@ def test_a_longer_loop_is_refused_too():
 
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "revision_cycle"
+
+
+# --------------------------------------------------------------------------------- #
+# Browser pass 2, finding 1 - a SKIP row must not hide a revision candidate
+# --------------------------------------------------------------------------------- #
+
+
+def test_an_invoice_with_only_a_skip_row_is_still_offered_as_a_revision_target():
+    """The dev JINBAICHUAN invoices carry a SKIP link - a line no product matched, recorded
+    when a convert of ANOTHER invoice ran. The candidate query excluded any invoice with a
+    link row at all, so the upload dialog offered no revision for exactly the documents the
+    tester was re-uploading, and every second send landed as an independent PI."""
+    from app.models.scm import ProformaInvoiceShipmentLink
+    from app.models.procurement import InboundShipment
+
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w))
+        first = _invoices(db, w)[0]
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"ZZREV-{uuid.uuid4().hex[:8]}",
+            shipment_date=date(2026, 8, 1),
+            shipment_status="draft",
+        )
+        db.add(shipment)
+        db.flush()
+        db.add(ProformaInvoiceShipmentLink(
+            id=str(uuid.uuid4()),
+            proforma_invoice_id=first.id,
+            proforma_invoice_line_id=_lines(db, first.id)[0].id,
+            inbound_shipment_id=shipment.id,
+            inbound_shipment_line_id=None,
+            unmatched_reason="No catalogue product matches this line's item code.",
+        ))
+        db.flush()
+
+        preview = svc.preview(
+            db, _kailu(w, price_factor=1.1), supplier_id=str(w.supplier.id),
+            source_ref="kailu-2.xlsx",
+        )
+
+        candidate = preview["documents"][0]["revision_candidate"]
+        assert candidate is not None
+        assert candidate["invoice_id"] == str(first.id)
+
+
+def test_an_invoice_actually_on_a_container_is_still_not_offered():
+    with pg_session() as db:
+        w = World(db)
+        _apply(db, w, _kailu(w))
+        svc.convert_to_draft_shipment(db, [str(_invoices(db, w)[0].id)])
+
+        preview = svc.preview(
+            db, _kailu(w, price_factor=1.1), supplier_id=str(w.supplier.id),
+            source_ref="kailu-2.xlsx",
+        )
+
+        assert preview["documents"][0]["revision_candidate"] is None

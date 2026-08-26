@@ -103,8 +103,43 @@ export function ProformaUploadDialog({
     },
   });
 
-  const { preview, result } = upload;
+  const { result } = upload;
   const supplierName = supplierOption?.label ?? null;
+
+  /**
+   * This channel reads the file as soon as one is picked, and the others do not.
+   *
+   * `useTwoStepUpload` deliberately fetches nothing on drop - picking a file is not a
+   * decision to do anything with it - and Confirm is enabled without a Test, because
+   * testing is a tool rather than ceremony. For every other channel that is fine: the
+   * preview only DESCRIBES what would happen. Here it also answers a question that changes
+   * what Confirm does - "is this the supplier's second send of a document you already
+   * hold" - so a Confirm with no preview behind it filed every revision as a new invoice
+   * and nothing on screen had offered otherwise (browser pass 2, AC-E6).
+   */
+  const [probed, setProbed] = useState<ProformaInvoicePreview | null>(null);
+  useEffect(() => {
+    if (!open || !upload.file || !supplierId || upload.preview) {
+      setProbed(null);
+      return;
+    }
+    let cancelled = false;
+    previewProformaInvoice(upload.file, supplierId, trimmedCurrency)
+      .then((answer) => {
+        if (!cancelled) setProbed(answer);
+      })
+      .catch(() => {
+        // Silent: the Test button and the apply both report their own failures, and a
+        // dialog that shouts about a background read the operator never asked for is
+        // reporting its own plumbing.
+        if (!cancelled) setProbed(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, upload.file, supplierId, trimmedCurrency, upload.preview]);
+
+  const preview = upload.preview ?? probed;
 
   // A fresh preview replaces the proposal wholesale: a tick left over from the last file
   // would file THIS one as a revision of a document it has nothing to do with.

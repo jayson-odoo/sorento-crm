@@ -132,6 +132,7 @@ const PREVIEW = {
       unmatched_items: [],
       currency: 'CNY',
       currency_source: 'document' as const,
+      revision_candidate: null,
     },
   ],
   document_count: 1,
@@ -430,5 +431,94 @@ describe('ProformaUploadDialog - currency, the last resort (AC-P3.1)', () => {
       // nothing on file matches this upload (F5b).
       expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD', {}),
     );
+  });
+});
+
+/**
+ * AC-E6 - the supplier's second send is a REVISION, and the dialog has to say so before it
+ * is filed. Two clean pairs went in as independent PIs on the browser pass, so this pins
+ * the whole path: the control renders, it is pre-ticked, and the apply carries the answer.
+ */
+const CANDIDATE = {
+  invoice_id: 'pi-earlier',
+  pi_number: 'PI-2026-7-31-1',
+  invoice_date: '2026-07-31',
+  overlap_pct: 100,
+  matched_items: 5,
+  lines: 5,
+};
+
+function previewWithCandidate(candidate: typeof CANDIDATE | null = CANDIDATE) {
+  return {
+    ...PREVIEW,
+    documents: [{ ...PREVIEW.documents[0], revision_candidate: candidate }],
+  };
+}
+
+describe('ProformaUploadDialog - filing a second send as a revision', () => {
+  it('offers the earlier invoice, pre-ticked, when the preview names one', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    const box = await screen.findByRole('checkbox', {
+      name: /Upload as a revision of PI-2026-7-31-1/,
+    });
+    expect(box).toBeChecked();
+    expect(screen.getByText(/Revision of PI-2026-7-31-1/)).toBeInTheDocument();
+    expect(screen.getByText(/5 of 5 item codes match/)).toBeInTheDocument();
+  });
+
+  it('sends the revision target on apply', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+    await screen.findByRole('checkbox', { name: /Upload as a revision of/ });
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {
+      '0': 'pi-earlier',
+    });
+  });
+
+  it('files a new PI when the operator unticks it', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+    fireEvent.click(
+      await screen.findByRole('checkbox', { name: /Upload as a revision of/ }),
+    );
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {});
+  });
+
+  it('offers nothing when the preview names no candidate', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate(null));
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    await screen.findByText('PI-2026-001');
+    expect(screen.queryByText(/Revision of/)).not.toBeInTheDocument();
   });
 });

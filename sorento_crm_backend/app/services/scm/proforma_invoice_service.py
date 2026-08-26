@@ -256,8 +256,14 @@ def _revision_candidates(
         .filter(
             ProformaInvoice.supplier_id == str(supplier_id),
             func.coalesce(ProformaInvoice.status, "current") == "current",
+            # PLACED, not "has a link row". A SKIP row records a line no product matched
+            # when some other invoice's convert ran; the JINBAICHUAN documents on the dev
+            # database all carry one, so this excluded exactly the invoices a re-upload was
+            # a revision of, and every second send landed as an independent PI.
             ~ProformaInvoice.id.in_(
-                db.query(ProformaInvoiceShipmentLink.proforma_invoice_id)
+                db.query(ProformaInvoiceShipmentLink.proforma_invoice_id).filter(
+                    ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None)
+                )
             ),
         )
         .all()
