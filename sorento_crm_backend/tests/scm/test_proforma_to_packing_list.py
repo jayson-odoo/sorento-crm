@@ -791,3 +791,44 @@ def test_an_actor_whose_user_row_is_gone_still_never_prints_the_id():
 
         assert source["created_by"] == "System"
         assert stranger not in str(source)
+
+
+# --------------------------------------------------------------------------------- #
+# Browser pass 2, finding 4 - the source card states which revision it took
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_source_read_states_which_revision_of_how_many():
+    """AC-F9 asks the card for the revision reading. Which revision the container was
+    loaded from is the whole point of keeping the chain: "PI-x" alone does not say whether
+    the goods were priced on the version that is still current."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        first = _kailu_invoice(db, w)
+        out = svc.apply(
+            db, _kailu_bytes(w, pi_number="KL20260801"), supplier_id=str(w.supplier.id),
+            source_ref="second.xlsx", revision_of={"1": str(first.id)},
+        )
+        second_id = out["results"][0]["invoice_id"]
+        converted = svc.convert_to_draft_shipment(db, [second_id])
+
+        source = svc.source_proforma_invoices(db, converted["shipment_id"])
+
+        entry = source["invoices"][0]
+        assert entry["revision_no"] == 2
+        assert entry["revision_count"] == 2
+
+
+def test_an_original_states_one_of_one():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        converted = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        source = svc.source_proforma_invoices(db, converted["shipment_id"])
+
+        entry = source["invoices"][0]
+        assert entry["revision_no"] == 1
+        assert entry["revision_count"] == 1

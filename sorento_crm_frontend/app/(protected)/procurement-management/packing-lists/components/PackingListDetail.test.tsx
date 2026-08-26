@@ -264,6 +264,7 @@ function sourceInvoices() {
         supplier_name: 'KAILU HARDWARE FACTORY',
         invoice_date: '2026-07-17',
         revision_no: 2,
+        revision_count: 2,
         status: 'current' as const,
         source_ref: 'KAILU proforma.xlsx',
         currency: 'CNY',
@@ -291,7 +292,21 @@ describe('F10 - which proforma invoices this container was drafted from', () => 
     const row = screen.getByText('PI-2026-001').closest('tr') as HTMLElement;
     expect(within(row).getByText('490 of 900')).toBeInTheDocument();
     expect(within(row).getByText('1 of 3')).toBeInTheDocument();
-    expect(within(row).getByText('Revision 2')).toBeInTheDocument();
+    // The revision reading AC-F9 names, in its own column.
+    expect(screen.getByRole('columnheader', { name: 'Revision' })).toBeInTheDocument();
+    expect(within(row).getByText(/Revision 2 of 2/)).toBeInTheDocument();
+  });
+
+  it('reads "-" on an invoice that has only ever had one version', () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    const only = sourceInvoices();
+    only.invoices[0] = { ...only.invoices[0], revision_no: 1, revision_count: 1 };
+    state.sourceInvoices = only;
+    renderDetail();
+
+    const row = screen.getByText('PI-2026-001').closest('tr') as HTMLElement;
+    expect(within(row).queryByText(/Revision/)).not.toBeInTheDocument();
+    expect(row.querySelectorAll('td')[3]).toHaveTextContent('-');
   });
 
   it('says so plainly when a container came off a real packing list instead', () => {

@@ -52,6 +52,9 @@ export function SourceProformaInvoicesCard({ packingListId }: { packingListId: s
                   <TableHead>Proforma invoice</TableHead>
                   <TableHead>Supplier</TableHead>
                   <TableHead>Invoice date</TableHead>
+                  {/* WHICH version the container was loaded from (AC-F9). "PI-x" alone does
+                      not say whether its goods were priced on the one still in force. */}
+                  <TableHead>Revision</TableHead>
                   <TableHead className="text-end">Lines</TableHead>
                   <TableHead className="text-end">Quantity here</TableHead>
                   <TableHead className="text-end">Amount</TableHead>
@@ -62,19 +65,7 @@ export function SourceProformaInvoicesCard({ packingListId }: { packingListId: s
                 {invoices.map((pi) => (
                   <TableRow key={pi.id}>
                     <TableCell>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-medium">{pi.pi_number}</span>
-                        {pi.revision_no > 1 || pi.status === 'superseded' ? (
-                          <Badge
-                            variant={pi.status === 'superseded' ? 'secondary' : 'success'}
-                            appearance="light"
-                            className="w-fit"
-                          >
-                            Revision {pi.revision_no}
-                            {pi.status === 'superseded' ? ' - superseded' : ''}
-                          </Badge>
-                        ) : null}
-                      </div>
+                      <span className="font-medium">{pi.pi_number}</span>
                     </TableCell>
                     <TableCell>
                       <span className="block max-w-[200px] truncate" title={pi.supplier_name ?? undefined}>
@@ -83,6 +74,20 @@ export function SourceProformaInvoicesCard({ packingListId }: { packingListId: s
                     </TableCell>
                     <TableCell>
                       {pi.invoice_date ? formatDate(new Date(pi.invoice_date)) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {(pi.revision_count ?? 1) > 1 ? (
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          Revision {pi.revision_no} of {pi.revision_count}
+                          {pi.status === 'superseded' ? (
+                            <Badge variant="secondary" appearance="light">
+                              Superseded
+                            </Badge>
+                          ) : null}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
                       {pi.lines} of {pi.total_lines}

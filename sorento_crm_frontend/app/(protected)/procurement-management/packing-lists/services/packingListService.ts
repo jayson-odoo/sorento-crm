@@ -301,6 +301,8 @@ export interface PackingListSourceInvoice {
   supplier_name: string | null;
   invoice_date: string | null;
   revision_no: number;
+  /** How many revisions the chain holds - "Revision 2 of 2" (AC-F9). 1 on an original. */
+  revision_count: number;
   status: 'current' | 'superseded';
   /** The file it was read from, which is what the Documents tab lists (AC-F9). */
   source_ref: string | null;

@@ -1136,6 +1136,10 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
                     invoice.invoice_date.isoformat() if invoice.invoice_date else None
                 ),
                 "revision_no": int(invoice.revision_no or 1),
+                # How many revisions the chain holds, so the card can read "Revision 2 of 2"
+                # (AC-F9): which version the container was loaded from is the whole point of
+                # keeping the chain, and the number alone does not say it.
+                "revision_count": len(_chain(db, invoice)),
                 "status": invoice.status or "current",
                 "source_ref": invoice.source_ref,
                 "currency": invoice.currency or None,
