@@ -1,6 +1,6 @@
 # PLAN - Order inquiry handshake: CS raises, purchasing acknowledges, links follow the acknowledgement
 
-Status: RULED 2026-08-27 (captain, morning), build before the Friday UAT walk. Lane `.claude/worktrees/scm-uat` (FE :3080, BE :8080), one PR stacked on part 3 (`feat/scm-uat-so-change`). UAC: `scm-oi-handshake-acceptance-criteria.md`. Friday stations 4 and 6 in `PLAN-scm-friday-uat-journey.md` change when this lands.
+Status: **BUILT** 2026-08-27 on `feat/scm-uat-oi-handshake` (stacked on part 3, #332), migration `428_order_inquiry_ack_state`. 21 pytest in `tests/test_order_inquiry_handshake.py`; browser evidence below. Build before the Friday UAT walk. Lane `.claude/worktrees/scm-uat` (FE :3080, BE :8080), one PR stacked on part 3 (`feat/scm-uat-so-change`). UAC: `scm-oi-handshake-acceptance-criteria.md`. Friday stations 4 and 6 in `PLAN-scm-friday-uat-journey.md` change when this lands.
 
 ## 0. What the captain asked (27 Aug)
 
@@ -61,3 +61,96 @@ Netting: `committed_v` and the S13b demand leg exclude `rejected`; the reorder p
 ## 6. Tests
 
 pytest: acknowledge one / many, 403 for a CS user, cascade runs only at acknowledge (a board confirm leaves rows unlinked), reject requires a reason (422), rejected row absent from `committed_v` and the plan demand, board line undecided with the reason, amend before ack silent, amend after ack -> `changed` with the previous value and links kept, supersede inherits `changed`, PO confirm cascade skips awaiting rows, Link now scoped to the uploaded products, every new column on the wire. vitest: filter, column states, bulk bar count, reject dialog validation, upload menu mount and the two buttons, board flag, plan chip.
+
+
+## 7. What shipped, and where it differs from the paragraphs above
+
+- **`committed_v` and the PLAN read different rules, deliberately, and section 3 already
+  said so.** The view drops a REJECTED row and keeps an awaiting one - the quantity is
+  still owed to the customer, and the board, the dashboard and the demand drill all read
+  the view. The narrower rule (acknowledged and changed only) lives in
+  `demand.horizon_committed_select_sql`, which `reorder_run_service._planning_rows` now
+  reads on EVERY run rather than only a horizoned one. One SELECT holds both rules; the
+  alternative was a branch that could answer differently on two runs of one plan.
+- **The awaiting count is LIVE, not frozen into `run_log`.** It rides `ReorderRunSummary`
+  beside the frozen counts because that is what the plan page already reads, and it drops
+  as the buyer acknowledges - a number still claiming six after they had cleared them
+  would send them looking for two that do not exist.
+- **A reject uncovers through a new method, not by relaxing a caller.**
+  `ProjectSupplyService.uncover_lines` writes a revision carrying every line but the
+  rejected one, and falls back to `supersede_for_material_change` when the active revision
+  covered only that line (a revision covering nothing reads on the board as a decision).
+  `confirm` now accepts a payload naming no line WHEN `uncover_line_ids` names one, which
+  is the seam part 3 built and had no caller for on its own.
+- **The new revision is attributed to whoever took the ORIGINAL decision**, never to the
+  buyer who rejected a row: it is CS's own decision minus one line, and stamping
+  purchasing on it would make every order-inquiry row of that order read as raised by the
+  person who refused one of them.
+- **The board reads the refusal off the LINE, not off the line's newest row.** A line
+  routinely carries several rows (an order back beside the order, an amendment's own), so
+  the last-writer-wins rule that picks the current instruction frequently would not pick
+  the rejected one - and the cell would then go back to undecided saying nothing. Measured
+  live on SO381895: the rejected ORDER BACK of 10 is the middle of three rows on its line.
+- **Only two upload entries, and the second is called what its dialog is called.** The PO
+  book is `OutstandingUploadDialog kind="purchase-orders"`; the PO and SPO book is the
+  PURCHASE HISTORY channel (`po_history_service` is what files an `SPO-` document into
+  `spo_allocations`, section K), whose dialog is titled "Upload purchase history" - so the
+  menu says that and names the captain's own words for the file underneath. The sales-order
+  book is deliberately absent: it is CS's document.
+- **Link now and Open purchase orders are offered on the PAGE, not inside the upload
+  activity drawer.** The drawer is a shared component every upload in the system reports
+  through, and a per-feature pair of buttons inside it would be a feature's opinion in a
+  shared surface. The Order Inquiries page shows them the moment an upload it queued is
+  accepted, which is the same moment and the same two next steps.
+- **The row checkbox refuses a CANCELLED or ACTIONED row** as well as an acknowledged or
+  rejected one. Acknowledging an instruction nobody is doing takes on work that does not
+  exist, and the cascade behind the press would link nothing for it - found in the browser,
+  where the first press took on three cancelled rows.
+- **No backfill, as ruled** - which on the dev copy means SO381895's existing rows read
+  Awaiting while three of them are already Linked from the lane's earlier work. That pair
+  is impossible for a row raised from here on and is worth saying out loud on the sheet.
+
+## 8. Browser evidence (AC-H15), lane :3080 / :8080, 27 Aug
+
+Navigated by sidebar from `/` (Supply Chain > Project Demand > Order Inquiries), viewport
+1280x1200, session `scm-uat-handshake`.
+
+- **AC-H1** SO381895's rows all read `Awaiting`. Unlinking the SRTWC8605-SC-RL 20 row
+  (purchasing's own Unlink) returns it to `Raised` / `Awaiting` / `Not linked`, which is
+  the shape a fresh raise now produces.
+- **AC-H2** Ticking it and pressing `Acknowledge (1)` -> `POST /order-inquiries/acknowledge`
+  200, the row reads `Acknowledged Jayson Personal 27/08/2026, 1:56 am` and Linked to fills
+  in with `20 of 20 PO 202607-S0039 BRW 14, PO 202607-S0070 BRW 6` without a reload. A
+  three-row press earlier read `Acknowledge (3)` and stamped all three.
+- **AC-H5** Reject on the SRTWCX7405-RL-S-PJ ORDER BACK row: submitting with no reason is
+  refused in the dialog ("A reason is required to reject"); with a reason the row reads
+  `Rejected Jayson Personal: Factory closed until November`.
+- **AC-H6** The order's active revision was superseded by the uncover (no active decision
+  left, because revision 4 covered only that line), and the board cell for
+  SRTWCX7405-RL-S-PJ now reads `Rejected by Jayson Personal: Factory closed until November`
+  beside a fresh proposal.
+- **AC-H8** A settle-in-place on the acknowledged row (driven through
+  `ProjectSupplyService.confirm(..., settle_in_place_line_ids=)`, the way part 3's own
+  evidence was) moved its date 10/08/2026 -> 20/08/2026: the row reads `Changed
+  27/08/2026` with the Was / Now table (Qty 20 -> 20, Date 10/08/2026 -> 20/08/2026), keeps
+  its links, and the Acknowledgement = Changed filter finds exactly it. Ticking it and
+  pressing Acknowledge returns it to Acknowledged, so it leaves that filter.
+- **AC-H4** The filter offers Awaiting / Acknowledged / Changed / Rejected with counts
+  ("Changed (1)") and is clearable; `?ack=changed` travels in the URL.
+- **AC-H12** The toolbar Upload offers "Upload purchase orders" and "Upload purchase
+  history"; the second opens the same `Upload purchase history` dialog the reorder page
+  mounts.
+- **AC-H13 NOT walked live.** Link now and Open purchase orders appear once an upload this
+  page queued is accepted, and no purchase-order book fixture small enough to import
+  against the shared dev database was to hand. The buttons hang off the same `onQueued`
+  seam the reorder and purchase-order pages use; the tester should walk it with a real
+  book.
+
+**What was done to the dev database** (the brief's ask): the migration was applied through
+`Operations`/`MigrationContext` without touching `alembic_version` (the lane convention);
+its grant sweep was re-run separately, because it was written after the columns had already
+been applied. On SO381895: the SRTWC8605-SC-RL 20 row was unlinked and re-acknowledged (it
+holds the same two links it did), its line's delivery date moved 10/08 -> 20/08 by the
+settle above and the order gained revision 5; the SRTWCX7405-RL-S-PJ ORDER BACK of 10 is
+rejected with "Factory closed until November" and revision 4 is superseded. Three cancelled
+rows were acknowledged by mistake during the walk and were reset to `awaiting`.

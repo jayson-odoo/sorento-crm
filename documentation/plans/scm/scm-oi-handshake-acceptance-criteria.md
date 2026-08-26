@@ -26,3 +26,10 @@ Plan: `PLAN-scm-oi-handshake.md`. Verified on the lane (:3080 / :8080) by browse
 - AC-H13 When the upload lands, the drawer offers Link now and Open purchase orders; Link now links acknowledged unlinked rows of the uploaded products and reports how many; Open purchase orders opens the PO list filtered to the upload.
 - AC-H14 Every new row field (`ack_state`, who, when, reason, changed_at) is on the wire from the list, the summary export and the SO detail's links.
 - AC-H15 Tests in the same PR per plan section 6; browser evidence for AC-H1, H2, H5, H6, H8, H12, H13 on SO381895; no dashes in the diff.
+
+**Result (27 Aug, `feat/scm-uat-oi-handshake`).** AC-H1 to AC-H12 and AC-H14 pass; the
+evidence run is written up in `PLAN-scm-oi-handshake.md` section 8. **AC-H13 is half
+done**: Link now and Open purchase orders are built and offered the moment an upload this
+page queued is accepted, but the pair was not walked in a browser - it needs a real
+purchase-order book to import, and that is the tester's step. AC-H12's own half (the two
+uploads mount their home pages' dialogs) was walked.

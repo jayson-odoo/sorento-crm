@@ -74,7 +74,11 @@ export function useOrderInquiryWorklistColumns({
               disabledReason: (row) =>
                 ackStateOf(row.original) === 'rejected'
                   ? 'Rejected rows go back to CS, not to purchasing'
-                  : 'Already acknowledged',
+                  : row.original.state === 'cancelled'
+                    ? 'This instruction was called off'
+                    : row.original.state === 'actioned'
+                      ? 'This row has already been answered'
+                      : 'Already acknowledged',
               rowLabel: (row) =>
                 `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
             }),

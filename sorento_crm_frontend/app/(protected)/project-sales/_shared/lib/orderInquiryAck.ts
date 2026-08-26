@@ -37,10 +37,18 @@ export function ackStateOf(row: OrderInquiryAckFields): OrderInquiryAckState {
   return ACK_STATES.includes(value) ? value : 'awaiting';
 }
 
-/** The two states a row may be acknowledged from: never read, or changed since it was. */
-export function isAcknowledgeable(row: OrderInquiryAckFields): boolean {
-  const state = ackStateOf(row);
-  return state === 'awaiting' || state === 'changed';
+/**
+ * A row worth taking on: never read (or changed since it was), and still OWED.
+ *
+ * The second half is why this is not just a state test. A cancelled row was called off
+ * and an actioned one was answered somewhere else - the same two `scm.committed_v` and
+ * the three supply cards already drop - so acknowledging one takes on work nobody is
+ * doing, and the cascade behind the press would link nothing for it anyway.
+ */
+export function isAcknowledgeable(row: OrderInquiryAckFields & { state?: string }): boolean {
+  const ack = ackStateOf(row);
+  if (ack !== 'awaiting' && ack !== 'changed') return false;
+  return row.state !== 'cancelled' && row.state !== 'actioned';
 }
 
 /** A row purchasing has not refused, so there is still something to refuse. */
