@@ -1133,13 +1133,14 @@ class ProjectSupplyService:
         belongs to this question - which is what "SPO stays inside the group net" means when
         it is the only reading of the pile.
 
-        THE REMAINDER IS STILL OFFERED, at this line's own location, when the group's free
-        STOCK falls short of its offer. `group_net` counts what is on the water
-        (`on hand + SPO - SO`, AutoCount's own Available) and `_free_at` counts only what is
-        on the floor, so a group whose cover is an SPO has an offer and no free stock to
-        point at. Walking the locations and stopping would lose exactly that cover to a Buy -
-        which is the double purchase rung 1 existed to prevent. The locations say WHERE the
-        draw is drawn; the group's net says HOW MUCH, and the two must total the same.
+        WHAT IS ON THE WATER IS OFFERED TOO, at this line's own location, because the group's
+        net counts it (`on hand + SPO - SO`, AutoCount's own Available) while `_free_at`
+        counts only what is on the floor. Without that, a group whose cover is an SPO would
+        have an offer and no location to point at, and the cover would be lost to a Buy -
+        which is the double purchase rung 1 existed to prevent, and exactly what AC-V2
+        refuses. Bounded by the group's own SPO and by what is left of the offer, so this
+        adds the water and nothing else: stock a location holds but has reserved is still
+        out, the same as under v4.
         """
         if not fact.product_id or not fact.group_code:
             return []
@@ -1162,17 +1163,26 @@ class ProjectSupplyService:
             if capacity > _ZERO:
                 out.append({"location": code, "qty": capacity})
                 left -= capacity
-        if left > _ZERO and fact.own_code:
-            # What the group's net holds beyond its floor stock: the SPO on the water, and
-            # any of the pile a per-location free reading does not see. Booked at this
-            # line's own location, because that is where the order is booked and where the
-            # goods land.
+        on_the_water = min(
+            left,
+            max(
+                sum(
+                    (_dec(getattr(entry, "spo_qty", 0)) for entry in fact.group_net_by_location),
+                    _ZERO,
+                ),
+                _ZERO,
+            ),
+        )
+        if on_the_water > _ZERO and fact.own_code:
+            # Booked at this line's own location, because that is where the order is booked.
+            # WHICH document it is stands on the cell's location table and on the
+            # order-inquiry row, where Link SPO ties one SPO to one line.
             for entry in out:
                 if entry["location"] == fact.own_code:
-                    entry["qty"] += left
+                    entry["qty"] += on_the_water
                     break
             else:
-                out.insert(0, {"location": fact.own_code, "qty": left})
+                out.insert(0, {"location": fact.own_code, "qty": on_the_water})
         return out
 
     def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:

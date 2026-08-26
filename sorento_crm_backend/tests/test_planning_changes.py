@@ -1741,12 +1741,14 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
 
     proposal = row["proposal"]
     assert proposal is not None
-    # Ladder v2's seven rungs (the read-only own location, then incoming, pool, group
-    # take, group borrow, cross-group borrow, buy) - the own-location rung is never a
-    # SOURCE any more (rule 7), but it stays as a read-only first rung (S4 of the 19
-    # August review): it is the one place the queue ahead of this line is named.
-    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5, 6, 7]
-    assert [step["kind"] for step in proposal["trail"]][0] == "reserve_own"
+    # LADDER V5 (section 1e): the four questions plus Buy. The read-only own-location
+    # strip is folded into question 1 - it existed to name the queue, which is one of that
+    # question's facts - and incoming is not a question at all, because an SPO is inside
+    # the ownership group's own net.
+    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
+    assert [step["kind"] for step in proposal["trail"]] == [
+        "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+    ]
     assert proposal["rank_factors"]
     assert proposal["sources"]
     assert proposal["item_flags"] is not None
@@ -2467,8 +2469,10 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     # The trail still reads "the pool took 432 at BRW", unedited - the pool take stands,
     # so there is nothing to relabel and nothing to narrate.
     pool_step = next(step for step in proposal["trail"] if step["kind"] == "pool")
-    assert Decimal(pool_step["taken"]) == Decimal("432")
-    assert pool_step.get("note") is None
+    assert Decimal(pool_step["took"]) == Decimal("432")
+    # Its note says which pools were opened (ladder v5's own hint) and nothing about a
+    # placed quantity, because there was nothing to relabel.
+    assert "already placed" not in (pool_step.get("note") or "")
     # sources agree with the aggregate - Fix 2's guard has nothing to warn about here.
     reserve_sources_total = sum(
         (Decimal(s["qty"]) for s in proposal["sources"] if s["kind"] == "reserve"),

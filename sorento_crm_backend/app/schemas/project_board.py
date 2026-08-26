@@ -86,6 +86,12 @@ class BoardSource(BaseModel):
     #: Ladder v2 (section E): which rung produced this source - `pool`, `group_take`,
     #: `group_borrow` or `cross_group_borrow`. `None` on a plain `timely_spo`/`buy` row.
     rung: Optional[str] = None
+    #: WHICH LADDER wrote it (AC-V8). A LIVE suggestion carries today's version; a FROZEN
+    #: one carries whatever was stamped when it was frozen, and `None` for a snapshot older
+    #: than the stamp itself. It is what lets the screen label a stale suggestion as history
+    #: without guessing - and without it the label showed on every line, live ones included,
+    #: because a missing key read as "older than v4" everywhere.
+    ladder: Optional[str] = None
     donor_so_number: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
@@ -99,18 +105,24 @@ class BoardSource(BaseModel):
     donor_required_date: Optional[date] = None
 
 
-#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): "incoming" now comes
-#: BEFORE the pool, the own-location rung is gone (section E rule 7), and the group rungs
-#: are new. `reserve_own` / `reserve_pool` are the pre-v2 spellings, kept in the Literal so
-#: an old snapshot's frozen trail (there is none - the trail is never frozen - but a stale
-#: client cache might still hold one) does not 422 a read.
+#: LADDER V5 (`PLAN-scm-cs-planning-uat.md` section 1e): the trail is the captain's four
+#: questions plus Buy, and `own` is the first of them - the ownership group read as one pile,
+#: with the old read-only `reserve_own` strip folded into it (it existed to name the queue,
+#: which is one of that question's facts rather than a question of its own). `incoming` is no
+#: longer emitted at all: an SPO is inside the group's net.
+#:
+#: These are INTERNAL KEYS and are never rendered. The reader is shown `question`.
+#:
+#: The retired spellings stay in the Literal so a stale client cache holding an older trail
+#: does not 422 a read: `incoming`, `group_take`, `reserve_own`, `reserve_pool`, `borrow`.
 BoardTrailKind = Literal[
-    "incoming", "pool", "group_take", "group_borrow", "cross_group_borrow", "buy",
-    "reserve_own", "reserve_pool", "borrow",
+    "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+    "incoming", "group_take", "reserve_own", "reserve_pool", "borrow",
 ]
-BoardTrailOutcome = Literal[
-    "took", "nothing_left", "not_eligible", "offered", "none_needed"
-]
+#: Yes or no, one word per question (AC-V1). It replaced a five-value `outcome`
+#: (`took` / `nothing_left` / `not_eligible` / `offered` / `none_needed`), which was five
+#: shades of the same two answers and put the reasoning in a pill instead of in the sentence.
+BoardTrailAnswer = Literal["yes", "no"]
 
 
 class BoardAheadLine(BaseModel):
@@ -212,65 +224,66 @@ class BoardItemFlags(BaseModel):
 
 
 class BoardTrailStep(BaseModel):
-    """One rung of the source ladder, as it was walked for one line.
+    """One of the four questions ladder v5 asks about a line, or Buy (section 1e).
 
     The captain, reading a Buy: "can you justify how you arrive at the buy, like what's the
-    process you have gone through: checking the available quantity first, deciding whether to
-    reserve it or not, then checking the SPO quantity, then checking whether can borrow" - and
-    then, on being shown a paragraph: "the justification needs to be STRUCTURED".
+    process you have gone through" - and then, on being shown a paragraph: "the justification
+    needs to be STRUCTURED". And, walking SO381895 on 26 August: "our thought process is
+    simpler now."
 
-    So EVERY rung is emitted for a plannable line, including the ones that gave nothing: a step
-    that is silently omitted reads as a step that was never taken, which is the exact doubt this
-    exists to answer. A line that cannot be planned at all carries no trail, because no ladder
-    was walked for it.
+    So it is FIVE ROWS, always, in one order: our own location, the pool, another location,
+    the same agent's other order, Buy. Every question is answered even when the line was
+    covered two rows above, because "the pool was checked and had none" is the answer to that
+    question and an omitted row reads as a question nobody asked.
+
+    THE FIGURES ARE INSIDE THE WORDS. `why` carries the group's net, the pile's net, the donor
+    group's net or the cap - the number that actually decided the answer - so the row is a
+    sentence with an answer beside it rather than eight columns of arithmetic a reader has to
+    do themselves. That is what retired `opening`, `offered`, `remaining_after` and the
+    five-valued `outcome`.
 
     The trail is a READ of what `front_planning_engine.propose_line` did. It never decides a
     quantity, so it cannot disagree with the proposal it explains.
     """
 
-    #: 1-based, in the order the ladder walked.
+    #: 1-based, in the order the questions are asked.
     step: int
+    #: The INTERNAL rung key. Addressing and test ids only - never rendered.
     kind: BoardTrailKind
-    #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for Borrow, whose
-    #: donors are several and are listed on the contribution itself.
+    #: The question, in the words a planner would ask it.
+    question: str
+    #: Whether this question supplied anything.
+    answer: BoardTrailAnswer
+    #: What the line took from it. Always "0" for the two borrow questions when nobody has
+    #: picked a donor: a Borrow needs a donor and a reason from a person (AC-B09).
+    took: str = "0"
+    #: The warehouses it came from, comma-joined, or null on a No.
+    from_: Optional[str] = Field(default=None, alias="from")
+    #: WHY, in ONE plain sentence, with the deciding figure in it.
+    why: Optional[str] = None
+    #: ONE short structured hint, never a paragraph: "checked BRW, DC1", "MWH-IB 12000 · BRW
+    #: 9000", "dealer hot-selling: the whole pile is kept for retail".
+    note: Optional[str] = None
+    #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for the borrow
+    #: questions, whose donors are several and are listed on the contribution itself.
     location: Optional[str] = None
     #: Addressing only, never rendered, exactly as on `BoardSource`.
     warehouse_id: Optional[str] = None
-    #: What the source held when the ladder reached this line, BEFORE the demand ranked ahead:
-    #: the pile's free stock for the own location, the running pool balance for the pool, the
-    #: timely incoming total, the donors' total for Borrow. Null where the question is
-    #: meaningless (Buy holds nothing; an absent pool holds nothing).
-    opening: Optional[str] = None
-    #: Own location only: what the demand ranked ahead of this line still wants there, and how
-    #: many lines that is. Null elsewhere - the pool nets its own book before it is offered, and
-    #: incoming and Buy have no queue.
+    #: Question 1 only: what the demand ranked ahead of this line still wants at its own pile,
+    #: and how many lines that is. Null elsewhere - no other question has a queue. Under
+    #: ladder v4 the queue decides no availability; it is who is in front of this line.
     ahead_qty: Optional[str] = None
     ahead_lines: Optional[int] = None
     #: WHO is in that queue: the top of it in rank order, how many more there are, and a count
-    #: of the whole queue by the factor that put each line in front. Own location only, for the
-    #: same reason `ahead_qty` is - no other rung has a queue.
+    #: of the whole queue by the factor that put each line in front.
     ahead: List[BoardAheadLine] = []
     ahead_more: int = 0
     ahead_by_factor: Dict[str, int] = {}
-    #: What this source could give THIS line after its own rules were applied.
-    offered: str = "0"
-    #: What the line actually took from it. Always "0" for Borrow: it is offered and never
-    #: proposed, because a Borrow needs a donor and a reason from a person (AC-B09).
-    taken: str = "0"
-    #: The line's still-uncovered quantity after this step. Zero on the last one.
-    remaining_after: str = "0"
-    outcome: BoardTrailOutcome
-    #: WHY it ended that way, in ONE plain sentence. The numbers above are what the captain was
-    #: already looking at when he asked "what does this mean? why do the orders stand ahead of
-    #: me? why? and why is the donor offered but I did not take, why?" - so this answers in
-    #: words, never by restating the row.
-    why: Optional[str] = None
-    #: ONE short structured hint, never a paragraph: "hot-selling: pool only", "capped by
-    #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "MWH-IB 12000 · BRW 9000".
-    note: Optional[str] = None
-    #: The pool's pile behind the `reserve_pool` rung. Null on every other rung, and on a
-    #: pool rung with no pile to describe (no shared pool; the pool is this location).
+    #: The pool's pile behind question 2. Null on every other question, and on a pool question
+    #: with no pile to describe (no shared pool; the pool is this location).
     pool: Optional[BoardTrailPool] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class BoardDecisionReserve(BaseModel):

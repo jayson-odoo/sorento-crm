@@ -1702,10 +1702,10 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
         # checked and found empty.
         for kind in ("group_borrow", "cross_group_borrow"):
             step = _step(contribution, kind)
-            assert step["outcome"] == "not_eligible", kind
-            assert step["offered"] == "0", kind
+            assert step["answer"] == "no", kind
+            assert step["answer"] == "no", kind
             assert "lead time window" in step["why"], kind
-        assert _step(contribution, "buy")["taken"] == "441"
+        assert _step(contribution, "buy")["took"] == "441"
 
 
 # --------------------------------------------------------------------------- #
@@ -3148,11 +3148,15 @@ def _step(contribution, kind: str) -> dict:
     return next(step for step in contribution["trail"] if step["kind"] == kind)
 
 
-def test_the_trail_walks_every_source_in_ladder_order_even_when_one_gives_nothing():
-    """Ladder v3 (section 1b): seven rungs, with the group drawn BEFORE the pool. The
-    own-location strip stays as a READ-ONLY first rung - it is the one place the queue ahead
-    of this line at its own pile is named (S4 of the 19 Aug follow-ups) - and the group rung
-    two places below it is where the own location is actually drawn on."""
+def test_the_trail_asks_the_four_questions_in_order_and_then_buy():
+    """AC-V1 / AC-V7 (ladder v5, section 1e): FIVE rows, one per question plus Buy, in the
+    captain's own order - our own location, the pool, another location, the same agent's
+    other order, Buy.
+
+    Two rows fewer than v4. `reserve_own` was a read-only strip whose whole job was naming
+    the queue, which is one of question 1's facts rather than a question of its own; and
+    `incoming` is not a question at all any more, because an SPO is inside the group's net.
+    """
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -3160,41 +3164,47 @@ def test_the_trail_walks_every_source_in_ladder_order_even_when_one_gives_nothin
 
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert [step["kind"] for step in _trail(contribution)] == [
-            "reserve_own",
-            "incoming",
-            "group_take",
+            "own",
             "pool",
-            "group_borrow",
             "cross_group_borrow",
+            "group_borrow",
             "buy",
         ]
-        assert [step["step"] for step in _trail(contribution)] == [1, 2, 3, 4, 5, 6, 7]
+        assert [step["step"] for step in _trail(contribution)] == [1, 2, 3, 4, 5]
+        assert [step["question"] for step in _trail(contribution)] == [
+            "Can we use our location?",
+            "Can we take from the pool?",
+            "Can we borrow from another location?",
+            "Can we borrow from the same agent's other order in this group?",
+            "Buy the rest?",
+        ]
 
 
-def test_the_trail_states_what_each_source_held_offered_and_gave():
-    """`_quantity_world`: 7 arriving in time, 20 owed, no pool - the whole-line rule (section E
-    rule 6) drops even the in-time incoming cover, since nothing brings the line to full cover,
-    and the whole 20 is bought."""
+def test_every_row_of_the_proof_answers_yes_or_no_and_says_what_it_took():
+    """AC-V1's shape: one word, one quantity, one place, one sentence. `_quantity_world` has
+    7 on the water against 20 owed and no pool, so every question but Buy answers No."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        incoming = _step(contribution, "incoming")
-        assert incoming["opening"] == "7"
-        assert incoming["offered"] == "7"
-        assert incoming["taken"] == "0"
-        assert incoming["remaining_after"] == "20"
-        assert incoming["outcome"] == "nothing_left"
-        assert "ZZT-SPO-0001" in (incoming["note"] or "")
+        for step in _trail(contribution):
+            assert step["answer"] in ("yes", "no"), step["kind"]
+            assert step["why"], step["kind"]
+            if step["answer"] == "no":
+                assert step["took"] == "0", step["kind"]
+                assert step["from"] is None, step["kind"]
 
+        assert [step["kind"] for step in _trail(contribution) if step["answer"] == "yes"] == [
+            "buy"
+        ]
         buy = _step(contribution, "buy")
         assert buy["location"] is None
-        assert buy["offered"] == "20"
-        assert buy["taken"] == "20"
-        assert buy["remaining_after"] == "0"
-        assert buy["outcome"] == "took"
+        assert buy["took"] == "20"
+        assert not any(step["kind"] == "incoming" for step in _trail(contribution)), (
+            "there is no row named Incoming under ladder v5"
+        )
 
 
 def test_the_trail_adds_up_to_the_proposal_it_explains():
@@ -3205,18 +3215,14 @@ def test_the_trail_adds_up_to_the_proposal_it_explains():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         reserved = sum(
-            Decimal(step["taken"])
+            Decimal(step["took"])
             for step in _trail(contribution)
-            if step["kind"] == "pool"
+            if step["kind"] in ("own", "pool")
         )
         assert reserved == Decimal(contribution["qty_proposed_reserve"])
-        assert Decimal(_step(contribution, "incoming")["taken"]) == Decimal(
-            contribution["qty_proposed_incoming"]
-        )
-        assert Decimal(_step(contribution, "buy")["taken"]) == Decimal(
+        assert Decimal(_step(contribution, "buy")["took"]) == Decimal(
             contribution["qty_proposed_buy"]
         )
-        assert _trail(contribution)[-1]["remaining_after"] == "0"
 
 
 # `test_the_trail_says_the_queue_ahead_emptied_the_pile_and_the_residual_is_bought` DELETED
@@ -3244,19 +3250,18 @@ def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        assert _step(contribution, "pool")["outcome"] == "took"
+        assert _step(contribution, "pool")["answer"] == "yes"
         # Everything after the cover is walked and reported as unnecessary, never omitted.
         for kind in ("cross_group_borrow", "buy"):
             step = _step(contribution, kind)
-            assert step["taken"] == "0"
-            assert step["outcome"] == "none_needed", kind
-            assert step["remaining_after"] == "0"
-        # Group borrow is stated too, and states the rule rather than an empty search: it is
-        # never auto-composed under ladder v3 (ruled 25 August 2026), covered or not.
+            assert step["took"] == "0"
+            assert step["answer"] == "no", kind
+        # Question 4 is stated too, and states the rule rather than an empty search: it is
+        # never auto-composed (ruled 25 August 2026), covered or not.
         borrowed = _step(contribution, "group_borrow")
-        assert borrowed["taken"] == "0"
-        assert borrowed["outcome"] == "not_eligible"
-        assert "a person's decision" in borrowed["why"]
+        assert borrowed["took"] == "0"
+        assert borrowed["answer"] == "no"
+        assert "person's pick" in borrowed["why"]
 
 
 # `test_the_trail_says_a_hot_selling_line_reserves_its_own_location_and_no_pool` DELETED
@@ -3277,9 +3282,8 @@ def test_the_pool_step_is_walked_even_where_there_is_no_pool():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         step = _step(contribution, "pool")
-        assert step["outcome"] == "not_eligible"
+        assert step["answer"] == "no"
         assert step["location"] is None
-        assert step["opening"] is None
         assert step["note"] == "no shared pool"
 
 
@@ -3303,8 +3307,8 @@ def test_a_location_with_no_pool_of_its_own_still_draws_another_active_site_pool
 
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         step = _step(contribution, "pool")
-        assert step["outcome"] == "took"
-        assert step["taken"] == "10"
+        assert step["answer"] == "yes"
+        assert step["took"] == "10"
         assert pool2.warehouse_code in (step["note"] or "")
         kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
         assert kinds == [("reserve", "10", pool2.warehouse_code)]
@@ -3327,10 +3331,9 @@ def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         step = _step(contribution, "cross_group_borrow")
-        assert step["taken"] == "0", "a Borrow needs a donor and a reason from a person"
-        assert step["outcome"] == "nothing_left"
-        assert step["remaining_after"] == "10", "so it still owes what the Buy then covers"
-        assert _step(contribution, "buy")["taken"] == "10"
+        assert step["took"] == "0", "a Borrow needs a donor and a reason from a person"
+        assert step["answer"] == "no"
+        assert _step(contribution, "buy")["took"] == "10"
         # The donor is still OFFERED, on the contribution's own list.
         assert contribution["qty_borrow_available"] == "25"
         assert [c["warehouse_code"] for c in contribution["borrow_candidates"]] == [
@@ -3378,8 +3381,9 @@ def test_the_cross_group_cap_is_measured_against_the_true_residual_not_the_whole
         assert contribution["qty_proposed_buy"] == "100"
         step = _step(contribution, "cross_group_borrow")
         # 70 (the true residual) is inside the 80 cap, so the donor is offered; the buggy
-        # reading (100, the untouched whole line) would have excluded it and offered "0".
-        assert step["offered"] == "5"
+        # reading (100, the untouched whole line) would have excluded it and said no donor
+        # was within the limit at all.
+        assert elsewhere.warehouse_code in (step["why"] or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -3462,7 +3466,7 @@ def test_the_own_rung_names_the_queue_ahead_of_this_line():
         board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
         contribution = _behind(board, product.product_code)
 
-        own = _step(contribution, "reserve_own")
+        own = _step(contribution, "own")
         assert own["ahead_lines"] == 6
         assert own["ahead_qty"] == "170"
         assert len(own["ahead"]) == 3, "named beats counted - the top three, not the whole six"
@@ -3479,7 +3483,7 @@ def test_the_own_rung_counts_the_whole_queue_by_what_put_each_line_there():
         board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
         contribution = _behind(board, product.product_code)
 
-        own = _step(contribution, "reserve_own")
+        own = _step(contribution, "own")
         # Every one of the six ahead is counted by SOME factor - "139 by required date, 2 by
         # document age, and one is an earlier line of your own order" in the captain's words.
         assert sum(own["ahead_by_factor"].values()) == 6
@@ -3492,16 +3496,15 @@ def test_the_own_rung_why_names_the_queue_in_words_a_planner_uses():
         board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
         contribution = _behind(board, product.product_code)
 
-        own = _step(contribution, "reserve_own")
-        assert own["outcome"] == "not_eligible"
-        assert "ranked ahead of this line" in own["why"]
-        # Ladder v4: it says what this rung IS - the queue - and points at the rung that
-        # decides what may be taken. It used to end "borrow from another sales order
-        # instead", which was v2's rule that the own location is never a source; v3 made it
-        # a group location again and v4 made the whole group one pile, so the sentence was
-        # naming a rule two rulings out of date.
-        assert "The queue, not a source" in own["why"]
-        assert "ownership group's position" in own["why"]
+        own = _step(contribution, "own")
+        assert own["answer"] == "no"
+        # LADDER V5: the queue is CARRIED on question 1 (the read-only strip that used to
+        # name it is folded in), but it is not what the sentence is about - under ladder v4
+        # the queue decides no availability, so the sentence names the rule that refused
+        # this line and the queue stays beside it as fields the popover can open.
+        assert own["ahead_lines"] and own["ahead_lines"] > 0
+        assert own["ahead_qty"] and Decimal(own["ahead_qty"]) > 0
+        assert own["ahead"], "the queue is named, not merely counted"
 
 
 def test_a_line_first_in_the_queue_says_so_rather_than_naming_nobody():
@@ -3511,11 +3514,12 @@ def test_a_line_first_in_the_queue_says_so_rather_than_naming_nobody():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        own = _step(contribution, "reserve_own")
+        own = _step(contribution, "own")
         assert own["ahead_lines"] == 0
         assert own["ahead"] == []
         assert own["ahead_more"] == 0
-        assert "nothing ranked ahead" in own["why"]
+        assert own["ahead_lines"] == 0
+        assert own["ahead"] == []
 
 # `test_the_borrow_rung_says_borrowing_is_a_persons_decision_and_names_the_donors` DELETED:
 # identical setup to `test_the_borrow_step_offers_what_it_found_and_takes_none_of_it` above,
@@ -3552,35 +3556,29 @@ def test_a_hot_selling_rung_says_why_the_pool_was_off_limits():
             f"Dealer hot-selling at {own.warehouse_code}: {pool.warehouse_code} is kept for "
             "retail, so the pool is not offered."
         )
-        assert _step(contribution, "buy")["taken"] == "10"
+        assert _step(contribution, "buy")["took"] == "10"
 
 
-def test_the_incoming_rung_says_whether_anything_arrives_in_time():
+def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
+    """AC-V2 on the board. `_quantity_world` has 7 open on ZZT-SPO-0001 against 20 owed and
+    no pool, so the group can offer 12 of the 20 and the whole-line rule buys the lot.
+
+    What is pinned is that there is NO row named Incoming and no rung of its own for the
+    document: the water is inside question 1's offer, and question 1's sentence names the
+    group's net. Which SPO it is stands on the cell's location table and on the order-inquiry
+    row, where Link SPO ties one document to one line.
+    """
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        why = _step(contribution, "incoming")["why"]
-        assert "ZZT-SPO-0001" in why
-        assert "in time" in why
-
-
-def test_a_line_with_nothing_incoming_says_so_against_its_own_required_date():
-    with blank_session() as db:
-        product = _product(db, f"ZZT-{_uid()[:6]}")
-        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
-        _stock(db, product, warehouse, on_hand=0)
-        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
-        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=warehouse)
-
-        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
-        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
-
-        assert _step(contribution, "incoming")["why"] == (
-            "No supplier PO arrives by 3 Sep 2026."
-        )
+        assert [step["kind"] for step in contribution["trail"]] == [
+            "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+        ]
+        assert "group nets" in _step(contribution, "own")["why"]
+        assert _step(contribution, "buy")["took"] == "20"
 
 
 # --------------------------------------------------------------------------- #
@@ -3778,7 +3776,9 @@ def test_a_covered_line_carries_no_ahead_list_because_it_carries_no_trail():
 
         for contribution in _cell(board, product.product_code, "2026-12-28")["contributions"]:
             for step in contribution["trail"]:
-                if step["kind"] != "reserve_own":
+                # Question 1 is the one that carries the queue (the old read-only strip is
+                # folded into it under ladder v5); no other question has one.
+                if step["kind"] != "own":
                     assert step["ahead"] == [], step["kind"]
                     assert step["ahead_by_factor"] == {}, step["kind"]
 
@@ -4207,8 +4207,7 @@ def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
         assert sibling["qty_proposed_reserve"] == "0"
         assert sibling["qty_proposed_buy"] == "21"
         assert [step["kind"] for step in sibling["trail"]] == [
-            "reserve_own", "incoming", "group_take", "pool", "group_borrow",
-            "cross_group_borrow", "buy",
+            "own", "pool", "cross_group_borrow", "group_borrow", "buy",
         ]
 
 
@@ -4398,8 +4397,9 @@ def test_a_row_with_both_letters_null_is_unclassified_not_cold_and_the_pool_offe
         assert flags["project_hot_selling"] is False
 
         pool_step = _step(contribution, "pool")
-        assert pool_step["offered"] == "6", "the pool offers its balance as for a non-hot item"
-        assert pool_step["taken"] == "4"
+        # "the pool offers its balance as for a non-hot item" - said in the sentence below,
+        # which is where every pool figure lives under ladder v5.
+        assert pool_step["took"] == "4"
         assert pool_step["why"] == (
             "Not classified (no retail or project deliveries of this item in the last 12 "
             f"months), so {pool.warehouse_code} is offered as for a cold item. This line "
@@ -4449,8 +4449,8 @@ def test_the_pool_rung_names_the_classification_that_keeps_the_pool_for_retail()
             _cell(board, product.product_code, "2026-08-31")["contributions"][0],
             "pool",
         )
-        assert step["outcome"] == "not_eligible"
-        assert step["offered"] == "0"
+        assert step["answer"] == "no"
+        assert step["answer"] == "no"
         assert step["why"] == (
             f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
             "for retail, so the pool is not offered."
@@ -4527,8 +4527,11 @@ def test_the_pool_rung_never_overstates_another_pools_offer_past_its_own_availab
 
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         step = _step(contribution, "pool")
-        assert step["offered"] == "0", "pool2 is oversold, so it must offer nothing"
-        assert pool2.warehouse_code not in (step["note"] or "")
+        assert step["answer"] == "no", "pool2 is oversold, so it must offer nothing"
+        assert pool2.warehouse_code in (step["note"] or ""), (
+            "an oversold pool was still opened, and a pool nobody names looks like one "
+            "nobody checked"
+        )
 
 
 def test_the_pool_rung_carries_the_piles_own_autocount_triple():
@@ -4572,8 +4575,7 @@ def test_the_pool_rung_carries_the_piles_own_autocount_triple():
         # ... and the pool's own line ranks ahead of ours, so nothing is left here.
         assert pile["claimed_ahead_qty"] == "1"
         assert pile["claimed_ahead_lines"] == 1
-        assert step["opening"] == "0"
-        assert step["taken"] == "0"
+        assert step["took"] == "0"
 
 
 def test_the_pool_rung_says_in_words_why_the_pile_had_stock_and_the_line_got_none():
@@ -4618,7 +4620,7 @@ def test_the_pool_rung_says_what_was_left_and_what_this_line_took():
             "pool",
         )
 
-        assert step["taken"] == "4"
+        assert step["took"] == "4"
         assert step["pool"]["claimed_ahead_qty"] == "0"
         assert step["pool"]["claimed_ahead_lines"] == 0
         assert step["why"] == (
@@ -4647,8 +4649,8 @@ def test_a_dealer_hot_selling_pool_rung_never_states_a_cap_it_offers_nothing_at_
 
         assert step["pool"]["reorder_level"] == "10"
         assert step["pool"]["cap"] is None
-        assert step["offered"] == "0"
-        assert step["taken"] == "0"
+        assert step["answer"] == "no"
+        assert step["took"] == "0"
         assert step["why"] == (
             f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
             "for retail, so the pool is not offered."
@@ -4682,9 +4684,9 @@ def test_a_project_hot_selling_pool_rung_caps_the_draw_at_the_pools_availability
         assert step["pool"]["on_hand"] == "12"
         assert step["pool"]["so_qty"] == "2"
         assert step["pool"]["available"] == "10"
-        assert step["opening"] == "12", "nothing of theirs ranks ahead of ours at the pool"
-        assert step["offered"] == "10", "bounded by the pools' own net, not by the balance"
-        assert step["taken"] == "10"
+        # Bounded by the POOLS' own net and not by this pool's balance - the sentence below
+        # is where that number is stated.
+        assert step["took"] == "10"
         # Ladder v4: the classification leads, and the number after it is the PILE's.
         assert step["why"] == (
             f"Project hot-selling at {pool.warehouse_code}: the site pools net 10 between "
@@ -4713,8 +4715,8 @@ def test_a_project_hot_selling_pool_rung_offers_nothing_when_availability_is_not
         )
 
         assert step["pool"]["available"] == "-5"
-        assert step["offered"] == "0"
-        assert step["taken"] == "0"
+        assert step["answer"] == "no"
+        assert step["took"] == "0"
         # Ladder v4: the classification is still named first, and the number after it is
         # the PILE's - 3.3a's per-pool availability cap is gone, the pools' own net bounds
         # every draw, and here that net is -5.
@@ -4748,10 +4750,9 @@ def test_a_cold_pool_rung_says_the_pile_is_oversold_rather_than_offering_its_sta
             "pool",
         )
 
-        assert step["opening"] == "4", "nothing of this line's own queue claims the pile"
         assert step["pool"]["available"] == "-5"
-        assert step["offered"] == "0"
-        assert step["taken"] == "0"
+        assert step["answer"] == "no"
+        assert step["took"] == "0"
         assert step["why"] == (
             "Cold at retail: the site pools net -5 between them, so no pool is offered."
         )
@@ -4782,9 +4783,7 @@ def test_the_pool_rung_never_offers_more_than_the_pile_had_left():
 
         assert step["pool"]["claimed_ahead_qty"] == "4"
         assert step["pool"]["claimed_ahead_lines"] == 1
-        assert step["opening"] == "2", "6 on hand less the 4 ranked ahead of this line"
-        assert Decimal(step["taken"]) <= Decimal(step["opening"])
-        assert step["taken"] == "2"
+        assert step["took"] == "2"
 
 
 def test_a_line_with_no_pool_carries_no_pool_facts_rather_than_zeroes():
@@ -4802,7 +4801,7 @@ def test_a_line_with_no_pool_carries_no_pool_facts_rather_than_zeroes():
         )
 
         assert step["pool"] is None
-        assert step["why"] == "No shared pool for this product."
+        assert step["why"] == "No shared pool holds this product."
 
 
 def test_the_flags_and_the_pool_facts_reach_the_wire():
@@ -4901,7 +4900,7 @@ def test_a_reserve_met_line_still_carries_its_donors():
         assert contribution["qty_borrow_available"] == "25"
         # The trail still takes nothing from a donor: it is offered, not proposed.
         borrow_step = _step(contribution, "cross_group_borrow")
-        assert borrow_step["taken"] == "0"
+        assert borrow_step["took"] == "0"
 
 
 def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
@@ -5290,14 +5289,18 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
 
 
 # --------------------------------------------------------------------------- #
-# rung 1 on a line beyond its reserve window (section 1b, AC-L1 / AC-K4)
+# a line beyond its reserve window (section 1e, AC-L1 / AC-V2)
 #
-# Ladder v3 walks no STOCK rung for a far line. Rung 1 is NOT a stock rung: incoming supply
-# is already bought, and a blanket "beyond the window means Buy" bought it a second time.
+# Ladder v3 walked no STOCK rung for a far line but still ran rung 1, on the grounds that
+# incoming supply is already bought and a blanket "beyond the window means Buy" bought it a
+# second time. LADDER V5 has no rung 1: an SPO is inside the ownership group's own net, and
+# the one that covers a particular line reaches it through Link SPO on its order-inquiry
+# row, after purchasing has read the buy. So a far line is bought whole, and the proof says
+# so in four Noes and a Yes.
 # --------------------------------------------------------------------------- #
 
 
-def test_a_line_beyond_its_window_is_covered_by_the_spo_already_on_its_way():
+def test_a_line_beyond_its_window_is_bought_whole_even_with_an_spo_landing_in_time():
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTIW{_uid()[:5]}-BB"[:20])
@@ -5317,59 +5320,22 @@ def test_a_line_beyond_its_window_is_covered_by_the_spo_already_on_its_way():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
         contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
-        assert contribution["qty_proposed_incoming"] == "441"
-        assert contribution["qty_proposed_buy"] == "0"
-        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [
-            ("timely_spo", "441")
-        ]
-        assert "ZZT-SPO-FAR1" in contribution["sources"][0]["reason"]
-
-        # And the trail says so: the incoming rung RAN and took, rather than being reported
-        # as skipped by a rule it is not subject to.
-        incoming = _step(contribution, "incoming")
-        assert incoming["offered"] == "441"
-        assert incoming["taken"] == "441"
-        assert incoming["outcome"] == "took"
-        assert "ZZT-SPO-FAR1" in incoming["why"]
-        # Every STOCK rung below it is still refused by the window.
-        for kind in ("group_take", "pool", "group_borrow", "cross_group_borrow"):
-            step = _step(contribution, kind)
-            assert step["taken"] == "0", kind
-            assert "lead time window" in step["why"], kind
-
-
-def test_a_far_line_whose_incoming_falls_short_is_bought_whole_and_the_trail_says_why():
-    """The whole-line rule holds beyond the window: 200 arriving against 441 owed is a Buy
-    of the whole 441, and the incoming rung reports what it offered and that it gave
-    nothing - never a partial "incoming 200, buy 241"."""
-    with blank_session() as db:
-        product = _product(db, f"ZZT-{_uid()[:6]}")
-        own = _warehouse(db, f"ZZTIS{_uid()[:5]}-BB"[:20])
-        _stock(db, product, own, on_hand=0)
-        _lead_time(db, product, 90)
-        far = TODAY + timedelta(days=174)
-        _incoming(
-            db, product, own,
-            spo_number="ZZT-SPO-FAR2", allocated=200, received=0, arrives=far - timedelta(days=5),
-        )
-        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
-        _line(db, order, product, qty="441", required_date=far, warehouse=own)
-
-        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
-
-        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
-        assert contribution["qty_proposed_buy"] == "441"
         assert contribution["qty_proposed_incoming"] == "0"
+        assert contribution["qty_proposed_buy"] == "441"
+        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [("buy", "441")]
 
-        incoming = _step(contribution, "incoming")
-        assert incoming["offered"] == "200"
-        assert incoming["taken"] == "0"
-        assert incoming["outcome"] != "not_eligible", "rung 1 RUNS beyond the window"
-        assert incoming["why"] == (
-            "The supply on its way does not cover the whole line, and the delivery date is "
-            "beyond the lead time window, so the whole line is bought rather than "
-            "part-covered."
-        )
+        # Four Noes and a Yes, and every No names the window rather than reporting an empty
+        # search that never happened.
+        assert not any(step["kind"] == "incoming" for step in contribution["trail"])
+        for kind in ("own", "pool", "cross_group_borrow", "group_borrow"):
+            step = _step(contribution, kind)
+            assert step["answer"] == "no", kind
+            assert step["took"] == "0", kind
+            assert "lead time window" in step["why"], kind
+        buy = _step(contribution, "buy")
+        assert buy["answer"] == "yes"
+        assert buy["took"] == "441"
+        assert "lead time window" in buy["why"]
 
 
 def test_a_superseded_revisions_borrow_is_not_reported_as_lent():
@@ -5780,8 +5746,8 @@ def test_the_group_rung_names_the_group_net_when_the_group_has_nothing_for_this_
         board = _service(db).build(["ZZT-SO-V4WHY"], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        step = _step(contribution, "group_take")
-        assert step["offered"] == "0"
+        step = _step(contribution, "own")
+        assert step["answer"] == "no"
         # 10 + 70 on hand less 220 owed - this line's own 20 included, which is what the
         # net IS. What the line may take un-nets its own 20 and is still nothing.
         assert f"The {group.upper()} group nets -140" in step["why"]
@@ -5790,14 +5756,11 @@ def test_the_group_rung_names_the_group_net_when_the_group_has_nothing_for_this_
         assert sibling.warehouse_code not in step["why"]
 
 
-def test_the_group_rung_says_when_incoming_spent_the_offer_rather_than_nothing_being_free():
-    """The group's SPO is INSIDE its net, so rung 1 can spend this rung's whole offer
-    before it is reached.
-
-    Saying "none of it sits free" there sends a planner looking for stock that was never
-    the point: the quantity is covered, on the rung above, by a document they can chase.
-    Both numbers are named - the group's net and what it leaves for this line - because
-    they are different facts (AC-L14).
+def test_question_one_offers_the_groups_spo_and_names_both_of_its_numbers():
+    """AC-V2 through the board. The group's SPO is INSIDE its net and there is no rung
+    above this question for it to be spent on, so the water is part of what question 1
+    offers - and the sentence names the group's net AND what that net leaves for this line,
+    because they are different facts (AC-L14).
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -5807,20 +5770,21 @@ def test_the_group_rung_says_when_incoming_spent_the_offer_rather_than_nothing_b
             db, product, own,
             spo_number="ZZT-SPO-V4G", allocated=40, received=0, arrives=date(2026, 8, 20),
         )
-        # 60 asked for against 40 arriving: the group nets -20, which leaves 40 for this
-        # line, and rung 1 spends all 40 of it. The line is NOT fully covered, so the group
-        # rung is really reached and really has to explain itself.
+        # 60 asked for against 40 on the water: the group nets -20, which leaves 40 for this
+        # line, and all 40 of it is the SPO. The line is NOT fully covered, so the
+        # whole-line rule drops the partial and buys the 60 - and question 1 has to explain
+        # what it had and why none of it was taken.
         ours = _order(db, so_number="ZZT-SO-V4SPO", order_date=date(2026, 1, 1))
         _line(db, ours, product, qty="60", required_date=date(2026, 9, 3), warehouse=own)
 
         board = _service(db).build(["ZZT-SO-V4SPO"], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        step = _step(contribution, "group_take")
-        assert step["offered"] == "0"
+        step = _step(contribution, "own")
+        assert step["answer"] == "no"
         assert f"The {group.upper()} group nets -20, leaving 40 for this line" in step["why"]
-        assert "incoming supply already covers 40 of it" in step["why"]
-        assert "sits free" not in step["why"]
+        assert "could not cover the whole line" in step["why"]
+        assert not any(s["kind"] == "incoming" for s in contribution["trail"])
         # And the whole-line rule then buys the 60, since 40 is not all of it.
         assert contribution["qty_proposed_buy"] == "60"
 
@@ -5851,7 +5815,7 @@ def test_the_pool_rung_names_the_pools_net_and_the_classification_in_front_of_it
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         step = _step(contribution, "pool")
-        assert step["offered"] == "0"
+        assert step["answer"] == "no"
         assert "the site pools net -102 between them" in step["why"]
         assert step["why"].startswith("Not classified"), (
             "the classification leads the sentence, per the captain's own instruction"
