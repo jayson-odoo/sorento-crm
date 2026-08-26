@@ -641,3 +641,139 @@ describe('CellStockTable: PO qty and Taken', () => {
     expect(screen.getByTestId('stock-taken-BRW').textContent).toBe('0');
   });
 });
+
+/**
+ * AC-L12 (ladder v4, ruled 26 August 2026): the subtotal prints the NET the engine obeyed.
+ *
+ * `B2155-NL-BLUE` is the case the ruling came from. `MWH-IB` reads 7000 available and lends
+ * nothing, because the IB group it belongs to nets -15514 - and a table that showed only the
+ * per-row figure could not explain why nothing was taken from it. The net is over the WHOLE
+ * group, silent members included, so it is stated by the server rather than summed here.
+ */
+describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
+  const ibGroup = () => [
+    position({
+      location: 'BRW-IB',
+      warehouse_id: 'wh-brw-ib',
+      where: 'own',
+      qty_on_hand: '5290',
+      so_qty: '27804',
+      spo_qty: '0',
+      available_qty: '-22514',
+      net: '-15514',
+      net_of: 'IB',
+    }),
+    position({
+      location: 'MWH-IB',
+      warehouse_id: 'wh-mwh-ib',
+      where: 'group',
+      qty_on_hand: '7000',
+      so_qty: '0',
+      spo_qty: '0',
+      available_qty: '7000',
+      net: '-15514',
+      net_of: 'IB',
+    }),
+    position({
+      location: 'BRW',
+      warehouse_id: 'wh-brw',
+      where: 'site_pool',
+      qty_on_hand: '0',
+      so_qty: '103',
+      spo_qty: '0',
+      available_qty: '-103',
+      net: '-102',
+      net_of: 'pools',
+    }),
+    position({
+      location: 'DC1',
+      warehouse_id: 'wh-dc1',
+      where: 'site_pool',
+      qty_on_hand: '1',
+      so_qty: '0',
+      spo_qty: '0',
+      available_qty: '1',
+      net: '-102',
+      net_of: 'pools',
+    }),
+  ];
+
+  it('subtotals the own location WITH its group, and prints the group net', () => {
+    renderTable(ibGroup());
+
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-IB').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    // One ownership group, one subtotal, whatever Where tag each row carries: the tag says
+    // where a row stands relative to this cell, the net says which pile it is part of.
+    expect(subtotal).toContain('IB group subtotal');
+    // Available takes the server's NET; every other column still adds up the rows on
+    // screen, which is what makes the two readable side by side - 12290 sits at these two
+    // locations, and -15514 is what the group has once its book is counted.
+    expect(screen.getByTestId('stock-subtotal-available-IB').textContent).toBe('-15514');
+    expect(subtotal).toContain('12290');
+  });
+
+  it('prints the site pools net rather than the pools on screen', () => {
+    renderTable(ibGroup());
+
+    expect(screen.getByTestId('stock-subtotal-available-pools').textContent).toBe('-102');
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-pools').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('Site pool subtotal');
+  });
+
+  it('prints a net for a section of ONE row, because the rows cannot say it', () => {
+    // The net covers every location of the group; this table lists the ones the cell
+    // consulted. A single row that IS its own sum still cannot state the group's position.
+    renderTable([
+      position({ where: 'own', available_qty: '10', net: '-40', net_of: 'BB' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-brw',
+        where: 'site_pool',
+        available_qty: '5',
+        net: '5',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-BB').textContent).toBe('-40');
+  });
+
+  it('takes nothing from a set whose net is not positive', () => {
+    // The engine cannot draw on a set that nets zero or less, so every row of one reads 0 -
+    // which is the answer to "why not MWH-IB", said by the row itself.
+    renderTable(ibGroup(), null, new Map());
+
+    expect(screen.getByTestId('stock-taken-BRW-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-taken-MWH-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-taken-DC1').textContent).toBe('0');
+    expect(screen.getByTestId('stock-subtotal-taken-IB').textContent).toBe('0');
+  });
+
+  it('falls back to the sum where the server states no net', () => {
+    // Nothing on the wire, nothing invented: a cell whose rows carry no net is the old
+    // table, and its subtotal is what the rows add up to.
+    renderTable([
+      position({ where: 'group', qty_on_hand: '10', available_qty: '10' }),
+      position({
+        location: 'DC1-BB',
+        warehouse_id: 'wh-2',
+        where: 'group',
+        qty_on_hand: '5',
+        available_qty: '5',
+      }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        available_qty: '1716',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-group').textContent).toBe('15');
+  });
+});

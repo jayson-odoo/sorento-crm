@@ -374,6 +374,7 @@ type StockSection = {
  */
 function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
   const sections: StockSection[] = [];
+  const used = new Set<string>();
   locations.forEach((entry) => {
     const where = entry.where ?? 'own';
     const setKey = entry.net_of ? `set:${entry.net_of}` : `where:${where}`;
@@ -382,8 +383,14 @@ function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
       last.rows.push(entry);
       return;
     }
+    // The set's own name is the test id and the anchor: `group`, `pools`, `IB`. Suffixed
+    // only if one set is ever split into two runs, which is what keeps the id unique
+    // without putting an index on the ordinary case.
+    let key = entry.net_of ?? where;
+    for (let n = 2; used.has(key); n += 1) key = `${entry.net_of ?? where}-${n}`;
+    used.add(key);
     sections.push({
-      key: `${setKey}#${sections.length}`,
+      key,
       setKey,
       label: labelOf(where, entry.net_of ?? null),
       net: entry.net ?? null,
