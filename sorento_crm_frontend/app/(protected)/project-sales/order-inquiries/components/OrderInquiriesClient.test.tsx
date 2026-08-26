@@ -849,7 +849,7 @@ describe('OrderInquiriesClient', () => {
 
 describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission gating', () => {
   it('AC-H2: the bulk press counts every ticked row and sends exactly those ids', async () => {
-    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    granted = new Set(['projects.order_inquiry.action', 'projects.order_inquiries.acknowledge']);
     acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 1, links: 1 });
     renderClient();
     await screen.findByText('SO385126');
@@ -867,7 +867,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
   });
 
   it('clears the tick marks once the press succeeds', async () => {
-    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    granted = new Set(['projects.order_inquiry.action', 'projects.order_inquiries.acknowledge']);
     acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 1, linked_rows: 0, links: 0 });
     renderClient();
     await screen.findByText('SO385126');
@@ -885,7 +885,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     // reads nothing else, so a column-level one is silently ignored and every row ticks.
     granted = new Set([
       'projects.order_inquiry.action',
-      'project_sales.order_inquiries.acknowledge',
+      'projects.order_inquiries.acknowledge',
     ]);
     renderClient();
     await screen.findByText('SO385126');
@@ -900,7 +900,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
   it('leaves a disabled row out of the bulk press even when Select all is used', async () => {
     granted = new Set([
       'projects.order_inquiry.action',
-      'project_sales.order_inquiries.acknowledge',
+      'projects.order_inquiries.acknowledge',
     ]);
     acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 0, links: 0 });
     renderClient();
@@ -921,7 +921,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
 
   it('a CS user (no acknowledge grant) sees the Acknowledged column and the filter, but none of the actions', async () => {
     // The default `beforeEach` grant is exactly this: `projects.order_inquiry.action`
-    // only, no `project_sales.order_inquiries.acknowledge` - CS's own shape.
+    // only, no `projects.order_inquiries.acknowledge` - CS's own shape.
     renderClient();
     await screen.findByText('SO385126');
 
@@ -951,7 +951,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
   });
 
   it('AC-H13: offers nothing while the worker is still reading the book', async () => {
-    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    granted = new Set(['projects.order_inquiry.action', 'projects.order_inquiries.acknowledge']);
     uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'processing' }];
     renderClient();
     await screen.findByText('SO385126');
@@ -966,7 +966,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
   });
 
   it('AC-H13: once the job lands, Link now carries the products it wrote', async () => {
-    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    granted = new Set(['projects.order_inquiry.action', 'projects.order_inquiries.acknowledge']);
     uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'linked' }];
     linkNowOrderInquiryRows.mockResolvedValue({ placed_rows: 2, allocations: 3 });
     renderClient();
@@ -998,7 +998,7 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
   });
 
   it('AC-H13: a book naming more documents than the job lists opens the whole list', async () => {
-    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    granted = new Set(['projects.order_inquiry.action', 'projects.order_inquiries.acknowledge']);
     uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'linked' }];
     getOrderInquiryUploadJob.mockResolvedValue({
       job_id: 'job-1',

@@ -538,7 +538,7 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
-        "slug": "project_sales.order_inquiries.acknowledge",
+        "slug": "projects.order_inquiries.acknowledge",
         "name": "Acknowledge Order Inquiry Rows",
         "description": (
             "Purchasing grant: acknowledge an order inquiry row - which is the moment "

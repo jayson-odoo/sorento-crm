@@ -148,7 +148,7 @@ const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
  * and the book uploads. CS holds the read and sees the column and the filter; taking an
  * instruction on is purchasing's, and they may not do it for themselves.
  */
-const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'project_sales.order_inquiries.acknowledge';
+const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 
 /** Where the handshake stands (AC-H4), in the four words the column prints. */
 const ACK_OPTIONS = ACK_STATES.map((state) => ({

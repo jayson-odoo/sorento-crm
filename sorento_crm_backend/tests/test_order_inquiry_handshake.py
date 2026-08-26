@@ -8,7 +8,7 @@ restricted to rows purchasing has taken on. What is pinned here, one test each:
   purchase-order line sitting there waiting for the product;
 * AC-H2 Acknowledge takes a batch on, stamps who and when, and runs the cascade for exactly
   those rows;
-* AC-H3 a CS user (no `project_sales.order_inquiries.acknowledge`) is refused 403 by every
+* AC-H3 a CS user (no `projects.order_inquiries.acknowledge`) is refused 403 by every
   one of the three write routes;
 * AC-H4 the `ack` filter is a closed set, and the facet counts all four states with its own
   filter dropped;
@@ -69,7 +69,7 @@ from .test_planning_changes import (
 VIEW = "projects.projects.view"
 ACTION = "projects.order_inquiry.action"
 EDIT = "projects.projects.edit"
-ACKNOWLEDGE = "project_sales.order_inquiries.acknowledge"
+ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 PURCHASING = [VIEW, ACTION, ACKNOWLEDGE]
 CS = [VIEW, EDIT, ACTION]
 
@@ -556,6 +556,58 @@ def test_a_rejected_rows_line_goes_back_to_the_board_undecided_with_the_reason(a
     assert cell["ack_state"] == ACK_REJECTED
     assert cell["rejected_reason"] == "Factory closed until November"
     assert f"{MARKER} Joey" in (cell["rejected_by_name"] or "")
+
+
+def test_the_boards_refusal_flag_hides_once_cs_has_decided_the_line_again(api):
+    """The captain, review round: a refusal is a line coming BACK to CS, so it is news
+    until they answer it. Once an active revision covers the line again, confirmed after
+    the rejection, the cell is about that decision - a flag that outlived the answer reads
+    as an open refusal on a line somebody has already dealt with."""
+    _client, world = api
+    fixture = _raise_one_row(api)
+    core_id = str(fixture["core_line"].id)
+
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(
+                f"{LIST}/{fixture['row'].id}/reject",
+                json={"reason": "Factory closed until November"},
+            ).status_code
+            == 200
+        )
+    world.db.commit()
+
+    from app.services.project_fulfilment_board_service import FulfilmentBoardService
+
+    def cell_of():
+        board = FulfilmentBoardService(world.db)
+        frozen, _proposals = {}, None
+        decision = ProjectSupplyService(world.db).active_decision(
+            str(fixture["order"].id)
+        )
+        covering = {
+            str(snap.get("core_line_id")): decision.confirmed_at
+            for snap in ((decision.line_snapshots if decision else None) or [])
+            if snap.get("core_line_id")
+        }
+        frozen = covering
+        return board._order_inquiries([core_id], decided_at=frozen)[core_id]
+
+    assert cell_of()["ack_state"] == ACK_REJECTED, "nobody has answered it yet"
+
+    # CS decides the line again. The refused row stays readable; the cell is not about it.
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    answered = cell_of()
+    assert answered["ack_state"] != ACK_REJECTED
+    assert answered["rejected_reason"] is None
+    assert answered["rejected_by_name"] is None
+    world.db.refresh(fixture["row"])
+    assert fixture["row"].ack_state == ACK_REJECTED, "the refusal itself is still on record"
 
 
 # ---------------------------------------------------------------------------

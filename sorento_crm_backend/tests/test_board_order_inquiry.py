@@ -186,9 +186,16 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
         contribution = _contribution(board, product.product_code)
+        # The HANDSHAKE rides in the same cell since `PLAN-scm-oi-handshake.md`: `state`
+        # is where the supply stands, `ack_state` (and the refusal beside it) is whether
+        # purchasing has taken the instruction on. A row nobody has read says `awaiting`
+        # and names no refusal, which is exactly what an untouched cell must say.
         assert contribution["order_inquiry"] == {
             "inquiry_no": inquiry.inquiry_no,
             "state": INQUIRY_PLACED,
+            "ack_state": "awaiting",
+            "rejected_reason": None,
+            "rejected_by_name": None,
         }
         # Stamped by the model's own listener, not invented here.
         assert inquiry.inquiry_no.startswith("OI-")

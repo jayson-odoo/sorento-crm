@@ -1,6 +1,6 @@
 # PLAN - Order inquiry handshake: CS raises, purchasing acknowledges, links follow the acknowledgement
 
-Status: **BUILT** 2026-08-27 on `feat/scm-uat-oi-handshake` (stacked on part 3, #332), migration `428_order_inquiry_ack_state`. 21 pytest in `tests/test_order_inquiry_handshake.py`; browser evidence below. Build before the Friday UAT walk. Lane `.claude/worktrees/scm-uat` (FE :3080, BE :8080), one PR stacked on part 3 (`feat/scm-uat-so-change`). UAC: `scm-oi-handshake-acceptance-criteria.md`. Friday stations 4 and 6 in `PLAN-scm-friday-uat-journey.md` change when this lands.
+Status: **BUILT + REVIEWED** 2026-08-27 on `feat/scm-uat-oi-handshake` (stacked on part 3, #332), migration `428_order_inquiry_ack_state`. Review and tester fixes applied the same day (section 7 carries each one): the carried-line acknowledgement, the server-side refusals, Link now waiting for the book, the slug under `projects.*` with named grants. 26 pytest in `tests/test_order_inquiry_handshake.py`, 14 in `..._edges.py` (no xfail left), 8 in `test_order_inquiry_upload_jobs.py`; browser evidence below. Build before the Friday UAT walk. Lane `.claude/worktrees/scm-uat` (FE :3080, BE :8080), one PR stacked on part 3 (`feat/scm-uat-so-change`). UAC: `scm-oi-handshake-acceptance-criteria.md`. Friday stations 4 and 6 in `PLAN-scm-friday-uat-journey.md` change when this lands.
 
 ## 0. What the captain asked (27 Aug)
 
@@ -30,6 +30,7 @@ Columns on `projects.order_inquiry_rows` (one migration, `down_revision` = lane 
 | Event | Actor | Effect |
 | --- | --- | --- |
 | Board Approve / Confirm | CS | rows raised `awaiting`; **no cascade**: `_auto_place_after_confirm` leaves `supply.confirm` |
+| CS Order Inquiry FORM import | CS | the sheet's rows are raised `awaiting` like any other instruction and `rows_linked` is 0 by design - the form is CS telling purchasing what is needed, and nothing links until purchasing has read it |
 | Amend before acknowledgement | CS | settle-in-place (part 3), stays `awaiting`, silent; supersede path raises the new rows `awaiting` |
 | Acknowledge (one or many) | purchasing | `acknowledged` + who/when; the cascade runs for exactly those rows |
 | Reject with reason | purchasing | reason required; `rejected` + who/when/reason; row leaves `committed_v` and the plan's demand; the line's decision is uncovered (`supply.confirm`'s `uncover_line_ids` seam) so the board shows it undecided with the reason |
@@ -47,7 +48,7 @@ Netting: `committed_v` and the S13b demand leg exclude `rejected`; the reorder p
 - **Order Inquiries (list + schedule):** an Acknowledgement filter (SearchableSelect, clearable: Awaiting / Acknowledged / Changed / Rejected); a column "Acknowledged" reading the name and time, "Awaiting", "Changed <date>" or "Rejected: <reason>" (truncate + title); row checkboxes with a bulk bar: **Acknowledge (N)**; per row **Reject** opening the reason dialog (reuse `scm/reorder/components/BulkRejectDialog.tsx`'s shape); a **Changed** row shows the same Was / Now table part 3 draws on the board. Upload button on the toolbar.
 - **Fulfilment board:** a rejected line's cell is undecided and carries "Rejected by <name>: <reason>"; the decision strip counts it under nothing decided.
 - **Reorder planning:** count chip "N awaiting acknowledgement" beside the existing header badges.
-- Permission slug `project_sales.order_inquiries.acknowledge` gates Acknowledge, Reject, Link now and the upload button; seeded to the purchasing role; CS sees the column and the filter, not the actions.
+- Permission slug `projects.order_inquiries.acknowledge` gates Acknowledge, Reject, Link now, the upload button and the upload-job read; CS sees the column and the filter, not the actions. Granted two ways in migration 428 and both are needed: derived from every role holding `projects.order_inquiry.action`, and named outright for the roles `Purchasing` and `Purchasing Manager Role` - on the live copy the derived sweep reaches Admin alone, so on its own it would hide the feature from the person it was built for.
 
 ## 5. Order of work (one PR)
 
@@ -98,14 +99,48 @@ pytest: acknowledge one / many, 403 for a CS user, cascade runs only at acknowle
   menu says that and names the captain's own words for the file underneath. The sales-order
   book is deliberately absent: it is CS's document.
 - **Link now and Open purchase orders are offered on the PAGE, not inside the upload
-  activity drawer.** The drawer is a shared component every upload in the system reports
-  through, and a per-feature pair of buttons inside it would be a feature's opinion in a
-  shared surface. The Order Inquiries page shows them the moment an upload it queued is
-  accepted, which is the same moment and the same two next steps.
+  activity drawer, and they wait for the WORKER.** The drawer is a shared component every
+  upload in the system reports through, and a per-feature pair of buttons inside it would
+  be a feature's opinion in a shared surface. The page shows them when the job this page
+  queued reaches a terminal state - it follows the job through the drawer's own feed
+  (`useUploadActivity`, one poll already running for every upload in the system) rather
+  than starting a second watcher. They used to appear when the request was ACCEPTED, which
+  invited the buyer to link against a book nobody had read yet.
+- **Both buttons carry what the upload actually wrote**, read off the finished job:
+  `GET /order-inquiries/upload-jobs/{job_id}`, gated on the acknowledge grant. Each channel
+  states its own answer on its own result (`product_ids` beside the `scope_documents` the
+  outstanding book already carried; `product_ids` / `documents` on the history book) and
+  one reader lifts them off `result.upload` - nothing recomputes "what did that upload
+  touch", because a second derivation would be free to disagree with the importer. Link now
+  sends those product ids (it sent `{}`, so one book re-dealt every open instruction in the
+  company); Open purchase orders sends those document numbers to the purchase-order list's
+  new `documents` filter, which says how many it is showing and gives the rest back in one
+  press. A book naming more documents than the endpoint lists opens the unfiltered list:
+  fifty of two hundred shown as if they were all of them is worse than no filter.
 - **The row checkbox refuses a CANCELLED or ACTIONED row** as well as an acknowledged or
-  rejected one. Acknowledging an instruction nobody is doing takes on work that does not
-  exist, and the cascade behind the press would link nothing for it - found in the browser,
-  where the first press took on three cancelled rows.
+  rejected one, AND SO DOES THE SERVER. Acknowledging an instruction nobody is doing takes
+  on work that does not exist, and the cascade behind the press would link nothing for it -
+  found in the browser, where the first press took on three cancelled rows. The review
+  round made both halves true: `acknowledge_rows` refuses a row whose supply state is not
+  open (a batch carrying one is refused whole), `reject_row` accepts only a row still owed,
+  and the checkbox's predicate moved to the TABLE's own `enableRowSelection`, where
+  `row.getCanSelect()` actually reads it - as a column-level option it was silently ignored
+  and every row ticked.
+- **A CARRIED line keeps its acknowledgement.** A confirmation naming one line carries the
+  others, and a carried line's still-raised row is cancelled and re-raised under the new
+  revision; the handshake for the new row was read AFTER that cancel, off every superseded
+  row the line had ever carried, so untouched acknowledged rows read "Changed today" with
+  no Was and no Now. It is read before the cancel now, off live rows only: carried inherits
+  it verbatim, a line this revision names is promoted to `changed` from acknowledged or
+  changed alone, and a refused line raises a fresh awaiting row.
+- **The previous value is two COLUMNS, not a sentence to parse.** `previous_qty` /
+  `previous_delivery_date`, written by the settle-in-place beside the note it already
+  wrote. The screen parsed that note back into figures and read the comma in "Was 10, no
+  previous delivery date" as part of the quantity.
+- **A refusal hides once CS answers it** (captain, review round): the board cell drops the
+  "Rejected by" flag when an active revision covering the line was confirmed after the
+  rejection. A flag that outlived the answer reads as an open refusal on a line somebody
+  had already dealt with.
 - **No backfill, as ruled** - which on the dev copy means SO381895's existing rows read
   Awaiting while three of them are already Linked from the lane's earlier work. That pair
   is impossible for a row raised from here on and is worth saying out loud on the sheet.

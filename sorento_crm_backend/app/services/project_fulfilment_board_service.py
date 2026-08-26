@@ -1027,7 +1027,15 @@ class FulfilmentBoardService:
         # the proposal the engine had made at that moment (AC-D1). One read for both.
         frozen, frozen_proposals = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
-        inquiries = self._order_inquiries([str(line.id) for line, *_r in records])
+        # The active decisions go in with it: a refusal is only news until CS answers it
+        # (see `_order_inquiries`).
+        inquiries = self._order_inquiries(
+            [str(line.id) for line, *_r in records],
+            decided_at={
+                core_id: (decision or {}).get("confirmed_at")
+                for core_id, decision in frozen.items()
+            },
+        )
         # What another order borrowed OFF each of these lines. One read for the whole board.
         lent = self._lent_from([str(line.id) for line, *_r in records])
 
@@ -1139,13 +1147,22 @@ class FulfilmentBoardService:
             rows.sort(key=lambda r: (str(r["so_number"] or ""), r["line_no"] or 0))
         return out
 
-    def _order_inquiries(self, core_line_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    def _order_inquiries(
+        self,
+        core_line_ids: Sequence[str],
+        *,
+        decided_at: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
         """The instruction covering each core line, keyed by that line.
 
         Through the mirror, the same link `_mirror_addressing` traverses:
         `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
         `core_sales_order_line_id`. A partial unique index makes that at most one project
         line per core line, so the join cannot multiply a board row.
+
+        `decided_at` is when the ACTIVE revision covering each line was confirmed, where
+        there is one. It decides nothing about the instruction; it is read only to drop a
+        refusal CS has already answered (see the loop at the end).
 
         ONE query for the whole board. Ordered oldest first with the LAST writer winning,
         because a line routinely carries several rows - the G2 cascade splits a placed
@@ -1167,6 +1184,7 @@ class FulfilmentBoardService:
                 # - purchasing's rejection uncovers it - and a cell that only went back to
                 # blank would tell CS nothing about why.
                 OrderInquiryRow.ack_state,
+                OrderInquiryRow.rejected_at,
                 OrderInquiryRow.rejected_reason,
                 rejecter.name,
             )
@@ -1190,19 +1208,29 @@ class FulfilmentBoardService:
                 "rejected_reason": None,
                 "rejected_by_name": None,
             }
-            for core_id, inquiry_no, state, ack_state, _reason, _name in rows
+            for core_id, inquiry_no, state, ack_state, _at, _reason, _name in rows
         }
         # The REFUSAL is read off the line rather than off its current row, and that is
         # the difference between the cell saying why it came back and saying nothing. A
         # line routinely carries several rows - an order back beside the order, an
         # amendment's own - so the newest one is frequently not the one purchasing
-        # refused, and last-wins would then drop the only explanation CS has. Latest
-        # refusal wins where there are two.
-        for core_id, _inquiry_no, _state, ack_state, reason, name in rows:
+        # refused, and last-wins would then drop the only explanation CS has. The rows
+        # arrive oldest first, so the LATEST refusal is the one left standing here.
+        #
+        # And it stands only until CS answers it (the captain, 27 Aug): a refusal is a
+        # line coming BACK to them, so once they have decided it again - an active
+        # revision covering the line, confirmed after the refusal - the cell is about that
+        # decision and not about the objection that prompted it. A flag that outlived the
+        # answer would read as an open refusal on a line somebody had already dealt with.
+        answered = decided_at or {}
+        for core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name in rows:
             if ack_state != ACK_REJECTED:
                 continue
             entry = out.get(str(core_id))
             if entry is None:
+                continue
+            decided = answered.get(str(core_id))
+            if decided is not None and rejected_at is not None and decided > rejected_at:
                 continue
             entry["ack_state"] = ACK_REJECTED
             entry["rejected_reason"] = reason
