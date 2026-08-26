@@ -324,7 +324,13 @@ def test_export_creates_a_download_row_and_queues_the_render(api, db, monkeypatc
     assert row.filename == body["filename"]
 
     assert queued["func"].__name__ == "generate_report_xlsx"
-    assert queued["kwargs"]["queue_name"] == "imports"
+    # The SHIPPED default is the production queue; the live value is whatever this
+    # checkout's .env says, and a lane running its own worker sets its own (the test
+    # below). Asserting the literal here failed on the very worktree the knob exists for.
+    from app.config import Settings, settings
+
+    assert Settings.model_fields["report_export_queue"].default == "imports"
+    assert queued["kwargs"]["queue_name"] == settings.report_export_queue
     assert queued["args"][0] == body["download_id"]
     assert queued["args"][1] == KEY
 

@@ -17,6 +17,8 @@ import {
   DataGridTableHeadRowCell,
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
+  headerRowSpan,
+  skipMergedLeafHeader,
 } from '@/components/ui/data-grid-table';
 import {
   closestCenter,
@@ -35,15 +37,22 @@ import { Cell, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-tabl
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { GripVertical } from 'lucide-react';
 
-function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unknown> }) {
+function DataGridTableDndHeader<TData>({
+  header,
+  rowSpan,
+}: {
+  header: Header<TData, unknown>;
+  rowSpan: number;
+}) {
   const { props } = useDataGrid();
   const { column } = header;
 
-  // A GROUP header (and the placeholder that sits above an ungrouped column in the group
-  // row) is not draggable: it carries the same column id as its leaf, and registering the
-  // id twice would make dnd-kit resolve the drop to whichever node it saw last. Grids
-  // without column groups never take this branch.
-  const isGroupHeader = header.isPlaceholder || header.subHeaders.length > 0;
+  // A GROUP header is not draggable: dragging it would mean dragging its members as a
+  // block, and dnd-kit is registered on leaf ids. A PLACEHOLDER is the opposite - it IS
+  // the single-level column's only header now that it spans both rows (the leaf it stands
+  // in for is not rendered), so it stays draggable and each id registers exactly once.
+  // Grids without column groups never take either branch.
+  const isGroupHeader = !header.isPlaceholder && header.subHeaders.length > 0;
 
   const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
     id: header.column.id,
@@ -63,17 +72,20 @@ function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unkno
   if (isGroupHeader) {
     return (
       <DataGridTableHeadRowCell header={header}>
-        {header.isPlaceholder ? null : (
-          <div className="flex w-full items-center justify-center text-center">
-            {flexRender(header.column.columnDef.header, header.getContext())}
-          </div>
-        )}
+        <div className="flex w-full items-center justify-center text-center">
+          {flexRender(header.column.columnDef.header, header.getContext())}
+        </div>
       </DataGridTableHeadRowCell>
     );
   }
 
   return (
-    <DataGridTableHeadRowCell header={header} dndStyle={style} dndRef={setNodeRef}>
+    <DataGridTableHeadRowCell
+      header={header}
+      dndStyle={style}
+      dndRef={setNodeRef}
+      rowSpan={rowSpan}
+    >
       <div
         className="flex items-center justify-start gap-0.5 w-full cursor-grab select-none"
         {...attributes}
@@ -81,8 +93,8 @@ function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unkno
         aria-label="Drag column to reorder"
       >
         {/* Keeping the grip icon purely visual (drag is on the entire header area). */}
-        {!header.isPlaceholder && <GripVertical className="size-4 opacity-35 ms-1" aria-hidden="true" />}
-        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+        <GripVertical className="size-4 opacity-35 ms-1" aria-hidden="true" />
+        {flexRender(header.column.columnDef.header, header.getContext())}
         {props.tableLayout?.columnsResizable && column.getCanResize() && (
           <DataGridTableHeadRowCellResize header={header} />
         )}
@@ -141,12 +153,19 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
         <DataGridTableBase>
           <DataGridTableHead>
             {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
+              const rowCount = table.getHeaderGroups().length;
               return (
                 <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
                   <SortableContext items={orderedIds} strategy={horizontalListSortingStrategy}>
-                    {headerGroup.headers.map((header, index) => (
-                      <DataGridTableDndHeader header={header} key={index} />
-                    ))}
+                    {headerGroup.headers
+                      .filter((header) => !skipMergedLeafHeader(header, rowCount))
+                      .map((header, index) => (
+                        <DataGridTableDndHeader
+                          header={header}
+                          rowSpan={headerRowSpan(header, rowCount)}
+                          key={index}
+                        />
+                      ))}
                   </SortableContext>
                 </DataGridTableHeadRow>
               );

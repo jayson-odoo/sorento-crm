@@ -113,7 +113,11 @@ _SUBJECT_LABEL = sa.func.coalesce(
     _PR.c.sponsor_subject,
 )
 
-#: "Others: Sales Gallery" - the same shape the form's own detail page and listing use.
+#: The free text ALONE when the subject is "others" ("Sales Gallery"), the lookup label
+#: otherwise. The client's SPONSHER PROJECT column holds the answer, not the question, and
+#: this report is read beside their own workbook (AC-G5). The form's listing and detail page
+#: keep the "Others: Sales Gallery" shape, where the label still tells the reader which
+#: field they are looking at.
 _SPONSOR_SUBJECT = sa.case(
     (_PR.c.sponsor_subject.is_(None), sa.null()),
     (
@@ -121,7 +125,7 @@ _SPONSOR_SUBJECT = sa.case(
             sa.func.lower(_PR.c.sponsor_subject) == "others",
             _blank_to_null(_PR.c.sponsor_subject_other).isnot(None),
         ),
-        _SUBJECT_LABEL + ": " + sa.func.btrim(_PR.c.sponsor_subject_other),
+        sa.func.btrim(_PR.c.sponsor_subject_other),
     ),
     else_=_SUBJECT_LABEL,
 )
@@ -209,13 +213,16 @@ def sales_agent_condition(ctx, values: List[str]) -> Optional[Any]:
     return _SALES_AGENT.in_(values)
 
 
+#: Sizes are the DEFAULT WIDTHS the seven workbook columns plus the four delivery-year
+#: ticks need to fit a 1280 screen without a horizontal scroll (AC-G2). A user's own resize
+#: still wins: the DataGrid persists it per listing.
 COLUMNS: Tuple[reg.Column, ...] = (
-    reg.Column("request_number", "PS No", "text", "dimension", lambda c: _PR.c.request_number, size=130),
-    reg.Column("sales_agent", "Sales agent", "text", "dimension", lambda c: _SALES_AGENT, size=150),
-    reg.Column("customer_name", "Customer", "text", "dimension", lambda c: _PR.c.customer_name, size=170),
-    reg.Column("project_title", "Project title", "text", "dimension", lambda c: _PROJECT_TITLE, size=220),
-    reg.Column("sponsor_subject", "Sponsor project", "text", "dimension", lambda c: _SPONSOR_SUBJECT, size=170),
-    reg.Column("project_value", "Project value", "money", "measure", lambda c: _PR.c.total_project_value, size=150),
+    reg.Column("request_number", "PS No", "text", "dimension", lambda c: _PR.c.request_number, size=114),
+    reg.Column("sales_agent", "Sales agent", "text", "dimension", lambda c: _SALES_AGENT, size=92),
+    reg.Column("customer_name", "Customer", "text", "dimension", lambda c: _PR.c.customer_name, size=98),
+    reg.Column("project_title", "Project title", "text", "dimension", lambda c: _PROJECT_TITLE, size=114),
+    reg.Column("sponsor_subject", "Sponsor project", "text", "dimension", lambda c: _SPONSOR_SUBJECT, size=96),
+    reg.Column("project_value", "Project value", "money", "measure", lambda c: _PR.c.total_project_value, size=118),
     reg.Column(
         "project_value_text",
         "Project value as stated",
@@ -224,7 +231,7 @@ COLUMNS: Tuple[reg.Column, ...] = (
         lambda c: _PR.c.total_project_value_text,
         size=200,
     ),
-    reg.Column("sample_price", "Sample price", "money", "measure", lambda c: _SAMPLE_PRICE, size=140),
+    reg.Column("sample_price", "Sample price", "money", "measure", lambda c: _SAMPLE_PRICE, size=104),
     reg.Column(
         "expected_delivery_year",
         "Expected year of delivery",
@@ -250,7 +257,9 @@ COLUMNS: Tuple[reg.Column, ...] = (
     reg.Column("request_date", "Form date", "date", "date", lambda c: _PR.c.request_date, size=130),
     reg.Column("submitted_at", "Submitted on", "date", "date", lambda c: _PR.c.submitted_at, size=130),
     reg.Column("approver", "Approver", "text", "dimension", lambda c: _PR.c.approved_by, size=150),
-    reg.Column("purpose", "Purpose", "text", "text", lambda c: _PR.c.purpose, size=200),
+    # The workbook's OTHERS column. The KEY stays `purpose` (a view saved before the label
+    # changed still resolves); the label is what the user reads (AC-G6).
+    reg.Column("purpose", "Others", "text", "text", lambda c: _PR.c.purpose, size=200),
     reg.Column(
         "delivery_address", "Delivery address", "text", "text", lambda c: _PR.c.delivery_address, size=240
     ),

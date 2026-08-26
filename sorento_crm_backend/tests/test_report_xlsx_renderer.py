@@ -23,7 +23,7 @@ from io import BytesIO
 import pytest
 
 from tests import _report_fixture as fixture
-from tests._pg_fixture import pg_session
+from tests._pg_fixture import blank_session
 
 SUMMARY = "SUMMARY"
 MONTHS = [
@@ -43,7 +43,7 @@ def workbook():
     from app.services.reports import engine
     from app.services.reports.xlsx_renderer import render_workbook
 
-    with pg_session() as db:
+    with blank_session() as db:
         fixture.create_table(db)
         definition = fixture.definition()
         data = engine.run_workbook(db, definition, definition.default_view["params"])
@@ -62,7 +62,27 @@ def _merged(sheet, anchor: str) -> str:
 
 
 def _headers(sheet) -> list:
-    return [c.value for c in sheet[_HEADER_ROW]]
+    """The header of every column, wherever it sits: a single-level header is merged up
+    into the group row (AC-G4), a tick column's year stays on the leaf row."""
+    return [
+        sheet.cell(row=_GROUP_ROW, column=index).value
+        if sheet.cell(row=_HEADER_ROW, column=index).value is None
+        else sheet.cell(row=_HEADER_ROW, column=index).value
+        for index in range(1, sheet.max_column + 1)
+    ]
+
+
+def _column(sheet, header: str) -> int:
+    return _headers(sheet).index(header) + 1
+
+
+def _grand_total_label_column(sheet):
+    """Where the GRAND TOTAL label landed on the last row of a detail sheet."""
+    row = sheet.max_row
+    for index in range(1, sheet.max_column + 1):
+        if sheet.cell(row=row, column=index).value == "GRAND TOTAL":
+            return index
+    return None
 
 
 def _row_labels(sheet) -> list:
@@ -84,10 +104,10 @@ def test_the_summary_comes_first_then_one_sheet_per_month_of_the_period(workbook
 def test_a_month_with_no_rows_still_gets_its_sheet(workbook):
     """February booked nothing. The client's register still has a February."""
     sheet = workbook["FEB'26"]
-    assert sheet["A1"].value == "ZZT Sdn Bhd"
-    assert _headers(sheet)[0] == "Order no"
+    assert sheet["A2"].value == "ZZT SDN BHD"
+    assert sheet["A6"].value == "ORDER NO"  # merged up into the group row (AC-G4/G8)
     assert _row_labels(sheet) == []
-    assert sheet.cell(row=sheet.max_row, column=1).value == "GRAND TOTAL"
+    assert _grand_total_label_column(sheet) is not None
 
 
 def test_each_monthly_sheet_holds_only_that_months_rows(workbook):
@@ -106,40 +126,61 @@ def test_a_row_outside_the_period_reaches_no_sheet(workbook):
 
 
 def test_every_sheet_opens_with_the_title_block(workbook):
-    """AC-D2: whose report this is, what it is, over what period, for which department."""
+    """AC-D2 / AC-G7: the client's own four lines, in the client's own rows."""
     for name in [SUMMARY] + MONTHS:
         sheet = workbook[name]
-        assert sheet["A1"].value == "ZZT Sdn Bhd"
-        assert sheet["A2"].value == "Scratch orders"
-        assert sheet["A4"].value == "Scratch"
+        assert sheet["A1"].value is None
+        assert sheet["A2"].value == "ZZT SDN BHD"
+        assert sheet["A3"].value == "SCRATCH ORDERS"
+        assert sheet["A5"].value == "DEPARTMENT:"
+        assert sheet["C5"].value == "Scratch"
+        assert sheet["A2"].font.bold and sheet["A3"].font.bold
 
 
-def test_the_period_line_is_the_range_on_summary_and_the_month_on_a_monthly_sheet(workbook):
-    assert workbook[SUMMARY]["A3"].value == "Jan'26 to Dec'26"
-    assert workbook["JAN'26"]["A3"].value == "Jan'26"
-    assert workbook["DEC'26"]["A3"].value == "Dec'26"
+def test_the_period_line_is_the_range_on_summary_and_a_real_date_on_a_monthly_sheet(workbook):
+    """AC-G7. The client's monthly sheets carry a DATE in A4 formatted mmm-yy, which is
+    what makes the month sortable and reformattable rather than a caption."""
+    from datetime import date, datetime
+
+    assert workbook[SUMMARY]["A4"].value == "Jan'26 to Dec'26"
+
+    january = workbook["JAN'26"]["A4"]
+    assert isinstance(january.value, (date, datetime))
+    assert (january.value.year, january.value.month, january.value.day) == (2026, 1, 1)
+    assert january.number_format == "mmm-yy"
+    assert workbook["DEC'26"]["A4"].value.month == 12
 
 
 # --------------------------------------------------------------------------- AC-D3
 
 
 def test_the_summary_merges_each_column_value_over_its_measures(workbook):
-    """AC-D3: one merged month header spanning Amount and Fee."""
+    """AC-D3 / AC-G10: one merged month header spanning Amount and Fee, uppercase."""
     sheet = workbook[SUMMARY]
-    assert sheet["A6"].value == "Agent"
-    assert sheet["B6"].value == "Jan'26"
+    assert sheet["A6"].value == "AGENT"
+    assert _merged(sheet, "A6") == "A6:A7"
+    assert sheet["B6"].value == "JAN'26"
     assert _merged(sheet, "B6") == "B6:C6"
-    assert sheet["B7"].value == "Amount"
-    assert sheet["C7"].value == "Fee"
+    assert sheet["B7"].value == "AMOUNT"
+    assert sheet["C7"].value == "FEE"
 
 
 def test_a_monthly_sheet_merges_the_tick_group_header(workbook):
-    """AC-D3: "Delivery year" spans its 2026 and 2027 tick columns."""
+    """AC-D3: "DELIVERY YEAR" spans its 2026 and 2027 tick columns."""
     sheet = workbook["JAN'26"]
     group_row = [c.value for c in sheet[_GROUP_ROW]]
-    assert "Delivery year" in group_row
-    anchor = sheet.cell(row=_GROUP_ROW, column=group_row.index("Delivery year") + 1)
+    assert "DELIVERY YEAR" in group_row
+    anchor = sheet.cell(row=_GROUP_ROW, column=group_row.index("DELIVERY YEAR") + 1)
     assert _merged(sheet, anchor.coordinate)
+
+
+def test_a_single_level_header_spans_both_header_rows(workbook):
+    """AC-G4 / AC-G8. The client's sheet merges A6:A7 .. G6:G7; an empty band over every
+    ungrouped column is the tell of a header that was drawn in two halves."""
+    sheet = workbook["JAN'26"]
+    assert _merged(sheet, "A6") == "A6:A7"
+    assert sheet["A6"].value == "ORDER NO"
+    assert sheet["A7"].value is None
 
 
 def test_every_monthly_sheet_carries_the_same_columns(workbook):
@@ -150,7 +191,7 @@ def test_every_monthly_sheet_carries_the_same_columns(workbook):
     same table.
     """
     expected = _headers(workbook["JAN'26"])
-    assert "2026" in [str(v) for v in expected] and "2027" in [str(v) for v in expected]
+    assert "2026" in [str(v) for v in expected] and "2027" in [str(v) for v in expected]  # noqa: E501
     for name in MONTHS:
         assert _headers(workbook[name]) == expected
 
@@ -159,7 +200,7 @@ def test_a_tick_reads_as_a_tick_not_as_true(workbook):
     """The client's sheet marks the delivery year with a tick, not the word TRUE."""
     sheet = workbook["JAN'26"]
     group_row = [c.value for c in sheet[_GROUP_ROW]]
-    first_tick_col = group_row.index("Delivery year") + 1
+    first_tick_col = group_row.index("DELIVERY YEAR") + 1
     ticks = {
         sheet.cell(row=row, column=first_tick_col).value
         for row in range(_FIRST_DATA_ROW, sheet.max_row)
@@ -178,16 +219,23 @@ def test_the_summary_carries_a_row_per_row_value(workbook):
     assert sheet["B8"].data_type == "n"
 
 
-def test_a_missing_cell_is_blank_not_zero(workbook):
-    """Bob has nothing in January; the workbook prints nothing, as the client's does."""
-    assert workbook[SUMMARY]["B9"].value is None
+def test_a_missing_cell_reads_as_a_dash_never_as_zero(workbook):
+    """AC-G9. Bob has nothing in January. The client's own sheet prints "-" there; a
+    0.00 would claim he booked something and it came to nothing."""
+    assert workbook[SUMMARY]["B9"].value == "-"
 
 
-def test_the_summary_grand_total_row_holds_values_not_formulas(workbook):
-    """AC-D4. A formula lets Excel recompute a different answer from the screen's."""
+def _labelled_row(sheet, label: str) -> int:
+    for row in range(_FIRST_DATA_ROW, sheet.max_row + 1):
+        if sheet.cell(row=row, column=1).value == label:
+            return row
+    raise AssertionError(f"no row labelled {label!r}")
+
+
+def test_the_summary_column_totals_row_holds_values_not_formulas(workbook):
+    """AC-D4 / AC-G10. A formula lets Excel recompute a different answer from the screen's."""
     sheet = workbook[SUMMARY]
-    total_row = sheet.max_row
-    assert sheet.cell(row=total_row, column=1).value == "GRAND TOTAL"
+    total_row = _labelled_row(sheet, "TOTAL")
     values = [
         sheet.cell(row=total_row, column=col).value for col in range(2, sheet.max_column + 1)
     ]
@@ -195,12 +243,37 @@ def test_the_summary_grand_total_row_holds_values_not_formulas(workbook):
     assert float(values[-1]) == 36.51
 
 
+def test_the_summary_closes_with_one_labelled_total_row_per_measure(workbook):
+    """AC-G10. The client's SUMMARY ends in two labelled lines carrying the year totals,
+    which is the pair of numbers the whole register is kept for."""
+    sheet = workbook[SUMMARY]
+    amount_row = _labelled_row(sheet, "GRAND TOTAL AMOUNT JAN-DEC'26")
+    fee_row = _labelled_row(sheet, "GRAND TOTAL FEE JAN-DEC'26")
+
+    assert float(sheet.cell(row=amount_row, column=3).value) == 1750.24
+    assert float(sheet.cell(row=fee_row, column=3).value) == 36.51
+    assert sheet.cell(row=amount_row, column=1).font.bold
+    assert _merged(sheet, f"A{amount_row}") == f"A{amount_row}:B{amount_row}"
+
+
+def test_the_summary_row_total_group_closes_the_header(workbook):
+    """AC-G10. The client names it TOTAL VALUE (BY SALESMAN); the kernel default is TOTAL,
+    and the words are the definition's."""
+    sheet = workbook[SUMMARY]
+    assert sheet.cell(row=_GROUP_ROW, column=sheet.max_column - 1).value == "TOTAL"
+
+
+def test_a_row_value_prints_as_it_is_stored(workbook):
+    """AC-G10. Agent names are not uppercased: the register is read by the people in it."""
+    assert workbook[SUMMARY]["A8"].value == "Alice"
+
+
 def test_a_monthly_sheet_totals_its_own_measures(workbook):
     sheet = workbook["JAN'26"]
     total_row = sheet.max_row
-    assert sheet.cell(row=total_row, column=1).value == "GRAND TOTAL"
-    amount_col = _headers(sheet).index("Amount") + 1
-    fee_col = _headers(sheet).index("Fee") + 1
+    assert _grand_total_label_column(sheet) == _column(sheet, "AMOUNT") - 1
+    amount_col = _column(sheet, "AMOUNT")
+    fee_col = _column(sheet, "FEE")
     assert float(sheet.cell(row=total_row, column=amount_col).value) == 1250.25
     assert float(sheet.cell(row=total_row, column=fee_col).value) == 10.50
 
@@ -209,7 +282,7 @@ def test_the_monthly_totals_add_up_to_the_summary_grand_total(workbook):
     monthly = 0.0
     for name in MONTHS:
         sheet = workbook[name]
-        amount_col = _headers(sheet).index("Amount") + 1
+        amount_col = _column(sheet, "AMOUNT")
         value = sheet.cell(row=sheet.max_row, column=amount_col).value
         monthly += float(value) if value is not None else 0.0
     assert round(monthly, 2) == 1750.24
@@ -223,11 +296,15 @@ def test_no_cell_anywhere_in_the_workbook_is_a_formula(workbook):
                 assert not (isinstance(cell.value, str) and cell.value.startswith("="))
 
 
-def test_money_cells_carry_a_thousands_and_two_decimal_format(workbook):
-    assert workbook[SUMMARY]["B8"].number_format == "#,##0.00"
+def test_money_cells_carry_the_clients_accounting_format(workbook):
+    """AC-G9. The RM sits left, the digits align, and a zero prints RM - like the client's."""
+    from app.services.reports.xlsx_renderer import MONEY_FORMAT
+
+    assert '"RM"' in MONEY_FORMAT and "#,##0.00" in MONEY_FORMAT
+    assert workbook[SUMMARY]["B8"].number_format == MONEY_FORMAT
     sheet = workbook["JAN'26"]
-    amount_col = _headers(sheet).index("Amount") + 1
-    assert sheet.cell(row=_FIRST_DATA_ROW, column=amount_col).number_format == "#,##0.00"
+    amount_col = _column(sheet, "AMOUNT")
+    assert sheet.cell(row=_FIRST_DATA_ROW, column=amount_col).number_format == MONEY_FORMAT
 
 
 # ------------------------------------------------------------------ AC-C5 / columns
@@ -249,13 +326,13 @@ def test_the_workbook_carries_exactly_the_views_columns_in_its_order():
             "pivot": definition.default_view["pivot"],
         }
     )
-    with pg_session() as db:
+    with blank_session() as db:
         fixture.create_table(db)
         data = engine.run_workbook(db, definition, definition.default_view["params"], view)
         content = render_workbook(definition, data)
 
     sheet = load_workbook(BytesIO(content))["JAN'26"]
-    assert _headers(sheet) == ["Amount", "Order no", "Agent"]
+    assert _headers(sheet) == ["AMOUNT", "ORDER NO", "AGENT"]
 
 
 def _rendered(columns):
@@ -274,7 +351,7 @@ def _rendered(columns):
             "pivot": definition.default_view["pivot"],
         }
     )
-    with pg_session() as db:
+    with blank_session() as db:
         fixture.create_table(db)
         data = engine.run_workbook(db, definition, definition.default_view["params"], view)
         content = render_workbook(definition, data)
@@ -282,8 +359,8 @@ def _rendered(columns):
 
 
 def test_the_grand_total_label_never_overwrites_a_money_total():
-    """A view whose FIRST column is a measure used to lose that column's total: the label
-    was written into cell A, then the money was written over it."""
+    """A view whose FIRST column is a measure has nowhere to the left to put the label, so
+    it takes the first cell that carries no total rather than writing over the money."""
     sheet = _rendered(["amount", "order_no", "agent"])
     total_row = sheet.max_row
 
@@ -292,11 +369,12 @@ def test_the_grand_total_label_never_overwrites_a_money_total():
     assert float(sheet.cell(row=total_row, column=1).value) == 1250.25
 
 
-def test_the_grand_total_label_still_opens_the_row_when_it_can():
-    """The client's own sheets read GRAND TOTAL in the first column; nothing moves unless
-    that cell carries money."""
+def test_the_grand_total_label_sits_in_the_column_before_the_first_measure():
+    """AC-G9. The client types GRAND TOTAL beside the money, not at the far end of a row
+    the reader has already scrolled past."""
     sheet = _rendered(["order_no", "agent", "amount"])
-    assert sheet.cell(row=sheet.max_row, column=1).value == "GRAND TOTAL"
+    assert _grand_total_label_column(sheet) == _column(sheet, "AMOUNT") - 1
+    assert sheet.cell(row=sheet.max_row, column=_column(sheet, "AGENT")).font.bold
 
 
 def test_a_date_column_is_a_real_date_not_a_string():
@@ -334,10 +412,39 @@ def test_an_empty_column_list_falls_back_to_the_definitions_default_columns():
             "pivot": definition.default_view["pivot"],
         }
     )
-    with pg_session() as db:
+    with blank_session() as db:
         fixture.create_table(db)
         data = engine.run_workbook(db, definition, definition.default_view["params"], view)
         content = render_workbook(definition, data)
 
     sheet = load_workbook(BytesIO(content))["JAN'26"]
-    assert _headers(sheet) == ["Order no", "Amount"]
+    assert _headers(sheet) == ["ORDER NO", "AMOUNT"]
+
+
+# --------------------------------------------------------------------------- AC-G7
+
+
+def test_the_company_name_comes_from_system_settings():
+    """AC-G7. The letterhead is the customer's own, edited in Settings, not a constant a
+    developer has to change per install."""
+    from openpyxl import load_workbook
+
+    from app.models.user import SystemSetting
+    from app.services.reports import engine
+    from app.services.reports.xlsx_renderer import render_workbook
+
+    definition = fixture.definition()
+    with blank_session() as db:
+        fixture.create_table(db)
+        db.add(SystemSetting(id="zzt-settings", name="ZZT Holdings Berhad"))
+        db.flush()
+        data = engine.run_workbook(db, definition, definition.default_view["params"])
+        content = render_workbook(definition, data)
+
+    assert load_workbook(BytesIO(content))[SUMMARY]["A2"].value == "ZZT HOLDINGS BERHAD"
+
+
+def test_the_definition_names_the_company_when_settings_does_not(workbook):
+    """An install that never set one falls back to the definition, which is also what
+    every test in this file renders under (the blank schema holds no settings row)."""
+    assert workbook[SUMMARY]["A2"].value == "ZZT SDN BHD"

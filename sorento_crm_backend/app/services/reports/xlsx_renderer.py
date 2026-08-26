@@ -4,6 +4,13 @@ SUMMARY first (the pivot), then ONE SHEET PER MONTH of the period, named the way
 client's own file names them (JAN'25 .. DEC'25). A month with no rows still gets its sheet:
 a register with eleven tabs reads as a lost month rather than a quiet one.
 
+**The layout is the client's, cell for cell** (AC-G7 to AC-G10): the title block occupies
+rows 2-5 (company, report, the month as a real date, DEPARTMENT), the header is two rows,
+6 and 7, with every single-level label merged vertically and every group merged across its
+members, and the table starts on row 8. What differs per report is DATA, not code: the
+words, the widths and the two summary labels come from the definition's `WorkbookSpec`, and
+a report that declares none of them gets its own column labels uppercased.
+
 **Totals are VALUES, never formulas** (AC-D4). The workbook the client keeps uses SUM
 formulas; ours writes exactly what the engine computed, so an Excel recalculation cannot
 produce a different answer from the screen the user exported.
@@ -16,52 +23,87 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.schemas.report import ReportDetailLayout, ReportPivotLayout
+from app.schemas.report import (
+    ReportColumn,
+    ReportColumnGroup,
+    ReportDetailLayout,
+    ReportPivotLayout,
+)
 from app.services.reports.engine import WorkbookData
-from app.services.reports.registry import ReportDefinition
+from app.services.reports.registry import ReportDefinition, WorkbookSpec
 
-MONEY_FORMAT = "#,##0.00"
+#: Accounting, the way the client's own cells are formatted: the RM is pinned left, the
+#: digits align on the decimal, and a zero prints "RM -" rather than "RM 0.00" (AC-G9).
+MONEY_FORMAT = '_-"RM"* #,##0.00_-;-"RM"* #,##0.00_-;_-"RM"* "-"??_-;_-@_-'
+#: What a money cell with NO value prints. The client types it by hand; a blank cell reads
+#: as an oversight and a 0.00 claims a number nobody has.
+NO_VALUE = "-"
 # The CRM writes dates dd/mm/yyyy everywhere else, and a text date cannot be sorted,
 # filtered or reformatted in Excel - which is most of what a file is opened to do.
 DATE_FORMAT = "DD/MM/YYYY"
+MONTH_FORMAT = "mmm-yy"
 TICK = "X"
 
-_TITLE_FONT = Font(bold=True, size=14)
-_HEADER_FONT = Font(bold=True)
+_COMPANY_FONT = Font(bold=True, size=26)
+_REPORT_FONT = Font(bold=True, size=22)
+_PERIOD_FONT = Font(bold=True, size=22)
+_DEPARTMENT_FONT = Font(bold=True, size=12)
+_HEADER_FONT = Font(bold=True, size=12)
+_TOTAL_FONT = Font(bold=True)
+
 _CENTRE = Alignment(horizontal="center", vertical="center")
+_CENTRE_WRAP = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_LEFT = Alignment(horizontal="left", vertical="center")
 
-# Rows 1-4 are the title block, 5 is blank, so a table's header starts at 6.
-_HEADER_ROW = 6
+_THIN = Side(style="thin")
+_BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+# Row 1 is left empty, as the client's own sheets leave it. 2-5 are the title block, the
+# header is 6-7, and the table starts at 8.
+_COMPANY_ROW = 2
+_REPORT_ROW = 3
+_PERIOD_ROW = 4
+_DEPARTMENT_ROW = 5
+_GROUP_ROW = 6
+_HEADER_ROW = 7
+_FIRST_DATA_ROW = 8
+
+_TITLE_HEIGHTS = {_COMPANY_ROW: 35.25, _REPORT_ROW: 30.75, _PERIOD_ROW: 29.25, _DEPARTMENT_ROW: 19.5}
 
 
-def _title_block(sheet: Worksheet, definition: ReportDefinition, period_label: str) -> None:
-    """Whose report this is, what it is, over what period, for which department (AC-D2)."""
-    sheet["A1"] = definition.workbook.company_name
-    sheet["A1"].font = _TITLE_FONT
-    sheet["A2"] = definition.title
-    sheet["A2"].font = _HEADER_FONT
-    sheet["A3"] = period_label
-    sheet["A4"] = definition.workbook.department or ""
+def _header_text(spec: WorkbookSpec, key: str, label: str) -> str:
+    """The word the client's own sheet prints over this column.
+
+    The definition names the ones where their wording is not ours ("SPONSHER PROJECT"); the
+    rest is the column's own label, uppercased, which is the whole layout for report #2.
+    """
+    return spec.headers.get(key) or (label or "").upper()
 
 
-def _money(value: Optional[str]) -> Optional[Decimal]:
+def _width(spec: WorkbookSpec, key: str) -> float:
+    return spec.column_widths.get(key, spec.default_width)
+
+
+def _decimal(value: Optional[str]) -> Optional[Decimal]:
     return Decimal(value) if value not in (None, "") else None
 
 
-def _write_money(sheet: Worksheet, row: int, column: int, value: Optional[str]) -> None:
+def _write_money(sheet: Worksheet, row: int, column: int, value: Optional[str], *, bold=False):
+    """A money cell: the number when there is one, the client's own "-" when there is not."""
     cell = sheet.cell(row=row, column=column)
-    amount = _money(value)
-    if amount is None:
-        return  # blank, not zero - the client's sheet prints "-" here
-    cell.value = amount
+    amount = _decimal(value)
+    cell.value = NO_VALUE if amount is None else amount
     cell.number_format = MONEY_FORMAT
+    if bold:
+        cell.font = _TOTAL_FONT
+    return cell
 
 
 def _write_date(sheet: Worksheet, row: int, column: int, value: Optional[str]) -> None:
@@ -75,97 +117,124 @@ def _write_date(sheet: Worksheet, row: int, column: int, value: Optional[str]) -
     cell.number_format = DATE_FORMAT
 
 
-def _autosize(sheet: Worksheet, widths: List[int]) -> None:
-    for index, width in enumerate(widths, start=1):
-        sheet.column_dimensions[get_column_letter(index)].width = width
-
-
-def _render_summary(
-    sheet: Worksheet, definition: ReportDefinition, pivot: ReportPivotLayout, period_label: str
+def _title_block(
+    sheet: Worksheet,
+    definition: ReportDefinition,
+    company: str,
+    width: int,
+    period_text: Optional[str],
+    period_date: Optional[date],
 ) -> None:
-    _title_block(sheet, definition, period_label)
-
-    measures = pivot.measures
-    span = max(len(measures), 1)
-    header, sub = _HEADER_ROW, _HEADER_ROW + 1
-
-    sheet.cell(row=header, column=1, value=pivot.row_dim.label).font = _HEADER_FONT
-    sheet.merge_cells(start_row=header, start_column=1, end_row=sub, end_column=1)
-
-    def _group(column: int, label: str) -> None:
-        cell = sheet.cell(row=header, column=column, value=label)
-        cell.font = _HEADER_FONT
+    """The four lines every sheet opens with, merged across the table (AC-G7)."""
+    spec = definition.workbook
+    lines = (
+        (_COMPANY_ROW, (company or spec.company_name).upper(), _COMPANY_FONT),
+        (_REPORT_ROW, (spec.report_title or definition.title).upper(), _REPORT_FONT),
+        (_PERIOD_ROW, period_date or period_text, _PERIOD_FONT),
+    )
+    for row, value, font in lines:
+        cell = sheet.cell(row=row, column=1, value=value)
+        cell.font = font
         cell.alignment = _CENTRE
-        if span > 1:
-            sheet.merge_cells(
-                start_row=header, start_column=column, end_row=header, end_column=column + span - 1
-            )
-        for offset, measure in enumerate(measures):
-            measure_cell = sheet.cell(row=sub, column=column + offset, value=measure.label)
-            measure_cell.font = _HEADER_FONT
-            measure_cell.alignment = _CENTRE
+        if row == _PERIOD_ROW and period_date is not None:
+            cell.number_format = MONTH_FORMAT
+        for column in range(1, width + 1):
+            sheet.cell(row=row, column=column).border = _BOX
+        if width > 1:
+            sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
 
-    column = 2
-    for value in pivot.col_dim.values:
-        _group(column, (pivot.col_dim.value_labels or {}).get(value, value))
-        column += span
-    total_column = column
-    _group(total_column, "TOTAL")
+    label = sheet.cell(row=_DEPARTMENT_ROW, column=1, value="DEPARTMENT:")
+    label.font = _DEPARTMENT_FONT
+    label.alignment = _CENTRE
+    if width > 1:
+        sheet.merge_cells(
+            start_row=_DEPARTMENT_ROW,
+            start_column=1,
+            end_row=_DEPARTMENT_ROW,
+            end_column=min(2, width),
+        )
+    if width > 2:
+        sheet.cell(row=_DEPARTMENT_ROW, column=3, value=spec.department or "").alignment = _LEFT
 
-    row = sub + 1
-    for row_value in pivot.row_values:
-        sheet.cell(row=row, column=1, value=row_value)
-        column = 2
-        for col_value in pivot.col_dim.values:
-            cell_measures = pivot.cells.get(row_value, {}).get(col_value, {})
-            for offset, measure in enumerate(measures):
-                _write_money(sheet, row, column + offset, cell_measures.get(measure.key))
-            column += span
-        for offset, measure in enumerate(measures):
-            _write_money(sheet, row, total_column + offset, pivot.row_totals.get(row_value, {}).get(measure.key))
-        row += 1
-
-    sheet.cell(row=row, column=1, value="GRAND TOTAL").font = _HEADER_FONT
-    column = 2
-    for col_value in pivot.col_dim.values:
-        for offset, measure in enumerate(measures):
-            _write_money(sheet, row, column + offset, pivot.col_totals.get(col_value, {}).get(measure.key))
-        column += span
-    for offset, measure in enumerate(measures):
-        _write_money(sheet, row, total_column + offset, pivot.grand_total.get(measure.key))
-
-    _autosize(sheet, [22] + [14] * (total_column + span - 2))
+    for row, height in _TITLE_HEIGHTS.items():
+        sheet.row_dimensions[row].height = height
 
 
-def _render_detail(
-    sheet: Worksheet, definition: ReportDefinition, detail: ReportDetailLayout, period_label: str
+def _style_header_cells(sheet: Worksheet, width: int) -> None:
+    for row in (_GROUP_ROW, _HEADER_ROW):
+        for column in range(1, width + 1):
+            cell = sheet.cell(row=row, column=column)
+            cell.font = _HEADER_FONT
+            cell.alignment = _CENTRE_WRAP
+            cell.border = _BOX
+    sheet.row_dimensions[_GROUP_ROW].height = 32.25
+
+
+def _write_header(
+    sheet: Worksheet,
+    spec: WorkbookSpec,
+    columns: Sequence[ReportColumn],
+    groups: Sequence[ReportColumnGroup],
+    positions: Dict[str, int],
 ) -> None:
-    _title_block(sheet, definition, period_label)
+    """The client's two-row header: single levels merged DOWN, groups merged ACROSS.
 
-    group_row, header_row = _HEADER_ROW, _HEADER_ROW + 1
-    positions = {column.key: index for index, column in enumerate(detail.columns, start=1)}
+    A single-level label written on the leaf row alone leaves an empty band above every
+    ungrouped column, which is the tell of a header drawn in two halves (AC-G4, AC-G8).
+    """
+    grouped = {key for group in groups for key in group.keys}
 
-    for column in detail.columns:
-        cell = sheet.cell(row=header_row, column=positions[column.key], value=column.label)
-        cell.font = _HEADER_FONT
-        cell.alignment = _CENTRE
+    for column in columns:
+        index = positions[column.key]
+        if column.key in grouped:
+            # A tick column's header is the year itself, written as a number the way the
+            # client writes it, and it stays on the leaf row under its group.
+            label = column.label
+            value = int(label) if str(label).isdigit() else label
+            sheet.cell(row=_HEADER_ROW, column=index, value=value)
+            continue
+        sheet.cell(
+            row=_GROUP_ROW, column=index, value=_header_text(spec, column.key, column.label)
+        )
+        sheet.merge_cells(
+            start_row=_GROUP_ROW, start_column=index, end_row=_HEADER_ROW, end_column=index
+        )
 
-    for group in detail.column_groups:
+    for group in groups:
         members = [positions[key] for key in group.keys if key in positions]
         if not members:
             continue
         first, last = min(members), max(members)
-        cell = sheet.cell(row=group_row, column=first, value=group.label)
-        cell.font = _HEADER_FONT
-        cell.alignment = _CENTRE
+        sheet.cell(
+            row=_GROUP_ROW, column=first, value=_header_text(spec, group.source, group.label)
+        )
         if last > first:
             sheet.merge_cells(
-                start_row=group_row, start_column=first, end_row=group_row, end_column=last
+                start_row=_GROUP_ROW, start_column=first, end_row=_GROUP_ROW, end_column=last
             )
 
-    row = header_row + 1
+    _style_header_cells(sheet, len(columns))
+
+
+def _render_detail(
+    sheet: Worksheet,
+    definition: ReportDefinition,
+    detail: ReportDetailLayout,
+    company: str,
+    period_text: Optional[str],
+    period_date: Optional[date],
+) -> None:
+    spec = definition.workbook
+    columns = list(detail.columns)
+    positions = {column.key: index for index, column in enumerate(columns, start=1)}
+    width = max(len(columns), 1)
+
+    _title_block(sheet, definition, company, width, period_text, period_date)
+    _write_header(sheet, spec, columns, detail.column_groups, positions)
+
+    row = _FIRST_DATA_ROW
     for record in detail.rows:
-        for column in detail.columns:
+        for column in columns:
             index = positions[column.key]
             value = record.get(column.key)
             if column.type == "money":
@@ -177,23 +246,151 @@ def _render_detail(
                 if value:
                     sheet.cell(row=row, column=index, value=TICK).alignment = _CENTRE
             elif value is not None:
-                sheet.cell(row=row, column=index, value=value)
+                sheet.cell(row=row, column=index, value=value).alignment = _LEFT
+            sheet.cell(row=row, column=index).border = _BOX
         row += 1
 
-    # The label opens the row, as the client's own sheets do - unless that cell carries a
-    # total, in which case writing the label over it would silently lose the money. It then
-    # takes the first cell that holds no total, or a dedicated one past the last column.
-    totalled = {c.key for c in detail.columns if c.type == "money" and c.key in detail.totals}
-    label_column = next(
-        (positions[c.key] for c in detail.columns if c.key not in totalled),
-        len(detail.columns) + 1,
-    )
-    sheet.cell(row=row, column=label_column, value="GRAND TOTAL").font = _HEADER_FONT
-    for column in detail.columns:
-        if column.key in totalled:
-            _write_money(sheet, row, positions[column.key], detail.totals[column.key])
+    _write_detail_total(sheet, detail, columns, positions, row)
 
-    _autosize(sheet, [max(12, min(40, (c.size or 120) // 8)) for c in detail.columns])
+    for column in columns:
+        key = next(
+            (g.source for g in detail.column_groups if column.key in g.keys), column.key
+        )
+        sheet.column_dimensions[get_column_letter(positions[column.key])].width = _width(spec, key)
+
+
+def _write_detail_total(
+    sheet: Worksheet,
+    detail: ReportDetailLayout,
+    columns: List[ReportColumn],
+    positions: Dict[str, int],
+    row: int,
+) -> None:
+    """GRAND TOTAL: the label beside the money, the money as the engine computed it.
+
+    The client types the label a column or two left of the first amount, where the eye
+    lands on its way to the number. It takes the cell immediately before the first measure,
+    and when that cell carries a total of its own (a view whose first column IS a measure)
+    the first cell that does not - writing the label over money would lose it silently.
+    """
+    totalled = {c.key for c in columns if c.type == "money" and c.key in detail.totals}
+    measure_positions = [positions[c.key] for c in columns if c.type == "money"]
+    preferred = min(measure_positions) - 1 if measure_positions else 1
+    free = [positions[c.key] for c in columns if c.key not in totalled]
+    label_column = preferred if preferred in free else (min(free) if free else len(columns) + 1)
+
+    cell = sheet.cell(row=row, column=label_column, value="GRAND TOTAL")
+    cell.font = _TOTAL_FONT
+    cell.alignment = _LEFT
+    for column in columns:
+        if column.key in totalled:
+            _write_money(sheet, row, positions[column.key], detail.totals[column.key], bold=True)
+    for index in range(1, len(columns) + 1):
+        sheet.cell(row=row, column=index).border = _BOX
+
+
+def _render_summary(
+    sheet: Worksheet,
+    definition: ReportDefinition,
+    pivot: ReportPivotLayout,
+    company: str,
+    period_label: str,
+    period_compact: str,
+) -> None:
+    """The client's SUMMARY: salesman by month, a TOTAL SALES line, then the year totals."""
+    spec = definition.workbook
+    measures = pivot.measures
+    span = max(len(measures), 1)
+    width = 1 + span * (len(pivot.col_dim.values) + 1)
+
+    _title_block(sheet, definition, company, width, period_label, None)
+
+    sheet.cell(
+        row=_GROUP_ROW, column=1, value=_header_text(spec, pivot.row_dim.key, pivot.row_dim.label)
+    )
+    sheet.merge_cells(start_row=_GROUP_ROW, start_column=1, end_row=_HEADER_ROW, end_column=1)
+
+    def _group(column: int, label: str) -> None:
+        sheet.cell(row=_GROUP_ROW, column=column, value=label)
+        if span > 1:
+            sheet.merge_cells(
+                start_row=_GROUP_ROW,
+                start_column=column,
+                end_row=_GROUP_ROW,
+                end_column=column + span - 1,
+            )
+        for offset, measure in enumerate(measures):
+            sheet.cell(
+                row=_HEADER_ROW,
+                column=column + offset,
+                value=_header_text(spec, measure.key, measure.label),
+            )
+            sheet.column_dimensions[get_column_letter(column + offset)].width = _width(
+                spec, measure.key
+            )
+
+    column = 2
+    for value in pivot.col_dim.values:
+        _group(column, ((pivot.col_dim.value_labels or {}).get(value, value) or "").upper())
+        column += span
+    total_column = column
+    _group(total_column, spec.summary_row_total_label)
+    _style_header_cells(sheet, width)
+    sheet.column_dimensions["A"].width = _width(spec, pivot.row_dim.key)
+
+    row = _FIRST_DATA_ROW
+    for row_value in pivot.row_values:
+        # As stored: the register is read by the people named in it.
+        sheet.cell(row=row, column=1, value=row_value).alignment = _LEFT
+        column = 2
+        for col_value in pivot.col_dim.values:
+            cell_measures = pivot.cells.get(row_value, {}).get(col_value, {})
+            for offset, measure in enumerate(measures):
+                _write_money(sheet, row, column + offset, cell_measures.get(measure.key))
+            column += span
+        for offset, measure in enumerate(measures):
+            _write_money(
+                sheet,
+                row,
+                total_column + offset,
+                pivot.row_totals.get(row_value, {}).get(measure.key),
+            )
+        for index in range(1, width + 1):
+            sheet.cell(row=row, column=index).border = _BOX
+        row += 1
+
+    total_row = row
+    label = sheet.cell(row=total_row, column=1, value=spec.summary_total_row_label)
+    label.font = _TOTAL_FONT
+    label.alignment = _CENTRE
+    column = 2
+    for col_value in pivot.col_dim.values:
+        for offset, measure in enumerate(measures):
+            _write_money(
+                sheet, total_row, column + offset, pivot.col_totals.get(col_value, {}).get(measure.key)
+            )
+        column += span
+    for offset, measure in enumerate(measures):
+        _write_money(sheet, total_row, total_column + offset, pivot.grand_total.get(measure.key))
+    for index in range(1, width + 1):
+        sheet.cell(row=total_row, column=index).border = _BOX
+
+    # One labelled line per measure, the way the client closes their own sheet: the two
+    # numbers the whole register is kept for, spelled out rather than read off a corner.
+    row = total_row + 2
+    for measure in measures:
+        title = " ".join(
+            part
+            for part in ("GRAND TOTAL", _header_text(spec, measure.key, measure.label), period_compact)
+            if part
+        )
+        cell = sheet.cell(row=row, column=1, value=title)
+        cell.font = _TOTAL_FONT
+        cell.alignment = _CENTRE
+        if width > 1:
+            sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+        _write_money(sheet, row, 3, pivot.grand_total.get(measure.key), bold=True)
+        row += 1
 
 
 def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
@@ -201,13 +398,26 @@ def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
     workbook = Workbook()
     summary_sheet = workbook.active
     summary_sheet.title = "SUMMARY"
-    _render_summary(summary_sheet, definition, data.summary, data.period_label)
+    company = data.company_name or definition.workbook.company_name
+    _render_summary(
+        summary_sheet,
+        definition,
+        data.summary,
+        company,
+        data.period_label,
+        data.period_compact_label,
+    )
 
     for sheet in data.sheets:
         # Excel refuses a tab name over 31 characters; a month never is, but a report whose
         # period is a custom range still names its sheets through here.
         _render_detail(
-            workbook.create_sheet(title=sheet.name[:31]), definition, sheet.detail, sheet.label
+            workbook.create_sheet(title=sheet.name[:31]),
+            definition,
+            sheet.detail,
+            company,
+            sheet.label,
+            sheet.month_start,
         )
 
     stream = BytesIO()

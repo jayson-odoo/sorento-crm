@@ -13,10 +13,14 @@ import { cn } from '@/lib/utils';
 import { formatMoney2dp } from '@/lib/helpers';
 import type { ReportColumn, ReportPivotLayout } from '@/services/reportService';
 
-/** Blank, not zero: an absent cell is a form that does not exist, not a form worth nothing. */
+/**
+ * Blank, not zero: an absent cell is a form that does not exist, not a form worth nothing.
+ * A cell that IS zero reads the same way the detail grid and the client's own sheet read it
+ * (AC-G5): "-", never 0.00, which would claim money that came to nothing.
+ */
 function measureText(value: string | undefined, measure: ReportColumn): string {
   if (value == null || value === '') return '';
-  if (measure.type === 'money') return formatMoney2dp(value, '');
+  if (measure.type === 'money') return Number(value) === 0 ? '-' : formatMoney2dp(value, '');
   return value;
 }
 

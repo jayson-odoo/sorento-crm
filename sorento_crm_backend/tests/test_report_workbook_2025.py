@@ -33,6 +33,7 @@ MONTHS = [
 CLIENT_YEAR_PROJECT_VALUE = 257076027.91
 CLIENT_YEAR_SAMPLE_PRICE = 518605.38
 
+_GROUP_ROW = 6
 _HEADER_ROW = 7
 _FIRST_DATA_ROW = 8
 
@@ -75,18 +76,28 @@ def exported(sheets):
 
 
 def _headers(sheet) -> list:
-    return [c.value for c in sheet[_HEADER_ROW]]
+    """The header of every column, wherever it sits: a single-level header is merged up
+    into the group row (AC-G4), a tick column's year stays on the leaf row."""
+    return [
+        sheet.cell(row=_GROUP_ROW, column=index).value
+        if sheet.cell(row=_HEADER_ROW, column=index).value is None
+        else sheet.cell(row=_HEADER_ROW, column=index).value
+        for index in range(1, sheet.max_column + 1)
+    ]
+
+
+def _column(sheet, header: str) -> int:
+    return _headers(sheet).index(header) + 1
 
 
 def _grand_total(sheet, label: str) -> float:
     """The GRAND TOTAL row's cell under a named column, as a float."""
-    column = _headers(sheet).index(label) + 1
-    value = sheet.cell(row=sheet.max_row, column=column).value
-    return 0.0 if value is None else round(float(value), 2)
+    value = sheet.cell(row=sheet.max_row, column=_column(sheet, label)).value
+    return _money(value)
 
 
 def _money(value) -> float:
-    return 0.0 if value is None else round(float(value), 2)
+    return 0.0 if value in (None, "-") else round(float(value), 2)
 
 
 # ------------------------------------------------------------------ shape (AC-D1/D2)
@@ -97,34 +108,64 @@ def test_the_export_is_summary_then_the_twelve_months_of_2025(exported):
 
 
 def test_every_sheet_opens_with_the_clients_title_block(exported):
-    """AC-D2, with the values settled in S3: company Sorento, department PROJECT SALES."""
+    """AC-D2 / AC-G7 / AC-G11: the client's own four lines, in the client's own cells."""
+    from datetime import date, datetime
+
     for name in [SUMMARY] + MONTHS:
         sheet = exported[name]
-        assert sheet["A1"].value == "Sorento"
-        assert sheet["A2"].value == "Sponsorship report"
-        assert sheet["A4"].value == "PROJECT SALES"
-    assert exported[SUMMARY]["A3"].value == "Jan'25 to Dec'25"
-    assert exported["JAN'25"]["A3"].value == "Jan'25"
-    assert exported["DEC'25"]["A3"].value == "Dec'25"
+        assert sheet["A1"].value is None
+        assert sheet["A2"].value == "SORENTO SDN BHD"
+        assert sheet["A3"].value == "SPONSORSHIP"
+        assert sheet["A5"].value == "DEPARTMENT:"
+        assert sheet["C5"].value == "PROJECT SALES"
+
+    assert exported[SUMMARY]["A4"].value == "Jan'25 to Dec'25"
+    january = exported["JAN'25"]["A4"]
+    assert isinstance(january.value, (date, datetime))
+    assert (january.value.year, january.value.month) == (2025, 1)
+    assert january.number_format == "mmm-yy"
+    assert exported["DEC'25"]["A4"].value.month == 12
 
 
-def test_a_monthly_sheet_carries_the_reports_default_columns(exported):
-    """The client's seven columns. The Expected-year group has no member in 2025.
+def test_a_monthly_sheet_carries_the_clients_own_header_row(exported):
+    """AC-G8 / AC-G11. A..G are the client's seven columns, in their words and their
+    order; H..K are the four delivery years, under one merged header, exactly as their
+    own H6:K6 band prints them (empty on all 214 rows of 2025, and still four columns)."""
+    sheet = exported["JAN'25"]
 
-    H..K is empty on all 214 rows of the client's workbook, so there is no delivery year
-    to tick and the group renders no columns at all. That is a fact about the data, not a
-    missing feature (PLAN, S5 contract points).
-    """
-    assert _headers(exported["JAN'25"]) == [
-        "PS No",
-        "Sales agent",
-        "Customer",
-        "Project title",
-        "Sponsor project",
-        "Project value",
-        "Sample price",
+    assert _headers(sheet) == [
+        "PS NO:",
+        "SALES AGENT",
+        "CUSTOMER NAME",
+        "PROJECT TITLE",
+        "SPONSHER PROJECT",
+        "PROJECT VALUE",
+        "SAMPLE PRICE",
+        2025,
+        2026,
+        2027,
+        2028,
     ]
-    assert "Expected year of delivery" not in [c.value for c in exported["JAN'25"][6]]
+    assert sheet["H6"].value == "EXPECTED YEAR OF DELIVERY"
+    assert "H6:K6" in [str(r) for r in sheet.merged_cells.ranges]
+    # Single-level headers are merged DOWN over both header rows, so the client's empty
+    # band above every ungrouped column is not reproduced (AC-G4).
+    assert "A6:A7" in [str(r) for r in sheet.merged_cells.ranges]
+    assert sheet["A7"].value is None
+
+
+def test_the_grand_total_money_sits_where_the_clients_own_sheet_puts_it(exported):
+    """AC-G11. The client's JAN'25 GRAND TOTAL is F25 / G25 - the sixth and seventh
+    columns, under PROJECT VALUE and SAMPLE PRICE, labelled to their left."""
+    sheet = exported["JAN'25"]
+    total_row = sheet.max_row
+
+    assert _column(sheet, "PROJECT VALUE") == 6
+    assert _column(sheet, "SAMPLE PRICE") == 7
+    assert sheet.cell(row=total_row, column=5).value == "GRAND TOTAL"
+    assert sheet.cell(row=total_row, column=5).font.bold
+    assert sheet.cell(row=total_row, column=6).value is not None
+    assert sheet.cell(row=total_row, column=7).value is not None
 
 
 def test_each_sheet_holds_the_same_number_of_rows_the_client_typed(exported, sheets):
@@ -141,39 +182,68 @@ def test_each_monthly_grand_total_equals_the_clients_sheet(exported, sheets):
     """The twelve numbers the client checks the register against, to the cent."""
     for sheet, name in zip(sheets, MONTHS):
         rendered = exported[name]
-        assert _grand_total(rendered, "Project value") == _money(
+        assert _grand_total(rendered, "PROJECT VALUE") == _money(
             sheet["sheet_total_project_value"]
         ), name
-        assert _grand_total(rendered, "Sample price") == _money(
+        assert _grand_total(rendered, "SAMPLE PRICE") == _money(
             sheet["sheet_total_sample_price"]
         ), name
 
 
+def _labelled_row(sheet, label: str) -> int:
+    for row in range(_FIRST_DATA_ROW, sheet.max_row + 1):
+        if sheet.cell(row=row, column=1).value == label:
+            return row
+    raise AssertionError(f"no row labelled {label!r}")
+
+
 def test_the_summary_grand_total_equals_the_clients_c28_and_c29(exported):
+    """AC-G10 / AC-G11. The client's own C28 and C29, under the same two labels, in the
+    same column - the two numbers the register is kept for."""
     sheet = exported[SUMMARY]
-    total_row = sheet.max_row
-    assert sheet.cell(row=total_row, column=1).value == "GRAND TOTAL"
-    # The last group of the header is TOTAL, and its two measures are the year totals.
-    project_value = sheet.cell(row=total_row, column=sheet.max_column - 1).value
-    sample_price = sheet.cell(row=total_row, column=sheet.max_column).value
-    assert round(float(project_value), 2) == CLIENT_YEAR_PROJECT_VALUE
-    assert round(float(sample_price), 2) == CLIENT_YEAR_SAMPLE_PRICE
+
+    project_row = _labelled_row(sheet, "GRAND TOTAL PROJECT VALUE JAN-DEC'25")
+    sample_row = _labelled_row(sheet, "GRAND TOTAL SAMPLE PRICE JAN-DEC'25")
+    assert round(float(sheet.cell(row=project_row, column=3).value), 2) == CLIENT_YEAR_PROJECT_VALUE
+    assert round(float(sheet.cell(row=sample_row, column=3).value), 2) == CLIENT_YEAR_SAMPLE_PRICE
+
+    total_row = _labelled_row(sheet, "TOTAL SALES")
+    assert round(float(sheet.cell(row=total_row, column=sheet.max_column - 1).value), 2) == (
+        CLIENT_YEAR_PROJECT_VALUE
+    )
+    assert round(float(sheet.cell(row=total_row, column=sheet.max_column).value), 2) == (
+        CLIENT_YEAR_SAMPLE_PRICE
+    )
+
+
+def test_the_summary_header_reads_like_the_clients(exported):
+    """AC-G10. SALES AGENT, twelve uppercase month groups, then TOTAL VALUE (BY SALESMAN)."""
+    sheet = exported[SUMMARY]
+
+    assert sheet["A6"].value == "SALES AGENT"
+    assert sheet["B6"].value == "JAN'25"
+    assert sheet["B7"].value == "PROJECT VALUE"
+    assert sheet["C7"].value == "SAMPLE PRICE"
+    assert sheet.cell(row=_GROUP_ROW, column=sheet.max_column - 1).value == (
+        "TOTAL VALUE (BY SALESMAN)"
+    )
 
 
 def test_the_monthly_totals_add_up_to_the_year(exported):
-    project_value = sum(_grand_total(exported[name], "Project value") for name in MONTHS)
-    sample_price = sum(_grand_total(exported[name], "Sample price") for name in MONTHS)
+    project_value = sum(_grand_total(exported[name], "PROJECT VALUE") for name in MONTHS)
+    sample_price = sum(_grand_total(exported[name], "SAMPLE PRICE") for name in MONTHS)
     assert round(project_value, 2) == CLIENT_YEAR_PROJECT_VALUE
     assert round(sample_price, 2) == CLIENT_YEAR_SAMPLE_PRICE
 
 
 def test_the_summary_column_headers_are_the_twelve_months(exported):
     sheet = exported[SUMMARY]
-    labels = [sheet.cell(row=6, column=col).value for col in range(2, sheet.max_column + 1)]
+    labels = [sheet.cell(row=_GROUP_ROW, column=col).value for col in range(2, sheet.max_column + 1)]
     named = [label for label in labels if label]
     assert named == [
-        "Jan'25", "Feb'25", "Mar'25", "Apr'25", "May'25", "Jun'25",
-        "Jul'25", "Aug'25", "Sep'25", "Oct'25", "Nov'25", "Dec'25", "TOTAL",
+        "JAN'25", "FEB'25", "MAR'25", "APR'25", "MAY'25", "JUN'25",
+        "JUL'25", "AUG'25", "SEP'25", "OCT'25", "NOV'25", "DEC'25",
+        "TOTAL VALUE (BY SALESMAN)",
     ]
 
 

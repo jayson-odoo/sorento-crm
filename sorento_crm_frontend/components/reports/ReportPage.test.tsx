@@ -269,6 +269,39 @@ describe('ReportPage', () => {
     expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
 
+  it('reads a zero money cell as "-", the way the client writes it (AC-G5)', async () => {
+    runReport.mockResolvedValue({
+      ...RESULT,
+      layouts: {
+        ...RESULT.layouts,
+        detail: {
+          ...RESULT.layouts.detail,
+          rows: [
+            { request_number: 'PSSF26-0310', sales_agent: 'Eric Ng', project_value: '0.00' },
+            { request_number: 'PSSF26-0313', sales_agent: 'Amirul', project_value: null },
+          ],
+          totals: {},
+        },
+      },
+    });
+    render();
+
+    await screen.findByText('PSSF26-0310');
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
+    // Two rows with no money in them, and a dash in each.
+    expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows the whole period at once, with no pagination control (AC-G2)', async () => {
+    render();
+
+    await screen.findByText('PSSF26-0310');
+    expect(screen.queryByRole('button', { name: /Next page|Go to next page/i })).toBeNull();
+    expect(screen.queryByText(/Rows per page/i)).toBeNull();
+    // Every row of the run is on screen, whatever a default page size would have been.
+    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(RESULT.row_count);
+  });
+
   it('names both tabs, with the row count on the detail one', async () => {
     render();
 

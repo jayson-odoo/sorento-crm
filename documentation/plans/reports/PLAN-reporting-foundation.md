@@ -14,7 +14,15 @@ test-first) BUILT and browser-verified 2026-08-26: `engine.run_workbook` + the r
 SUMMARY plus one sheet per month, the export queue knob, and the AC-D5 diff against the
 client's own workbook. **All five slices are built**; 176 pytest across the reporting
 suite, 26 vitest. Phase 3 review fixes applied 2026-08-26 (see "Contract points settled in
-review"): 196 pytest across the reporting suite, 58 vitest.
+review"): 196 pytest across the reporting suite, 58 vitest. S6 (workbook fidelity, see
+"S6 - workbook fidelity" below) BUILT and browser-verified 2026-08-26 on :3090/:8091: month
+chips, the whole period on one dense page, the fixed four-year delivery band with stable
+ids, single-level headers merged over both header rows, "-" for zero money, and the
+client's own title block, headers, widths, RM accounting format and SUMMARY tail rows in
+the export. 210 pytest across the reporting suite, 92 vitest (reports + shared DataGrid +
+listing column preferences); the JAN'25 export read back with openpyxl carries GRAND TOTAL
+14,850,000.00 / 29,195.00 in F25 / G25 and the SUMMARY closes on the client's own
+257,076,027.91 / 518,605.38.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -379,7 +387,9 @@ their owner only; shared views to anyone with the report permission.
 | S4 | Excel export DONE | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
 | S5 | Local 2025 fixture DONE | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |
 
-Order: S1 -> S2 -> S3 -> S5 -> S4 (S4's diff test needs S5's fixture). Each slice is a PR;
+| S6 | Workbook fidelity DONE | Month chips, one page of dense rows, a FIXED four-year tick group with stable ids, single-level headers merged over both header rows, "-" for zero money, the free text alone for an "others" subject, the hidden Others column; the client's title block, uppercase headers, widths, RM accounting format, labelled GRAND TOTAL and the SUMMARY tail rows; the 2025 diff test extended to cell positions | The default report READS like the register the team keeps by hand, on screen and in Excel |
+
+Order: S1 -> S2 -> S3 -> S5 -> S4 -> S6 (S6's diff test needs S4's export). Each slice is a PR;
 S2 and S3 may share a branch if S2 is small enough to review together.
 
 ## Risks
@@ -399,3 +409,89 @@ S2 and S3 may share a branch if S2 is small enough to review together.
   explanatory prose on screen): the blank cells already say it.
 - **Contact name churn.** `sales_agent` resolves LIVE from the contact FK, so a renamed
   contact regroups history. Accepted (same rule as `requested_by_contact_name`).
+
+## S6 - workbook fidelity
+
+**Why.** The five slices built a report that is CORRECT: the numbers match the client's own
+workbook to the cent. They did not build one that LOOKS like it. Asked to compare the
+export against `SPONSORSHIP REPORT JAN-Dec'25.xlsx`, the user's decision (2026-08-26) was
+that the report on its DEFAULT configuration must read as close to the workbook as the CRM
+allows, on screen and in Excel. That is a fidelity slice, not a feature: the register the
+team keeps by hand is the thing they recognise, and a file that carries the same numbers in
+a different shape still has to be re-read before it is trusted.
+
+**What it is not.** Nothing sponsorship-specific enters the kernel. Every item below is
+either a generic capability (a fixed tick group, a header/width map on the workbook spec, a
+vertically merged single-level header in the shared DataGrid) or a VALUE set in
+`definitions/sponsorship.py`. Report #2 inherits the mechanism and supplies its own words.
+The export still follows whatever columns are on screen (AC-C5 unchanged).
+
+**The reference.** `sorento_crm_backend/tests/fixtures/sponsorship_2025.xlsx`, read with
+openpyxl: monthly sheets carry the title block in rows 2-5 (company 26pt bold, SPONSORSHIP
+22pt, a `mmm-yy` DATE cell in A4, `DEPARTMENT:` in row 5), a two-row header at 6-7 with
+every single-level label merged vertically (A6:A7 ... G6:G7, L6:L7) and
+`EXPECTED YEAR OF DELIVERY` merged across H6:K6 over the four years 2025-2028, data from
+row 8, and a bold GRAND TOTAL line whose money sits in F and G. SUMMARY carries the agent
+in A, twelve month groups of two measures across B..Y, `TOTAL VALUE (BY SALESMAN)` over
+Z..AA, `TOTAL SALES` on row 26 and two labelled year-total rows on 28 and 29.
+
+### Decisions (S6)
+
+1. **The four delivery-year columns are FIXED, not derived.** Period year .. year+3, with
+   STABLE ids `expected_delivery_year_1..4` and the actual years as labels. This is the
+   workbook's own band (2025-2028), and it is also the repair for the S4 defect that
+   survived review: a derived id (`expected_delivery_year__2026`) outlives the result it
+   came from, so switching the period left the user's saved column order naming a column
+   that no longer exists and TanStack logged it on every render. A stable id cannot go
+   stale. `TickGroup.members` is the generic knob (a callable of the query context);
+   unset, it keeps the derived-from-present behaviour the synthetic kernel dataset uses.
+2. **A single-level header spans both header rows.** TanStack puts a PLACEHOLDER above an
+   ungrouped column when any column is grouped, which draws an empty band over most of the
+   header. The shared DataGrid now renders that placeholder as the column's real header
+   with `rowSpan`, and skips the leaf underneath it - the merged cell the workbook has. A
+   grid with one header row has no placeholders, so every flat listing is untouched.
+3. **The whole period is on screen at once.** The register is ~214 rows a year and the
+   workbook has no pages; a page control here only hides rows from a total the user is
+   reading. The page size IS the row count, rows are dense, and the seven default columns
+   plus the four year ticks are sized to fit 1280 without a horizontal scroll.
+4. **Month chips, not a month picker.** The workbook's unit of work is a monthly sheet, so
+   the year period offers All / Jan .. Dec as one click. A chip is a `month_range` period
+   with `from_month == to_month`, which the engine, the export and the sheet naming already
+   understand; a single-month period labels itself `Jan'25` rather than `Jan'25 to Jan'25`.
+5. **Zero is "-" and so is missing.** On screen and in the file. The client's sheet prints
+   `RM -` for a zero and a bare `-` for a value they never had, and both readings are "no
+   money here". Money cells carry the accounting format `_-"RM"* #,##0.00_-;...`, which is
+   what puts the RM and the dash where Excel expects them.
+6. **`Others: Sales Gallery` becomes `Sales Gallery`.** The workbook's SPONSHER PROJECT
+   column holds the free text alone. This SUPERSEDES the S3 contract point that copied the
+   form listing's `<label>: <free text>` shape into the report.
+7. **The sheet's OTHERS column is the form's `purpose`,** hidden by default, and it keeps
+   the catalog key `purpose` so a view saved before S6 still resolves. The LABEL is what
+   the user reads, and it reads Others.
+8. **The company name comes from system settings** (`system_settings.name`), falling back
+   to the definition's `company_name` when it is blank. The local copy still carries the
+   Metronic template name, so a local export says METRONIC until that setting is corrected;
+   the definition's own value is `SORENTO SDN BHD`.
+9. **The display fonts are not reproduced.** The client's file uses Bell MT and Algerian
+   for the two title lines. Neither is a font this system ships, and a missing font
+   substitutes silently per machine, so the export mirrors the SIZES, the weight, the
+   merges, the borders and the widths and leaves the family alone.
+10. **The GRAND TOTAL label sits in the column immediately before the first measure.** The
+    client types it in D (two columns before the money); "immediately before the first
+    measure" is the rule that holds for any column set, including one the user reordered.
+
+### What changed (S6)
+
+| Id | Change | Where |
+|---|---|---|
+| G1 | Month chips under Period; single-month period label | `ReportFilterBar.tsx`, `engine.resolve_period` |
+| G2 | No pagination, page size = row count, dense rows, tuned sizes | `ReportPage.tsx`, dataset column sizes |
+| G3 | Fixed four-year tick group with stable ids | `registry.TickGroup.members` + `period_year_span`, `engine._tick_values` |
+| G4 | Single-level headers span both header rows | `data-grid-table.tsx`, `data-grid-table-dnd.tsx` |
+| G5 | Zero money reads "-"; sponsor subject drops the prefix | `ReportPage.tsx`, `datasets/sponsorship_forms.py` |
+| G6 | `purpose` is labelled Others | `datasets/sponsorship_forms.py` |
+| G7 | Title block rows 2-5, real date cell, DEPARTMENT row | `xlsx_renderer.py`, `WorkbookSpec` |
+| G8 | Uppercase configured headers, vertical + horizontal merges, widths | `xlsx_renderer.py`, `WorkbookSpec.headers` / `column_widths` |
+| G9 | Accounting RM format, "-" for missing, labelled GRAND TOTAL | `xlsx_renderer.py` |
+| G10 | SUMMARY: TOTAL SALES + one labelled year-total row per measure | `xlsx_renderer.py`, `WorkbookSpec` labels |
+| G11 | The 2025 diff test asserts cell POSITIONS as well as numbers | `tests/test_report_workbook_2025.py` |

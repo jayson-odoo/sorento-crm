@@ -1,5 +1,6 @@
 'use client';
 
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -25,6 +26,8 @@ const MONTHS = [
   'November',
   'December',
 ];
+
+const MONTH_CHIPS = MONTHS.map((label) => label.slice(0, 3));
 
 const PERIOD_KIND_OPTIONS = [
   { value: 'month_range', label: 'Month range' },
@@ -64,6 +67,64 @@ function yearOptions(available: number[], ...alsoOffer: (number | undefined)[]):
 }
 
 /**
+ * The month chips: All, Jan .. Dec, under the Period control (AC-G1).
+ *
+ * The workbook this report mirrors is twelve monthly sheets, so a month is the unit the
+ * team actually works in and it has to be ONE click, not three controls. A chip is a
+ * `month_range` period whose ends are the same month - a shape the engine, the sheet
+ * naming and the export already understand - so a single-month export comes out as SUMMARY
+ * plus that one sheet with nothing added to the wire.
+ *
+ * They appear over a year and over a single month, which are the two states they can move
+ * between, and stay out of the way of a real range or a custom date span.
+ */
+function MonthChips({
+  period,
+  onPick,
+  disabled,
+}: {
+  period: ReportPeriod;
+  onPick: (period: ReportPeriod) => void;
+  disabled: boolean;
+}) {
+  const single =
+    period.kind === 'month_range' && period.from_month === period.to_month
+      ? period.from_month
+      : null;
+  if (period.kind === 'custom' || (period.kind === 'month_range' && single === null)) return null;
+
+  const year = period.year;
+  const chip = (label: string, active: boolean, next: ReportPeriod) => (
+    <Button
+      key={label}
+      type="button"
+      size="sm"
+      variant={active ? 'primary' : 'outline'}
+      aria-pressed={active}
+      disabled={disabled}
+      className="h-7 px-2.5"
+      onClick={() => onPick(next)}
+    >
+      {label}
+    </Button>
+  );
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {chip('All', period.kind === 'year', { kind: 'year', year })}
+      {MONTH_CHIPS.map((label, index) =>
+        chip(label, single === index + 1, {
+          kind: 'month_range',
+          year,
+          from_month: index + 1,
+          to_month: index + 1,
+        }),
+      )}
+    </div>
+  );
+}
+
+/**
  * The report filter bar, rendered from `GET /reports/{key}` param meta - never from a
  * per-report component. A new report gets its filters by declaring params, which is what
  * makes report #2 cost two backend files (PLAN "Why a foundation and not a page").
@@ -81,6 +142,10 @@ export function ReportFilterBar({
   onChange: (key: string, value: ReportParamValue) => void;
   disabled?: boolean;
 }) {
+  const periodParam = params.find((param) => param.kind === 'period');
+  const currentPeriod =
+    periodParam?.kind === 'period' ? asPeriod(values[periodParam.key], periodParam.default) : null;
+
   return (
     <div className="flex flex-wrap items-end gap-3">
       {params.map((param) => {
@@ -144,7 +209,11 @@ export function ReportFilterBar({
                 />
               </div>
 
-              {period.kind === 'month_range' && (
+              {/* A ONE-month range is what a chip sets, and the chip row already says
+                  which month it is: repeating it as Year + From + To is three controls
+                  that can only disagree with the chips. A real range (chosen from Period)
+                  still gets them (AC-G1). */}
+              {period.kind === 'month_range' && period.from_month !== period.to_month && (
                 <>
                   <div className="w-full sm:w-32">
                     <Label htmlFor="report-param-period-year">Year</Label>
@@ -256,6 +325,17 @@ export function ReportFilterBar({
           </div>
         );
       })}
+      {/* `w-full` puts the chips on their own line of the wrapping row, under the controls
+          they belong to, at 1280 and at 375 alike. */}
+      {periodParam && currentPeriod && (
+        <div className="w-full">
+          <MonthChips
+            period={currentPeriod}
+            onPick={(next) => onChange(periodParam.key, next)}
+            disabled={disabled}
+          />
+        </div>
+      )}
     </div>
   );
 }

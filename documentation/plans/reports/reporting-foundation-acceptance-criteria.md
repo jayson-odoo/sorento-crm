@@ -139,3 +139,59 @@ up; the file has a SUMMARY sheet and one sheet per month of the chosen period.
   listed at the end with counts, and those rows keep the name in `requested_by` only.
 - **AC-F5.** The workbook is committed as `tests/fixtures/sponsorship_2025.xlsx` (real
   sample, per the e2e-real-samples rule) and is the input of AC-D5.
+
+### G. Workbook fidelity (S6)
+
+The report, on its DEFAULT configuration, reads as close to the client's own workbook as
+the CRM allows, on screen and in Excel. Every item below is configuration on the
+definition, the dataset or the shared renderer, so report #2 inherits the mechanism and
+nothing sponsorship-specific enters the kernel. The export keeps following the columns on
+screen (AC-C5 stands).
+
+- **AC-G1 [FE].** Given the Period is a year, when the report renders, then a chip row
+  reads All, Jan .. Dec under the Period control; clicking a month shows that month's rows
+  and total (the client's monthly sheet) by setting a `month_range` period with
+  `from_month == to_month`, and the chip row reflects the current period. Exporting a
+  single month yields SUMMARY (one month column) plus that one monthly sheet.
+- **AC-G2 [FE].** The detail grid shows every row of the period at once (no pagination
+  control; the page size IS the row count), rows are compact, and the seven default
+  columns plus the four year columns fit at 1280 with no horizontal scroll. Long text
+  still truncates with a `title`.
+- **AC-G3 [BE/FE].** Expected year of delivery is a FIXED group of four columns, the
+  period's year .. year + 3, whatever the data holds. The column ids are stable
+  (`expected_delivery_year_1` .. `_4`) and the labels are the actual years, so switching
+  the period never leaves a stale id in the column preferences and the console error
+  "Column with id 'expected_delivery_year__2026' does not exist" cannot recur. A row whose
+  expected delivery year matches a column shows a check mark; every other cell is blank.
+- **AC-G4 [FE].** A single-level header cell spans BOTH header rows (rowSpan) in the
+  shared DataGrid, so the group row exists only over the grouped columns, as the
+  workbook's merged header does. A flat listing has one header row and is unchanged.
+- **AC-G5 [FE].** A money cell that is zero or missing renders "-". The Sponsor project
+  cell shows the free text ALONE when the subject is "others" (no "Others: " prefix); every
+  other subject reads its lookup label. This supersedes the S3 contract point.
+- **AC-G6 [BE].** The catalog carries the sheet's OTHERS column (the form's `purpose` free
+  text), labelled Others and hidden by default, so a user can show it and export it.
+- **AC-G7 [BE].** Every exported sheet opens with the client's title block: row 2 the
+  company legal name (system settings' company name when it is set, else the definition's),
+  row 3 the report title, row 4 a real date cell formatted `mmm-yy` on a monthly sheet or
+  the period label on SUMMARY, row 5 `DEPARTMENT:` and the department. Rows 2-4 are merged
+  across the table, centred and bold.
+- **AC-G8 [BE].** Header labels are the definition's, uppercase (PS NO:, SALES AGENT,
+  CUSTOMER NAME, PROJECT TITLE, SPONSHER PROJECT, PROJECT VALUE, SAMPLE PRICE, EXPECTED
+  YEAR OF DELIVERY over the four years, OTHERS when shown). A single-level header is
+  merged vertically over rows 6-7, a group header horizontally over its members, both
+  bold and bordered, and column widths come from the definition.
+- **AC-G9 [BE].** A money cell carries the accounting format `"RM"#,##0.00`, so zero
+  prints RM - ; a missing money cell prints "-" as the client's sheet does. The detail
+  GRAND TOTAL row is labelled in the column immediately before the first measure, bold,
+  and its values are still what the engine computed (AC-D4).
+- **AC-G10 [BE].** SUMMARY mirrors the client's: uppercase headers, month headers JAN'25 ..
+  merged over their measures, a `TOTAL VALUE (BY SALESMAN)` group last, a `TOTAL SALES`
+  row of column totals, then one labelled row per measure -
+  `GRAND TOTAL PROJECT VALUE JAN-DEC'25` and `GRAND TOTAL SAMPLE PRICE JAN-DEC'25` -
+  carrying the year totals. Agent names print as stored, never uppercased.
+- **AC-G11 [T].** `tests/test_report_workbook_2025.py` asserts CELL POSITIONS as well as
+  numbers: for JAN'25 the GRAND TOTAL money sits in the same columns as the client's F25 /
+  G25 given the header layout, the title-block cells hold the expected strings, and the
+  twelve monthly totals plus the SUMMARY year totals still match the client's workbook to
+  the cent.

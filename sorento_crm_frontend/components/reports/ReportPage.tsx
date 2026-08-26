@@ -22,11 +22,10 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -128,6 +127,9 @@ function cellFor(column: ReportColumn) {
     }
     if (value == null || value === '') return <span className="text-muted-foreground">-</span>;
     if (column.type === 'money') {
+      // A zero reads as "no money here", not as a number somebody typed - which is why the
+      // client's own sheet prints RM- in that cell rather than 0.00 (AC-G5).
+      if (Number(value) === 0) return <span className="block text-end text-muted-foreground">-</span>;
       return <span className="block text-end tabular-nums">{formatMoney2dp(String(value), '-')}</span>;
     }
     if (column.type === 'date') return <span>{formatDateSafe(String(value))}</span>;
@@ -219,7 +221,6 @@ export function ReportPage({
   const [configureOpen, setConfigureOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('detail');
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
 
   const applyView = (view: ReportView | null, fallback: ReportViewConfig) => {
     const config = view?.view ?? fallback;
@@ -230,7 +231,6 @@ export function ReportPage({
       pivot: config.pivot,
       token: (prev?.token ?? 0) + 1,
     }));
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
 
   // The report opens on the shared default view when one exists, else on the report's own
@@ -294,6 +294,19 @@ export function ReportPage({
     return (effectiveGrid?.order ?? []).filter((id) => present.has(id));
   }, [detailLayout, effectiveGrid]);
 
+  /**
+   * ONE page, always (AC-G2).
+   *
+   * The register this screen mirrors has no pages: a month is a table you read down to its
+   * GRAND TOTAL, and a page control that hides half the rows from a total printed under
+   * them is a way to be quietly wrong. The row set is a year of forms (~214), so the page
+   * size IS the row count; the DataGrid still needs a positive one for its skeletons.
+   */
+  const pagination: PaginationState = {
+    pageIndex: 0,
+    pageSize: Math.max(detailLayout?.rows.length ?? 0, 1),
+  };
+
   const table = useReactTable({
     data: (detailLayout?.rows ?? []) as ReportRow[],
     columns,
@@ -305,7 +318,6 @@ export function ReportPage({
       columnOrder,
     },
     onSortingChange: setSorting,
-    onPaginationChange: setPagination,
     // Both changes start from `effectiveGrid`, which already DISCARDS an override written
     // against an older token. Starting from the raw override instead resurrected the
     // pre-view columns on the first toggle after a saved view was applied.
@@ -354,7 +366,6 @@ export function ReportPage({
 
   const setParam = (key: string, value: ReportParamValue) => {
     setState((prev) => (prev ? { ...prev, params: { ...prev.params, [key]: value } } : prev));
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
 
   const heading = (
@@ -541,7 +552,14 @@ export function ReportPage({
                   recordCount={result.row_count}
                   isLoading={isFetching}
                   listingKey={reportLayoutListingKey(meta.permission, detailLayout.key)}
-                  tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+                  tableLayout={{
+                    width: 'fixed',
+                    columnsResizable: true,
+                    columnsVisibility: true,
+                    // The client reads a whole month at a glance; a comfortable row height
+                    // turns twenty forms into a scroll (AC-G2).
+                    dense: true,
+                  }}
                 >
                   <Card>
                     <CardHeader className="block">
@@ -558,9 +576,6 @@ export function ReportPage({
                         <ScrollBar orientation="horizontal" />
                       </ScrollArea>
                     </CardTable>
-                    <CardFooter>
-                      <DataGridPagination />
-                    </CardFooter>
                   </Card>
                 </DataGrid>
               </TabsContent>

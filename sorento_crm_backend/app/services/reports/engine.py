@@ -96,6 +96,9 @@ class Period:
     end_exclusive: date
     label: str
     months: Tuple[str, ...]
+    #: The period as a total line names it: "JAN-DEC'25". The client's own SUMMARY closes
+    #: with "GRAND TOTAL PROJECT VALUE JAN-DEC'25", so the words are part of the report.
+    compact_label: str = ""
 
 
 def _month_key(value: date) -> str:
@@ -145,7 +148,14 @@ def resolve_period(raw: Any) -> Period:
             raise _invalid("Invalid period: 'year' is required for a yearly period")
         start, end = date(year, 1, 1), date(year + 1, 1, 1)
         suffix = str(year)[2:]
-        return Period(kind, start, end, f"Jan'{suffix} to Dec'{suffix}", _months_between(start, end))
+        return Period(
+            kind,
+            start,
+            end,
+            f"Jan'{suffix} to Dec'{suffix}",
+            _months_between(start, end),
+            f"JAN-DEC'{suffix}",
+        )
 
     if kind == "month_range":
         try:
@@ -161,8 +171,19 @@ def resolve_period(raw: Any) -> Period:
         start = date(year, from_month, 1)
         end = _add_month(date(year, to_month, 1))
         suffix = str(year)[2:]
-        label = f"{_MONTH_ABBR[from_month - 1]}'{suffix} to {_MONTH_ABBR[to_month - 1]}'{suffix}"
-        return Period(kind, start, end, label, _months_between(start, end))
+        # One month is not a range: a month chip that reads "Jan'25 to Jan'25" describes a
+        # span the user never asked for (AC-G1).
+        label = (
+            f"{_MONTH_ABBR[from_month - 1]}'{suffix}"
+            if from_month == to_month
+            else f"{_MONTH_ABBR[from_month - 1]}'{suffix} to {_MONTH_ABBR[to_month - 1]}'{suffix}"
+        )
+        compact = (
+            f"{_MONTH_ABBR[from_month - 1]}'{suffix}"
+            if from_month == to_month
+            else f"{_MONTH_ABBR[from_month - 1]}-{_MONTH_ABBR[to_month - 1]}'{suffix}"
+        ).upper()
+        return Period(kind, start, end, label, _months_between(start, end), compact)
 
     if kind == "custom":
         start = _parse_date(raw.get("from"), "period.from")
@@ -170,8 +191,9 @@ def resolve_period(raw: Any) -> Period:
         if last < start:
             raise _invalid("Invalid period: 'to' is before 'from'")
         end = last + timedelta(days=1)
+        label = f"{start.isoformat()} to {last.isoformat()}"
         return Period(
-            kind, start, end, f"{start.isoformat()} to {last.isoformat()}", _months_between(start, end)
+            kind, start, end, label, _months_between(start, end), label.upper()
         )
 
     raise _invalid(f"Unknown period kind '{kind}'")
@@ -363,26 +385,34 @@ def _detail_statement(ctx: QueryContext, columns: List[reg.Column], *extra):
 
 def _tick_values(
     ctx: QueryContext, columns: List[reg.Column], fetched: List[Any]
-) -> Dict[str, List[str]]:
-    """One tick column per value PRESENT, derived over the whole result.
+) -> Dict[str, List[reg.TickColumn]]:
+    """The member columns of every tick group, computed ONCE over the whole result.
+
+    A group that declares ``members`` (the workbook's fixed 2025..2028 band) gets them from
+    the period, so its ids stay put when the period moves. A group that does not gets one
+    column per value PRESENT.
 
     The workbook splits the same result across twelve sheets, so these are computed once
     and handed to every sheet: derived per sheet, January would come out with one delivery
     year and March with two, and the twelve tables would stop being the same table.
     """
     groups_by_source = {g.source: g for g in ctx.definition.detail.groups}
-    values: Dict[str, List[str]] = {}
-    for source in groups_by_source:
-        if any(c.key == source for c in columns):
-            present = {_dimension_value(row[source]) for row in fetched}
-            values[source] = sorted(v for v in present if v)
+    values: Dict[str, List[reg.TickColumn]] = {}
+    for source, group in groups_by_source.items():
+        if not any(c.key == source for c in columns):
+            continue
+        if group.members is not None:
+            values[source] = list(group.members(ctx, source))
+            continue
+        present = sorted({_dimension_value(row[source]) for row in fetched} - {""})
+        values[source] = [reg.TickColumn(key=f"{source}__{v}", label=v, value=v) for v in present]
     return values
 
 
 def _detail_layout(
     ctx: QueryContext,
     columns: List[reg.Column],
-    tick_values: Dict[str, List[str]],
+    tick_values: Dict[str, List[reg.TickColumn]],
     fetched: List[Any],
 ) -> ReportDetailLayout:
     """Fetched rows -> the wire shape, with a total for every measure among the columns."""
@@ -393,17 +423,18 @@ def _detail_layout(
     out_groups: List[ReportColumnGroup] = []
     for column in columns:
         if column.key in groups_by_source:
-            values = tick_values.get(column.key) or []
-            if not values:
+            members = tick_values.get(column.key) or []
+            if not members:
                 continue
-            keys = [f"{column.key}__{value}" for value in values]
             out_columns.extend(
-                ReportColumn(key=key, label=value, type="bool", size=80)
-                for key, value in zip(keys, values)
+                ReportColumn(key=member.key, label=member.label, type="bool", size=52)
+                for member in members
             )
             out_groups.append(
                 ReportColumnGroup(
-                    label=groups_by_source[column.key].label, source=column.key, keys=keys
+                    label=groups_by_source[column.key].label,
+                    source=column.key,
+                    keys=[member.key for member in members],
                 )
             )
             continue
@@ -421,8 +452,8 @@ def _detail_layout(
             value = fetched_row[column.key]
             if column.key in groups_by_source:
                 rendered = _dimension_value(value)
-                for tick in tick_values.get(column.key) or []:
-                    row[f"{column.key}__{tick}"] = rendered == tick
+                for member in tick_values.get(column.key) or []:
+                    row[member.key] = rendered == member.value
                 continue
             row[column.key] = _cell_value(column, value)
             if column.tag == "measure" and value is not None:
@@ -621,6 +652,9 @@ class WorkbookSheet:
     #: The period line of the title block: Jan'25.
     label: str
     detail: ReportDetailLayout
+    #: The first of the month, so the title block can carry a real DATE cell rather than a
+    #: caption (the client's own A4 is a date formatted mmm-yy).
+    month_start: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -631,6 +665,11 @@ class WorkbookData:
     period_label: str
     summary: ReportPivotLayout
     sheets: List[WorkbookSheet]
+    #: How the company writes its own name on a document. System settings when it is set,
+    #: else the definition's (AC-G7).
+    company_name: str = ""
+    #: "JAN-DEC'25", for the labelled total rows the client's SUMMARY closes with.
+    period_compact_label: str = ""
 
 
 def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -> List[str]:
@@ -694,6 +733,7 @@ def _month_sheets(ctx: QueryContext, view: ReportViewConfig) -> List[WorkbookShe
             name=month_sheet_name(key),
             label=month_label(key),
             detail=_detail_layout(ctx, columns, ticks, by_month.get(key, [])),
+            month_start=date(int(key[:4]), int(key[5:7]), 1),
         )
         for key in ctx.period.months
     ]
@@ -718,4 +758,22 @@ def run_workbook(
         period_label=ctx.period.label,
         summary=_pivot(ctx, effective, cap=False),
         sheets=_month_sheets(ctx, effective),
+        company_name=company_name(db, definition),
+        period_compact_label=ctx.period.compact_label,
     )
+
+
+def company_name(db: Session, definition: reg.ReportDefinition) -> str:
+    """How this installation writes its own name, for the title block (AC-G7).
+
+    System settings is where a customer edits it, so that wins; the definition's value is
+    the fallback for an install that never set one (and for a test with no settings row).
+    """
+    from app.models.user import SystemSetting
+
+    try:
+        stored = db.query(SystemSetting.name).order_by(SystemSetting.id).first()
+    except Exception:  # noqa: BLE001 - a report must not fail over its own letterhead
+        stored = None
+    name = (stored[0] if stored else None) or ""
+    return name.strip() or definition.workbook.company_name

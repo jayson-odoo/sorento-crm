@@ -124,8 +124,9 @@ def test_the_task_honours_the_view_it_was_given(db, registered, download):
         "JAN'26", "FEB'26", "MAR'26", "APR'26", "MAY'26", "JUN'26",
         "JUL'26", "AUG'26", "SEP'26", "OCT'26", "NOV'26", "DEC'26",
     ]
-    assert [c.value for c in workbook["JAN'26"][7]] == ["Order no", "Amount"]
-    assert workbook["SUMMARY"]["A6"].value == "Region"
+    # Single-level headers merge up into the group row (AC-G4/G8).
+    assert [c.value for c in workbook["JAN'26"][6]] == ["ORDER NO", "AMOUNT"]
+    assert workbook["SUMMARY"]["A6"].value == "REGION"
 
 
 def test_the_export_path_ignores_the_sync_caps(db, registered, download, monkeypatch):

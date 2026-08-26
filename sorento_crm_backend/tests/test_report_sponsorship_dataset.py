@@ -246,11 +246,19 @@ def test_sponsor_subject_reads_the_lookup_label(db):
     assert _row(_run(db), "0006")["sponsor_subject"] == "Showroom"
 
 
-def test_sponsor_subject_appends_the_free_text_when_it_is_others(db):
+def test_sponsor_subject_is_the_free_text_alone_when_it_is_others(db):
+    """AC-G5. The workbook's SPONSHER PROJECT column holds the answer, not the question:
+    the client types "SALES GALLERY", never "Others: Sales Gallery"."""
     _form(db, "0007", approved_at=datetime(2026, 1, 11), sponsor_subject="others",
           sponsor_subject_other="Sales Gallery")
 
-    assert _row(_run(db), "0007")["sponsor_subject"] == "Others: Sales Gallery"
+    assert _row(_run(db), "0007")["sponsor_subject"] == "Sales Gallery"
+
+
+def test_sponsor_subject_keeps_the_label_when_others_carries_no_free_text(db):
+    _form(db, "0071", approved_at=datetime(2026, 1, 11), sponsor_subject="others")
+
+    assert _row(_run(db), "0071")["sponsor_subject"] == "Others"
 
 
 def test_expected_delivery_year_is_the_year_of_the_delivery_date(db):
@@ -513,12 +521,21 @@ def test_the_default_detail_columns_are_the_workbook_columns_in_order(db):
     assert view["detail"]["order"] == view["detail"]["columns"]
 
 
-def test_there_is_no_others_column(db):
-    keys = {c.key for c in _definition().dataset.columns}
-    assert not any("other" in key for key in keys)
+def test_the_others_column_is_offered_and_hidden(db):
+    """AC-G6. The sheet's OTHERS column is the form's own `purpose` free text. Hidden by
+    default (the client's twelve sheets leave it empty), offerable in the Columns panel."""
+    dataset = _definition().dataset
+    column = dataset.column("purpose")
+
+    assert column is not None
+    assert column.label == "Others"
+    assert column.type == "text"
+    assert "purpose" not in _definition().default_view["detail"]["columns"]
 
 
-def test_the_delivery_year_renders_as_a_tick_group(db):
+def test_the_delivery_year_renders_as_four_fixed_year_columns(db):
+    """AC-G3. The workbook's own band: the period's year and the three after it, with ids
+    that do not change when the period does."""
     _form(db, "0500", approved_at=datetime(2026, 6, 1),
           expected_delivery_date=date(2026, 9, 1))
     _form(db, "0501", approved_at=datetime(2026, 6, 2),
@@ -528,9 +545,25 @@ def test_the_delivery_year_renders_as_a_tick_group(db):
     group = next(g for g in detail.column_groups if g.source == "expected_delivery_year")
 
     assert group.label == "Expected year of delivery"
-    assert group.keys == ["expected_delivery_year__2026", "expected_delivery_year__2027"]
-    assert _row(_run(db), "0500")["expected_delivery_year__2026"] is True
-    assert _row(_run(db), "0500")["expected_delivery_year__2027"] is False
+    assert group.keys == [f"expected_delivery_year_{index}" for index in range(1, 5)]
+    labels = [c.label for c in detail.columns if c.key in group.keys]
+    assert labels == ["2026", "2027", "2028", "2029"]
+    assert _row(_run(db), "0500")["expected_delivery_year_1"] is True
+    assert _row(_run(db), "0500")["expected_delivery_year_2"] is False
+    assert _row(_run(db), "0501")["expected_delivery_year_2"] is True
+
+
+def test_the_year_columns_are_the_same_ids_in_a_year_with_no_delivery_dates(db):
+    """AC-G3. 2025's 214 rows tick nothing at all; the four columns still print, and they
+    are the same four ids the user's saved column order names."""
+    _form(db, "0502", approved_at=datetime(2026, 7, 1))
+
+    detail = _run(db, {"period": {"kind": "year", "year": 2026}}).layouts.detail
+    group = next(g for g in detail.column_groups if g.source == "expected_delivery_year")
+
+    assert group.keys == [f"expected_delivery_year_{index}" for index in range(1, 5)]
+    assert _row(detail_result := _run(db), "0502")["expected_delivery_year_1"] is False
+    assert detail_result is not None
 
 
 # --------------------------------------------------------------- AC-B8 default summary

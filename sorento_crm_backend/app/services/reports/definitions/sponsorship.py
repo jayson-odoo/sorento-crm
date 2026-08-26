@@ -71,7 +71,14 @@ REPORT = reg.register(
             title="Sponsorships",
             order_by=ds.order_by,
             groups=(
-                reg.TickGroup(source="expected_delivery_year", label="Expected year of delivery"),
+                reg.TickGroup(
+                    source="expected_delivery_year",
+                    label="Expected year of delivery",
+                    # The client's own band: 2025, 2026, 2027, 2028 on a 2025 sheet. Fixed
+                    # rather than derived, so an empty year still prints a column and the
+                    # ids never go stale when the period moves (AC-G3).
+                    members=reg.period_year_span(4),
+                ),
             ),
         ),
         pivot=reg.PivotLayout(title="Summary by salesman"),
@@ -93,6 +100,34 @@ REPORT = reg.register(
                 "measures": ["project_value", "sample_price"],
             },
         },
-        workbook=reg.WorkbookSpec(company_name="Sorento", department="PROJECT SALES"),
+        # The workbook is READ BESIDE the register the team keeps by hand, so it carries
+        # their words, their widths and their two total labels - the client's own spelling
+        # of SPONSHER PROJECT included (AC-G7 to AC-G10). Anything not named here is the
+        # column's label uppercased, which is what report #2 will get for free.
+        workbook=reg.WorkbookSpec(
+            company_name="SORENTO SDN BHD",
+            department="PROJECT SALES",
+            report_title="SPONSORSHIP",
+            headers={
+                "request_number": "PS NO:",
+                "customer_name": "CUSTOMER NAME",
+                "sponsor_subject": "SPONSHER PROJECT",
+            },
+            # The client's own column widths, to the character.
+            column_widths={
+                "request_number": 15.7,
+                "sales_agent": 17.1,
+                "customer_name": 28.3,
+                "project_title": 30.4,
+                "sponsor_subject": 30.4,
+                "project_value": 19.6,
+                "sample_price": 23.3,
+                "expected_delivery_year": 9.5,
+                "purpose": 11.7,
+                "month": 12.0,
+            },
+            summary_row_total_label="TOTAL VALUE (BY SALESMAN)",
+            summary_total_row_label="TOTAL SALES",
+        ),
     )
 )

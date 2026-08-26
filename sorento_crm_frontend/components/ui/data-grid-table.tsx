@@ -109,16 +109,42 @@ function DataGridTableHeadRow<TData>({
   );
 }
 
+/**
+ * A grid with column GROUPS repeats every ungrouped column twice: TanStack puts a
+ * placeholder in the group row and the real header in the leaf row underneath, which draws
+ * an empty band above most of the header. The workbook the reports grid mirrors merges
+ * those cells vertically, so here the PLACEHOLDER carries the header and spans the
+ * remaining rows, and `skipMergedLeafHeader` drops the leaf it stands in for.
+ *
+ * A flat listing has one header row and therefore no placeholders at all, so both helpers
+ * are no-ops on every other listing in the app.
+ */
+function headerRowSpan<TData>(header: Header<TData, unknown>, rowCount: number): number {
+  // `header.depth` is 1-based: the first header row is depth 1.
+  return header.isPlaceholder ? Math.max(rowCount - (header.depth - 1), 1) : 1;
+}
+
+function skipMergedLeafHeader<TData>(header: Header<TData, unknown>, rowCount: number): boolean {
+  if (rowCount <= 1) return false; // a flat listing: nothing to merge
+  if (header.column.parent) return false; // a grouped column keeps its own cell
+  if (header.subHeaders.length > 0 && !header.isPlaceholder) return false; // a real group header
+  // What is left is an ungrouped column below the first header row: the placeholder in
+  // that first row already carries it, spanning down to here.
+  return header.depth > 1;
+}
+
 function DataGridTableHeadRowCell<TData>({
   children,
   header,
   dndRef,
   dndStyle,
+  rowSpan,
 }: {
   children: ReactNode;
   header: Header<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  rowSpan?: number;
 }) {
   const { props } = useDataGrid();
 
@@ -138,6 +164,9 @@ function DataGridTableHeadRowCell<TData>({
       // grouped (the reports detail grid's "Expected year of delivery" ticks) needs the
       // group header to span its leaves, or the two header rows do not line up.
       colSpan={header.colSpan}
+      // 1 on every flat listing. A single-level header in a GROUPED grid spans both header
+      // rows instead of leaving an empty cell above itself (see headerRowSpan).
+      rowSpan={rowSpan && rowSpan > 1 ? rowSpan : undefined}
       style={{
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
@@ -571,20 +600,27 @@ function DataGridTable<TData>() {
       <DataGridTableBase>
         <DataGridTableHead>
           {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
+            const rowCount = table.getHeaderGroups().length;
             return (
               <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-                {headerGroup.headers.map((header, index) => {
-                  const { column } = header;
+                {headerGroup.headers
+                  .filter((header) => !skipMergedLeafHeader(header, rowCount))
+                  .map((header, index) => {
+                    const { column } = header;
 
-                  return (
-                    <DataGridTableHeadRowCell header={header} key={index}>
-                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                      {props.tableLayout?.columnsResizable && column.getCanResize() && (
-                        <DataGridTableHeadRowCellResize header={header} />
-                      )}
-                    </DataGridTableHeadRowCell>
-                  );
-                })}
+                    return (
+                      <DataGridTableHeadRowCell
+                        header={header}
+                        key={index}
+                        rowSpan={headerRowSpan(header, rowCount)}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {props.tableLayout?.columnsResizable && column.getCanResize() && (
+                          <DataGridTableHeadRowCellResize header={header} />
+                        )}
+                      </DataGridTableHeadRowCell>
+                    );
+                  })}
               </DataGridTableHeadRow>
             );
           })}
@@ -674,6 +710,8 @@ function DataGridTable<TData>() {
 
 export {
   footerGroupsWithContent,
+  headerRowSpan,
+  skipMergedLeafHeader,
   DataGridTable,
   DataGridTableBase,
   DataGridTableBody,

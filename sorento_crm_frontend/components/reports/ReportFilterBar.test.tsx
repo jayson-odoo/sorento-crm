@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // Native equivalents of the shared searchable selects: what is asserted here is which
 // OPTIONS a control offers, not popover mechanics.
@@ -103,5 +103,82 @@ describe('ReportFilterBar period', () => {
     expect(screen.getByRole('button', { name: /Custom date range/ })).toBeInTheDocument();
     expect(screen.queryByLabelText('From')).toBeNull();
     expect(screen.queryByLabelText('To')).toBeNull();
+  });
+});
+
+describe('ReportFilterBar month chips (AC-G1)', () => {
+  it('offers All and the twelve months while the period is a year', () => {
+    renderBar(periodParam([2025], { kind: 'year', year: 2025 }), { kind: 'year', year: 2025 });
+
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    for (const month of ['Jan', 'Jun', 'Dec']) {
+      expect(screen.getByRole('button', { name: month })).toHaveAttribute('aria-pressed', 'false');
+    }
+  });
+
+  it('a month chip is a one-month period, which is the client monthly sheet', () => {
+    const onChange = renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'year',
+      year: 2025,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mar' }));
+
+    expect(onChange).toHaveBeenCalledWith('period', {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 3,
+    });
+  });
+
+  it('reflects the month the period is already on, and All returns to the year', () => {
+    const onChange = renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 3,
+    });
+
+    expect(screen.getByRole('button', { name: 'Mar' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(onChange).toHaveBeenCalledWith('period', { kind: 'year', year: 2025 });
+  });
+
+  it('replaces the Year, From and To controls while the range is one month', () => {
+    renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 3,
+    });
+
+    expect(screen.queryByTestId('report-param-period-from')).toBeNull();
+    expect(screen.queryByTestId('report-param-period-to')).toBeNull();
+    expect(screen.queryByTestId('report-param-period-year')).toBeNull();
+  });
+
+  it('leaves a multi-month range to the From and To controls', () => {
+    renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'month_range',
+      year: 2025,
+      from_month: 3,
+      to_month: 6,
+    });
+
+    expect(screen.queryByRole('button', { name: 'All' })).toBeNull();
+    expect(screen.getByTestId('report-param-period-from')).toBeInTheDocument();
+  });
+
+  it('shows no chips on a custom date range', () => {
+    renderBar(periodParam([2025], { kind: 'year', year: 2025 }), {
+      kind: 'custom',
+      from: '2025-02-01',
+      to: '2025-03-15',
+    });
+
+    expect(screen.queryByRole('button', { name: 'Jan' })).toBeNull();
   });
 });

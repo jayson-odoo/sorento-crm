@@ -562,3 +562,88 @@ def test_the_engine_totals_with_decimals_not_floats(db, definition):
     totals = _run(db, definition).layouts.detail.totals
     assert totals["amount"] == "0.30"
     assert Decimal(totals["amount"]) == Decimal("0.30")
+
+
+# ------------------------------------------------------------------ AC-G1 / AC-G3
+
+
+def test_a_single_month_period_is_labelled_as_that_month(db, definition):
+    """AC-G1. A month chip is a month_range of one month; "Jan'26 to Jan'26" reads as a
+    range the user did not ask for."""
+    result = _run(
+        db,
+        definition,
+        {"period": {"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 1}},
+    )
+    assert result.period_label == "Jan'26"
+    assert [r["order_no"] for r in result.layouts.detail.rows] == ["Z-001", "Z-002"]
+
+
+def test_a_single_month_workbook_is_the_summary_and_that_one_sheet(db, definition):
+    """AC-G1. A month chip exports what the client's own monthly tab is: SUMMARY over the
+    one month, then that month's table. Twelve sheets for a month the user narrowed to
+    would hand back the year they had just filtered away."""
+    from app.services.reports import engine
+
+    params = dict(definition.default_view["params"])
+    params["period"] = {"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 1}
+    data = engine.run_workbook(db, definition, params)
+
+    assert [sheet.name for sheet in data.sheets] == ["JAN'26"]
+    assert data.period_label == "Jan'26"
+    assert data.summary.col_dim.values == ["2026-01"]
+
+
+def _fixed_year_definition():
+    """The scratch report with a FIXED four-year tick group instead of a derived one."""
+    from dataclasses import replace
+
+    from app.services.reports import registry as reg
+
+    base = fixture.definition()
+    return replace(
+        base,
+        detail=replace(
+            base.detail,
+            groups=(
+                reg.TickGroup(
+                    source="delivery_year",
+                    label="Delivery year",
+                    members=reg.period_year_span(4),
+                ),
+            ),
+        ),
+    )
+
+
+def test_a_fixed_tick_group_renders_four_years_from_the_period(db):
+    """AC-G3. The workbook's own band: the period's year and the three after it, whatever
+    the data holds, so an empty year is a visible empty column rather than a missing one."""
+    definition = _fixed_year_definition()
+    detail = _run(db, definition).layouts.detail
+    group = detail.column_groups[0]
+
+    assert group.source == "delivery_year"
+    assert group.keys == [f"delivery_year_{index}" for index in range(1, 5)]
+    labels = [c.label for c in detail.columns if c.key in group.keys]
+    assert labels == ["2026", "2027", "2028", "2029"]
+
+    row = next(r for r in detail.rows if r["order_no"] == "Z-003")  # delivery year 2027
+    assert row["delivery_year_2"] is True
+    assert row["delivery_year_1"] is False
+    assert row["delivery_year_4"] is False
+
+
+def test_a_fixed_tick_groups_column_ids_survive_a_change_of_period(db):
+    """AC-G3. A derived id (`delivery_year__2026`) outlives the result it came from: the
+    user's saved column ORDER still names it after the period moves, and the grid logs
+    "Column with id ... does not exist" on every render. A stable id cannot go stale."""
+    definition = _fixed_year_definition()
+
+    keys_2026 = _run(db, definition).layouts.detail.column_groups[0].keys
+    later = _run(db, definition, {"period": {"kind": "year", "year": 2027}})
+    group = later.layouts.detail.column_groups[0]
+
+    assert group.keys == keys_2026
+    labels = [c.label for c in later.layouts.detail.columns if c.key in group.keys]
+    assert labels == ["2027", "2028", "2029", "2030"]

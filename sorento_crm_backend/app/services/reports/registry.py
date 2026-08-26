@@ -20,7 +20,7 @@ basis is a plain column - it cannot depend on itself.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from zoneinfo import ZoneInfo
@@ -203,11 +203,47 @@ def default_value(param: Param) -> Any:
 
 
 @dataclass(frozen=True)
+class TickColumn:
+    """One member of a tick group: the column id, its header, and the value it ticks on."""
+
+    key: str
+    label: str
+    value: str
+
+
+def period_year_span(count: int) -> Callable[[Any, str], List[TickColumn]]:
+    """A FIXED band of year columns: the period's year and the ``count - 1`` after it.
+
+    The workbook this foundation mirrors prints 2025..2028 whether or not a row falls in
+    any of them, and a year with nothing in it is a visible empty column rather than a
+    missing one. The ids are STABLE (``<source>_1`` .. ``<source>_4``) and only the labels
+    move with the period: a derived id (``expected_delivery_year__2026``) outlives the
+    result it came from, so the user's saved column order goes on naming a column that no
+    longer exists the moment the period changes.
+    """
+
+    def members(ctx: Any, source: str) -> List[TickColumn]:
+        first = ctx.period.start.year
+        return [
+            TickColumn(key=f"{source}_{index}", label=str(first + index - 1), value=str(first + index - 1))
+            for index in range(1, count + 1)
+        ]
+
+    return members
+
+
+@dataclass(frozen=True)
 class TickGroup:
-    """A dimension rendered as one tick column per value present, under a merged header."""
+    """A dimension rendered as tick columns under a merged header.
+
+    ``members`` is a callable of (query context, source key). Unset, the group renders one
+    column per value PRESENT in the result - which is all a report needs until the columns
+    have to stay put across periods (see ``period_year_span``).
+    """
 
     source: str
     label: str
+    members: Optional[Callable[[Any, str], Sequence[TickColumn]]] = None
 
 
 @dataclass(frozen=True)
@@ -226,10 +262,30 @@ class PivotLayout:
 
 @dataclass(frozen=True)
 class WorkbookSpec:
-    """The title block every sheet opens with (AC-D2)."""
+    """How the exported workbook READS: the title block, the header words, the widths.
 
+    Every field here is a value a report supplies, never a rule the renderer knows. The
+    sponsorship report mirrors a register the client keeps by hand, down to their own
+    spelling of SPONSHER PROJECT; report #2 says nothing and gets its column labels
+    uppercased, which is the plain version of the same layout (AC-G7, AC-G8, AC-G10).
+    """
+
+    #: The fallback company name. The live one comes from system settings when set.
     company_name: str
     department: Optional[str] = None
+    #: What the SHEET calls this report. The client's own file says SPONSORSHIP where the
+    #: screen says Sponsorship report; unset, the definition's title is used.
+    report_title: Optional[str] = None
+    #: Catalog key or tick-group source -> the header the client's own sheet prints.
+    #: Anything unnamed falls back to the column's label, uppercased.
+    headers: Dict[str, str] = field(default_factory=dict)
+    #: Catalog key or tick-group source -> Excel column width (characters).
+    column_widths: Dict[str, float] = field(default_factory=dict)
+    default_width: float = 16.0
+    #: The summary's last column group: every measure totalled across the row.
+    summary_row_total_label: str = "TOTAL"
+    #: The summary's column-totals row ("TOTAL SALES" on the client's own sheet).
+    summary_total_row_label: str = "TOTAL"
 
 
 # --------------------------------------------------------------------- definition
