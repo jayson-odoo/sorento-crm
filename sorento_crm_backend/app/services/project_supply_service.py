@@ -108,6 +108,7 @@ from app.services.scm.front_planning_engine import (
     Component,
     attribute_sources,
     group_take_reason,
+    pool_reason,
     pool_reserve_capacity,
     propose_line,
     qty_text,
@@ -1030,8 +1031,18 @@ class ProjectSupplyService:
     def _pool_chain(
         self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
     ) -> List[Dict[str, Any]]:
-        """The ordered pool list for `propose_line`'s rung 3: this line's own site pool
-        first, then every OTHER active site pool (section 1b)."""
+        """The DRAW ORDER for rung 3: this line's own site pool first, then every other
+        active site pool BY ON HAND (section 1d).
+
+        By on hand rather than by code, because the rung now draws one pile down across
+        several warehouses (`pools_net` bounds the total, each pool's own free stock bounds
+        its share) and the fullest pool is the one that costs the fewest movements. The code
+        breaks a tie so two runs cannot disagree.
+
+        `available` is still carried per pool: nothing caps a draw with it any more, but the
+        board's trail and the cell table print it, and it is the term the pile's net is
+        summed from.
+        """
         chain: List[Dict[str, Any]] = []
         if fact.pool_code and fact.pool:
             chain.append(
@@ -1041,14 +1052,19 @@ class ProjectSupplyService:
                         fact.pool_free if own_pool_free_left is None else own_pool_free_left
                     ),
                     "available": fact.pool_available,
+                    "on_hand": self._pile_facts()
+                    .get(
+                        (fact.product_id, str(fact.pool.id)),
+                        {"on_hand": _ZERO},
+                    )
+                    .get("on_hand", _ZERO),
                 }
             )
         if not fact.product_id:
             return chain
         seen = {str(fact.pool.id)} if fact.pool else set()
-        for pool_id, pool in sorted(
-            self._site_pool_warehouses().items(), key=lambda item: item[1].warehouse_code
-        ):
+        rest: List[Dict[str, Any]] = []
+        for pool_id, pool in self._site_pool_warehouses().items():
             if pool_id in seen:
                 continue
             free = self._free_at(fact.product_id, pool_id)
@@ -1056,7 +1072,16 @@ class ProjectSupplyService:
                 (fact.product_id, pool_id), {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
             )
             available = triple["on_hand"] - triple["so_qty"] + triple["spo_qty"]
-            chain.append({"location": pool.warehouse_code, "free": free, "available": available})
+            rest.append(
+                {
+                    "location": pool.warehouse_code,
+                    "free": free,
+                    "available": available,
+                    "on_hand": triple["on_hand"],
+                }
+            )
+        rest.sort(key=lambda entry: (-_dec(entry["on_hand"]), entry["location"]))
+        chain.extend(rest)
         return chain
 
     def _group_sibling_warehouses(self, fact: _LineFacts) -> Dict[str, Warehouse]:
@@ -1331,9 +1356,8 @@ class ProjectSupplyService:
             if remaining <= _ZERO:
                 break
             remaining -= min(remaining, max(_dec(candidate.get("qty")), _ZERO))
-        for _location, capacity, _reason in pool_reserve_capacity(
+        for _location, capacity in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
-            is_project_hot_selling=fact.is_project_hot_selling,
             pools=pools,
             pools_net=fact.pools_net,
         ):
@@ -2358,9 +2382,8 @@ class ProjectSupplyService:
         pools = self._pool_chain(fact, own_pool_free_left=None)
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
-        for location, live_qty, _reason in pool_reserve_capacity(
+        for location, live_qty in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
-            is_project_hot_selling=fact.is_project_hot_selling,
             pools=pools,
             pools_net=fact.pools_net,
         ):
@@ -3408,14 +3431,13 @@ class ProjectSupplyService:
         """The rule's own sentence for a confirmed Reserve component, at whichever
         location it named - ladder v3's GROUP first (this line's own location, then its
         siblings), then the pool chain (own site pool, then every other)."""
-        for candidate, _qty, reason in pool_reserve_capacity(
+        for candidate, qty in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
-            is_project_hot_selling=fact.is_project_hot_selling,
             pools=self._pool_chain(fact, own_pool_free_left=None),
             pools_net=fact.pools_net,
         ):
             if candidate == location:
-                return reason
+                return pool_reason(str(location), qty, fact.pools_net)
         for candidate in self._group_take_candidates(fact):
             if candidate["location"] == location:
                 return group_take_reason(

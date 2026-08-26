@@ -2204,8 +2204,10 @@ def test_the_locations_include_the_site_pool_the_suggestion_cites():
         # Ladder v4: the quantity is a share of what the five pools net BETWEEN them, so
         # the reason names that number rather than reading as though this pool held it
         # alone. Here it is the same 1716, because this is the only pool with anything.
+        # The reason names what was TAKEN beside the pile's net, never the rung's
+        # capacity: the sentence travels with the quantity next to it.
         assert source["reason"] == (
-            f"Pool {pool.warehouse_code} lends 1716 of the 1716 the site pools net "
+            f"Pool {pool.warehouse_code} lends 71 of the 1716 the site pools net "
             "between them."
         )
 
@@ -4681,12 +4683,12 @@ def test_a_project_hot_selling_pool_rung_caps_the_draw_at_the_pools_availability
         assert step["pool"]["so_qty"] == "2"
         assert step["pool"]["available"] == "10"
         assert step["opening"] == "12", "nothing of theirs ranks ahead of ours at the pool"
-        assert step["offered"] == "10", "capped at the pool's own availability, not its balance"
+        assert step["offered"] == "10", "bounded by the pools' own net, not by the balance"
         assert step["taken"] == "10"
+        # Ladder v4: the classification leads, and the number after it is the PILE's.
         assert step["why"] == (
-            f"Project hot-selling at {pool.warehouse_code}: {pool.warehouse_code} may be "
-            "drawn while its availability stays positive - 10 available, 10 offered. This "
-            "line takes 10."
+            f"Project hot-selling at {pool.warehouse_code}: the site pools net 10 between "
+            "them, and 10 is offered here. This line takes 10."
         )
 
 
@@ -4713,19 +4715,22 @@ def test_a_project_hot_selling_pool_rung_offers_nothing_when_availability_is_not
         assert step["pool"]["available"] == "-5"
         assert step["offered"] == "0"
         assert step["taken"] == "0"
+        # Ladder v4: the classification is still named first, and the number after it is
+        # the PILE's - 3.3a's per-pool availability cap is gone, the pools' own net bounds
+        # every draw, and here that net is -5.
         assert step["why"] == (
-            f"Project hot-selling at {pool.warehouse_code}: {pool.warehouse_code}'s "
-            "availability is -5, so nothing is offered."
+            f"Project hot-selling at {pool.warehouse_code}: the site pools net -5 between "
+            "them, so no pool is offered."
         )
 
 
-def test_a_cold_pool_rung_says_the_pool_is_oversold_rather_than_offering_its_stale_balance():
-    """A non-hot-selling item shares the same cap `pool_reserve_capacity` gives the
-    hot-selling rungs (`max(min(free, available), 0)`), read here rather than forked. The
-    queue-netted balance ("Had") is still 4 - nothing of THIS line's own book ranks ahead of
-    it - but the pile's signed position is oversold by the wider book, so `offered` must
-    read 0, not the stale balance, and the sentence must say oversold rather than silently
-    printing zero."""
+def test_a_cold_pool_rung_says_the_pile_is_oversold_rather_than_offering_its_stale_balance():
+    """Ladder v4: one cap for every item, and it is the PILE's net.
+
+    The queue-netted balance ("Had") is still 4 - nothing of THIS line's own book ranks
+    ahead of it - but the five pools' signed position is oversold by the wider book, so
+    `offered` must read 0 rather than the stale balance, and the sentence must say WHY
+    rather than silently printing a zero."""
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -4748,8 +4753,7 @@ def test_a_cold_pool_rung_says_the_pool_is_oversold_rather_than_offering_its_sta
         assert step["offered"] == "0"
         assert step["taken"] == "0"
         assert step["why"] == (
-            f"Cold at retail: {pool.warehouse_code} is oversold (-5 available), so nothing "
-            "is offered."
+            "Cold at retail: the site pools net -5 between them, so no pool is offered."
         )
 
 
@@ -5786,14 +5790,48 @@ def test_the_group_rung_names_the_group_net_when_the_group_has_nothing_for_this_
         assert sibling.warehouse_code not in step["why"]
 
 
-def test_the_pool_rung_names_the_pools_net_only_when_that_net_is_what_refused_it():
-    """AC-L8. One pool oversold and another holding 1: per-pool arithmetic would offer the
-    1, and the five pools net -102 between them, so nothing is offered and the sentence
-    says which number decided.
+def test_the_group_rung_says_when_incoming_spent_the_offer_rather_than_nothing_being_free():
+    """The group's SPO is INSIDE its net, so rung 1 can spend this rung's whole offer
+    before it is reached.
 
-    A pool that had nothing to give on its own terms keeps its own, more specific reason -
-    that case is covered by the cold/oversold sentences this one deliberately does not
-    replace.
+    Saying "none of it sits free" there sends a planner looking for stock that was never
+    the point: the quantity is covered, on the rung above, by a document they can chase.
+    Both numbers are named - the group's net and what it leaves for this line - because
+    they are different facts (AC-L14).
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        group = f"IB{_uid()[:4]}"
+        own = _warehouse(db, f"ZZTS{_uid()[:4]}-{group}"[:20])
+        _incoming(
+            db, product, own,
+            spo_number="ZZT-SPO-V4G", allocated=40, received=0, arrives=date(2026, 8, 20),
+        )
+        # 60 asked for against 40 arriving: the group nets -20, which leaves 40 for this
+        # line, and rung 1 spends all 40 of it. The line is NOT fully covered, so the group
+        # rung is really reached and really has to explain itself.
+        ours = _order(db, so_number="ZZT-SO-V4SPO", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="60", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build(["ZZT-SO-V4SPO"], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "group_take")
+        assert step["offered"] == "0"
+        assert f"The {group.upper()} group nets -20, leaving 40 for this line" in step["why"]
+        assert "incoming supply already covers 40 of it" in step["why"]
+        assert "sits free" not in step["why"]
+        # And the whole-line rule then buys the 60, since 40 is not all of it.
+        assert contribution["qty_proposed_buy"] == "60"
+
+
+def test_the_pool_rung_names_the_pools_net_and_the_classification_in_front_of_it():
+    """AC-L8. One pool oversold and another holding 1: per-pool arithmetic would offer the
+    1, and the five pools net -102 between them, so nothing is offered.
+
+    The sentence names the pile's net, and the classification first, because "just tell me
+    hot selling or cold selling" is the captain's own instruction about this rung and the
+    net is a different fact from it.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -5814,5 +5852,8 @@ def test_the_pool_rung_names_the_pools_net_only_when_that_net_is_what_refused_it
 
         step = _step(contribution, "pool")
         assert step["offered"] == "0"
-        assert "The site pools net -102 between them" in step["why"]
+        assert "the site pools net -102 between them" in step["why"]
+        assert step["why"].startswith("Not classified"), (
+            "the classification leads the sentence, per the captain's own instruction"
+        )
         assert contribution["qty_proposed_buy"] == "10"
