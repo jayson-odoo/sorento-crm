@@ -290,6 +290,13 @@ export interface OrderInquiryWorklistParams {
    * kind"; `none` means no link at all, which is the buyer's own worklist.
    */
   linked?: 'po' | 'spo' | 'none';
+  /**
+   * WHAT the row still needs, which is the cards' own filter (AC-I11) and a different
+   * question from `linked`: a row linked 5 of 8 to a purchase order carries `po` AND
+   * `buy`, so it answers to either card, while `linked` asks only where its links point.
+   * A cancelled row carries no kind at all - its quantity is not owed any more.
+   */
+  kind?: OrderInquiryKind;
   page?: number;
   limit?: number;
   sort?: string;
@@ -318,6 +325,20 @@ export interface OrderInquiryFacet {
   rows: number;
 }
 
+/**
+ * The three answers purchasing has for a row (section 3.I2): the quantity is on an SPO
+ * already on its way, it is on a purchase order, or nobody has put it on anything.
+ * `_shared/lib/orderInquiryKinds` holds the words, the colours and the arithmetic.
+ */
+export type OrderInquiryKind = 'spo' | 'po' | 'buy';
+
+/** The `kinds` facet: quantity, per kind, over every matching row (AC-I11). */
+export interface OrderInquiryKindTotals {
+  spo: string;
+  po: string;
+  buy: string;
+}
+
 export interface OrderInquiryWorklistSummary {
   /** The visible set: every filter applied, the month included. */
   total_rows: number;
@@ -342,6 +363,15 @@ export interface OrderInquiryWorklistSummary {
   projects: OrderInquiryFacet[];
   /** The people who raised the rows in view, id + name. The "Raised by" filter's list. */
   raised_by: OrderInquiryFacet[];
+  /**
+   * The three cards above both views: quantity linked to SPO allocations, quantity
+   * linked to purchase order lines, and the unlinked remainder that still has to be
+   * bought. Computed over every matching row rather than the page on screen - a card
+   * that counted one page would claim less than pressing it reveals - and with the
+   * `kind` filter itself dropped, like every other control here, so pressing one card
+   * leaves the other two readable.
+   */
+  kinds: OrderInquiryKindTotals;
 }
 
 /* --------------------------------------------------------- the schedule matrix

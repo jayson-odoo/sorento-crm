@@ -14,6 +14,13 @@ import {
   OrderInquiryStatePill,
   OrderInquiryVerbPill,
 } from '../../_shared/components/OrderInquiryVerbPill';
+import { SupplyBar } from '../../fulfilment-planning/components/SupplyBar';
+import {
+  KIND_COLOURS,
+  KIND_LABELS,
+  fullyLinked,
+  segmentsOfRow,
+} from '../../_shared/lib/orderInquiryKinds';
 import {
   flowExclusionLabel,
   formatInquiryQty,
@@ -234,16 +241,35 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
             row.original.linked_qty,
             row.original.links,
           );
+          // The same bar the schedule draws, off the same three kinds (AC-I14), so the
+          // two views of this worklist cannot read differently: an unlinked row is a
+          // solid rose bar over the words that say so, a row linked 5 of 8 is sky over
+          // rose. No legend beside it - the cards above the list carry the words.
+          const bar = (
+            <SupplyBar
+              segments={segmentsOfRow(row.original)}
+              decided={fullyLinked([row.original])}
+              labels={KIND_LABELS}
+              colours={KIND_COLOURS}
+              className="mt-1 max-w-[120px]"
+            />
+          );
           if (!summary) {
             // Not a dash: on their own sheet a blank PO column is what "still to link"
             // looks like, and the word says which of the two it is.
-            return <Muted>Not linked</Muted>;
+            return (
+              <div className="min-w-0">
+                <Muted>Not linked</Muted>
+                {bar}
+              </div>
+            );
           }
           return (
             <div className="min-w-0">
               <span className="block truncate text-xs font-medium tabular-nums">
                 {summary.headline}
               </span>
+              {bar}
               {summary.documents.map((entry) => {
                 const link = (row.original.links ?? []).find(
                   (candidate) =>
