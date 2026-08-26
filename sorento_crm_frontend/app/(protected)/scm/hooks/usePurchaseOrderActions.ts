@@ -13,6 +13,8 @@ import {
 // instead of the buyer finding out on the next reload (AC-I13).
 import {
   ORDER_INQUIRY_KEY,
+  ORDER_INQUIRY_PO_CANDIDATES_KEY,
+  ORDER_INQUIRY_PO_DETAIL_KEY,
   ORDER_INQUIRY_ROWS_KEY,
   ORDER_INQUIRY_SUMMARY_KEY,
   ORDER_INQUIRY_WORKLIST_KEY,
@@ -48,7 +50,11 @@ export function usePurchaseOrderActions() {
   // Every order-inquiry read a link can move: the per-project rows and summary, the
   // inquiry itself, and purchasing's cross-project worklist WITH its summary - the
   // summary is where the three cards' `kinds` facet lives, so leaving it out would flip
-  // a cell to Use PO under cards that still counted it as a Buy.
+  // a cell to Use PO under cards that still counted it as a Buy. The last two are the
+  // "Place on PO" dialog's own reads, invalidated for the same reason the order-inquiry
+  // screen's own placement hook invalidates them: a purchase order this pass confirmed
+  // or deleted is a candidate whose remaining quantity has changed, or a header and set
+  // of lines that no longer exist at all.
   const invalidateOrderInquiries = () =>
     [
       ORDER_INQUIRY_ROWS_KEY,
@@ -56,6 +62,8 @@ export function usePurchaseOrderActions() {
       ORDER_INQUIRY_KEY,
       ORDER_INQUIRY_WORKLIST_KEY,
       ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
+      ORDER_INQUIRY_PO_CANDIDATES_KEY,
+      ORDER_INQUIRY_PO_DETAIL_KEY,
     ].forEach((queryKey) => queryClient.invalidateQueries({ queryKey: [queryKey] }));
 
   const confirm = useMutation({

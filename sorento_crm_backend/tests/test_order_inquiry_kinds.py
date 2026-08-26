@@ -12,7 +12,8 @@ purchase order lines, and the remainder nobody has put anywhere - the same three
 * the visible TOTALS (`total_rows` / `total_qty`) DO honour `kind`, because they describe
   what is on screen;
 * a CANCELLED row contributes to neither the facet nor the `kind` filter - its quantity
-  is not owed any more;
+  is not owed any more, and neither does an ACTIONED one, which has been answered
+  somewhere else (the same two `scm.committed_v` and `_quantity_flow_by_so_line` drop);
 * `kind` is a closed set, refused at 422 like every other filter here.
 """
 from __future__ import annotations
@@ -27,6 +28,7 @@ from sqlalchemy import text
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -433,6 +435,41 @@ def test_kinds_sums_spo_po_and_the_unlinked_remainder_across_the_matching_rows(a
     # contributes nothing here - it is wholly linked - and row_cancelled contributes
     # nothing at all, however large its own quantity is.
     assert body["kinds"]["buy"] == "73"
+
+
+def test_an_actioned_row_contributes_to_neither_the_facet_nor_the_buy_card(api):
+    """An actioned row has already been answered elsewhere - `_quantity_flow_by_so_line`
+    and `scm.committed_v` both drop it - so its unlinked remainder is not a purchase
+    anybody still has to make. Counting it would have purchasing buy the same quantity a
+    second time."""
+    client, db, company_id, seeded = api
+
+    actioned_product = _product(
+        db, f"ZZT-KIND-ACTIONED-{_uid()[:6]}", f"{MARKER} actioned product"
+    )
+    order, line = _order_and_line(
+        db, company_id, seeded["project_p"].id, actioned_product, "40", date(2026, 1, 15)
+    )
+    inquiry = _inquiry(db, company_id, order.id, seeded["raiser1"])
+    row_actioned = _row(
+        db,
+        company_id,
+        inquiry.id,
+        line.id,
+        actioned_product.product_code,
+        "40",
+        delivery_date=date(2026, 1, 15),
+        state=INQUIRY_ACTIONED,
+    )
+    db.commit()
+
+    body = client.get(SUMMARY).json()
+    # Unmoved by the 40 that row carries: still row_po's 3 + row_rest's 20 +
+    # row_other_project's 50.
+    assert body["kinds"]["buy"] == "73"
+
+    listed = client.get(LIST, params={"kind": "buy", "limit": 50}).json()
+    assert row_actioned.id not in {row["id"] for row in listed["data"]}
 
 
 def test_a_cancelled_row_contributes_to_the_facet_not_at_all(api):

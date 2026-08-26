@@ -109,6 +109,10 @@ describe('usePurchaseOrderActions - bulkDelete', () => {
     // Deleting a PO can unplace a row - the order-inquiry reads must refetch too.
     expect(keys).toContain(JSON.stringify(['project-order-inquiry-rows']));
     expect(keys).toContain(JSON.stringify(['order-inquiry-worklist']));
+    // Including the "Place on PO" dialog's own two reads: the purchase order this pass
+    // deleted is neither a candidate nor a header anybody can still open.
+    expect(keys).toContain(JSON.stringify(['order-inquiry-po-candidates']));
+    expect(keys).toContain(JSON.stringify(['order-inquiry-po-detail']));
   });
 
   it('bulkDelete surfaces the extracted error on failure', async () => {
