@@ -53,7 +53,7 @@ depends_on = None
 _RETAIL = "retail"
 
 #: The agent codes the captain ruled on, and ONLY those.
-_RULED_RETAIL = ("LCL", "KATHERINE", "XUAN", "JAMYN CHANG")
+_RULED_RETAIL = ("LCL", "KATHERINE", "XUAN", "JAMYN CHANG", "JACKSON I", "JACKSON IV")
 
 _MARKER = "scm.agent_class_backfill_427"
 
