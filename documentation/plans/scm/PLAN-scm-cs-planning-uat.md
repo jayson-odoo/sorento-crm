@@ -207,6 +207,26 @@ is the price of `available_to_this_line` retiring, and it is the behaviour AC-L7
 Golden set changes again with the captain's sign-off. Status: RULED 26 Aug, build queued
 ahead of part 3.
 
+## 1e. Ladder v5: four questions, and the proof reads them (captain, 26 Aug, walking SO381895)
+
+The v4 numbers are right; the trail and the popover still have the v3 shape. The captain, on SRTSA-SS / SRTWB241 / SRTWB243 / SRTWC8605-SC-RL: "our thought process is simpler now". Rulings:
+
+| Question, in order | Reader | Answer shown |
+| --- | --- | --- |
+| 1. Can we use our location? | own ownership GROUP net (`group_net`, v4 1d) | "Yes, N from BRW-IB (+ siblings)" or "No, the IB group nets -969" |
+| 2. Can we take from the pool? | all five pools as one pile (v4); the dealer hot-selling gate refuses the WHOLE pile (BRW, DC1, MWH, RSW, WH3) even though the order is booked at BRW | "Yes, N from BRW (pile nets 268)" or "No, dealer hot-selling" |
+| 3. Can we borrow from another location? | another ownership group as ONE pile: `donor_group_net` over every `*-<group>` site, capped by the cross-group limit | "Yes, N from DC1-NTC (NTC group nets 166)" or "No, NTC / IR / BB net 0, or the cap (N) is below what is left" - the cap number is printed |
+| 4. Can we borrow from the same agent's other order in this group? | 1c, manual only | never proposed; the row reads "a person's pick in Amend" with the donors named |
+| Else | Buy | "Buy N" |
+
+- **Incoming (SPO) is no longer a rung.** SPO stays INSIDE the group net (AutoCount's available already counts it); the rung and its proof row go. Incoming reaches a line through Link SPO on its order-inquiry row.
+- **Order (captain, 26 Aug, second pass):** own location -> pool -> borrow other location -> borrow other order -> Buy. The rungs, the proof rows AND the decision-strip cards follow this one order; the v4 rung order (pool before cross-group) stands, the card order changes to match.
+- **Other-group rows in the popover table:** every site of the donor group is listed with a group subtotal, exactly as the own group is, not only the site the ladder drew from (`_cited_locations` expands to the siblings). Each row carries its own signed available; the subtotal carries the net.
+- **Staleness:** a line with NO decision shows the LIVE suggestion; the frozen `proposed_components` snapshot is read only beside a decided line (that is what Suggested-vs-Decided is for) and is re-written at every confirm. The "(before ladder v4)" tag then appears only on a decided line whose snapshot predates v4.
+- The proof dialog is rewritten as the four questions plus Buy, one row each, "Yes, took N from X" / "No, because ...", figures beside the words. The rung names (own, group take, pool, cross-group borrow, group borrow) are internal; the trail shows the questions.
+
+Status: RULED 26 Aug; build queued after part 3 as one PR.
+
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 
 Decided by the engine's `rung`, never by comparing warehouse codes:

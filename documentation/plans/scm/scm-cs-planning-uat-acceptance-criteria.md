@@ -113,3 +113,14 @@ Fixture: SO381895 re-uploaded with form (3): SRTWCX7405-RL-S-PJ 10 + 10 + 5 on 2
 - AC-P3-11 After apply, the board cell and the Order Inquiries page agree: SO381895 shows one raised row of 25 for SRTWCX7405-RL-S-PJ and two cancelled rows; `committed_v` for the product counts 25 and nothing else for that SO.
 - AC-P3-12 Tests land in the same PR: pytest for apply (update in place with id kept, link shift to the survivor then cascade, late flag, over-cover unlink latest-dated first, release to pool with links, transfer flag, second apply refused); vitest for the Was / Now cell, the pre-marked decision words, Confirm carrying `batch`, the retired page's entry points.
 - AC-P3-13 Browser evidence on the lane: form (3) re-upload of SO381895, board opened from the Planning changes list, three annotations (on one cell when the closed instalments have no cell of their own), Confirm, OI page showing the 25 row with its links and the two cancelled rows.
+
+## Ladder v5, four questions (ruled 26 Aug)
+- AC-V1 The proof dialog shows exactly five rows: the four questions in order (own group, pool, other group, same agent's other order) and Buy; each reads "Yes, took N from X" or "No, <reason with the figure>"; no row named Incoming.
+- AC-V2 SPO is not a rung: a line whose group net is positive only because of an SPO is served from the group (question 1) and the trail names the group net, not the SPO.
+- AC-V3 The other-group block of the popover table lists every site of the donor group with a subtotal, each row with its own signed available; the subtotal equals `donor_group_net`.
+- AC-V4 Question 3 names the cap in the No sentence when the cap is what refused it, and the suggestion note never says borrowing is possible where the trail says nothing is left.
+- AC-V5 Question 4 is never proposed; its row names the same-agent donors and reads as a person's pick.
+- AC-V6 A dealer hot-selling product is refused at question 2 for the whole pile: DC1 and MWH pool stock is not offered when the product is hot-selling at BRW.
+- AC-V7 Pool (question 2) is walked before other-group borrow (question 3): with 24 needed, pool free 268 and other-group free 100 within cap, the proposal is Pool 24, not Borrow 24. The decision-strip cards read in the same order: own, pool, borrow other location, borrow other order, Buy.
+- AC-V8 A line with no decision shows the live suggestion with no "(before ladder v4)" tag; a decided line shows its frozen snapshot, re-written at confirm.
+- AC-V9 Golden set updated with the captain's sign-off; pytest for AC-V1..V8; vitest for the five-row proof and the expanded other-group block; browser evidence on SO381895's SRTSA-SS, SRTWB241, SRTWC8605-SC-RL cells.
