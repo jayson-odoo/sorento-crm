@@ -55,7 +55,10 @@ from tests._pg_fixture import pg_session
 MARKER = "ZZTISO"
 
 # The header row the seeded `import_field_alias` rows map (doc_type = outstanding_so).
-_HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION"]
+# `ORDER TYPE` is on every SO header set here because since QP1 an upload naming an order
+# nothing can classify is refused outright, and these files name debtors this test invents
+# - a company-isolation case must not be measuring the refusal instead.
+_HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION", "ORDER TYPE"]
 
 # The same, for doc_type = outstanding_po. The creditor code is the PO book's third
 # company-scoped lookup, alongside the item code and the stock location.
@@ -64,7 +67,7 @@ _PO_HEADERS = ["PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "ETA", "STO
 # The SO headers plus the debtor code, for the tests about the customer LINK. Kept off
 # `_HEADERS` so the lookup tests above still exercise a file that names no counterparty.
 _SO_DEBTOR_HEADERS = ["S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
-                      "STOCK LOCATION"]
+                      "STOCK LOCATION", "ORDER TYPE"]
 
 
 def _u() -> str:
@@ -82,9 +85,15 @@ def _workbook(rows, headers=None) -> bytes:
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(headers or _HEADERS)
+    head = headers or _HEADERS
+    ws.append(head)
     for row in rows:
-        ws.append(list(row))
+        row = list(row)
+        # Every SO row states DEALER, which is the class these orders effectively imported
+        # with before QP1 (an unclassified line counted exactly as a retail one does).
+        if head[-1] == "ORDER TYPE" and len(row) == len(head) - 1:
+            row.append("DEALER")
+        ws.append(row)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
