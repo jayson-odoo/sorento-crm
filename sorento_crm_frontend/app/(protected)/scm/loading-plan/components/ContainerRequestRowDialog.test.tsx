@@ -99,10 +99,39 @@ describe('ContainerRequestRowDialog', () => {
     expect(suggestion).toHaveTextContent('2,426');
     // The arithmetic, spelled out (AC-B5).
     expect(suggestion).toHaveTextContent('need 3,999 - pool stock 1,573 - SPO 0 = 2,426');
-    expect(suggestion).toHaveTextContent(
-      'Incoming PL 600 and outstanding PO 297 are not deducted',
-    );
+    // Gone: "Incoming PL 600 and outstanding PO 297 are not deducted" was a sentence
+    // teaching the reader the rule, which the UI does not do (PRINCIPLES design mandates).
+    // The two figures keep their own section further down, labelled, not explained.
+    expect(suggestion).not.toHaveTextContent('not deducted');
     expect(suggestion).toHaveTextContent('They hold 522 packed');
+  });
+
+  it('reads the stand-in proforma quantity, not the zeroed packed field', () => {
+    // The backend zeroes `qty_packed` on a proforma-sourced row, so the dialog said "They
+    // hold 0" under a grid cell reading 400.
+    renderDialog({
+      holding_source: 'proforma',
+      holding_qty: 400,
+      holding_as_of: '2026-07-31',
+      qty_packed: 0,
+      qty_unfinished: 0,
+    });
+
+    expect(screen.getByTestId('row-suggestion')).toHaveTextContent('They hold 400 on PI');
+  });
+
+  it('says nothing is on file when neither document names the product', () => {
+    renderDialog({ holding_source: 'none', holding_qty: null, qty_packed: 0, qty_unfinished: 0 });
+
+    expect(screen.getByTestId('row-suggestion')).toHaveTextContent('Nothing of theirs on file');
+  });
+
+  it('renders the ask the server computed rather than recomputing the netting', () => {
+    // One netting rule, and it is the server's (`suggested_qty`). A second copy in the
+    // browser is a copy that can disagree with the number the grid was built from.
+    renderDialog({ suggested_qty: 111, open_so_need: 9_999, on_hand: 1, incoming_spo: 1 });
+
+    expect(screen.getByTestId('row-suggestion')).toHaveTextContent('= 111');
   });
 
   it('shows the ask she edited, not the suggestion she overrode', () => {

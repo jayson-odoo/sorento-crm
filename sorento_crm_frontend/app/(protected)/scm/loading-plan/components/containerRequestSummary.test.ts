@@ -72,7 +72,7 @@ describe('summariseContainerRequest', () => {
   });
 
   it('follows the edited quantity, not the suggestion', () => {
-    const rows = [row({ open_so_need: 100, suggested_qty: 100, qty_packed: 60 })];
+    const rows = [row({ open_so_need: 100, suggested_qty: 100, qty_packed: 60, holding_qty: 60 })];
 
     const s = summariseContainerRequest(rows, () => 25);
 
@@ -82,7 +82,7 @@ describe('summariseContainerRequest', () => {
   });
 
   it('caps what they can pack now at what they actually hold packed', () => {
-    const rows = [row({ open_so_need: 100, suggested_qty: 100, qty_packed: 12 })];
+    const rows = [row({ open_so_need: 100, suggested_qty: 100, qty_packed: 12, holding_qty: 12 })];
 
     expect(summariseContainerRequest(rows, asked).canPackNow).toBe(12);
   });
@@ -99,5 +99,45 @@ describe('summariseContainerRequest', () => {
 
     expect(s.askCbm).toBeCloseTo(5);
     expect(s.askCbmUnmeasured).toBe(1);
+  });
+});
+
+describe('summariseContainerRequest - what the supplier can pack today', () => {
+  it('counts the packed figure on a stock-list row', () => {
+    const out = summariseContainerRequest(
+      [row({ suggested_qty: 500, holding_source: 'stock_list', holding_qty: 120, qty_packed: 120 })],
+      asked,
+    );
+
+    expect(out.canPackNow).toBe(120);
+  });
+
+  it('counts the invoiced quantity on a proforma row, not the zeroed packed field', () => {
+    // The backend zeroes `qty_packed` on a proforma-sourced row: a proforma states one
+    // quantity per line and there is no packed/unfinished split to report. Reading that
+    // field made the card say 0 while the grid beside it said 400.
+    const out = summariseContainerRequest(
+      [
+        row({
+          suggested_qty: 500,
+          holding_source: 'proforma',
+          holding_qty: 400,
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      asked,
+    );
+
+    expect(out.canPackNow).toBe(400);
+  });
+
+  it('counts nothing when neither document names the product', () => {
+    const out = summariseContainerRequest(
+      [row({ suggested_qty: 500, holding_source: 'none', holding_qty: null, qty_packed: 0 })],
+      asked,
+    );
+
+    expect(out.canPackNow).toBe(0);
   });
 });

@@ -52,7 +52,11 @@ export function summariseContainerRequest(
     summary.fromPool += pool;
     summary.fromSpo += spo;
     summary.toAsk += qty;
-    summary.canPackNow += Math.min(qty, row.qty_packed);
+    // Whatever their own latest statement says they have - the stock list's packed figure
+    // or the stand-in proforma's quantity. `qty_packed` alone reads 0 on a proforma row (the
+    // backend zeroes it: a proforma states one quantity and no packed/unfinished split), so
+    // this card said 0 under a grid cell reading 400.
+    summary.canPackNow += Math.min(qty, row.holding_qty ?? 0);
     if (qty > 0) {
       if (row.cbm_per_unit === null) summary.askCbmUnmeasured += 1;
       else summary.askCbm += qty * row.cbm_per_unit;

@@ -154,6 +154,21 @@ function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
 }
 
 /**
+ * What "They hold" sorts by.
+ *
+ * A stock-list row sorts on its UNFINISHED quantity: this column replaced the standalone
+ * "Waiting on production" list, which was ordered that way, and sorting on the packed figure
+ * instead throws that ordering away - the supplier with 500 unfired bodies stops surfacing,
+ * which is the one thing the list existed to show. A proforma row has no unfinished half, so
+ * it sorts on the single quantity it states. A row neither document names sorts below every
+ * row that carries a figure, rather than tying with a real zero.
+ */
+export function holdingSortValue(row: ContainerRequestRow): number {
+  if (row.holding_source === 'stock_list') return row.qty_unfinished;
+  return row.holding_qty ?? -1;
+}
+
+/**
  * What the supplier says they hold, in the words of whichever document said it (F1).
  *
  * A stock list states two quantities and they are never summed - packed can go on a
@@ -294,7 +309,7 @@ export function ContainerRequestSection({
         min={0}
         className="h-8 w-24 tabular-nums"
         value={qty}
-        title="need - on hand at site pools - SPO at site pools, floored at 0. Incoming PL and outstanding PO are references and are not deducted."
+        title="Suggested qty"
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
@@ -379,13 +394,13 @@ export function ContainerRequestSection({
           const original = row.original;
           if (original.has_demand === false) {
             return (
-              <span className="text-2xs text-muted-foreground" title="gross open SO demand">
+              <span className="text-2xs text-muted-foreground" title="Need">
                 No open demand
               </span>
             );
           }
           return (
-            <span className="tabular-nums" title="gross open SO demand">
+            <span className="tabular-nums" title="Need">
               {fmtInt(original.open_so_need)}
             </span>
           );
@@ -416,10 +431,7 @@ export function ContainerRequestSection({
         accessorKey: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
         cell: ({ row }) => (
-          <span
-            className="tabular-nums"
-            title="site pools only; group locations are in the breakdown"
-          >
+          <span className="tabular-nums" title="On hand">
             {fmtInt(row.original.on_hand)}
           </span>
         ),
@@ -431,7 +443,7 @@ export function ContainerRequestSection({
         accessorKey: 'incoming_spo',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums" title="SPO on the water, landing at a site pool">
+          <span className="tabular-nums" title="SPO">
             {fmtInt(row.original.incoming_spo)}
           </span>
         ),
@@ -445,10 +457,7 @@ export function ContainerRequestSection({
         // Muted because it is a reference: a packing list names no destination, so it can be
         // read beside the ask but never subtracted from it (Q1).
         cell: ({ row }) => (
-          <span
-            className="tabular-nums text-muted-foreground"
-            title="unreceived packing-list qty, reference only - never deducted"
-          >
+          <span className="tabular-nums text-muted-foreground" title="Incoming PL - reference only">
             {fmtInt(row.original.incoming_pl)}
           </span>
         ),
@@ -460,7 +469,7 @@ export function ContainerRequestSection({
         accessorKey: 'outstanding_po',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums" title="placed but not yet shipped">
+          <span className="tabular-nums" title="Outstanding PO - reference only">
             {fmtInt(row.original.outstanding_po)}
           </span>
         ),
@@ -515,9 +524,11 @@ export function ContainerRequestSection({
       {
         id: 'holding',
         // Sortable on purpose (captain follow-up): this cell replaced the standalone
-        // "Waiting on production" list, which was ordered by unfinished quantity descending.
-        // `accessorFn` gives the sort its number; the cell itself still shows both figures.
-        accessorFn: (row) => row.holding_qty ?? -1,
+        // "Waiting on production" list, which was ordered by unfinished quantity descending -
+        // so a stock-list row still sorts by what is UNFINISHED, which is what that list was
+        // for. A proforma row has no unfinished half, so it sorts by the one quantity it
+        // states. `accessorFn` gives the sort its number; the cell shows the figures.
+        accessorFn: holdingSortValue,
         header: ({ column }) => <DataGridColumnHeader title="They hold" column={column} />,
         cell: ({ row }) => <HoldingCell row={row.original} />,
         size: 110,
