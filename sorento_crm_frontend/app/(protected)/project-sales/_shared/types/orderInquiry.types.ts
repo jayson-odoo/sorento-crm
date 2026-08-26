@@ -72,6 +72,12 @@ export interface OrderInquiryLink {
    * filter, only a rank - a link outside tier 1 is the split instruction for AutoCount.
    */
   tier?: number | null;
+  /**
+   * The document arrives AFTER the row's own required date (AC-P3-7). Stated, never acted
+   * on: purchasing decides whether a late document is still the answer, and unlinking it
+   * for lateness would leave the row with nothing rather than with something late.
+   */
+  late?: boolean;
   /** Written by the cascade rather than by a person. */
   auto?: boolean;
   linked_at?: string | null;

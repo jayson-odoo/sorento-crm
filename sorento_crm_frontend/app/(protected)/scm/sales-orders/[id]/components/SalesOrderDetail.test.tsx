@@ -1239,7 +1239,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(body.lines[0].uom).toBe('');
   });
 
-  it('shows the planning-change banner when a save raises one, linking to it, and it clears on the next edit', async () => {
+  it('shows the planning-change banner when a save raises one, opening the board on it, and it clears on the next edit', async () => {
     // Same envelope key the SO-book upload's own preview surfaces
     // (`OutstandingUploadDialog`'s `PlanningChangeBatchCard`) - PLAN-so-book-diff
     // -replanning.md section 2.
@@ -1253,9 +1253,11 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText('Planning changes raised on 2 lines')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Review' })).toHaveAttribute(
+    // AC-P3-1: straight to the BOARD, on this order and this batch. There is no batch
+    // page any more - the plan has one screen and one vocabulary.
+    expect(screen.getByRole('link', { name: 'Plan' })).toHaveAttribute(
       'href',
-      '/project-sales/planning-changes/batch-77',
+      '/project-sales/fulfilment-planning?orders=SO-2026%2F07-0042&batch=batch-77',
     );
 
     // A fresh edit session clears the stale notice - it describes the LAST save, not this one.

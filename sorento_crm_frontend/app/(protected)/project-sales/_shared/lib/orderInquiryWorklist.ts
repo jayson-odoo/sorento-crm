@@ -116,16 +116,22 @@ export function linkedSummary(
   qty: string | null | undefined,
   linkedQty: string | null | undefined,
   links: OrderInquiryLink[] | null | undefined,
-): { headline: string; documents: { document: string; kind: 'po' | 'spo'; parts: string }[] } | null {
+): {
+  headline: string;
+  documents: { document: string; kind: 'po' | 'spo'; parts: string; late: boolean }[];
+} | null {
   const list = links ?? [];
   if (list.length === 0) return null;
-  const grouped: { document: string; kind: 'po' | 'spo'; parts: string[] }[] = [];
+  const grouped: { document: string; kind: 'po' | 'spo'; parts: string[]; late: boolean }[] = [];
   for (const link of list) {
     let entry = grouped.find((g) => g.document === link.document && g.kind === link.kind);
     if (!entry) {
-      entry = { document: link.document, kind: link.kind, parts: [] };
+      entry = { document: link.document, kind: link.kind, parts: [], late: false };
       grouped.push(entry);
     }
+    // AC-P3-7: any line of this document landing after the row needs it makes the
+    // document late. Said, never acted on - purchasing decides.
+    if (link.late) entry.late = true;
     // The line when the book numbered it, the location when it did not: both name WHICH
     // line of the document holds the quantity, and a bare number beside a document with
     // six open lines names nothing.
@@ -138,6 +144,7 @@ export function linkedSummary(
       document: g.document,
       kind: g.kind,
       parts: g.parts.join(', '),
+      late: g.late,
     })),
   };
 }
