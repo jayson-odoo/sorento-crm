@@ -140,6 +140,26 @@ export function BoardCellBreakdownDialog({
    * is a claim about the ladder rather than about the record. Verified live on SO324132 rev
    * 1, whose four lines all predate the field.
    */
+  /**
+   * Was this suggestion composed by a ladder that no longer runs?
+   *
+   * A frozen proposal outlives the rule that made it, and its sentences say so - "MWH-IB
+   * has 30 available in the IB group" is v3 reading ONE warehouse's availability, which
+   * under v4 is not a reading anybody makes. Shown as a short label on the card's own title
+   * rather than a sentence beside it: what a planner needs is to know they are looking at
+   * history, and a paragraph explaining ladder versions is a feature explanation in the UI.
+   *
+   * Only a FROZEN proposal can be old. A live one is today's by definition, so an undecided
+   * cell never carries the label.
+   */
+  const suggestionIsPreV4 = React.useMemo(
+    () =>
+      cell.contributions.some(
+        (entry) =>
+          entry.proposed?.components?.some((part) => !part.ladder) ?? false,
+      ),
+    [cell.contributions],
+  );
   const suggestionRecorded = React.useMemo(
     () => cell.contributions.some((entry) => contributionSuggestion(entry) !== null),
     [cell.contributions],
@@ -554,7 +574,7 @@ export function BoardCellBreakdownDialog({
             <CompositionCard
               testId="cell-suggestion"
               rowTestId="suggestion"
-              title="Suggestion"
+              title={suggestionIsPreV4 ? 'Suggestion (before ladder v4)' : 'Suggestion'}
               rows={suggestion}
               empty={
                 suggestionRecorded

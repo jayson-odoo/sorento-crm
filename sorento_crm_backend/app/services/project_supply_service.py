@@ -120,6 +120,12 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
+#: The ladder that composed a proposal, stamped on every component frozen at confirm
+#: (`_proposed_component`). Read by the board so a suggestion made under an older rule can
+#: be labelled as one rather than read as today's answer. Bumped when the rungs change what
+#: they MEAN, never when a sentence is reworded.
+LADDER_VERSION = "v4"
+
 #: The statuses a Project SO may be confirmed in. A draft has not left the building and a
 #: blocked one has findings in the way.
 #:
@@ -1432,6 +1438,13 @@ class ProjectSupplyService:
                 # A location in no ownership group is its own pile: nobody else's backlog
                 # has a prior claim on it, so its free stock is the honest cap and there is
                 # no group net to measure it against.
+                #
+                # MEASURED, 26 August 2026: no such warehouse exists on the book. All 60
+                # active codes are either a bare site (`BRW`, `DC1`, `MWH`, `RSW`, `WH3`,
+                # the five pools, excluded above) or `SITE-GROUP`. This branch is here for
+                # a warehouse somebody adds later, and it fails OPEN - offering its free
+                # stock, as ladder v3 did - rather than silently withholding a location
+                # nobody has classified yet.
                 offer = free
             if offer <= _ZERO:
                 continue
@@ -3415,6 +3428,13 @@ class ProjectSupplyService:
             "source_warehouse_id": self.warehouse_id_for_code(component.source_location),
             "reason": component.reason,
             "rung": component.rung,
+            # WHICH LADDER wrote this proposal. A frozen suggestion outlives the rule that
+            # made it - `MWH-IB has 30 available in the IB group` is a v3 sentence about a
+            # warehouse's own availability, and under v4 that reading does not exist - so a
+            # screen showing it beside a live one has to be able to say which is which.
+            # Its ABSENCE is the signal for every snapshot written before this key: a JSON
+            # column needs no migration to grow one, and "no stamp" is exactly "pre v4".
+            "ladder": LADDER_VERSION,
             "donor_so_number": component.donor_so_number,
             "donor_line_no": component.donor_line_no,
             "donor_agent_code": component.donor_agent_code,
