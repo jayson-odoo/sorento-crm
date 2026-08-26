@@ -2856,6 +2856,11 @@ class ProjectOrderInquiryService:
             query = narrowed
 
         rows = self._rank_raised_rows(query.all())
+        # LADDER V4 (section 1d): prime the availability reader ONCE, from every product
+        # this pass will ask about. `_netting` rebuilds whenever it meets a product it has
+        # not seen, so a loop that met them one at a time would rebuild per row - three
+        # queries each, over a growing product list, on a pass that names thousands.
+        self._netting([self._resolve_product_id(row) for row in rows])
 
         placed_rows = 0
         allocation_count = 0
