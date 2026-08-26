@@ -60,6 +60,8 @@ const EMPTY_SOURCES: ContainerRequestSources = {
   po_book_as_of: null,
   spo_as_of: null,
   stock_list_as_of: null,
+  proforma_as_of: null,
+  proforma_pi_number: null,
 };
 
 const state = {
@@ -125,6 +127,9 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     unclassified_qty: 0,
     earliest_required_date: '2026-09-01',
     so_count: 2,
+    holding_source: 'stock_list' as const,
+    holding_qty: 3,
+    holding_as_of: null,
     qty_packed: 3,
     qty_unfinished: 1,
     cbm_per_unit: null,
@@ -177,22 +182,31 @@ describe('ContainerRequestSection - loading / empty / error states', () => {
     expect(screen.queryByText('What to ask Foshan Ceramics for')).not.toBeInTheDocument();
   });
 
-  it('offers a CTA to upload a stock list when this supplier has none yet, not a bare table', () => {
+  it('says there is nothing to ask for, and still offers the stock-list upload', () => {
+    // AC-A1: a missing stock list is no longer an empty state. The plan builds from what we
+    // buy from them and what customers are owed, so the ONLY empty state left is "there is
+    // genuinely nothing to ask for" - and the upload is a next step, not a prerequisite.
     state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
     const { onUploadStockList } = renderSection();
 
-    expect(screen.getByText(/no stock list for foshan ceramics yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no stock list for foshan ceramics yet/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /upload stock list/i }));
     expect(onUploadStockList).toHaveBeenCalledTimes(1);
   });
 
-  it('says plainly when the supplier\'s products carry no open demand', () => {
-    state.build.data = { stock_list_as_of: '2026-08-18T00:00:00', rows: [], sources: EMPTY_SOURCES };
+  it('renders the table with no stock list at all, on demand alone', () => {
+    // The regression AC-A1 exists to prevent: a supplier who has never sent a stock list used
+    // to get a CTA instead of a plan.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [row({ holding_source: 'none', holding_qty: null, qty_packed: 0, qty_unfinished: 0 })],
+      sources: EMPTY_SOURCES,
+    };
     renderSection();
 
-    expect(
-      screen.getByText(/no open customer demand for what foshan ceramics supplies/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText('ITEM-1')).toBeInTheDocument();
+    expect(screen.queryByText(/nothing to ask foshan ceramics for/i)).not.toBeInTheDocument();
   });
 
   it('shows the error and lets her try again', () => {
@@ -213,6 +227,59 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.getByText('ITEM-1')).toBeInTheDocument();
     expect(screen.getByText('Widget')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument(); // so_count
+  });
+
+  // AC-A2 / AC-A3: "They hold" says WHICH document said it.
+  it('reads packed and unfinished off a stock list', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ holding_source: 'stock_list', holding_qty: 3, qty_packed: 3, qty_unfinished: 7 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('3 packed')).toBeInTheDocument();
+    expect(screen.getByText('7 unfinished')).toBeInTheDocument();
+  });
+
+  it('reads the stand-in proforma with a PI badge, not as packed stock', () => {
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [
+        row({
+          holding_source: 'proforma',
+          holding_qty: 300,
+          holding_as_of: '2026-07-31',
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      sources: { ...EMPTY_SOURCES, proforma_as_of: '2026-07-31', proforma_pi_number: 'PI-7' },
+    };
+    renderSection();
+
+    expect(screen.getByText('300')).toBeInTheDocument();
+    // Twice: once in the freshness strip, once on the row - both name the stand-in.
+    expect(screen.getAllByText(/PI 31\/07\/2026/)).toHaveLength(2);
+    // Not "0 packed": a proforma states one quantity per line and there is no unfinished
+    // half of it to report, so reporting zeroes would be inventing the supplier's words.
+    expect(screen.queryByText(/0 packed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
+    // The freshness strip names the document the holdings actually came from.
+    expect(screen.queryByText(/Stock list/)).not.toBeInTheDocument();
+  });
+
+  it('reads a dash when neither document names the product', () => {
+    // Not a zero: "they have told us nothing" and "they told us they have none" are
+    // different answers, and only one of them lets the plan proceed on their word.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [row({ holding_source: 'none', holding_qty: null, qty_packed: 0, qty_unfinished: 0 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.queryByText('0 packed')).not.toBeInTheDocument();
   });
 
   // AC-A2.2: the column is gone for good, unclassified demand or not - it goes with part 2's
@@ -509,22 +576,11 @@ describe('ContainerRequestSection - requests already sent', () => {
 });
 
 describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card survives every early return', () => {
-  it('renders on the no-stock-list branch', () => {
+  it('renders on the nothing-to-ask-for branch', () => {
     state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
     renderSection();
 
-    expect(screen.getByText(/no stock list for foshan ceramics yet/i)).toBeInTheDocument();
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-    expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
-  });
-
-  it('renders on the zero-rows (no open demand) branch', () => {
-    state.build.data = { stock_list_as_of: '2026-08-18T00:00:00', rows: [], sources: EMPTY_SOURCES };
-    renderSection();
-
-    expect(
-      screen.getByText(/no open customer demand for what foshan ceramics supplies/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
     expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
     expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
   });
