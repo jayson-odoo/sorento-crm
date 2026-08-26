@@ -191,7 +191,24 @@ _SPO_LINKED_PO_ID = (
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
-_PLACED_PO_ID = func.coalesce(_LINKED_PO_ID, _SPO_LINKED_PO_ID)
+# The row's OWN `spo_ref` - the coverage reference the netting engine writes on an
+# ALREADY INBOUND / PRE-ORDERED row (`ProjectOrderInquiryService._write`), which is not a
+# placement at all and never became a link. Kept as the last leg: those rows are traceable
+# to a purchase order through the shipping order that covers them, and dropping the leg
+# when placements moved to the links table would have blanked their Supplier and PO no
+# columns for a reason that has nothing to do with linking.
+_SPO_REF_PLACED_PO_ID = (
+    select(PurchaseOrderLine.purchase_order_id)
+    .select_from(SPOAllocation)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == SPOAllocation.po_line_id)
+    .where(SPOAllocation.spo_number == OrderInquiryRow.spo_ref)
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_PLACED_PO_ID = func.coalesce(
+    _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
+)
 
 #: Does this row hold a link of each kind? The "Linked" filter's own predicates (AC-I5),
 #: stated once so the filter and the column cannot disagree about what "linked to a PO"
@@ -914,6 +931,12 @@ class OrderInquiryWorklistService:
         one arbitrarily. `LIMIT 2` is enough to tell "one" from "more than one" without
         pulling the whole matching set.
         """
+        # `linked` is forced, so whatever the caller sent for it is dropped rather than
+        # passed twice - the same treatment `state` gets at the route, and for the same
+        # reason: this action is about LINKED rows however the list happens to be
+        # filtered. Sending both is a TypeError, which the route turns into a 500 and the
+        # dialog into "could not check linked rows".
+        filters.pop("linked", None)
         visible = self._base(**filters, linked="any")
         count = int(
             visible.with_entities(func.count(OrderInquiryRow.id)).order_by(None).scalar()
@@ -948,6 +971,7 @@ class OrderInquiryWorklistService:
         job stops at resolving WHICH rows are in scope; the two can never disagree about
         what a linked row is because both read off the same "holds a link" predicate.
         """
+        filters.pop("linked", None)
         visible = self._base(**filters, linked="any")
         row_ids = [row_id for (row_id,) in visible.all()]
         return ProjectOrderInquiryService(self.db).unplace_rows(row_ids)

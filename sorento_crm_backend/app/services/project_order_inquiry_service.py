@@ -396,6 +396,18 @@ class ProjectOrderInquiryService:
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
             carried = bool(entry.get("carried"))
+            # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
+            # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
+            # DONOR hole raised by `_raise_borrow_shortfalls`, which supersedes and nets it
+            # by its own rule. The two writers never meet on one line - the whole-line rule
+            # (AC-L5) makes a line either wholly stock or wholly Buy - and this is what
+            # keeps them apart.
+            order_back = bool(entry.get("order_back")) and need > _ZERO
+            owned_verbs = (
+                (IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)
+                if order_back
+                else (IV_ORDER, IV_CANCEL_BALANCE)
+            )
             # This sales order's OWN inquiry only. An amendment raises its exception verbs
             # under its own inquiry (`amendment_id`), and cancelling those here would
             # delete an instruction purchasing is still working from.
@@ -404,10 +416,7 @@ class ProjectOrderInquiryService:
                 .filter(
                     OrderInquiryRow.order_inquiry_id == inquiry.id,
                     OrderInquiryRow.so_line_id == line.id,
-                    # `ORDER_BACK` beside `ORDER` since part 2 4b: a Buy line CS marked
-                    # "Order back" raises that verb here, and a reconfirm must supersede
-                    # and net it exactly as it does an ORDER or the row would stack.
-                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)),
+                    OrderInquiryRow.verb.in_(owned_verbs),
                 )
                 .all()
             )
@@ -437,7 +446,7 @@ class ProjectOrderInquiryService:
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
                     continue
-                if row.verb not in (IV_ORDER, IV_ORDER_BACK):
+                if row.verb not in owned_verbs or row.verb == IV_CANCEL_BALANCE:
                     continue
                 # A planning change already REDIRECTED this row to replenish the pool it
                 # drew on (`planning_change_service._apply_placed_redirect`, the captain's
@@ -528,8 +537,16 @@ class ProjectOrderInquiryService:
             inquiry,
             decision,
             borrow_shortfalls,
+            # The lines whose ORDER BACK rows the loop above already owns: a Buy CS
+            # marked "Order back". NOT every confirmed line - a line with no Buy at all
+            # appears in `buy_lines` too, and excluding it would have stopped the donor's
+            # own hole being netted against what purchasing had already placed.
             buy_line_ids={
-                str(entry["line"].id) for entry in buy_lines if entry.get("line")
+                str(entry["line"].id)
+                for entry in buy_lines
+                if entry.get("line")
+                and entry.get("order_back")
+                and _dec(entry.get("buy_qty")) > _ZERO
             },
         )
         created += shortfalls

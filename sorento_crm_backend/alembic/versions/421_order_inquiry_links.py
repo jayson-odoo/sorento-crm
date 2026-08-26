@@ -121,21 +121,6 @@ def _has_links_table(bind) -> bool:
     )
 
 
-def _has_column(bind, table: str, column: str, schema: str = "projects") -> bool:
-    return bool(
-        bind.execute(
-            sa.text(
-                """
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema = :schema
-                  AND table_name = :table AND column_name = :column
-                """
-            ),
-            {"schema": _schema(bind, schema), "table": table, "column": column},
-        ).first()
-    )
-
-
 # --------------------------------------------------------------------------- data steps
 #
 # Each is idempotent on its own and each returns its counts, so the migration can report
@@ -494,12 +479,14 @@ def upgrade() -> None:
             f"CREATE INDEX IF NOT EXISTS {name} ON {_links(bind)} ({columns})"
         )
 
-    if not _has_column(bind, "order_inquiry_rows", "cited_document"):
-        op.add_column(
-            "order_inquiry_rows",
-            sa.Column("cited_document", sa.String(length=80), nullable=True),
-            schema="projects",
-        )
+    # Raw and schema-aware rather than `op.add_column(..., schema="projects")`: alembic
+    # renders an ALTER TABLE's schema LITERALLY, so under the test suite's
+    # `schema_translate_map` that statement reaches the REAL `projects` schema while the
+    # test believes it is isolated - the trap `_schema` above exists to close. `IF NOT
+    # EXISTS` keeps it a no-op on a database `create_all` has already converged.
+    op.execute(
+        f"ALTER TABLE {_rows(bind)} ADD COLUMN IF NOT EXISTS cited_document VARCHAR(80)"
+    )
 
     renamed = rename_order_back_verb(bind)
     written = links_from_placed_rows(bind)
@@ -535,8 +522,7 @@ def downgrade() -> None:
         )
     )
 
-    if _has_column(bind, "order_inquiry_rows", "cited_document"):
-        op.drop_column("order_inquiry_rows", "cited_document", schema="projects")
+    op.execute(f"ALTER TABLE {_rows(bind)} DROP COLUMN IF EXISTS cited_document")
 
     if _has_links_table(bind):
         op.drop_table("order_inquiry_links", schema="projects")
