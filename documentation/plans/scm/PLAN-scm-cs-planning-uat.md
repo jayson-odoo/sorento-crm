@@ -225,7 +225,30 @@ The v4 numbers are right; the trail and the popover still have the v3 shape. The
 - **Staleness:** a line with NO decision shows the LIVE suggestion; the frozen `proposed_components` snapshot is read only beside a decided line (that is what Suggested-vs-Decided is for) and is re-written at every confirm. The "(before ladder v4)" tag then appears only on a decided line whose snapshot predates v4.
 - The proof dialog is rewritten as the four questions plus Buy, one row each, "Yes, took N from X" / "No, because ...", figures beside the words. The rung names (own, group take, pool, cross-group borrow, group borrow) are internal; the trail shows the questions.
 
-Status: RULED 26 Aug; build queued after part 3 as one PR.
+Status: **BUILT** 27 Aug, branch `feat/scm-uat-ladder-v5`. `LADDER_VERSION = "v5"`.
+
+**What moved in the golden set** (`tests/scm/front_planning_golden.py`), regenerated deliberately per AC-V9:
+
+| Case | Was | Is | Why |
+| --- | --- | --- | --- |
+| AC-L1, beyond the window with an SPO landing in time | `timely_spo 40` | `buy 40` | incoming ran on both sides of the window as rung 1; there is no rung 1 |
+| AC-B12, the balance invariant | `timely_spo 10 + pool 60` | `group 10 + pool 60` | same 70, same two stated reasons, one rung different |
+| AC-L10, an SPO inside a negative group net | `buy 10` | `buy 10` | unchanged; the comment about netting rung 1 against the group goes, because there is nothing to net |
+| AC-V7, new | - | `pool 24` | 24 needed, the pile free 268, a donor at 100 within the cap: the pool is asked first |
+
+Every other case answers exactly what it answered under v4.
+
+**Two consequences worth naming.** `group_net` has no arrival-date term, so a group whose only cover is a LATE SPO now offers it, where v4 refused it twice (rung 1's date test, and the group rung's floor-stock cap). `tests/scm/test_project_supply_service_ladder.py::test_an_spo_arriving_after_the_required_date_is_still_inside_the_groups_net` pins that rather than leaving it to be discovered. And the cell table's batched stock reads now cover every active warehouse, because which group is the donor is not known until the engine has composed - the board used to leave a cited donor's figures null on purpose, and a block of dashes is not a subtotal anybody can check.
+
+**Browser evidence** (agent-browser, :3080, 1280x1200, sidebar nav from `/`, SO381895):
+
+| Cell | The five rows |
+| --- | --- |
+| SRTSA-SS | own **No** 0 ("The IB group nets -683", queue link 16 ahead) · pool **No** 0 (dealer hot-selling, pile table beneath) · other location **Yes 30 from BRW-NTC** ("NTC group nets 129, SMC 44, AM 40, within the cross-group borrow limit") · same agent's other order **No** 0 · Buy **No** 0 |
+| SRTWB241 | own **No** 0 ("The IB group nets -409", 3 ahead) · pool **No** 0 · other location **Yes 10 from DC1-NTC** ("NTC group nets 166") · other order **No** 0 · Buy **No** 0 |
+| SRTWC8605-SC-RL | own **No** 0 ("The IB group nets -969", 2 ahead) · pool **No** 0 · other location **No** 0 ("No other ownership group has anything left: BB nets -3259, IR nets -967") · other order **No** 0 · Buy **Yes 24** |
+
+The other-group block on SRTSA-SS listed BRW-NTC 130, DC1-NTC 0, MWH-NTC 0, RSW-NTC 0, WH3-NTC 0 under one **NTC group subtotal** whose Available reads **129** - the same figure the trail's sentence quotes. The decision strip read **Use own location · Use shared stock · Borrow other location · Borrow from another order · Buy · Incoming supply** (the last disabled at 0 and 0). SRTSA-SS, undecided, showed a plain **Suggestion** card; SRTWC8605-SC-RL, whose line is Confirmed rev 5, showed **Suggestion (before ladder v5)**. No console errors.
 
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 
