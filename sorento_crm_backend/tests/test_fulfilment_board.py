@@ -3553,8 +3553,9 @@ def test_a_hot_selling_rung_says_why_the_pool_was_off_limits():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         assert _step(contribution, "pool")["why"] == (
-            f"Dealer hot-selling at {own.warehouse_code}: {pool.warehouse_code} is kept for "
-            "retail, so the pool is not offered."
+            f"Dealer hot-selling at {own.warehouse_code}: the shared pile is kept for "
+            f"retail, so no pool is offered - not {pool.warehouse_code}, and not another "
+            "site's."
         )
         assert _step(contribution, "buy")["took"] == "10"
 
@@ -4452,8 +4453,9 @@ def test_the_pool_rung_names_the_classification_that_keeps_the_pool_for_retail()
         assert step["answer"] == "no"
         assert step["answer"] == "no"
         assert step["why"] == (
-            f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
-            "for retail, so the pool is not offered."
+            f"Dealer hot-selling at {pool.warehouse_code}: the shared pile is kept for "
+            f"retail, so no pool is offered - not {pool.warehouse_code}, and not another "
+            "site's."
         )
 
 
@@ -4652,8 +4654,9 @@ def test_a_dealer_hot_selling_pool_rung_never_states_a_cap_it_offers_nothing_at_
         assert step["answer"] == "no"
         assert step["took"] == "0"
         assert step["why"] == (
-            f"Dealer hot-selling at {pool.warehouse_code}: {pool.warehouse_code} is kept "
-            "for retail, so the pool is not offered."
+            f"Dealer hot-selling at {pool.warehouse_code}: the shared pile is kept for "
+            f"retail, so no pool is offered - not {pool.warehouse_code}, and not another "
+            "site's."
         )
 
 

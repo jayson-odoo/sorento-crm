@@ -192,9 +192,11 @@ WHERE_GROUP = "group"
 WHERE_SITE_POOL = "site_pool"
 WHERE_OTHER_GROUP = "other_group"
 
-#: Said by every rung the ladder reached after the line was already covered. One sentence, in
-#: one place, so five rungs cannot phrase the same fact five ways.
-_COVERED_BEFORE = "Fully covered before this rung."
+#: Said by every question the ladder reached after the line was already covered. One sentence,
+#: in one place, so five questions cannot phrase the same fact five ways. "Question" and not
+#: "rung": the rung names are internal keys under ladder v5 and never reach a reader, and a
+#: sentence that used one leaked the vocabulary the rewrite exists to hide.
+_COVERED_BEFORE = "Fully covered before this question."
 
 #: Said by a question that HAD something to give and gave nothing: the whole-line rule
 #: (section 1e's last rule) refused the partial cover, so the line is bought entire and every
@@ -2516,9 +2518,12 @@ class FulfilmentBoardService:
         if outcome == "none_needed":
             return _COVERED_BEFORE
         if fact.is_dealer_hot_selling:
+            # AC-V6: the gate refuses the WHOLE pile, not this site's share of it, so the
+            # sentence has to say pile. Naming only `code` read as "BRW is kept for retail"
+            # beside 500 units sitting at DC1 and MWH that were equally not on offer.
             return (
-                f"{self._hot_prefix(fact, dealer=True)}: {code} is kept for retail, so the "
-                "pool is not offered."
+                f"{self._hot_prefix(fact, dealer=True)}: the shared pile is kept for retail, "
+                f"so no pool is offered - not {code}, and not another site's."
             )
         # LADDER V4 (section 1d): the five site pools are ONE pile, and that pile's net is
         # now the ONLY thing that bounds the rung - `BRW -103` beside `DC1 +1` nets -102,
