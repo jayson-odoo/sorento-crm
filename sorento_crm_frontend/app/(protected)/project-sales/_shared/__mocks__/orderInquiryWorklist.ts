@@ -243,6 +243,11 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'user-cindy', label: 'Cindy Lee', rows: 2 },
     { id: 'user-johnson', label: 'Johnson Tan', rows: 1 },
   ],
+  // The three cards (AC-I11), over these same five rows: row 5's SPO link 10; row 1's
+  // 35 and row 3's 40 + 20 on purchase orders; row 2's whole 85 and row 3's remaining
+  // 31 still to buy. The CANCELLED row 4 contributes nothing at all - its 6 is not owed
+  // any more - which is why the three add to 221 rather than to `total_qty` 227.
+  kinds: { spo: '10', po: '95', buy: '116' },
 };
 
 /**

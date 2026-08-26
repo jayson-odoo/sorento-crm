@@ -4,6 +4,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { COLOURS, LABELS } from '../../_shared/lib/supplyVocabulary';
 import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
+import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
 import { decisionStripTotals } from '../../_shared/lib/decisionStrip';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import type { BoardContribution, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
@@ -51,38 +52,27 @@ export function DecisionStrip({
         // Nothing on this board is that kind of supply, so there is nothing to filter to.
         const empty = toMinor(total.suggested) === 0 && toMinor(total.decided) === 0;
         return (
-          <button
+          <SupplyKindCard
             key={total.kind}
-            type="button"
-            data-testid={`decision-strip-${total.kind}`}
-            aria-pressed={selected}
+            kind={total.kind}
+            label={LABELS[total.kind]}
+            swatchClass={COLOURS[total.kind].bar}
+            selected={selected}
             disabled={empty}
             onClick={() => onToggle(total.kind)}
-            className={cn(
-              'rounded-lg border p-2.5 text-start transition-colors',
-              empty ? 'opacity-60' : 'hover:bg-accent',
-              selected ? 'border-primary bg-accent' : 'border-border',
-            )}
-          >
-            <span className="flex items-center gap-1.5">
-              <span
-                data-kind={total.kind}
-                aria-hidden
-                className={cn('size-2.5 shrink-0 rounded-sm', COLOURS[total.kind].bar)}
-              />
-              <span className="min-w-0 truncate text-xs font-medium" title={LABELS[total.kind]}>
-                {LABELS[total.kind]}
-              </span>
-              {/* The two figures moved apart. The same amber the grid marks a change with,
-                  and no word beside it: the pair of numbers under it is the explanation. */}
-              {total.changed ? (
+            testId={`decision-strip-${total.kind}`}
+            // The two figures moved apart. The same amber the grid marks a change with,
+            // and no word beside it: the pair of numbers under it is the explanation.
+            mark={
+              total.changed ? (
                 <span
                   data-testid={`decision-strip-changed-${total.kind}`}
                   aria-label="Suggested and decided differ"
                   className="size-1.5 shrink-0 rounded-full bg-amber-500"
                 />
-              ) : null}
-            </span>
+              ) : null
+            }
+          >
             <span className="mt-1.5 flex items-baseline justify-between gap-2">
               <span className="text-[11px] text-muted-foreground">Suggested</span>
               <span className="text-sm font-semibold tabular-nums">{total.suggested}</span>
@@ -95,7 +85,7 @@ export function DecisionStrip({
                 {total.decided}
               </span>
             </span>
-          </button>
+          </SupplyKindCard>
         );
       })}
     </div>

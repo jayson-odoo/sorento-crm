@@ -507,7 +507,9 @@ describe('OrderInquiriesClient', () => {
     it('clicking a cell drills down to its own rows, in the list columns', async () => {
       currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
       renderClient();
-      const cell = await screen.findByRole('button', { name: '85, 1 row' });
+      // The cell now names what its quantity still needs as well as how many rows it is
+      // (AC-I12): this one is wholly unlinked, so it reads "Buy 85".
+      const cell = await screen.findByRole('button', { name: '85, 1 row, Buy 85' });
 
       fireEvent.click(cell);
 

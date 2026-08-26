@@ -50,6 +50,8 @@ import {
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
 } from '../../_shared/hooks/useOrderInquiry';
+import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
+import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel, formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
@@ -61,6 +63,7 @@ import type {
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldown';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
+import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
 const STATE_OPTIONS = [
@@ -180,6 +183,11 @@ export function OrderInquiriesClient() {
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
+  // Which card is pressed (AC-I11). Not one of the toolbar's filters: it lives on the
+  // strip above BOTH views, so the same press narrows the matrix and the list, and it is
+  // deliberately kept out of the summary's own request so the other two cards keep their
+  // figures while it is held down.
+  const [kindFilter, setKindFilter] = React.useState<OrderInquiryKind | null>(null);
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
@@ -239,6 +247,7 @@ export function OrderInquiriesClient() {
     raisedDate,
     raisedByFilter,
     linkedFilter,
+    kindFilter,
   ]);
 
   const filters = React.useMemo(
@@ -264,6 +273,16 @@ export function OrderInquiriesClient() {
     ],
   );
 
+  // Everything the screen reads honours whichever card is pressed - the rows, the
+  // totals, the export. Only the `kinds` facet inside the summary drops it, and it does
+  // that server-side, the same rule the month, supplier, project and raised-by controls
+  // are computed by: a control that empties itself the moment you use it cannot be used
+  // a second time.
+  const listFilters = React.useMemo(
+    () => ({ ...filters, kind: kindFilter ?? undefined }),
+    [filters, kindFilter],
+  );
+
   // "Unplace all"'s own scope (the captain, 20-21 Aug): the SAME filters as `filters`,
   // minus `state` - the action is always about placed rows, whatever else is filtered,
   // so a State=raised selection must not zero its own scope out.
@@ -281,28 +300,32 @@ export function OrderInquiriesClient() {
 
   const params = React.useMemo(
     () => ({
-      ...filters,
+      ...listFilters,
       page: pagination.pageIndex + 1,
       limit: pagination.pageSize,
       sort: sorting[0]?.id ?? 'delivery_date',
       dir: (sorting[0]?.desc ? 'desc' : 'asc') as 'asc' | 'desc',
     }),
-    [filters, pagination, sorting],
+    [listFilters, pagination, sorting],
   );
 
   const list = useOrderInquiryWorklist(params, { enabled: view === 'list' });
-  const summary = useOrderInquiryWorklistSummary(filters);
+  // Asked WITH the pressed card, so the header badges and the month / supplier / project
+  // controls describe the rows actually on screen. Its `kinds` facet is the one thing
+  // computed with the card dropped (server-side), which is what keeps the other two
+  // cards readable while one is held down.
+  const summary = useOrderInquiryWorklistSummary(listFilters);
 
   // The Schedule view's own request: the same filters, unpaged, so the matrix groups
   // exactly what the list would otherwise page through.
   const matrixParams = React.useMemo(
     () => ({
-      ...filters,
+      ...listFilters,
       limit: MATRIX_FETCH_LIMIT,
       sort: 'delivery_date',
       dir: 'asc' as const,
     }),
-    [filters],
+    [listFilters],
   );
   const matrixList = useOrderInquiryWorklist(matrixParams, { enabled: view === 'schedule' });
   const matrix = React.useMemo(
@@ -321,7 +344,8 @@ export function OrderInquiriesClient() {
       projectFilter ||
       raisedDate ||
       raisedByFilter ||
-      linkedFilter,
+      linkedFilter ||
+      kindFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -394,7 +418,7 @@ export function OrderInquiriesClient() {
   async function handleExport() {
     setExporting(true);
     try {
-      const blob = await downloadOrderInquiryWorklistXlsx(filters);
+      const blob = await downloadOrderInquiryWorklistXlsx(listFilters);
       saveBlobAs(blob, `order-inquiry-${month || 'all-months'}.xlsx`);
     } catch (error) {
       toast.error(
@@ -472,6 +496,16 @@ export function OrderInquiriesClient() {
           Schedule
         </Button>
       </div>
+
+      {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
+          rows in view still need, in the same colours the cells and the "Linked to"
+          column draw. No legend beside them - each card carries its own swatch and its
+          own words, so there is nothing left for a legend to say. */}
+      <OrderInquiryStrip
+        totals={facetSegments(summary.data?.kinds)}
+        active={kindFilter}
+        onToggle={(kind) => setKindFilter((current) => (current === kind ? null : kind))}
+      />
 
       {view === 'schedule' ? (
         <div className="space-y-4">

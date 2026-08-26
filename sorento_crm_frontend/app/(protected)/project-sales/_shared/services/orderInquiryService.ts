@@ -293,7 +293,10 @@ export async function unplaceAllOrderInquiryRows(
  *
  *   GET  {BASE}/order-inquiries
  *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
- *        supplier_id, raised_by, page, limit, sort, dir
+ *        supplier_id, raised_by, linked, kind, page, limit, sort, dir
+ *        kind=spo|po|buy is the cards' own filter (AC-I11): every row CARRYING that
+ *        kind, so a row linked 5 of 8 to a purchase order answers to po and to buy
+ *        alike, and a cancelled row to neither.
  *        query also matches the name and the email prefix of the CS who raised it.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
@@ -305,7 +308,12 @@ export async function unplaceAllOrderInquiryRows(
  *        the same filters, no paging
  *        -> { total_rows, total_qty, by_state,
  *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
- *             raised_by: [] }
+ *             raised_by: [], kinds: {spo,po,buy} }
+ *        `kinds` is the three cards above both views - quantity on SPO allocations, on
+ *        purchase order lines, and the unlinked remainder - over every matching row.
+ *        The TOTALS honour `kind` like every other filter, because they describe what is
+ *        on screen; the `kinds` facet itself drops it, so pressing one card leaves the
+ *        other two readable.
  *        `raised_by` lists only the people who have actually raised one of the rows in
  *        view, id + name, which is what the "Raised by" filter offers.
  *        The totals honour every filter. The AXES each ignore their own filter on
@@ -341,6 +349,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       supplier_id: params.supplier_id,
       raised_by: params.raised_by,
       linked: params.linked,
+      kind: params.kind,
     },
   );
 }
