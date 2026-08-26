@@ -260,7 +260,7 @@ describe('uncoverChangedLines', () => {
     decision: { revision_no: 2, components: [] },
     sources: [{ kind: 'buy', qty: '10' }],
     qty_proposed_buy: '10',
-  } as Partial<BoardContribution>);
+  } as unknown as Partial<BoardContribution>);
   const board = { cells: [cell({ contributions: [frozen] })], contributions: [frozen] };
   const withProposal = batchOf([
     row({
