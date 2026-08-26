@@ -421,10 +421,10 @@ def propose_line(
 
     `group_offer` and `pools_net` are ladder v4's own numbers (section 1d). `pools_net` is
     what the five site pools hold BETWEEN them, signed, and it caps rung 3's whole draw.
-    `group_offer` is what the ownership group's pile leaves for THIS line (the group's
-    supply, less the demand ranked ahead of it across the group); it is the bound the caller
-    has already applied to `group_take_candidates`, and it travels here so each component's
-    reason can name the number it is a share OF. Both are `None` for a caller that states neither, and
+    `group_offer` is what the ownership group's NET leaves for THIS line (its own quantity
+    un-netted, every other line's still netted); it is the bound the caller has already
+    applied to `group_take_candidates`, and it travels here so each component's reason can
+    name the number it is a share OF. Both are `None` for a caller that states neither, and
     the rungs then stand on their per-location caps alone.
     """
     open_amount = max(_dec(open_qty), ZERO)

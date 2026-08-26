@@ -416,12 +416,6 @@ class _LineFacts:
     #: (`BRW-BB` -> `BB`) - or `None` for a location that carries no group (a bare pool
     #: code, or an inactive/unrecognised warehouse).
     group_code: Optional[str] = None
-    #: The CORE sales-order line this fact is about, by id. `core` itself is loaded only by
-    #: the per-order sheet; the multi-order board builds its facts from raw demand rows and
-    #: has no ORM object to hang here, so the id is carried separately and `core_id` below
-    #: is what anything addressing the line reads. Without it the board could not find this
-    #: line in its own group's queue, and every line of a busy group read as last.
-    core_line_id: Optional[str] = None
     #: Ladder v4 (section 1d). What the WHOLE ownership group holds of this product -
     #: `sum(on hand) - sum(SO) + sum(SPO)` over every active `*-<group>` location, signed -
     #: and what the five site pools hold between them. These, not any one warehouse's own
@@ -429,17 +423,9 @@ class _LineFacts:
     #: while the IB group nets -15514, because those 7000 are already owed at `BRW-IB`.
     group_net: Decimal = _ZERO
     pools_net: Decimal = _ZERO
-    #: What the GROUP's pile leaves for THIS line: `max(on hand + SPO across the group,
-    #: less the demand the active policy ranks AHEAD of this line at the group, 0)`.
-    #:
-    #: The queue is not what ladder v4 replaced - the per-WAREHOUSE reading is. v3 asked
-    #: two separate questions and got two wrong answers: the own location's queue
-    #: (`available_to_this_line`) and each sibling's own signed availability, so `MWH-IB`
-    #: holding 7000 offered all of it while `BRW-IB` owed 27,804 against 5,290. v4 asks one
-    #: question of one pile: what does the GROUP hold, and how much of it is spoken for
-    #: before this line is reached. Fair share is a queue, not a ban - the line at the front
-    #: of a queue still reserves its 80 out of 1,015 - and a group that cannot cover its own
-    #: book offers nothing to the lines at the back of it, which is AC-L7.
+    #: What the group's net leaves for THIS line: `max(group_net + its own open quantity,
+    #: 0)`. See `ProjectSupplyService._group_offer` for the rule and for the consequence it
+    #: carries: while a group cannot cover its own book, no line of it takes its stock.
     group_offer: Decimal = _ZERO
     #: The group's position location by location (`group_netting.LocationNet`), the evidence
     #: behind `group_net`.
@@ -449,13 +435,6 @@ class _LineFacts:
     #: netted; this is kept so the trail can say "110 arrives, and none of it is free for
     #: this line" rather than showing nothing at all.
     timely_qty_before_group_net: Decimal = _ZERO
-
-    @property
-    def core_id(self) -> Optional[str]:
-        """The core line's id, however this fact was built."""
-        if self.core is not None:
-            return str(self.core.id)
-        return str(self.core_line_id) if self.core_line_id else None
 
     @property
     def own_code(self) -> Optional[str]:
@@ -1118,9 +1097,9 @@ class ProjectSupplyService:
         where the orders are booked - owed 27,804 against 5,290 on hand. The group nets
         -15,514, so there is nothing to take, and the line buys.
 
-        HOW MUCH is `fact.group_offer` - the group's whole pile less what is queued ahead of
-        this line across it (`_group_offer`). WHERE it comes from is each location's free
-        stock, in draw order: this line's own first, then the siblings by site code. A
+        HOW MUCH is `fact.group_offer` - what the group's own net leaves for this line
+        (`_group_offer`). WHERE it comes from is each location's free stock, in draw order:
+        this line's own first, then the siblings by site code. A
         location's OWN signed availability takes no part any more, and that is the whole
         change - it is the per-warehouse reading that let `MWH-IB` offer 7000 while the
         group was 15,514 short, and it would now refuse a draw the group's pile has already
@@ -1247,12 +1226,12 @@ class ProjectSupplyService:
         it, or `None` when this line is not itself open demand at its pile (an
         amended/carried line has none to compare against, so no donor can be judged
         against it either)."""
-        if not fact.product_id or not fact.core_id:
+        if not fact.product_id or not fact.core:
             return [], None
         members = self._group_pile_members(fact)
         if not members:
             return [], None
-        mine = next((m for m in members if m["line_id"] == fact.core_id), None)
+        mine = next((m for m in members if m["line_id"] == str(fact.core.id)), None)
         return members, mine
 
     def _group_borrow_donors(
@@ -1619,7 +1598,6 @@ class ProjectSupplyService:
             claimed = _dec(claim.get("qty"))
             pool_triple = pool_piles.get((product_id, str(pool.id))) if pool and product_id else None
             facts[str(row["key"])] = _LineFacts(
-                core_line_id=str(row["line_id"]) if row.get("line_id") else None,
                 item_code=row.get("item_code"),
                 product_id=product_id,
                 open_qty=_dec(row.get("open_qty")),
@@ -1699,36 +1677,32 @@ class ProjectSupplyService:
             fact.timely_qty = min(fact.timely_qty, fact.group_offer)
 
     def _group_offer(self, fact: _LineFacts, group: Any) -> Decimal:
-        """What the group's pile leaves for this line: its SUPPLY, less what is queued
-        ahead of this line across the WHOLE group.
+        """What the group's net leaves for this line: `max(group_net + its own open
+        quantity, 0)`.
 
-        The supply term is `on hand + SPO` over every active `*-<group>` location, never a
-        single warehouse's and never floored per location - one pile, which is the ruling.
-        The queue term is `_group_pile_members`, the group-wide ranked list that already
-        exists for the donor walk and is already cached per `(product, group)`, so this
-        costs no query the request was not paying for.
+        THE CAPTAIN'S RULE, 26 August 2026, stated in the plan and in AC-L7: a group that
+        cannot cover its own book offers nothing to any line of it, however much sits at any
+        one of its locations. `B2155-NL-BLUE` nets -15514 across `BRW-IB` and `MWH-IB`, so
+        the 60 is bought and `MWH-IB`'s 7000 is never on the table - it is already owed at
+        `BRW-IB`, and promising it here is what creates the double allocation this ruling
+        exists to stop.
 
-        A line the book does not carry (an amended or carried line with no open core row)
-        cannot be placed in that queue, so it is treated as LAST: everything else at the
-        group stands in front of it, which leaves it `max(group_net + its own quantity, 0)`.
-        Conservative, and never zero for a line that is the only claim on its own stock.
+        The rank queue takes no part. It was v3's own-location cap
+        (`available_to_this_line`), it decided how much this line could have out of one
+        WAREHOUSE, and it is exactly what the ruling replaced.
+
+        Its OWN quantity is un-netted, and that is arithmetic rather than a softening:
+        `sum(SO)` counts every open line at the group INCLUDING this one, so a line standing
+        alone on exactly the stock it needs would read a net of zero and buy stock that is
+        sitting there waiting for it. Every OTHER line's demand stays netted.
+
+        THE CONSEQUENCE, named rather than buried: on a group whose book runs ahead of its
+        stock, EVERY line of that group buys - the line at the front of the queue included.
+        1,015 on hand against 9,080 owed proposes a Buy for the 80 at the front as well as
+        for the 9,000 behind it. That is the rule as ruled: while the group is short, its
+        stock is not promised to anybody in particular, and whoever ships first uses it.
         """
-        supply = sum(
-            (entry.on_hand + entry.spo_qty for entry in group.by_location), _ZERO
-        )
-        members, mine = self._group_pile(fact)
-        if mine is None:
-            demand = sum((entry.so_qty for entry in group.by_location), _ZERO)
-            ahead = max(demand - max(_dec(fact.open_qty), _ZERO), _ZERO)
-        else:
-            ahead = sum(
-                (
-                    max(_dec(member.get("open_qty")), _ZERO)
-                    for member in members[: members.index(mine)]
-                ),
-                _ZERO,
-            )
-        return max(supply - ahead, _ZERO)
+        return max(group.net + max(_dec(fact.open_qty), _ZERO), _ZERO)
 
     def _serialize_line(
         self,
