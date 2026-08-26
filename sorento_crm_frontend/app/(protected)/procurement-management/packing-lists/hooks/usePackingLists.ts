@@ -14,9 +14,26 @@ import {
   bulkDeletePackingLists,
   PACKING_LIST_NEIGHBOURS_PATH,
   getClearanceCheckpoints,
+  getPackingListSourceInvoices,
   type PackingListsListParams,
 } from '../services/packingListService';
 import type { PackingListFormData } from '../types/packingList.types';
+
+/**
+ * The proforma invoices this container's lines were charged on (F10).
+ *
+ * Read once for the whole page: the Details card, the Lines column, the Timeline entry and
+ * the Documents list are four readings of the same link rows, and four fetches of it would
+ * be four chances for them to disagree.
+ */
+export function usePackingListSourceInvoices(packingListId: string | null) {
+  return useQuery({
+    queryKey: ['packing-lists', 'source-proforma-invoices', packingListId],
+    queryFn: () => getPackingListSourceInvoices(packingListId as string),
+    enabled: !!packingListId,
+    refetchOnWindowFocus: false,
+  });
+}
 
 /**
  * Prev/next neighbours of a packing list within the active filtered+sorted list set.

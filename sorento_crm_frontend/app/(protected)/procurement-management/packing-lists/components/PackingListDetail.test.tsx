@@ -22,12 +22,17 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
-const state = { packingList: null as unknown };
+const state = {
+  packingList: null as unknown,
+  /** The proforma invoices behind the container - F10's four readings of one payload. */
+  sourceInvoices: undefined as unknown,
+};
 
 vi.mock('../hooks/usePackingLists', () => ({
   usePackingList: () => ({ data: state.packingList, isLoading: false }),
   useDeletePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  usePackingListSourceInvoices: () => ({ data: state.sourceInvoices, isLoading: false }),
 }));
 
 vi.mock('../../suppliers/hooks/useSupplierSelectQuery', () => ({
@@ -109,6 +114,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   searchParams.value = new URLSearchParams();
   state.packingList = mixedContainer();
+  state.sourceInvoices = undefined;
 });
 
 describe('PackingListDetail - who loaded this container', () => {
@@ -208,5 +214,89 @@ describe('F6 - the container states how much room it takes', () => {
     // Quantity and cartons total too, so the footer answers the whole row.
     expect(within(total).getByText('1510')).toBeInTheDocument();
     expect(within(total).getByText('171')).toBeInTheDocument();
+  });
+});
+
+/** One PI behind this container, charging half of the KAILU line. */
+function sourceInvoices() {
+  return {
+    invoices: [
+      {
+        id: 'pi-1',
+        pi_number: 'PI-2026-001',
+        supplier_id: 'sup-a',
+        supplier_name: 'KAILU HARDWARE FACTORY',
+        invoice_date: '2026-07-17',
+        revision_no: 2,
+        status: 'current' as const,
+        source_ref: 'KAILU proforma.xlsx',
+        currency: 'CNY',
+        lines: 1,
+        total_lines: 3,
+        qty: 490,
+        total_qty: 900,
+        amount: 32095,
+      },
+    ],
+    by_shipment_line: {
+      'l-1': [{ proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 490 }],
+    },
+  };
+}
+
+describe('F10 - which proforma invoices this container was drafted from', () => {
+  it('names them in the Details tab with what came from each (AC-F9)', async () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    state.sourceInvoices = sourceInvoices();
+    renderDetail();
+
+    expect(screen.getByText('Source proforma invoices')).toBeInTheDocument();
+    const row = screen.getByText('PI-2026-001').closest('tr') as HTMLElement;
+    expect(within(row).getByText('490 of 900')).toBeInTheDocument();
+    expect(within(row).getByText('1 of 3')).toBeInTheDocument();
+    expect(within(row).getByText('Revision 2')).toBeInTheDocument();
+  });
+
+  it('says so plainly when a container came off a real packing list instead', () => {
+    searchParams.value = new URLSearchParams('tab=details');
+    state.sourceInvoices = { invoices: [], by_shipment_line: {} };
+    renderDetail();
+
+    expect(screen.getByText('Source proforma invoices')).toBeInTheDocument();
+    expect(
+      screen.getByText(/This container was not drafted from a proforma invoice/),
+    ).toBeInTheDocument();
+  });
+
+  it('names the invoice per line in the Lines tab (AC-F9)', () => {
+    searchParams.value = new URLSearchParams('tab=lines');
+    state.sourceInvoices = sourceInvoices();
+    renderDetail();
+
+    expect(screen.getByRole('columnheader', { name: 'From PI' })).toBeInTheDocument();
+    const kailuLine = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailuLine).getByRole('link', { name: /PI-2026-001/ })).toHaveAttribute(
+      'href',
+      '/scm/proforma-invoices/pi-1',
+    );
+    const other = screen.getByText('MCHWT1200').closest('tr') as HTMLElement;
+    expect(within(other).queryByText('PI-2026-001')).not.toBeInTheDocument();
+  });
+
+  it('opens the timeline with where the container came from (AC-F9)', () => {
+    searchParams.value = new URLSearchParams('tab=timeline');
+    state.sourceInvoices = sourceInvoices();
+    renderDetail();
+
+    expect(screen.getByText(/Created from PI-2026-001/)).toBeInTheDocument();
+  });
+
+  it('lists the proforma files in the Documents tab (AC-F9)', () => {
+    searchParams.value = new URLSearchParams('tab=documents');
+    state.sourceInvoices = sourceInvoices();
+    renderDetail();
+
+    expect(screen.getByText('Proforma invoices')).toBeInTheDocument();
+    expect(screen.getByText(/KAILU proforma\.xlsx/)).toBeInTheDocument();
   });
 });

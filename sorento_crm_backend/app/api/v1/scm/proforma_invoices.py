@@ -18,7 +18,7 @@ forget - a raw supplier SELECT written here would have bypassed the ORM's filter
 from __future__ import annotations
 
 import json
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
@@ -53,6 +53,15 @@ class ConvertToDraftShipmentRequest(BaseModel):
     )
     override_reason: Optional[str] = Field(
         None, description="Why it is being loaded anyway. Required with `override_capacity`."
+    )
+    line_quantities: Optional[Dict[str, float]] = Field(
+        None,
+        description="Per PI line id, how much to place. A line left out places what it has "
+                    "left, which is the normal case (AC-F10).",
+    )
+    target_shipment_id: Optional[str] = Field(
+        None,
+        description="An existing DRAFT packing list to add to, instead of creating one.",
     )
 
 
@@ -186,6 +195,8 @@ def convert_proforma_invoices_to_draft_shipment(
         created_by=(current_user or {}).get("id"),
         override_capacity=payload.override_capacity,
         override_reason=payload.override_reason,
+        line_quantities=payload.line_quantities,
+        target_shipment_id=payload.target_shipment_id,
     )
     db.commit()
     return out
@@ -208,6 +219,10 @@ def bulk_delete_proforma_invoices(
 @router.get("/proforma-invoices")
 def list_proforma_invoices(
     supplier_id: Optional[str] = Query(None, description="Whose invoices to show"),
+    placement: Optional[str] = Query(
+        None,
+        description="not_converted / converted / split - where the goods have got to (AC-F6).",
+    ),
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0, description="Skip this many, so a second page is reachable"),
     _user: dict = Depends(_READ),
@@ -215,8 +230,37 @@ def list_proforma_invoices(
 ):
     """Invoices we have read, newest first. `total` counts all of them, not just this page."""
     return proforma_invoice_service.list_for_supplier(
-        db, supplier_id=supplier_id, limit=limit, offset=offset
+        db, supplier_id=supplier_id, placement=placement, limit=limit, offset=offset
     )
+
+
+# Declared BEFORE `/proforma-invoices/{invoice_id}`: a literal path that comes after a
+# path parameter is swallowed by it, and the id lookup would answer 404 for this route.
+@router.get("/proforma-invoices/draft-shipments")
+def list_draft_shipments(
+    supplier_id: Optional[str] = Query(
+        None, description="Only the drafts already carrying this factory's goods"
+    ),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The draft packing lists a convert can be ADDED to (AC-F10)."""
+    return {"data": proforma_invoice_service.draft_shipments(db, supplier_id=supplier_id)}
+
+
+@router.get("/inbound-shipments/{shipment_id}/source-proforma-invoices")
+def source_proforma_invoices_for_shipment(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Which proforma invoices this container was drafted from (AC-F9).
+
+    One endpoint for the four places that show it - the Details card, the Lines column, the
+    Timeline entry and the Documents list - because they are four readings of the same link
+    rows, and four fetches would be four chances for them to disagree.
+    """
+    return proforma_invoice_service.source_proforma_invoices(db, shipment_id)
 
 
 @router.post("/proforma-invoices/{invoice_id}/mark-as-revision-of")

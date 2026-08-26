@@ -82,6 +82,11 @@ _DRAFT_SHIPMENT_STATUS = "draft"
 _DRAFT_NUMBER_DOC_TYPE = "inbound_shipment_draft"
 _DRAFT_NUMBER_PREFIX = "SHIP-DRAFT"
 
+#: Where an invoice's goods have got to. `split` is a real state, not a rounding of
+#: `converted`: one invoice legitimately sits in two containers (Q9), and until every line
+#: is placed there is still something to convert.
+_PLACEMENTS = ("not_converted", "converted", "split")
+
 
 def _uuid() -> str:
     return str(uuid.uuid4())
@@ -823,6 +828,286 @@ def _product_base_uoms(db: Session, product_ids: set[str]) -> dict[str, Optional
     return {str(pid): (str(uom_id) if uom_id else None) for pid, uom_id in rows}
 
 
+#: A shipment a convert may still be ADDED to. Anything further along has left the yard as
+#: far as this screen is concerned, and adding goods to it would rewrite a document somebody
+#: is already working from.
+_ADDABLE_SHIPMENT_STATUSES = (_DRAFT_SHIPMENT_STATUS,)
+
+
+def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
+    """Per invoice, how much of it has reached a packing list and which ones (AC-F6).
+
+    Only rows that actually became a shipment line count. A SKIP row records why a line went
+    nowhere, and counting it as placed would report goods on a container that never held
+    them.
+    """
+    ids = [i for i in set(invoice_ids) if i]
+    if not ids:
+        return {}
+    rows = (
+        db.query(
+            ProformaInvoiceShipmentLink.proforma_invoice_id,
+            ProformaInvoiceShipmentLink.inbound_shipment_id,
+            InboundShipment.shipment_number,
+            InboundShipment.shipment_status,
+            func.sum(func.coalesce(ProformaInvoiceShipmentLink.qty, 0)),
+            func.count(func.distinct(ProformaInvoiceShipmentLink.proforma_invoice_line_id)),
+        )
+        .join(
+            InboundShipment,
+            InboundShipment.id == ProformaInvoiceShipmentLink.inbound_shipment_id,
+        )
+        .filter(
+            ProformaInvoiceShipmentLink.proforma_invoice_id.in_(ids),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .group_by(
+            ProformaInvoiceShipmentLink.proforma_invoice_id,
+            ProformaInvoiceShipmentLink.inbound_shipment_id,
+            InboundShipment.shipment_number,
+            InboundShipment.shipment_status,
+        )
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for invoice_id, shipment_id, number, status, qty, lines in rows:
+        entry = out.setdefault(str(invoice_id), {"placed_qty": 0.0, "packing_lists": []})
+        entry["placed_qty"] += float(qty or 0)
+        entry["packing_lists"].append(
+            {
+                "shipment_id": str(shipment_id),
+                "shipment_number": number,
+                "shipment_status": status,
+                "qty": float(qty or 0),
+                "lines": int(lines or 0),
+            }
+        )
+    for entry in out.values():
+        entry["packing_lists"].sort(key=lambda p: (p["shipment_number"] or "", p["shipment_id"]))
+    return out
+
+
+def _line_placements(db: Session, invoice_id: str) -> dict[str, list[dict]]:
+    """Per LINE of one invoice, where its goods went and how much of them."""
+    rows = (
+        db.query(
+            ProformaInvoiceShipmentLink.proforma_invoice_line_id,
+            ProformaInvoiceShipmentLink.inbound_shipment_id,
+            InboundShipment.shipment_number,
+            func.sum(func.coalesce(ProformaInvoiceShipmentLink.qty, 0)),
+        )
+        .join(
+            InboundShipment,
+            InboundShipment.id == ProformaInvoiceShipmentLink.inbound_shipment_id,
+        )
+        .filter(
+            ProformaInvoiceShipmentLink.proforma_invoice_id == str(invoice_id),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .group_by(
+            ProformaInvoiceShipmentLink.proforma_invoice_line_id,
+            ProformaInvoiceShipmentLink.inbound_shipment_id,
+            InboundShipment.shipment_number,
+        )
+        .all()
+    )
+    out: dict[str, list[dict]] = {}
+    for line_id, shipment_id, number, qty in rows:
+        out.setdefault(str(line_id), []).append(
+            {
+                "shipment_id": str(shipment_id),
+                "shipment_number": number,
+                "qty": float(qty or 0),
+            }
+        )
+    return out
+
+
+def _placeable(line: ProformaInvoiceLine) -> float:
+    """What of this line COULD go on a container.
+
+    A line with no catalogue product cannot: `inbound_shipment_lines.product_id` is NOT
+    NULL, so there is nowhere to write it. Counting it as outstanding would leave the
+    invoice reading Split for ever, with a remainder nobody can ever place.
+    """
+    if line.product_id is None:
+        return 0.0
+    qty = float(line.qty or 0)
+    return qty if qty > 0 else 0.0
+
+
+def _quantities(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
+    """Per invoice: what the document totals, what could be placed, and what still can be."""
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id.in_([str(i) for i in invoice_ids]))
+        .all()
+    )
+    placements = _placements(db, [str(i) for i in invoice_ids])
+    out: dict[str, dict] = {
+        str(i): {"total_qty": 0.0, "placeable_qty": 0.0} for i in invoice_ids
+    }
+    for line in lines:
+        entry = out.setdefault(str(line.invoice_id), {"total_qty": 0.0, "placeable_qty": 0.0})
+        entry["total_qty"] += float(line.qty or 0)
+        entry["placeable_qty"] += _placeable(line)
+    for invoice_id, entry in out.items():
+        placed = placements.get(invoice_id, {}).get("placed_qty", 0.0)
+        entry["placed_qty"] = placed
+        entry["remaining_qty"] = max(entry["placeable_qty"] - placed, 0.0)
+        entry["packing_lists"] = placements.get(invoice_id, {}).get("packing_lists", [])
+        entry["placement"] = (
+            "not_converted" if placed <= 0
+            else ("converted" if entry["remaining_qty"] <= 0 else "split")
+        )
+    return out
+
+
+def draft_shipments(db: Session, *, supplier_id: Optional[str] = None) -> list[dict]:
+    """The packing lists a convert can be ADDED to (AC-F10).
+
+    A container is loaded over several days, and the second factory's invoice belongs in the
+    box the first one is already in - so the dialog offers the drafts that are still open
+    rather than only ever making a new one. `supplier_id` narrows it to the drafts that
+    already carry that factory's goods, which is the normal question; without it every open
+    draft is offered, for the mixed-container case.
+    """
+    q = (
+        db.query(InboundShipment)
+        .filter(InboundShipment.shipment_status.in_(_ADDABLE_SHIPMENT_STATUSES))
+        .order_by(InboundShipment.created_at.desc(), InboundShipment.id.desc())
+        .limit(50)
+    )
+    shipments = q.all()
+    if not shipments:
+        return []
+    ids = [str(s.id) for s in shipments]
+    rows = (
+        db.query(InboundShipmentLine.shipment_id, InboundShipmentLine.supplier_id, Supplier.supplier_name)
+        .outerjoin(Supplier, Supplier.id == InboundShipmentLine.supplier_id)
+        .filter(InboundShipmentLine.shipment_id.in_(ids))
+        .all()
+    )
+    names: dict[str, list[str]] = {}
+    supplier_ids: dict[str, set[str]] = {}
+    counts: dict[str, int] = {}
+    for shipment_id, line_supplier, name in rows:
+        counts[str(shipment_id)] = counts.get(str(shipment_id), 0) + 1
+        if line_supplier:
+            supplier_ids.setdefault(str(shipment_id), set()).add(str(line_supplier))
+        if name and name not in names.setdefault(str(shipment_id), []):
+            names[str(shipment_id)].append(name)
+
+    out: list[dict] = []
+    for shipment in shipments:
+        sid = str(shipment.id)
+        if supplier_id and str(supplier_id) not in supplier_ids.get(sid, set()):
+            continue
+        out.append(
+            {
+                "shipment_id": sid,
+                "shipment_number": shipment.shipment_number,
+                "shipment_date": (
+                    shipment.shipment_date.isoformat() if shipment.shipment_date else None
+                ),
+                "supplier_names": names.get(sid, []),
+                "lines": counts.get(sid, 0),
+            }
+        )
+    return out
+
+
+def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
+    """Which proforma invoices this container's lines were charged on (AC-F9).
+
+    One read for the four places that show it - the Details card, the Lines column, the
+    Timeline entry and the Documents list - because they are four readings of the same link
+    rows, and four fetches would be four chances for them to disagree.
+
+    Empty rather than 404 on a container that came off a real packing-list upload: having no
+    proforma invoice behind it is a normal state, not a missing record.
+    """
+    if not _is_uuid(shipment_id):
+        raise AppException(404, "Packing list not found.", detail="shipment_id")
+
+    rows = (
+        db.query(ProformaInvoiceShipmentLink, ProformaInvoice)
+        .join(ProformaInvoice, ProformaInvoice.id == ProformaInvoiceShipmentLink.proforma_invoice_id)
+        .filter(
+            ProformaInvoiceShipmentLink.inbound_shipment_id == str(shipment_id),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .all()
+    )
+    if not rows:
+        return {"invoices": [], "by_shipment_line": {}}
+
+    prices: dict[str, Optional[float]] = {}
+    line_ids = {str(link.proforma_invoice_line_id) for link, _ in rows}
+    for pi_line in (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.id.in_(list(line_ids)))
+        .all()
+    ):
+        prices[str(pi_line.id)] = _f(pi_line.unit_price)
+
+    totals = _quantities(db, list({str(inv.id) for _, inv in rows}))
+    line_counts: dict[str, int] = {}
+    for invoice_id, count in (
+        db.query(ProformaInvoiceLine.invoice_id, func.count(1))
+        .filter(ProformaInvoiceLine.invoice_id.in_(list({str(inv.id) for _, inv in rows})))
+        .group_by(ProformaInvoiceLine.invoice_id)
+        .all()
+    ):
+        line_counts[str(invoice_id)] = int(count)
+
+    suppliers = _supplier_labels(db, [str(inv.supplier_id) for _, inv in rows])
+    invoices: dict[str, dict] = {}
+    by_line: dict[str, list[dict]] = {}
+    for link, invoice in rows:
+        qty = float(link.qty or 0)
+        entry = invoices.get(str(invoice.id))
+        if entry is None:
+            entry = {
+                "id": str(invoice.id),
+                "pi_number": invoice.pi_number,
+                "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
+                "supplier_name": suppliers.get(str(invoice.supplier_id), (None, None))[1],
+                "invoice_date": (
+                    invoice.invoice_date.isoformat() if invoice.invoice_date else None
+                ),
+                "revision_no": int(invoice.revision_no or 1),
+                "status": invoice.status or "current",
+                "source_ref": invoice.source_ref,
+                "currency": invoice.currency or None,
+                "lines": 0,
+                "total_lines": line_counts.get(str(invoice.id), 0),
+                "qty": 0.0,
+                "total_qty": totals.get(str(invoice.id), {}).get("total_qty", 0.0),
+                "amount": None,
+            }
+            invoices[str(invoice.id)] = entry
+        entry["lines"] += 1
+        entry["qty"] += qty
+        price = prices.get(str(link.proforma_invoice_line_id))
+        if price is not None:
+            entry["amount"] = round((entry["amount"] or 0.0) + price * qty, 2)
+
+        if link.inbound_shipment_line_id:
+            by_line.setdefault(str(link.inbound_shipment_line_id), []).append(
+                {
+                    "proforma_invoice_id": str(invoice.id),
+                    "pi_number": invoice.pi_number,
+                    "qty": qty,
+                }
+            )
+
+    return {
+        "invoices": sorted(invoices.values(), key=lambda i: i["pi_number"]),
+        "by_shipment_line": by_line,
+    }
+
+
 def _over_capacity(db: Session, invoices: list[ProformaInvoice]) -> list[str]:
     """One sentence per invoice that will not fit, naming both figures (AC-E5).
 
@@ -843,6 +1128,42 @@ def _over_capacity(db: Session, invoices: list[ProformaInvoice]) -> list[str]:
                 f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
             )
     return out
+
+
+def _target_shipment(db: Session, shipment_id: Optional[str]) -> Optional[InboundShipment]:
+    """The open draft this convert is being added to, or None for a new one (AC-F10).
+
+    Only a DRAFT can be added to. Anything further along has left the yard as far as this
+    screen is concerned, and adding goods to it would rewrite a document somebody is already
+    working from.
+    """
+    if not shipment_id:
+        return None
+    if not _is_uuid(shipment_id):
+        raise AppException(422, "That packing list does not exist.", detail="target_shipment_id")
+    shipment = (
+        db.query(InboundShipment).filter(InboundShipment.id == str(shipment_id)).first()
+    )
+    if shipment is None:
+        raise AppException(404, "That packing list does not exist.", detail="target_shipment_id")
+    if (shipment.shipment_status or "") not in _ADDABLE_SHIPMENT_STATUSES:
+        raise AppException(
+            422,
+            f"'{shipment.shipment_number or 'That packing list'}' is no longer a draft, so "
+            "nothing can be added to it.",
+            detail="target_shipment_id",
+        )
+    return shipment
+
+
+def _append_notes(existing: Optional[str], addition: str) -> str:
+    """Add to a container's story rather than replacing it."""
+    existing = (existing or "").strip()
+    if not existing:
+        return addition
+    if addition in existing:
+        return existing
+    return f"{existing} | {addition}"
 
 
 def _draft_notes(
@@ -871,6 +1192,8 @@ def convert_to_draft_shipment(
     created_by: Optional[str] = None,
     override_capacity: bool = False,
     override_reason: Optional[str] = None,
+    line_quantities: Optional[dict] = None,
+    target_shipment_id: Optional[str] = None,
 ) -> dict:
     """One or more proforma invoices become ONE draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -912,32 +1235,37 @@ def convert_to_draft_shipment(
             detail=", ".join(missing),
         )
 
-    # Idempotency: a PI already converted names the shipment it went to rather than
-    # converting again. Checked before anything is read further, so a caller re-submitting a
-    # mixed batch (some new, some already-done) gets one clear refusal naming all of them.
-    already = (
-        db.query(ProformaInvoiceShipmentLink, InboundShipment.shipment_number)
-        .join(
-            InboundShipment,
-            InboundShipment.id == ProformaInvoiceShipmentLink.inbound_shipment_id,
+    # What is left to place. Since Q9 an invoice may go into two containers, so "already
+    # converted" is no longer "has a link row" - it is "has nothing left", which is
+    # arithmetic rather than existence. An invoice with nothing left is SKIPPED and named
+    # (AC-F7); only a selection where every invoice is finished is refused outright.
+    quantities = _quantities(db, ids)
+    skipped_invoices: list[dict] = []
+    live_ids: list[str] = []
+    for invoice_id in ids:
+        entry = quantities.get(invoice_id, {})
+        if entry.get("remaining_qty", 0) > 0:
+            live_ids.append(invoice_id)
+            continue
+        names = ", ".join(
+            p["shipment_number"] or "a draft" for p in entry.get("packing_lists", [])
         )
-        .filter(ProformaInvoiceShipmentLink.proforma_invoice_id.in_(ids))
-        .all()
-    )
-    if already:
-        by_invoice: dict[str, str] = {}
-        for link, shipment_number in already:
-            by_invoice.setdefault(str(link.proforma_invoice_id), shipment_number or "?")
-        named_parts = [
-            f"{found_by_id[i].pi_number} -> {num}"
-            for i, num in by_invoice.items()
-            if i in found_by_id
-        ]
+        skipped_invoices.append(
+            {
+                "id": invoice_id,
+                "pi_number": found_by_id[invoice_id].pi_number,
+                "reason": f"Already in {names}." if names else "Nothing left to place.",
+            }
+        )
+    if not live_ids:
+        named_parts = [f"{i['pi_number']} -> {i['reason'].rstrip('.')}" for i in skipped_invoices]
         raise AppException(
             409,
             "Already converted: " + "; ".join(sorted(named_parts)) + ".",
-            detail="already_converted",
+            code="already_converted",
         )
+    ids = live_ids
+    invoices = [found_by_id[i] for i in ids]
 
     # A superseded revision is what the supplier sent on a day that has passed; converting
     # it would load the container from a document already replaced (AC-E10).
@@ -978,12 +1306,34 @@ def convert_to_draft_shipment(
     skipped: list[tuple[ProformaInvoiceLine, str]] = []
     product_ids: set[str] = set()
 
+    # How much of each line is still to place, and how much of it this convert is taking.
+    # The default is the whole remainder, because "all of what is left" is the normal case
+    # and a split is the exception somebody types (AC-F10).
+    placed_per_line = {
+        line_id: sum(p["qty"] for p in entries)
+        for invoice_id in ids
+        for line_id, entries in _line_placements(db, invoice_id).items()
+    }
+    requested = {str(k): float(v) for k, v in (line_quantities or {}).items()}
+
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
         if ln.product_id is None:
             skipped.append((ln, "No catalogue product matches this line's item code."))
             continue
-        qty = int(ln.qty or 0)
+        remaining = float(ln.qty or 0) - placed_per_line.get(str(ln.id), 0.0)
+        if remaining <= 0:
+            # Already on a container. Not a skip WITH A REASON - there is nothing wrong
+            # with it, it is simply finished, and a second skip row would claim otherwise.
+            continue
+        asked = requested.get(str(ln.id), remaining)
+        if asked < 0 or asked > remaining:
+            raise AppException(
+                422,
+                f"{ln.item_code} has {_num(remaining)} left to place, not {_num(asked)}.",
+                detail="line_quantities",
+            )
+        qty = int(asked)
         if qty <= 0:
             skipped.append((ln, "This line has no positive quantity to ship."))
             continue
@@ -1008,10 +1358,19 @@ def convert_to_draft_shipment(
             groups[key] = group
         prev_qty = group["quantity_shipped"]
         group["quantity_shipped"] = prev_qty + qty
-        if ln.cbm_total is not None:
-            group["cbm"] = (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_total))
+        # A part-placed line brings its SHARE of the volume and the cartons, not the whole
+        # line's: half a line in this container takes half the room in it.
+        share = (qty / float(ln.qty)) if ln.qty else 1.0
+        if ln.cbm_per_unit is not None:
+            group["cbm"] = (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_per_unit)) * qty
+        elif ln.cbm_total is not None:
+            group["cbm"] = (
+                (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_total)) * Decimal(str(share))
+            )
         if ln.cartons is not None:
-            group["cartons"] = (group["cartons"] or 0) + int(ln.cartons)
+            group["cartons"] = (group["cartons"] or 0) + int(round(float(ln.cartons) * share))
+        group["placed"] = group.get("placed", {})
+        group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
         if ln.unit_price is not None:
             if group["unit_cost"] is None:
                 group["unit_cost"] = ln.unit_price
@@ -1039,50 +1398,77 @@ def convert_to_draft_shipment(
 
     uoms = _product_base_uoms(db, product_ids)
 
-    shipment_number = _draft_shipment_number(db)
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
     pi_numbers = sorted({inv.pi_number for inv in invoices})
 
-    shipment = InboundShipment(
-        id=_uuid(),
-        shipment_number=shipment_number,
-        shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
-        shipment_status=_DRAFT_SHIPMENT_STATUS,
-        created_by=created_by,
-        notes=_draft_notes(pi_numbers, over, override_reason if over else None),
-    )
-    db.add(shipment)
-    db.flush()
+    shipment = _target_shipment(db, target_shipment_id)
+    if shipment is None:
+        shipment = InboundShipment(
+            id=_uuid(),
+            shipment_number=_draft_shipment_number(db),
+            shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
+            shipment_status=_DRAFT_SHIPMENT_STATUS,
+            created_by=created_by,
+            notes=_draft_notes(pi_numbers, over, override_reason if over else None),
+        )
+        db.add(shipment)
+        db.flush()
+    else:
+        # Adding to a draft somebody is already loading: its note gains this invoice rather
+        # than being replaced, so the container keeps the whole story of what went into it.
+        shipment.notes = _append_notes(
+            shipment.notes, _draft_notes(pi_numbers, over, override_reason if over else None)
+        )
+
+    # What is already on the container, so a second invoice naming the same model ADDS to
+    # its line instead of colliding with the unique index on (shipment, product, supplier).
+    existing_lines: dict[tuple[str, Optional[str]], InboundShipmentLine] = {
+        (str(line.product_id), str(line.supplier_id) if line.supplier_id else None): line
+        for line in db.query(InboundShipmentLine)
+        .filter(InboundShipmentLine.shipment_id == shipment.id)
+        .all()
+    }
 
     shipment_lines_by_key: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
     for key, group in groups.items():
-        line = InboundShipmentLine(
-            id=_uuid(),
-            shipment_id=shipment.id,
-            product_id=group["product_id"],
-            supplier_id=group["supplier_id"],
-            quantity_shipped=group["quantity_shipped"],
-            uom_id=uoms.get(group["product_id"]),
-            unit_cost=group["unit_cost"],
-            currency=group["currency"],
-            cbm=group["cbm"],
-            # `cartons_count` is NOT NULL with a default of 1, so an unstated carton count
-            # keeps that default rather than being written as 0 - which would read as a
-            # line that shipped in no box at all.
-            **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
-            remarks="; ".join(group["remarks"]) if group["remarks"] else None,
-        )
-        db.add(line)
+        line = existing_lines.get(key)
+        if line is not None:
+            line.quantity_shipped = (line.quantity_shipped or 0) + group["quantity_shipped"]
+            if group["cbm"] is not None:
+                line.cbm = (Decimal(str(line.cbm)) if line.cbm is not None else Decimal("0")) + group["cbm"]
+            if group["cartons"] is not None:
+                line.cartons_count = (line.cartons_count or 0) + group["cartons"]
+        else:
+            line = InboundShipmentLine(
+                id=_uuid(),
+                shipment_id=shipment.id,
+                product_id=group["product_id"],
+                supplier_id=group["supplier_id"],
+                quantity_shipped=group["quantity_shipped"],
+                uom_id=uoms.get(group["product_id"]),
+                unit_cost=group["unit_cost"],
+                currency=group["currency"],
+                cbm=group["cbm"],
+                # `cartons_count` is NOT NULL with a default of 1, so an unstated carton
+                # count keeps that default rather than being written as 0 - which would read
+                # as a line that shipped in no box at all.
+                **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
+                remarks="; ".join(group["remarks"]) if group["remarks"] else None,
+            )
+            db.add(line)
         shipment_lines_by_key[key] = line
     db.flush()
 
     # Header supplier: whatever the written lines agree on, else none - the same rule
     # `InboundShipmentService._derive_header_supplier` applies to a real packing list.
-    line_suppliers = {g["supplier_id"] for g in groups.values() if g["supplier_id"]}
+    all_lines = (
+        db.query(InboundShipmentLine)
+        .filter(InboundShipmentLine.shipment_id == shipment.id)
+        .all()
+    )
+    line_suppliers = {str(l.supplier_id) for l in all_lines if l.supplier_id}
     shipment.supplier_id = next(iter(line_suppliers)) if len(line_suppliers) == 1 else None
-
-    total_qty = sum(g["quantity_shipped"] for g in groups.values())
-    shipment.total_items_shipped = total_qty
+    shipment.total_items_shipped = sum(l.quantity_shipped or 0 for l in all_lines)
 
     for key, group in groups.items():
         shipment_line = shipment_lines_by_key[key]
@@ -1094,9 +1480,32 @@ def convert_to_draft_shipment(
                     proforma_invoice_line_id=source_line.id,
                     inbound_shipment_id=shipment.id,
                     inbound_shipment_line_id=shipment_line.id,
+                    # HOW MUCH of the line came here. The line's own quantity is no longer
+                    # the answer: since Q9 it may be split across two containers.
+                    qty=group["placed"].get(str(source_line.id)),
                 )
             )
+    # A skip is recorded ONCE per line. A repeat convert of the same invoice would otherwise
+    # write a second identical "no catalogue match" row every time, and the PI detail would
+    # report the same line going nowhere twice.
+    already_skipped: set[str] = set()
+    if skipped:
+        # Guarded rather than passed an empty list: `IN ('')` against a uuid column is a
+        # DataError, not an empty result.
+        already_skipped = {
+            str(row[0])
+            for row in db.query(ProformaInvoiceShipmentLink.proforma_invoice_line_id)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_line_id.in_(
+                    [str(l.id) for l, _ in skipped]
+                ),
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.is_(None),
+            )
+            .all()
+        }
     for source_line, reason in skipped:
+        if str(source_line.id) in already_skipped:
+            continue
         db.add(
             ProformaInvoiceShipmentLink(
                 id=_uuid(),
@@ -1122,6 +1531,9 @@ def convert_to_draft_shipment(
         "supplier_id": str(shipment.supplier_id) if shipment.supplier_id else None,
         "lines_created": len(groups),
         "lines_skipped": len(skipped),
+        # Invoices in the selection that had nothing left to place. Named rather than
+        # silently dropped, so the caller can say which ones did not move (AC-F7).
+        "skipped_invoices": skipped_invoices,
         "invoices": [
             {
                 "id": str(inv.id),
@@ -1569,7 +1981,12 @@ def get_or_404(db: Session, invoice_id: str) -> ProformaInvoice:
 
 
 def list_for_supplier(
-    db: Session, *, supplier_id: Optional[str] = None, limit: int = 25, offset: int = 0
+    db: Session,
+    *,
+    supplier_id: Optional[str] = None,
+    placement: Optional[str] = None,
+    limit: int = 25,
+    offset: int = 0,
 ) -> dict:
     """Invoices we have read, newest first. `supplier_id` narrows it to one supplier.
 
@@ -1587,19 +2004,44 @@ def list_for_supplier(
     if supplier_id and not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
+    if placement and placement not in _PLACEMENTS:
+        raise AppException(
+            422, "That is not a packing-list state.", detail="placement"
+        )
+
     q = db.query(ProformaInvoice)
     if supplier_id:
         q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
-    total = q.count()
-    rows = (
-        q.order_by(ProformaInvoice.created_at.desc(), ProformaInvoice.id.desc())
-        .offset(max(offset, 0))
-        .limit(limit)
-        .all()
-    )
+
+    if placement:
+        # Filtered in Python rather than in SQL, deliberately: "split" is the comparison of
+        # what is placed against what CAN be placed, and what can be placed excludes lines
+        # with no catalogue product - a predicate that would take three correlated
+        # subqueries to write and one line to get wrong. The candidate set here is one
+        # supplier's invoices, not a table scan.
+        candidates = q.order_by(
+            ProformaInvoice.created_at.desc(), ProformaInvoice.id.desc()
+        ).all()
+        states = _quantities(db, [str(r.id) for r in candidates])
+        matching = [
+            r for r in candidates
+            if states.get(str(r.id), {}).get("placement") == placement
+        ]
+        total = len(matching)
+        rows = matching[max(offset, 0): max(offset, 0) + limit]
+    else:
+        total = q.count()
+        rows = (
+            q.order_by(ProformaInvoice.created_at.desc(), ProformaInvoice.id.desc())
+            .offset(max(offset, 0))
+            .limit(limit)
+            .all()
+        )
+
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     volumes = _volumes(db, [str(r.id) for r in rows])
     sizes = _container_sizes(db)
+    placements = _quantities(db, [str(r.id) for r in rows])
     return {
         "data": [
             serialize(
@@ -1609,6 +2051,7 @@ def list_for_supplier(
                 supplier_labels=labels,
                 volumes=volumes,
                 container_sizes=sizes,
+                placements=placements,
             )
             for r in rows
         ],
@@ -1654,6 +2097,7 @@ def serialize(
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
     volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
     container_sizes: Optional[tuple[dict[str, Any], Optional[Any]]] = None,
+    placements: Optional[dict[str, dict]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
@@ -1716,6 +2160,20 @@ def serialize(
         out["revision_of_pi_number"] = previous.pi_number if previous else None
         out["diff"] = _diff(db, invoice)
 
+    quantities = (
+        placements if placements is not None else _quantities(db, [str(invoice.id)])
+    ).get(str(invoice.id), {})
+    out.update(
+        {
+            "placement": quantities.get("placement", "not_converted"),
+            "placed_qty": quantities.get("placed_qty", 0.0),
+            "total_qty": quantities.get("total_qty", 0.0),
+            "placeable_qty": quantities.get("placeable_qty", 0.0),
+            "remaining_qty": quantities.get("remaining_qty", 0.0),
+            "packing_lists": quantities.get("packing_lists", []),
+        }
+    )
+
     sizes_by_id, default_size = (
         container_sizes if container_sizes is not None else _container_sizes(db)
     )
@@ -1735,6 +2193,7 @@ def serialize(
         .all()
     )
     codes = _product_codes(db, [str(ln.product_id) for ln in lines if ln.product_id])
+    line_placements = _line_placements(db, str(invoice.id))
 
     # Where each line went, if it has been converted (the PI -> draft-shipment convert):
     # `(shipment_id, shipment_number)` when it became a real shipment line, or an
@@ -1803,6 +2262,14 @@ def serialize(
                 if str(ln.id) in links_by_line
                 else None
             ),
+            # Where this LINE went, and what is left of it - a line is what gets split
+            # across two containers, and the remainder is what the next convert pre-fills.
+            "placed_qty": sum(p["qty"] for p in line_placements.get(str(ln.id), [])),
+            "remaining_qty": max(
+                _placeable(ln) - sum(p["qty"] for p in line_placements.get(str(ln.id), [])),
+                0.0,
+            ),
+            "packing_lists": line_placements.get(str(ln.id), []),
         }
         for ln in lines
     ]

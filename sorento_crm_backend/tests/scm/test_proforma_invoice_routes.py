@@ -483,3 +483,97 @@ def test_mark_as_revision_of_links_two_invoices_after_the_fact(scm_app):
 
     # Itself is refused; the route is reachable and validating rather than 404ing.
     assert r.status_code == 422, r.text
+
+
+# --------------------------------------------------------------------------- #
+# F10 - the PI and the packing list see each other (AC-F6, AC-F9, AC-F10)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_list_filters_on_where_the_goods_went(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+
+    not_converted = client.get(
+        URL, params={"supplier_id": detail["supplier_id"], "placement": "not_converted"}
+    )
+    assert not_converted.status_code == 200, not_converted.text
+    assert [r["id"] for r in not_converted.json()["data"]] == [detail["id"]]
+
+    converted = client.get(
+        URL, params={"supplier_id": detail["supplier_id"], "placement": "converted"}
+    )
+    assert converted.json()["data"] == []
+
+
+def test_a_placement_nobody_recognises_is_a_422(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    _applied_invoice(client, db)
+
+    r = client.get(URL, params={"placement": "somewhere"})
+
+    assert r.status_code == 422, r.text
+
+
+def test_the_draft_shipments_route_is_not_swallowed_by_the_id_route(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    _applied_invoice(client, db)
+
+    r = client.get(f"{URL}/draft-shipments")
+
+    assert r.status_code == 200, r.text
+    assert "data" in r.json()
+
+
+def test_converting_part_of_a_line_and_then_the_rest(scm_app):
+    # The convert is a SHIPMENT write, so it sits behind `scm.reorder.run` rather than the
+    # proforma upload permission.
+    client, db = _client(scm_app, upload=True, view=True)
+    _grant(db, client.app.dependency_overrides[scm_app[2]]()["id"], "scm.reorder.run")
+    detail, line_id = _applied_invoice(client, db)
+    matched = [ln["id"] for ln in detail["lines"] if ln["matched"]]
+
+    first = client.post(
+        f"{URL}/convert-to-draft-shipment",
+        json={
+            "proforma_invoice_ids": [detail["id"]],
+            "line_quantities": {lid: 1 for lid in matched},
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    after = client.get(f"{URL}/{detail['id']}").json()
+    assert after["placement"] == "split"
+    assert after["remaining_qty"] > 0
+
+    second = client.post(
+        f"{URL}/convert-to-draft-shipment",
+        json={
+            "proforma_invoice_ids": [detail["id"]],
+            "target_shipment_id": first.json()["shipment_id"],
+        },
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["shipment_id"] == first.json()["shipment_id"]
+
+    finished = client.get(f"{URL}/{detail['id']}").json()
+    assert finished["placement"] == "converted"
+    assert finished["remaining_qty"] == 0
+
+
+def test_the_packing_list_route_names_the_invoices_behind_it(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    _grant(db, client.app.dependency_overrides[scm_app[2]]()["id"], "scm.reorder.run")
+    detail, _ = _applied_invoice(client, db)
+    converted = client.post(
+        f"{URL}/convert-to-draft-shipment", json={"proforma_invoice_ids": [detail["id"]]}
+    ).json()
+
+    r = client.get(
+        f"/api/v1/scm/inbound-shipments/{converted['shipment_id']}/source-proforma-invoices"
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [i["pi_number"] for i in body["invoices"]] == [detail["pi_number"]]
+    assert body["by_shipment_line"]

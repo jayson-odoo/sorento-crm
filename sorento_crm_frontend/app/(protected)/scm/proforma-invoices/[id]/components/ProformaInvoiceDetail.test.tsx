@@ -77,6 +77,8 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
     mutateAsync: writes.markAsRevision,
     isPending: false,
   }),
+  // The convert dialog offers this supplier's open drafts to add to (F10).
+  useDraftShipments: () => ({ data: [], isLoading: false }),
 }));
 
 vi.mock('../../../hooks/useFulfilment', () => ({
@@ -122,6 +124,11 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
     adjusted_by: null,
     adjusted_at: null,
     is_adjusted: false,
+    placement: 'not_converted',
+    placed_qty: 0,
+    total_qty: 10,
+    remaining_qty: 10,
+    packing_lists: [],
     lines: [
       {
         id: 'line-1',
@@ -140,6 +147,9 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         cbm_total: 1.7,
         supplier_qty: 10,
         supplier_unit_price: 100,
+        placed_qty: 0,
+        remaining_qty: 10,
+        packing_lists: [],
         product_code: 'ITEM-1',
         matched: true,
         shipment_id: null,
@@ -225,6 +235,7 @@ describe('ProformaInvoiceDetail - loading / error / data states', () => {
           description: 'Unknown part', qty: 5, uom: 'PCS', unit_price: 20, amount: 100,
           po_ref: null, remark: null, cartons: null, cbm_per_unit: null, cbm_total: null,
           supplier_qty: 5, supplier_unit_price: 20,
+          placed_qty: 0, remaining_qty: 5, packing_lists: [],
           product_code: null, matched: false,
           shipment_id: null, shipment_number: null, unmatched_reason: null,
         },
@@ -489,5 +500,61 @@ describe('F5b - revisions', () => {
     expect(
       screen.queryByRole('button', { name: /mark as revision of/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('F10 - the invoice says which packing list it is in', () => {
+  it('reads Not converted before anything is placed (AC-F8)', () => {
+    state.data = detail();
+    renderDetail();
+
+    // Twice on purpose: the header field, and the lines grid's own column header - the
+    // invoice-level answer and the per-line one are different questions (AC-F8).
+    expect(screen.getAllByText('In packing list')).toHaveLength(2);
+    expect(screen.getAllByText('Not converted').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('names the packing list, and what is left when it is split (Q9)', () => {
+    state.data = detail({
+      placement: 'split',
+      placed_qty: 4,
+      remaining_qty: 6,
+      packing_lists: [
+        {
+          shipment_id: 'sh-1',
+          shipment_number: 'FSCU8103365',
+          shipment_status: 'draft',
+          qty: 4,
+          lines: 1,
+        },
+      ],
+      lines: [
+        {
+          ...detail().lines[0],
+          placed_qty: 4,
+          remaining_qty: 6,
+          packing_lists: [{ shipment_id: 'sh-1', shipment_number: 'FSCU8103365', qty: 4 }],
+        },
+      ],
+    });
+    renderDetail();
+
+    expect(screen.getAllByRole('link', { name: /FSCU8103365/ }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/Split - 6 still to place/)).toBeInTheDocument();
+    expect(screen.getByText('6 left')).toBeInTheDocument();
+  });
+
+  it('offers "Convert the rest" while something is still to place', () => {
+    state.data = detail({ placement: 'split', placed_qty: 4, remaining_qty: 6 });
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: /convert the rest/i })).toBeInTheDocument();
+  });
+
+  it('offers no convert at all once every line is placed', () => {
+    state.data = detail({ placement: 'converted', placed_qty: 10, remaining_qty: 0 });
+    renderDetail();
+
+    expect(screen.queryByRole('button', { name: /convert/i })).not.toBeInTheDocument();
   });
 });

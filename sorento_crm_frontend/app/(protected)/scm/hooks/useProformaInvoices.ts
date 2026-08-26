@@ -9,24 +9,44 @@ import {
   deleteProformaInvoice,
   deleteProformaInvoiceLine,
   getProformaInvoice,
+  listDraftShipments,
   listProformaInvoices,
   markProformaInvoiceAsRevisionOf,
   updateProformaInvoice,
   updateProformaInvoiceLine,
+  type ConvertOptions,
   type ListProformaInvoicesOptions,
   type ProformaInvoiceDetail,
+  type ProformaPlacement,
 } from '../services/proformaInvoiceService';
 
 const KEY = ['scm', 'proforma-invoices'] as const;
 
 export function useProformaInvoices(
   supplierId: string | null,
-  opts: { limit?: number; offset?: number } = {},
+  opts: { limit?: number; offset?: number; placement?: ProformaPlacement | null } = {},
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };
   return useQuery({
-    queryKey: [...KEY, 'list', supplierId, opts.limit ?? 25, opts.offset ?? 0],
+    queryKey: [
+      ...KEY,
+      'list',
+      supplierId,
+      opts.placement ?? 'all',
+      opts.limit ?? 25,
+      opts.offset ?? 0,
+    ],
     queryFn: () => listProformaInvoices(options),
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** The draft packing lists a convert can be added to instead of creating a new one. */
+export function useDraftShipments(supplierId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'draft-shipments', supplierId],
+    queryFn: () => listDraftShipments(supplierId),
+    enabled,
     refetchOnWindowFocus: false,
   });
 }
@@ -135,11 +155,17 @@ export function useUpdateProformaInvoice(invoiceId: string) {
 export function useConvertProformaInvoicesToDraftShipment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { invoiceIds: string[]; overrideReason?: string }) =>
-      convertProformaInvoicesToDraftShipment(
-        args.invoiceIds,
-        args.overrideReason ? { reason: args.overrideReason } : undefined,
-      ),
+    mutationFn: (args: {
+      invoiceIds: string[];
+      overrideReason?: string;
+      lineQuantities?: Record<string, number>;
+      targetShipmentId?: string | null;
+    }) =>
+      convertProformaInvoicesToDraftShipment(args.invoiceIds, {
+        lineQuantities: args.lineQuantities,
+        targetShipmentId: args.targetShipmentId,
+        override: args.overrideReason ? { reason: args.overrideReason } : undefined,
+      } as ConvertOptions),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
       result.invoices.forEach((inv) => {

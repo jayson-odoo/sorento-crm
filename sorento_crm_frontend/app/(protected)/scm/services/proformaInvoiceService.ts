@@ -14,9 +14,14 @@
  *       multipart: file + supplier_id [+ currency] [+ revision_of]
  *       `revision_of` is JSON `{"<document index>": "<invoice id>"}` - one file holds
  *       several documents, so whether each is a revision is answered per document (AC-E7).
- *  GET  /api/v1/scm/proforma-invoices?supplier_id&limit&offset -> 200 ProformaInvoiceListResponse
+ *  GET  /api/v1/scm/proforma-invoices?supplier_id&placement&limit&offset -> 200 ProformaInvoiceListResponse
+ *       `placement` narrows to not_converted / converted / split (AC-F6). The API defaults
+ *       to all of them; the LIST defaults its control to Not converted, which is the
+ *       question being asked when somebody opens that screen.
  *       Fixed `created_at DESC` sort, NO page/sort/query params - offset paging only.
  *  GET  /api/v1/scm/proforma-invoices/{id}     -> 200 ProformaInvoiceDetail
+ *  GET  /api/v1/scm/proforma-invoices/draft-shipments?supplier_id -> 200 { data: DraftShipmentRef[] }
+ *       The draft packing lists a convert can be ADDED to (AC-F10).
  *  DELETE /api/v1/scm/proforma-invoices/{id}   -> 204, hard delete. 409 when this invoice
  *       has already been converted to a draft shipment.
  *  POST /api/v1/scm/proforma-invoices/bulk-delete -> 200 { deleted, blocked }. Same shape as
@@ -179,10 +184,45 @@ export interface ProformaInvoiceListRow {
   adjusted_at: string | null;
   /** True once any line's qty differs from what the supplier stated, or a line was removed. */
   is_adjusted: boolean;
+  /** Where this invoice's goods went, so a converted one is not picked a second time. */
+  placement: ProformaPlacement;
+  placed_qty: number;
+  total_qty: number;
+  remaining_qty: number;
+  packing_lists: PackingListPlacement[];
 }
 
 /** A revision is either the one in force or one the supplier has already replaced. */
 export type ProformaInvoiceStatus = 'current' | 'superseded';
+
+/**
+ * How much of this invoice has reached a packing list (Q9, AC-F6).
+ *
+ * `split` is a real state, not a rounding of `converted`: one invoice legitimately sits in
+ * two containers, and until every line is placed there is still something to convert.
+ */
+export type ProformaPlacement = 'not_converted' | 'converted' | 'split';
+
+/** One packing list an invoice (or one of its lines) went to, and how much went there. */
+export interface PackingListPlacement {
+  shipment_id: string;
+  shipment_number: string | null;
+  qty: number;
+  /** Absent on a per-LINE placement: the container's status is a fact about the container,
+   *  and repeating it under every one of its lines is how the two start disagreeing. */
+  shipment_status?: string | null;
+  /** How many of the invoice's lines landed in this one. Absent on a per-line placement. */
+  lines?: number;
+}
+
+/** A draft packing list a convert can be added to instead of creating a new one. */
+export interface DraftShipmentRef {
+  shipment_id: string;
+  shipment_number: string | null;
+  shipment_date: string | null;
+  supplier_names: string[];
+  lines: number;
+}
 
 export interface ProformaInvoiceListResponse {
   data: ProformaInvoiceListRow[];
@@ -222,6 +262,10 @@ export interface ProformaInvoiceLine {
   /** Set only when the convert ran and SKIPPED this line (no product match, or no
    *  positive quantity) - distinct from never having been converted at all. */
   unmatched_reason: string | null;
+  /** How much of this line has reached a packing list, and what is left to place. */
+  placed_qty: number;
+  remaining_qty: number;
+  packing_lists: PackingListPlacement[];
 }
 
 /** Every distinct shipment this invoice's lines went to - normally one, since a convert
@@ -412,6 +456,8 @@ export async function testProformaInvoice(
 
 export interface ListProformaInvoicesOptions {
   supplierId?: string | null;
+  /** Narrow to what has, or has not, reached a packing list (AC-F6). */
+  placement?: ProformaPlacement | null;
   limit?: number;
   offset?: number;
 }
@@ -421,6 +467,7 @@ export async function listProformaInvoices(
 ): Promise<ProformaInvoiceListResponse> {
   const params = new URLSearchParams();
   if (opts.supplierId) params.set('supplier_id', opts.supplierId);
+  if (opts.placement) params.set('placement', opts.placement);
   params.set('limit', String(opts.limit ?? 25));
   params.set('offset', String(opts.offset ?? 0));
   const res = await apiFetch(`/api/v1/scm/proforma-invoices?${params.toString()}`);
@@ -437,6 +484,16 @@ export async function deleteProformaInvoice(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the proforma invoice'));
 }
 
+/** What a convert may say beyond "these invoices". Every part of it is optional. */
+export interface ConvertOptions {
+  /** Per PI line, how much to place. Omitted lines place their remaining quantity. */
+  lineQuantities?: Record<string, number>;
+  /** An existing DRAFT packing list to add to, instead of creating one (AC-F10). */
+  targetShipmentId?: string | null;
+  /** The operator's answer to an over-capacity refusal, with their reason (AC-E5). */
+  override?: { reason: string };
+}
+
 /**
  * Several invoices, one draft shipment - any suppliers, one container.
  *
@@ -446,13 +503,18 @@ export async function deleteProformaInvoice(id: string): Promise<void> {
  */
 export async function convertProformaInvoicesToDraftShipment(
   invoiceIds: string[],
-  override?: { reason: string },
+  options?: ConvertOptions,
 ): Promise<ConvertToDraftShipmentResult> {
+  const override = options?.override;
   const res = await apiFetch('/api/v1/scm/proforma-invoices/convert-to-draft-shipment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       proforma_invoice_ids: invoiceIds,
+      ...(options?.lineQuantities && Object.keys(options.lineQuantities).length > 0
+        ? { line_quantities: options.lineQuantities }
+        : {}),
+      ...(options?.targetShipmentId ? { target_shipment_id: options.targetShipmentId } : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
     }),
   });
@@ -489,6 +551,22 @@ export async function deleteProformaInvoiceLine(
     { method: 'DELETE' },
   );
   return readJson<ProformaInvoiceDetail>(res, 'Failed to remove the line');
+}
+
+/** The draft packing lists this convert could be added to instead of making a new one. */
+export async function listDraftShipments(
+  supplierId?: string | null,
+): Promise<DraftShipmentRef[]> {
+  const params = new URLSearchParams();
+  if (supplierId) params.set('supplier_id', supplierId);
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/draft-shipments?${params.toString()}`,
+  );
+  const body = await readJson<{ data: DraftShipmentRef[] }>(
+    res,
+    'Failed to load the draft packing lists',
+  );
+  return body.data ?? [];
 }
 
 /**

@@ -40,8 +40,12 @@ import {
   useProformaInvoices,
 } from '../../hooks/useProformaInvoices';
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
-import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
-import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import type {
+  ProformaInvoiceListRow,
+  ProformaPlacement,
+} from '../../services/proformaInvoiceService';
+import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
+import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
 import { buildProformaBulkActions } from '../lib/proformaBulkActions';
@@ -62,12 +66,43 @@ import { buildProformaBulkActions } from '../lib/proformaBulkActions';
 const UPLOAD_PERMISSION = 'scm.proforma_invoice.upload';
 const CONVERT_PERMISSION = 'scm.reorder.run';
 
+/** The filter's own vocabulary, in the words the column uses. */
+const PLACEMENT_FILTER: { value: string; label: string }[] = [
+  { value: 'not_converted', label: 'Not converted' },
+  { value: 'split', label: 'Split' },
+  { value: 'converted', label: 'In a packing list' },
+];
+
+/** Can this invoice still go into a container? */
+function selectableForConvert(row: ProformaInvoiceListRow): boolean {
+  return row.status !== 'superseded' && row.placement !== 'converted';
+}
+
+/**
+ * WHY it cannot, in a sentence naming the container - "In FSCU8103365" (AC-F7).
+ *
+ * The same string is the checkbox's tooltip and the reason the column shows, so the two
+ * cannot drift into two explanations of one rule.
+ */
+function convertBlockedReason(row: ProformaInvoiceListRow): string | undefined {
+  if (row.status === 'superseded') return 'Superseded by a newer revision';
+  if (row.placement !== 'converted') return undefined;
+  const names = row.packing_lists
+    .map((p) => p.shipment_number)
+    .filter(Boolean)
+    .join(', ');
+  return names ? `In ${names}` : 'Already in a packing list';
+}
+
 export function ProformaInvoicesView() {
   const router = useRouter();
   const suppliers = useFulfilmentSuppliers();
   const canUpload = useHasPermission(UPLOAD_PERMISSION);
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const [supplierId, setSupplierId] = useState<string | null>(null);
+  // Defaulted to what has NOT been converted, because that is the question being asked by
+  // anyone opening this screen: which of these still has to go into a container (AC-F6).
+  const [placement, setPlacement] = useState<ProformaPlacement | null>('not_converted');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -75,15 +110,23 @@ export function ProformaInvoicesView() {
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
+  const [convertOpen, setConvertOpen] = useState(false);
+  // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
+  // the operator to re-type the split they already chose.
+  const [convertArgs, setConvertArgs] = useState<{
+    lineQuantities: Record<string, number>;
+    targetShipmentId: string | null;
+  } | null>(null);
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [supplierId]);
+  }, [supplierId, placement]);
 
   const { data, isLoading } = useProformaInvoices(supplierId, {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
+    placement,
   });
   const deleteInvoice = useDeleteProformaInvoice();
   const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
@@ -95,6 +138,11 @@ export function ProformaInvoicesView() {
     () => [
       buildSelectColumn<ProformaInvoiceListRow>({
         rowLabel: (row) => `Select ${row.original.pi_number}`,
+        // A fully placed invoice, and a superseded revision, cannot be converted - so they
+        // cannot be picked for it either, and the box says why rather than just greying
+        // out (AC-F7).
+        enableRow: (row) => selectableForConvert(row.original),
+        disabledReason: (row) => convertBlockedReason(row.original),
       }),
       {
         accessorKey: 'pi_number',
@@ -139,6 +187,47 @@ export function ProformaInvoicesView() {
         size: 200,
         enableSorting: false,
         meta: { headerTitle: 'Supplier' },
+      },
+      {
+        id: 'packing_list',
+        header: ({ column }) => <DataGridColumnHeader title="Packing list" column={column} />,
+        // Where this invoice's goods went. Read from the list rather than only from the
+        // detail, because the only way to learn a PI was converted used to be to try
+        // converting it again and be refused (AC-F6).
+        cell: ({ row }) => {
+          const invoice = row.original;
+          if (invoice.status === 'superseded') {
+            return <span className="text-muted-foreground">Superseded</span>;
+          }
+          if (invoice.placement === 'not_converted') {
+            return <span className="text-muted-foreground">Not converted</span>;
+          }
+          return (
+            <div className="flex flex-col gap-0.5">
+              {invoice.packing_lists.map((pl) => (
+                <Link
+                  key={pl.shipment_id}
+                  href={`/procurement-management/packing-lists/${pl.shipment_id}`}
+                  className="truncate text-primary hover:underline"
+                  title={`Open ${pl.shipment_number ?? 'the packing list'}`}
+                >
+                  {pl.shipment_number ?? 'Draft'}
+                  <span className="ms-1 text-xs text-muted-foreground">
+                    {fmtQty(pl.qty)}
+                  </span>
+                </Link>
+              ))}
+              {invoice.placement === 'split' ? (
+                <span className="text-xs text-muted-foreground">
+                  Split - {fmtQty(invoice.remaining_qty)} still to place
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Packing list' },
       },
       {
         accessorKey: 'invoice_date',
@@ -249,7 +338,7 @@ export function ProformaInvoicesView() {
     state: { pagination, rowSelection },
     onPaginationChange: setPagination,
     onRowSelectionChange: setRowSelection,
-    enableRowSelection: true,
+    enableRowSelection: (row) => selectableForConvert(row.original),
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     columnResizeMode: 'onChange',
@@ -258,15 +347,22 @@ export function ProformaInvoicesView() {
 
   const selectedIds = table.getSelectedRowModel().rows.map((r) => r.original.id);
 
-  const runConvert = async (reason?: string) => {
+  const runConvert = async (
+    args: { lineQuantities: Record<string, number>; targetShipmentId: string | null } | null,
+    reason?: string,
+  ) => {
     if (!selectedIds.length) return;
+    setConvertArgs(args);
     try {
       const result = await convertToDraftShipment.mutateAsync({
         invoiceIds: selectedIds,
         overrideReason: reason,
+        lineQuantities: args?.lineQuantities,
+        targetShipmentId: args?.targetShipmentId,
       });
       setOverCapacity(null);
       setOverrideReason('');
+      setConvertOpen(false);
       table.resetRowSelection();
       const skippedMsg =
         result.lines_skipped > 0
@@ -316,7 +412,7 @@ export function ProformaInvoicesView() {
 
   const bulkActions = buildProformaBulkActions(
     { selectedCount: selectedIds.length },
-    { onConvert: () => void runConvert(), onDelete: () => setBulkDeleteIds(selectedIds) },
+    { onConvert: () => setConvertOpen(true), onDelete: () => setBulkDeleteIds(selectedIds) },
   ).filter((a) => {
     if (a.key === 'bulk-convert') return canConvert;
     if (a.key === 'bulk-delete') return canUpload;
@@ -334,7 +430,7 @@ export function ProformaInvoicesView() {
       >
         <Card>
           <CardHeader className="block py-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
               <div className="min-w-0">
                 <Label className="text-xs text-muted-foreground" htmlFor="proforma-supplier-filter">
                   Supplier
@@ -346,6 +442,20 @@ export function ProformaInvoicesView() {
                   onChange={(v: string) => setSupplierId(v || null)}
                   options={suppliers.data ?? []}
                   placeholder="All suppliers"
+                  clearable
+                />
+              </div>
+              <div className="min-w-0">
+                <Label className="text-xs text-muted-foreground" htmlFor="proforma-placement-filter">
+                  Packing list
+                </Label>
+                <SearchableSelect
+                  id="proforma-placement-filter"
+                  className="mt-1 w-52"
+                  value={placement ?? ''}
+                  onChange={(v: string) => setPlacement((v as ProformaPlacement) || null)}
+                  options={PLACEMENT_FILTER}
+                  placeholder="Any"
                   clearable
                 />
               </div>
@@ -371,8 +481,21 @@ export function ProformaInvoicesView() {
             <div className="flex flex-col items-center gap-3 p-10 text-center">
               <FileText className="size-6 text-muted-foreground" />
               <p className="text-sm font-medium">
-                {supplierId ? 'No proforma invoice on file for this supplier.' : 'No proforma invoice read yet.'}
+                {/* The default filter is "not converted", so an empty result means either
+                    nothing was ever uploaded or everything is already in a container - and
+                    the screen cannot tell which without a second query. One sentence that
+                    is true of both, plus the escape hatch below, beats guessing. */}
+                {placement === 'not_converted'
+                  ? 'No proforma invoice is waiting for a container.'
+                  : supplierId
+                    ? 'No proforma invoice on file for this supplier.'
+                    : 'No proforma invoice read yet.'}
               </p>
+              {placement ? (
+                <Button variant="ghost" size="sm" onClick={() => setPlacement(null)}>
+                  Show every invoice
+                </Button>
+              ) : null}
               {canUpload ? (
                 <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
                   <Upload className="size-4" />
@@ -408,8 +531,18 @@ export function ProformaInvoicesView() {
         reason={overrideReason}
         onReasonChange={setOverrideReason}
         onCancel={() => setOverCapacity(null)}
-        onConfirm={() => void runConvert(overrideReason.trim())}
+        onConfirm={() => void runConvert(convertArgs, overrideReason.trim())}
         pending={convertToDraftShipment.isPending}
+      />
+
+      {/* How much goes where, before anything is written (AC-F10). */}
+      <ConvertToPackingListDialog
+        open={convertOpen}
+        onOpenChange={setConvertOpen}
+        invoiceIds={selectedIds}
+        supplierId={supplierId}
+        pending={convertToDraftShipment.isPending}
+        onConvert={(args) => void runConvert(args)}
       />
 
       <ConfirmDeleteDialog

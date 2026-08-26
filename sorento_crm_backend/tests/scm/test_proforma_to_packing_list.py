@@ -118,3 +118,296 @@ def test_two_invoice_lines_of_one_product_add_their_volumes_up():
         )
         assert float(line.cbm) == pytest.approx(expected_cbm)
         assert line.cartons_count == expected_cartons
+
+
+# --------------------------------------------------------------------------------- #
+# AC-F6 / AC-F8 - the invoice says where its goods went
+# --------------------------------------------------------------------------------- #
+
+
+def _kailu_bytes(w: World, *, pi_number=None) -> bytes:
+    """The Kailu proforma, optionally renumbered.
+
+    Kailu STATE their document number (`货单号：` in G6), and identity is
+    (supplier, pi_number) - so a second upload under the same number updates the first
+    invoice rather than creating a second one. A test that needs two documents has to
+    renumber, exactly as a second real document would be.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.load_workbook(BytesIO(kailu_proforma_workbook({"SRTWT7443": w.code("A")})))
+    if pi_number is not None:
+        wb.active["G6"] = pi_number
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _kailu_invoice(db, w: World, *, pi_number=None, source_ref="kailu.xlsx"):
+    svc.apply(db, _kailu_bytes(w, pi_number=pi_number), supplier_id=str(w.supplier.id),
+              actor="Ms Tee", source_ref=source_ref)
+    return _invoices(db, w)[0] if pi_number is None else next(
+        inv for inv in _invoices(db, w) if inv.pi_number == pi_number
+    )
+
+
+def test_an_untouched_invoice_reads_not_converted():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+
+        out = svc.serialize(db, invoice)
+
+        assert out["placement"] == "not_converted"
+        assert out["placed_qty"] == 0
+        # What is LEFT is what could ever be placed, not what the document totals: Kailu's
+        # proforma names codes this catalogue does not hold, and those lines can never go on
+        # a container. Counting them as outstanding would leave the invoice reading Split
+        # for ever, with a remainder nobody can place.
+        assert out["remaining_qty"] == out["placeable_qty"] > 0
+        assert out["total_qty"] > out["placeable_qty"]
+        assert out["packing_lists"] == []
+
+
+def test_a_fully_placed_invoice_reads_converted_and_names_its_packing_list():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        shipment = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        out = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+
+        assert out["placement"] == "converted"
+        assert out["remaining_qty"] == 0
+        assert [p["shipment_id"] for p in out["packing_lists"]] == [shipment["shipment_id"]]
+        assert out["packing_lists"][0]["shipment_number"] == shipment["shipment_number"]
+
+
+def test_placing_part_of_a_line_reads_split_and_leaves_the_remainder():
+    """Q9: one invoice may sit in two containers, and it reads Split until it is fully
+    placed."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        half = int(float(line.qty) // 2)
+
+        svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(line.id): half}
+        )
+
+        out = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+        assert out["placement"] == "split"
+        assert out["remaining_qty"] > 0
+        placed_line = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert placed_line["placed_qty"] == half
+        assert placed_line["remaining_qty"] == float(line.qty) - half
+        assert placed_line["packing_lists"][0]["qty"] == half
+
+
+def test_the_link_row_records_how_much_went_there():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+
+        svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(line.id): 5}
+        )
+
+        link = (
+            db.query(ProformaInvoiceShipmentLink)
+            .filter(ProformaInvoiceShipmentLink.proforma_invoice_line_id == line.id)
+            .one()
+        )
+        assert float(link.qty) == 5
+
+
+def test_the_list_filters_by_where_the_goods_went():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+
+        before = svc.list_for_supplier(
+            db, supplier_id=str(w.supplier.id), placement="not_converted"
+        )
+        assert [r["id"] for r in before["data"]] == [str(invoice.id)]
+
+        svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        after = svc.list_for_supplier(
+            db, supplier_id=str(w.supplier.id), placement="not_converted"
+        )
+        assert after["data"] == []
+        assert after["total"] == 0
+        converted = svc.list_for_supplier(
+            db, supplier_id=str(w.supplier.id), placement="converted"
+        )
+        assert [r["id"] for r in converted["data"]] == [str(invoice.id)]
+
+
+# --------------------------------------------------------------------------------- #
+# AC-F10 - convert places a remainder, and can be added to an open draft
+# --------------------------------------------------------------------------------- #
+
+
+def test_converting_twice_places_the_remainder_the_second_time():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        total = float(line.qty)
+
+        svc.convert_to_draft_shipment(db, [str(invoice.id)], line_quantities={str(line.id): 10})
+        svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        out = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+        placed_line = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert placed_line["placed_qty"] == total
+        assert placed_line["remaining_qty"] == 0
+        assert out["placement"] == "converted"
+        assert len(placed_line["packing_lists"]) == 2
+
+
+def test_an_invoice_with_nothing_left_to_place_is_refused():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        with pytest.raises(AppException) as exc:
+            svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "already_converted"
+
+
+def test_placing_more_than_a_line_has_left_is_refused():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+
+        with pytest.raises(AppException) as exc:
+            svc.convert_to_draft_shipment(
+                db, [str(invoice.id)], line_quantities={str(line.id): float(line.qty) + 1}
+            )
+        assert exc.value.status_code == 422
+
+
+def test_a_convert_can_be_added_to_an_open_draft_instead_of_making_a_new_one():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        first = _kailu_invoice(db, w)
+        draft = svc.convert_to_draft_shipment(db, [str(first.id)])
+        # A second document from the same factory, for the same container.
+        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
+
+        out = svc.convert_to_draft_shipment(
+            db, [str(second.id)], target_shipment_id=draft["shipment_id"]
+        )
+
+        assert out["shipment_id"] == draft["shipment_id"]
+        # One shipment, both invoices behind it.
+        source = svc.source_proforma_invoices(db, draft["shipment_id"])
+        assert {i["pi_number"] for i in source["invoices"]} == {
+            first.pi_number, second.pi_number
+        }
+
+
+def test_only_a_draft_can_be_added_to():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        draft = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        shipment = (
+            db.query(InboundShipment)
+            .filter(InboundShipment.id == draft["shipment_id"])
+            .one()
+        )
+        shipment.shipment_status = "in_transit"
+        db.flush()
+        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
+
+        with pytest.raises(AppException) as exc:
+            svc.convert_to_draft_shipment(
+                db, [str(second.id)], target_shipment_id=str(shipment.id)
+            )
+        assert exc.value.status_code == 422
+
+
+def test_the_open_drafts_are_listed_for_the_dialog_to_offer():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        draft = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        offered = svc.draft_shipments(db, supplier_id=str(w.supplier.id))
+
+        assert draft["shipment_id"] in [d["shipment_id"] for d in offered]
+        row = next(d for d in offered if d["shipment_id"] == draft["shipment_id"])
+        assert row["lines"] > 0
+        assert w.supplier.supplier_name in row["supplier_names"]
+
+
+# --------------------------------------------------------------------------------- #
+# AC-F9 - the packing list says which invoices it was drafted from
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_packing_list_names_its_source_invoices_with_what_came_from_each():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        matched = [ln for ln in _lines(db, invoice.id) if ln.product_id]
+        # Every placeable line takes a stated share, so the card's figure is a number this
+        # test chose rather than one it inherited.
+        out = svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(ln.id): 7 for ln in matched}
+        )
+
+        source = svc.source_proforma_invoices(db, out["shipment_id"])
+
+        assert len(source["invoices"]) == 1
+        entry = source["invoices"][0]
+        assert entry["pi_number"] == invoice.pi_number
+        assert entry["supplier_name"] == w.supplier.supplier_name
+        assert entry["qty"] == 7 * len(matched)
+        assert entry["total_qty"] > entry["qty"]
+        assert entry["lines"] == len(matched)
+        assert entry["source_ref"]
+        # And per shipment line, so the Lines tab can name the document per row.
+        shipment_line = _shipment_lines(db, out["shipment_id"])[0]
+        by_line = source["by_shipment_line"][str(shipment_line.id)]
+        assert by_line[0]["pi_number"] == invoice.pi_number
+        assert by_line[0]["qty"] == 7
+
+
+def test_a_container_with_no_proforma_behind_it_answers_empty_rather_than_404():
+    with pg_session() as db:
+        w = World(db)
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"ZZPL-{uuid.uuid4().hex[:8]}",
+            shipment_date="2026-08-01",
+            shipment_status="in_transit",
+        )
+        db.add(shipment)
+        db.flush()
+
+        source = svc.source_proforma_invoices(db, str(shipment.id))
+
+        assert source["invoices"] == []
+        assert source["by_shipment_line"] == {}

@@ -18,7 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { usePackingList, useDeletePackingList, useUpdatePackingList } from '../hooks/usePackingLists';
+import {
+  usePackingList,
+  useDeletePackingList,
+  usePackingListSourceInvoices,
+  useUpdatePackingList,
+} from '../hooks/usePackingLists';
 import { useSupplierSelectQuery } from '../../suppliers/hooks/useSupplierSelectQuery';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
@@ -33,6 +38,7 @@ import { toast } from 'sonner';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import ClearanceDeliveryCard from './ClearanceDeliveryCard';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
+import SourceProformaInvoicesCard from './SourceProformaInvoicesCard';
 import SpoPlannerTable from './SpoPlannerTable';
 
 interface PackingListDetailProps {
@@ -80,6 +86,11 @@ export default function PackingListDetail({
   const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const downloadMutation = useDownloadAttachment();
+  // The proforma invoices behind this container, read ONCE for the four places that show
+  // them: the Details card, the Lines column, the Timeline entry and the Documents list.
+  const { data: sourceInvoices } = usePackingListSourceInvoices(packingListId);
+  const invoicesByLine = sourceInvoices?.by_shipment_line ?? {};
+  const sourcePiNumbers = (sourceInvoices?.invoices ?? []).map((pi) => pi.pi_number);
 
   const linkPackingListAttachment = async (_entityId: string, attachmentId: string) => {
     await updatePackingListMutation.mutateAsync({
@@ -405,7 +416,31 @@ export default function PackingListDetail({
           <TabsTrigger value="spo">SPO Planner</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="timeline" className="mt-6">
+        <TabsContent value="timeline" className="mt-6 space-y-6">
+          {/* Where this container came from, at the top of its own timeline: it is the
+              first thing that happened to it (AC-F9). Always rendered - a container from a
+              real packing-list upload says so rather than hiding the row. */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Origin</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {sourcePiNumbers.length > 0 ? (
+                <p className="text-sm">
+                  Created from {sourcePiNumbers.join(', ')}
+                  {packingList.created_by ? ` by ${packingList.created_by}` : ''}
+                  {packingList.created_at
+                    ? ` on ${formatDate(new Date(packingList.created_at))}`
+                    : ''}
+                  .
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Read from a packing list, not drafted from a proforma invoice.
+                </p>
+              )}
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader>
               <CardTitle>Clearance &amp; Delivery</CardTitle>
@@ -531,6 +566,8 @@ export default function PackingListDetail({
             </div>
           </CardContent>
         </Card>
+        {/* Which proforma invoices this container was drafted from (AC-F9). */}
+        <SourceProformaInvoicesCard packingListId={packingListId} />
         </TabsContent>
 
         <TabsContent value="documents" className="mt-6">
@@ -605,6 +642,40 @@ export default function PackingListDetail({
                 </Button>
               </div>
             )}
+            {/* The proforma invoice files these lines were read from (AC-F9). Always
+                rendered: "none" is the honest answer for a container that came off a real
+                packing list, and a section that vanishes teaches nobody where to look. */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Proforma invoices</p>
+              {(sourceInvoices?.invoices ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No proforma invoice behind this container.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {(sourceInvoices?.invoices ?? []).map((pi) => (
+                    <div
+                      key={pi.id}
+                      className="flex items-center gap-2 rounded-lg border p-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{pi.pi_number}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {pi.source_ref || 'No source file recorded'}
+                          {pi.supplier_name ? ` • ${pi.supplier_name}` : ''}
+                        </p>
+                      </div>
+                      <Link
+                        href={`/scm/proforma-invoices/${pi.id}`}
+                        className="shrink-0 text-sm text-primary hover:underline"
+                      >
+                        Open
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <LinkAttachmentBrowserDialog
               open={linkAttachmentDialogOpen}
               onOpenChange={setLinkAttachmentDialogOpen}
@@ -701,6 +772,9 @@ export default function PackingListDetail({
                           this tab (AC-F2). Not sortable, same reason as Supplier. */}
                       <TableHead className="text-end">Cartons</TableHead>
                       <TableHead className="text-end">CBM</TableHead>
+                      {/* Which document charged these goods (AC-F9). Empty on a line that
+                          came off a real packing list rather than a proforma invoice. */}
+                      <TableHead>From PI</TableHead>
                       <TableHead>
                         <button
                           onClick={() => handleSort('spo_allocated')}
@@ -769,6 +843,26 @@ export default function PackingListDetail({
                             {/* Null reads "-", never 0: a line nobody measured and a line
                                 that takes no room are different facts (AC-F2). */}
                             {fmtCbm(line.cbm)}
+                          </TableCell>
+                          <TableCell>
+                            {(invoicesByLine[line.id] ?? []).length === 0 ? (
+                              <span className="text-muted-foreground">-</span>
+                            ) : (
+                              <div className="flex flex-col gap-0.5">
+                                {invoicesByLine[line.id].map((src) => (
+                                  <Link
+                                    key={`${src.proforma_invoice_id}-${line.id}`}
+                                    href={`/scm/proforma-invoices/${src.proforma_invoice_id}`}
+                                    className="text-primary hover:underline"
+                                  >
+                                    {src.pi_number}
+                                    <span className="ms-1 text-xs text-muted-foreground">
+                                      {src.qty}
+                                    </span>
+                                  </Link>
+                                ))}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -927,7 +1021,7 @@ export default function PackingListDetail({
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell colSpan={3} />
+                      <TableCell colSpan={4} />
                     </TableRow>
                   </TableFooter>
                 </Table>

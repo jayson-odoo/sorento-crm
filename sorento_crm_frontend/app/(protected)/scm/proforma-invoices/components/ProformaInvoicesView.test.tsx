@@ -61,7 +61,14 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options?: Array<{ value: string; label: string }>;
     placeholder?: string;
   }) => (
-    <select id={id} aria-label="Supplier" value={value} onChange={(e) => onChange?.(e.target.value)}>
+    // Labelled by its own id, so the supplier filter and the packing-list filter are two
+    // different controls to a test rather than two elements answering to "Supplier".
+    <select
+      id={id}
+      aria-label={id === 'proforma-placement-filter' ? 'Packing list filter' : 'Supplier'}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    >
       <option value="">{placeholder}</option>
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -101,6 +108,10 @@ const state = {
 
 vi.mock('../../hooks/useProformaInvoices', () => ({
   useProformaInvoices: () => ({ data: state.data, isLoading: state.isLoading }),
+  // The convert dialog reads the one invoice it is about, and this supplier's open drafts
+  // to offer as a target (F10). Neither is what this suite is testing.
+  useProformaInvoice: () => ({ data: undefined, isLoading: false }),
+  useDraftShipments: () => ({ data: [], isLoading: false }),
   useDeleteProformaInvoice: () => ({ mutateAsync: state.deleteInvoice }),
   useConvertProformaInvoicesToDraftShipment: () => ({
     mutateAsync: state.convertInvoices,
@@ -145,6 +156,11 @@ function invoiceRow(over: Partial<ProformaInvoiceListRow> = {}): ProformaInvoice
     adjusted_by: null,
     adjusted_at: null,
     is_adjusted: false,
+    placement: 'not_converted' as const,
+    placed_qty: 0,
+    total_qty: 500,
+    remaining_qty: 500,
+    packing_lists: [],
     ...over,
   };
 }
@@ -177,17 +193,24 @@ beforeEach(() => {
 });
 
 describe('ProformaInvoicesView - loading / empty / error / data states', () => {
-  it('shows nothing has been read yet, with no supplier filter applied', () => {
+  it('says nothing is waiting for a container, under the default filter', () => {
+    // The list opens on "Not converted" (AC-F6), so its empty state answers THAT question -
+    // one sentence that is true whether nothing was uploaded or everything is placed.
     state.data = { data: [], total: 0 };
     renderView();
 
-    expect(screen.getByText('No proforma invoice read yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('No proforma invoice is waiting for a container.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show every invoice/i })).toBeInTheDocument();
   });
 
   it('names the supplier once a filter narrows the empty result to none', () => {
     state.data = { data: [], total: 0 };
     renderView();
 
+    // Off the placement filter first: with it on, the empty state answers that question.
+    fireEvent.change(screen.getByLabelText('Packing list filter'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Supplier'), { target: { value: 'sup-1' } });
 
     expect(
@@ -211,7 +234,9 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     state.isLoading = false;
     renderView();
 
-    expect(screen.getByText('No proforma invoice read yet.')).toBeInTheDocument();
+    expect(
+      screen.getByText('No proforma invoice is waiting for a container.'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -286,5 +311,83 @@ describe('F5b - a superseded revision is recognisable in the list', () => {
 
     await screen.findByText('PI-2026-001');
     expect(screen.queryByText(/Revision \d of \d/)).not.toBeInTheDocument();
+  });
+});
+
+describe('F10 - the list says which packing list an invoice went into', () => {
+  const placed = (over: Record<string, unknown> = {}) =>
+    invoiceRow({
+      placement: 'converted' as const,
+      placed_qty: 500,
+      remaining_qty: 0,
+      packing_lists: [
+        {
+          shipment_id: 'sh-1',
+          shipment_number: 'FSCU8103365',
+          shipment_status: 'draft',
+          qty: 500,
+          lines: 5,
+        },
+      ],
+      ...over,
+    });
+
+  it('reads Not converted until something has been placed (AC-F6)', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    // Twice: the cell, and the filter's own option in the mocked select.
+    expect((await screen.findAllByText('Not converted')).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('names the packing list and how much went there', async () => {
+    state.data = { data: [placed()], total: 1 };
+    renderView();
+
+    const link = await screen.findByRole('link', { name: /FSCU8103365/ });
+    expect(link).toHaveAttribute(
+      'href',
+      '/procurement-management/packing-lists/sh-1',
+    );
+  });
+
+  it('reads Split, with what is left to place, on a part-placed invoice (Q9)', async () => {
+    state.data = {
+      data: [placed({ placement: 'split' as const, placed_qty: 200, remaining_qty: 300 })],
+      total: 1,
+    };
+    renderView();
+
+    expect(await screen.findByText(/Split - 300 still to place/)).toBeInTheDocument();
+  });
+
+  it('cannot tick a fully placed invoice, and says why (AC-F7)', async () => {
+    state.data = { data: [placed()], total: 1 };
+    renderView();
+
+    const box = await screen.findByRole('checkbox', { name: 'Select PI-2026-001' });
+    expect(box).toBeDisabled();
+    // The reason sits on the wrapper, because a disabled control does not reliably receive
+    // the hover that would show its own tooltip.
+    expect(box.closest('span[title]')).toHaveAttribute('title', 'In FSCU8103365');
+  });
+
+  it('cannot tick a superseded revision either', async () => {
+    state.data = {
+      data: [invoiceRow({ status: 'superseded', revision_no: 1, revision_count: 2 })],
+      total: 1,
+    };
+    renderView();
+
+    expect(await screen.findByRole('checkbox', { name: 'Select PI-2026-001' })).toBeDisabled();
+  });
+
+  it('leaves an unplaced invoice tickable', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    expect(
+      await screen.findByRole('checkbox', { name: 'Select PI-2026-001' }),
+    ).not.toBeDisabled();
   });
 });

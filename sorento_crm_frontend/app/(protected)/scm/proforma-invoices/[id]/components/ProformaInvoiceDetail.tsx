@@ -38,6 +38,7 @@ import {
   type ProformaInvoiceDetail as ProformaInvoiceDetailPayload,
   type ProformaInvoiceLine,
 } from '../../../services/proformaInvoiceService';
+import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
@@ -86,14 +87,23 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const [lineToRemove, setLineToRemove] = useState<ProformaInvoiceLine | null>(null);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
+  const [convertOpen, setConvertOpen] = useState(false);
+  // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
+  // the operator to re-type the split they already chose.
+  const [convertArgs, setConvertArgs] = useState<{
+    lineQuantities: Record<string, number>;
+    targetShipmentId: string | null;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
   const superseded = data?.status === 'superseded';
-  // A converted invoice is frozen: the goods are already drafted onto a shipment, and
-  // trimming the document afterwards would leave the two disagreeing with nothing on screen
-  // saying which one the container was loaded from.
+  // An invoice with ANY of its goods on a shipment is frozen: trimming the document
+  // afterwards would leave the two disagreeing with nothing on screen saying which one the
+  // container was loaded from. `fullyPlaced` is the narrower question - whether there is
+  // anything left to convert (Q9).
   const converted = (data?.converted_shipments?.length ?? 0) > 0;
+  const fullyPlaced = data?.placement === 'converted';
   const canEdit = canAdjust && !superseded && !converted;
 
   // Editing starts from whatever the server currently holds, every time - a draft left over
@@ -208,14 +218,21 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     }
   };
 
-  const runConvert = async (reason?: string) => {
+  const runConvert = async (
+    args: { lineQuantities: Record<string, number>; targetShipmentId: string | null } | null,
+    reason?: string,
+  ) => {
+    setConvertArgs(args);
     try {
       const result = await convertToDraftShipment.mutateAsync({
         invoiceIds: [id],
         overrideReason: reason,
+        lineQuantities: args?.lineQuantities,
+        targetShipmentId: args?.targetShipmentId,
       });
       setOverCapacity(null);
       setOverrideReason('');
+      setConvertOpen(false);
       const skippedMsg =
         result.lines_skipped > 0
           ? ` (${result.lines_skipped} line${result.lines_skipped === 1 ? '' : 's'} could not be matched to a product and were skipped)`
@@ -409,18 +426,36 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       },
       {
         id: 'shipment',
-        header: ({ column }) => <DataGridColumnHeader title="Went to" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="In packing list" column={column} />
+        ),
+        // Per line, because a line is what gets split: one model may go half in this
+        // container and half in the next, and the remainder is what the convert dialog
+        // pre-fills next time (AC-F8).
         cell: ({ row }) => {
           const line = row.original;
-          if (line.shipment_number && line.shipment_id) {
+          if (line.packing_lists?.length) {
             return (
-              <Link
-                href={`/procurement-management/packing-lists/${line.shipment_id}`}
-                className="truncate font-medium text-primary hover:underline"
-                title={`Open shipment ${line.shipment_number}`}
-              >
-                {line.shipment_number}
-              </Link>
+              <div className="flex flex-col gap-0.5">
+                {line.packing_lists.map((pl) => (
+                  <Link
+                    key={pl.shipment_id}
+                    href={`/procurement-management/packing-lists/${pl.shipment_id}`}
+                    className="truncate font-medium text-primary hover:underline"
+                    title={`Open ${pl.shipment_number ?? 'the packing list'}`}
+                  >
+                    {pl.shipment_number ?? 'Draft'}
+                    <span className="ms-1 font-normal text-muted-foreground">
+                      {fmtQty(pl.qty)}
+                    </span>
+                  </Link>
+                ))}
+                {line.remaining_qty > 0 ? (
+                  <span className="text-2xs text-muted-foreground">
+                    {fmtQty(line.remaining_qty)} left
+                  </span>
+                ) : null}
+              </div>
             );
           }
           if (line.unmatched_reason) {
@@ -432,9 +467,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           }
           return <span className="text-muted-foreground">{EM_DASH}</span>;
         },
-        size: 150,
+        size: 170,
         enableSorting: false,
-        meta: { headerTitle: 'Went to' },
+        meta: { headerTitle: 'In packing list' },
       },
       {
         id: 'line_actions',
@@ -557,16 +592,18 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     <Download className="size-4" />
                     Export adjusted PI
                   </Button>
-                  {!converted && !superseded && canConvert ? (
+                  {!fullyPlaced && !superseded && canConvert ? (
                     <Button
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      onClick={() => void runConvert()}
+                      onClick={() => setConvertOpen(true)}
                       disabled={convertToDraftShipment.isPending}
                     >
                       <Boxes className="size-4" />
-                      Convert to draft shipment
+                      {invoice.placement === 'split'
+                        ? 'Convert the rest'
+                        : 'Convert to packing list'}
                     </Button>
                   ) : null}
                   <ProformaInvoiceNavigation invoiceId={id} />
@@ -632,20 +669,30 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               EM_DASH
             )}
           </Field>
-          <Field label="Draft shipment">
-            {invoice.converted_shipments.length === 0 ? (
-              EM_DASH
+          {/* Where the goods went, and what is still to place. "Split" is a real state:
+              one invoice legitimately sits in two containers (Q9, AC-F8). */}
+          <Field label="In packing list">
+            {invoice.placement === 'not_converted' ? (
+              <span className="text-muted-foreground">Not converted</span>
             ) : (
               <div className="flex flex-col gap-0.5">
-                {invoice.converted_shipments.map((s) => (
+                {invoice.packing_lists.map((pl) => (
                   <Link
-                    key={s.shipment_id}
-                    href={`/procurement-management/packing-lists/${s.shipment_id}`}
+                    key={pl.shipment_id}
+                    href={`/procurement-management/packing-lists/${pl.shipment_id}`}
                     className="text-primary hover:underline"
                   >
-                    {s.shipment_number ?? EM_DASH}
+                    {pl.shipment_number ?? 'Draft'}
+                    <span className="ms-1 font-normal text-muted-foreground">
+                      {fmtQty(pl.qty)} of {fmtQty(invoice.total_qty)}
+                    </span>
                   </Link>
                 ))}
+                {invoice.placement === 'split' ? (
+                  <span className="text-xs text-muted-foreground">
+                    Split - {fmtQty(invoice.remaining_qty)} still to place
+                  </span>
+                ) : null}
               </div>
             )}
           </Field>
@@ -720,8 +767,18 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         reason={overrideReason}
         onReasonChange={setOverrideReason}
         onCancel={() => setOverCapacity(null)}
-        onConfirm={() => void runConvert(overrideReason.trim())}
+        onConfirm={() => void runConvert(convertArgs, overrideReason.trim())}
         pending={convertToDraftShipment.isPending}
+      />
+
+      {/* How much of this invoice goes into which packing list (AC-F10). */}
+      <ConvertToPackingListDialog
+        open={convertOpen}
+        onOpenChange={setConvertOpen}
+        invoiceIds={[id]}
+        supplierId={invoice.supplier_id}
+        pending={convertToDraftShipment.isPending}
+        onConvert={(args) => void runConvert(args)}
       />
     </div>
   );
