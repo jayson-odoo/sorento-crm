@@ -229,6 +229,50 @@ Captain: "SC is a product, not a set". Withdrawn: nothing about sets. The real q
 - **SPO is a link target for ORDER BACK rows only** (captain, 25 Aug; part 2 section 4b defines the `ORDER_BACK` verb), **read from `spo_allocations`** (Q6 ruled: "SPO should be in spo_allocations, not purchase_orders"; section K moves it there). Candidates = open `spo_allocations` rows of the product (allocated minus received) first, then open PO lines by `expected_date`. The row records which: `spo_ref` for an allocation, `po_ref` / `po_line_id` for a PO line; new `spo_allocation_id` FK on `order_inquiry_rows` (SET NULL).
 - **Location rule (Q5, ruled).** Candidate lines are ranked by location fit, never filtered out: (1) same location as the row's `stock_location` (BRW-IB row -> a BRW-IB line), (2) same group at another site (DC1-IB), (3) the site pool (BRW, then the other pools), (4) sibling locations at the site (BRW-BB), each tier by expected date. A link outside tier 1 shows "location differs" on the PO occupancy panel (section G), which is the split instruction for AutoCount. 
 - **One OI row per SO line, many links per row** (captain, 25 Aug, on SO414285: "1 line here should correspond to 1 line in sales order, so 1 line can be placed by multiple PO and SPO"). Today the cascade SPLITS the row: M310-CR-PJ 8 became two rows (5 + 3, two lines of 202607-S0105) and MSK11C 67 became 10 + 57, so nine SO lines read as eleven rows. Fix: `order_inquiry_rows` stays one row per SO line per revision with the FULL quantity; a new child table `projects.order_inquiry_links` (`row_id`, `po_line_id` | `spo_allocation_id`, `qty`, `linked_by/at`, `auto` marker, `claim_id`) carries each placement. Row state: raised (no links) | partly linked (sum < qty) | linked (sum = qty). `po_ref` / `po_line_id` / `spo_ref` on the row become derived display (first link) and stop being written. `committed_v` nets `qty - linked qty` per row instead of testing `state = 'placed'`. The worklist row shows "Linked 8 of 8: 202607-S0105 L3 5, L7 3" with the PO occupancy panel (G) reading the same child table. Backfill: merge split rows of one `(so_line_id, supply_decision_id)` into one row + N links.
+**BUILT on `feat/scm-uat-oi-links`** (stacked on the section K lane), migrations
+`421_order_inquiry_links` and `422_committed_v_link_netting`. What the build found, and
+where it differs from the paragraphs above:
+
+- **`cited_document` is its own column, not `spo_ref`.** The plan has `po_ref` / `spo_ref`
+  becoming the derived display of the first link, and a CITATION is a different fact from a
+  placement - CS naming `202604-S0083` on the form is what the walk tries first, not where
+  the row already sits. Overloading either column would have made "where is this linked"
+  unanswerable, so the row gained one nullable column and both old ones became display.
+- **The row state gained `partly_linked`.** `placed` keeps its stored value and reads
+  "Linked": renaming it would have rewritten `committed_v`, the worklist filter and every
+  saved column preference to say the same thing in a different word.
+- **Location is a `(tier, sub-rank)` pair internally.** Q5 names four tiers and puts "BRW,
+  then the other pools" inside the third, which one integer cannot express. The sub-rank
+  orders the row's own site pool ahead of the others; the tier a person reads is still the
+  four the plan names.
+- **`ORDER_BACK` has TWO writers and they are told apart by the LINE.** The donor hole a
+  borrow leaves (`_raise_borrow_shortfalls`) and a Buy CS marked "Order back" in Amend.
+  They can never meet on one sales-order line, because the whole-line rule (AC-L5) makes a
+  line either wholly stock or wholly Buy, so the line is the discriminator: the Buy path
+  supersedes and nets its rows like an ORDER, and the donor path keeps its own netting.
+- **`committed_v` counts an order back at the DONOR's location**, from the row's own
+  `stock_location`, not at the core line's warehouse. The row hangs off the BORROWING line,
+  so reading `sales_order_lines.warehouse_id` for it would put the shortfall in a warehouse
+  that never had one - the exact mis-attribution the verb was created to avoid. Measured: 0
+  rows carry the verb today, so this changes no live number.
+- **`L3` is printed only where the book numbered the line.** `purchase_order_lines.source_ref`
+  carries it and `spo_allocations.spo_line_number` carries it, and neither is set on
+  202607-S0105 or 202608-S0002 on the dev copy - so AC-I9's "L3 / L7" reads as the LOCATION
+  instead ("202607-S0105 BRW-BB 5"), which is a fact rather than an invented ordinal.
+- **An `ALREADY INBOUND` row still traces to a purchase order through its own `spo_ref`.**
+  That reference is a coverage note the netting engine writes, never a placement, so it
+  never became a link; the worklist keeps it as the last leg of the Supplier / PO no
+  coalesce behind the two link legs.
+- **The Order Inquiry Form upload does NOT raise rows.** `project_order_inquiry_import_service`
+  writes stock locations onto sales-order lines and PO claims, and nothing else - making it a
+  writer of `order_inquiry_rows` is a new feed, not a rename. The READER now recognises
+  `ORDER BACK` in the delivery-date cell and reports the count, so the fact is available;
+  the fixture's `[NL]` rows are "recorded as not raisable", which its own section 5 allows.
+- **Not done here, and named rather than half-fixed: `planning_change_service` still reads
+  `INQUIRY_PLACED` alone** in its "already actioned" predicates, so a `partly_linked` row
+  reads there as wholly unactioned. Conservative rather than wrong (its unlinked half IS
+  still changeable), and part 3 owns the link-shift on a planning change anyway.
+
 - **Cascade order (Q7 ruled: PO date first).** Candidates order by `purchase_orders.issue_date` ascending, then line `expected_date`, then document number. Today's key is line `expected_date` (`_open_po_lines_for_product`); one-line swap. Candidate list shows both dates.
 - **SO detail shows the links too:** `/scm/sales-orders/{id}` Lines tab gains a **Linked to** column (PO / SPO document + line + qty per link, via the SO line's OI row and its `order_inquiry_links`), beside Order inquiry and the Suggested / Decided columns. Same data as the worklist and the PO occupancy panel, one reader.
 - `committed_v` nets the unlinked remainder of every ORDER row; a fully linked row leaves confirmed demand exactly as `placed` does today.
