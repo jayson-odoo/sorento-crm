@@ -6,7 +6,10 @@ same branch: registry, engine, xlsx renderer skeleton, views service, routes, mi
 and the RQ export task, with 96 pytest over a synthetic dataset. S3 (sponsorship dataset +
 definition, and the frontend swapped off the mock) BUILT and browser-verified 2026-08-26:
 34 pytest on a seeded chain, 25 vitest, the S1 mock deleted, and the report shown on
-:3090/:8091 against the 18 real approved 2026 forms. S4 and S5 not started.
+:3090/:8091 against the 18 real approved 2026 forms. S5 (local 2025 fixture, test-first)
+BUILT 2026-08-26: `scripts/dev/load_sponsorship_2025_fixture.py`, the workbook committed as
+`tests/fixtures/sponsorship_2025.xlsx`, 28 pytest, and the 214 forms loaded on the local
+copy with all 12 monthly totals equal to the client's GRAND TOTAL cells. S4 not started.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -184,6 +187,30 @@ reads.
   `lib/api-client` with `extractApiError`. The capped 422 is detected by reading `capped` /
   `code` off a CLONE of the response while the message still comes from the shared extractor.
 
+### Contract points settled while building S5 (binding on S4)
+
+- **The month is the TAB NAME, never cell A4.** The client's `Dec'25` sheet carries
+  1 Nov 2025 in A4. Trusting it files 24 December forms under November: invisible in a
+  year total, wrong in every summary cell. The loader reports the mismatch rather than
+  correcting the workbook.
+- **`PSSF25- 001` is normalised to `PSSF25-0001`**, the CRM's own `PSSF{yy}-####` rule, so
+  the fixture rows sort and search like every real form.
+- **AC-D5's numbers, verified on the local copy.** All 12 sheets: parsed month total ==
+  the sheet's GRAND TOTAL, to the cent. Year: project value 257,076,027.91, sample price
+  518,605.38, which are the SUMMARY sheet's own C28 / C29.
+- **The 2025 fixture has NO `Unassigned` row and NO ticked delivery year.** Every workbook
+  row names an agent, and H..K is empty on all 214 rows, so a 2025 export renders the
+  Expected-year group with no member columns. That is a fact about the data, not a bug.
+- **The summary pivot for 2025 has 15 agent rows, not the workbook's 17.** `JEREMY TEO`
+  and `BASER` are zero rows on the client's SUMMARY sheet and appear on no monthly sheet;
+  `CINDY` and `CINDY LEE` both resolve to the one contact `Cindy Lee` and merge into a
+  single row of 33 forms. Per-agent rows therefore differ from the client's sheet by
+  design; the totals do not.
+- **`ACT`, `KH LIM` and `JAMYN` have no contact** (22 rows). They keep the typed name and
+  group under it, which is what the report's `sales_agent` fallback is for.
+- **Undo is one statement:** `DELETE FROM purchase_requests WHERE source = 'fixture_2025'`
+  (lines cascade).
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
@@ -207,7 +234,7 @@ their owner only; shared views to anyone with the report permission.
 | S2 | Kernel (Phase 2, test-first) DONE | registry, engine, xlsx renderer, views service, routes, migration (table + slugs), RQ task. pytest on a SYNTHETIC dataset registered by the test, not sponsorship | The kernel is generic; report #2 costs what §Why says |
 | S3 | Sponsorship dataset + definition DONE | dataset select + catalog; definition; the frontend swapped off the S1 mock; seeded-chain pytest asserting Summary cell = sum of Detail rows for the same agent/month, blanks vs zero, date basis switch changes the month; vitest for the page states, Configure summary and the Views menu | Report #1 on the real page with real 2026 rows |
 | S4 | Excel export | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
-| S5 | Local 2025 fixture | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |
+| S5 | Local 2025 fixture DONE | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |
 
 Order: S1 -> S2 -> S3 -> S5 -> S4 (S4's diff test needs S5's fixture). Each slice is a PR;
 S2 and S3 may share a branch if S2 is small enough to review together.
