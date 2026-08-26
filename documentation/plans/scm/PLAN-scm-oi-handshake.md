@@ -181,6 +181,48 @@ Navigated by sidebar from `/` (Supply Chain > Project Demand > Order Inquiries),
   seam the reorder and purchase-order pages use; the tester should walk it with a real
   book.
 
+## 9. Browser evidence, review round (AC-H13 and B1), lane :3080 / :8080, 27 Aug
+
+Session `scm-uat-handshake-fixes`, sidebar nav from `/`, viewport 1280x1200. The tester's
+own fixture, `ZZTOI-po-book-ac-h13.xlsx`, re-cut with both quantities bumped (22 / 12) so
+the book states a real change rather than a re-import of what is already held.
+
+- **AC-H13, the wait.** Upload > Upload purchase orders > Test ("Rows: 2 - Would import: 2
+  - Skipped: 0 - Errors: 0") > Confirm upload. The drawer shows
+  `ZZTOI-po-book-ac-h13-r2.xlsx Processing just now`, and the page offers NOTHING: no Link
+  now, no Open purchase orders, and no request to `/order-inquiries/upload-jobs/...` at all.
+- **AC-H13, the landing.** The moment the job is terminal the alert reads **"The book has
+  been read"** and the page asks the job what it wrote:
+  `GET /api/v1/project-sales/order-inquiries/upload-jobs/<job> 200`.
+- **AC-H13, Link now.** The press posts
+  `{"product_ids":["6bbefc18-...","7a3f336f-..."]}` - exactly the two products the upload
+  wrote (SRTWC8605-SC-RL, SRTWCX7405-RL-S-PJ), read off the job. It linked nothing, which
+  is the truth on this database: every row of those two products is already fully linked,
+  cancelled or rejected. The alert dismisses itself on the success.
+- **AC-H13, Open purchase orders.** The button carried
+  `/scm/purchase-orders?documents=ZZTOI-PO-0001`; the list requested
+  `GET /api/v1/scm/purchase-orders?page=1&limit=25&outstanding=true&documents=ZZTOI-PO-0001`,
+  showed ONE row, and said "Showing the 1 purchase order from one upload." next to **Show
+  all**, which gives the other 13,000 back in one press.
+- **B1, the carried line.** SO415898: two rows (line 1, 248; line 3, 512) ticked on the OI
+  page and taken on with **Acknowledge (2)** at 3:57 am. Then the board (Fulfilment
+  Planning > Plan SO415898 > List): one line approved, **Confirm 1 line** -> revision 2.
+  Both lines' rows were re-raised at 4:03 am under revision 2, and both read
+  **"Acknowledged Jayson Personal 27/08/2026, 3:57 am"** - the original stamp, no Changed
+  badge, no Was / Now. Before the fix every one of them would have read "Changed
+  27/08/2026" with no acknowledger. The order's third row (SRTSH22611, a genuine new
+  raise) reads Awaiting beside them, which is what says the two states still differ.
+- No console errors, no page errors, no horizontal overflow at 375px.
+
+**The lane worker could not run that import.** It forked before `OrderInquiryRow` grew
+`previous_qty`, so its work horse imports today's `order_inquiry_worklist_service` against
+yesterday's model class and dies on import (`AttributeError: type object 'OrderInquiryRow'
+has no attribute 'previous_qty'`, and RQ records it as a bare failure with no traceback on
+the job). That is the "worker has no reload" rule reached through a MODEL rather than
+through `app/tasks/*`, and it wants a worker restart on any machine that takes this branch.
+The queued job was run in a one-off process with the same task function and the same
+arguments, so everything downstream of it above is the real code path.
+
 **What was done to the dev database** (the brief's ask): the migration was applied through
 `Operations`/`MigrationContext` without touching `alembic_version` (the lane convention);
 its grant sweep was re-run separately, because it was written after the columns had already
@@ -189,3 +231,12 @@ holds the same two links it did), its line's delivery date moved 10/08 -> 20/08 
 settle above and the order gained revision 5; the SRTWCX7405-RL-S-PJ ORDER BACK of 10 is
 rejected with "Factory closed until November" and revision 4 is superseded. Three cancelled
 rows were acknowledged by mistake during the walk and were reset to `awaiting`.
+
+**Review round, 27 Aug.** Migration 428's two new columns (`previous_qty`,
+`previous_delivery_date`) were applied through `Operations`/`MigrationContext` without
+touching `alembic_version`, and its grant sweep was re-run: the permission row was renamed
+to `projects.order_inquiries.acknowledge`, the stale `project_sales.*` row and its one
+grant were deleted, and the slug now sits with **Admin, Purchasing and Purchasing Manager
+Role**. On the data: purchase order `ZZTOI-PO-0001` (the tester's fixture) was re-imported
+at 22 / 12 rather than 20 / 10; SO415898's two SRTSA625A rows were acknowledged and the
+order gained revision 2 from the board walk above (its rows re-raised, no links to move).
