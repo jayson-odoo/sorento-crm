@@ -17,6 +17,7 @@ forget - a raw supplier SELECT written here would have bypassed the ORM's filter
 """
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, Response, UploadFile, status
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service
 from app.services.scm.upload_intake import read_upload
 
@@ -62,6 +64,30 @@ class ProformaInvoiceUpdate(BaseModel):
 
 class ProformaLineUpdate(BaseModel):
     qty: float = Field(..., ge=0, description="Sorento's own quantity. The supplier's is kept.")
+
+
+class MarkAsRevisionRequest(BaseModel):
+    previous_id: str = Field(..., description="The invoice this one is a revision of.")
+
+
+def _revision_map(raw: Optional[str]) -> Optional[dict]:
+    """`{"<document index>": "<invoice id>"}` off the multipart form, or nothing.
+
+    A JSON field rather than one id, because one FILE holds several documents (the
+    pre-loading list is five) and the operator answers "is this a revision" per document.
+    Sent as a string because the rest of this upload is multipart, not JSON.
+    """
+    if not raw or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        raise AppException(422, "Could not read which invoices this file revises.",
+                           detail="revision_of")
+    if not isinstance(parsed, dict):
+        raise AppException(422, "Could not read which invoices this file revises.",
+                           detail="revision_of")
+    return {str(k): v for k, v in parsed.items() if v}
 
 
 class BulkDeleteRequest(BaseModel):
@@ -102,6 +128,11 @@ async def apply_proforma_invoice(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: str = Form(...),
     currency: Optional[str] = Form(None),
+    revision_of: Optional[str] = Form(
+        None,
+        description='{"<document index>": "<invoice id>"} - which documents in this file '
+                    "supersede an invoice already on file (AC-E7).",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -130,6 +161,7 @@ async def apply_proforma_invoice(
         currency=currency,
         source_ref=file.filename,
         actor=_actor(current_user),
+        revision_of=_revision_map(revision_of),
     )
     db.commit()
     return out
@@ -185,6 +217,19 @@ def list_proforma_invoices(
     return proforma_invoice_service.list_for_supplier(
         db, supplier_id=supplier_id, limit=limit, offset=offset
     )
+
+
+@router.post("/proforma-invoices/{invoice_id}/mark-as-revision-of")
+def mark_proforma_invoice_as_revision(
+    invoice_id: str,
+    payload: MarkAsRevisionRequest = Body(...),
+    _user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """Link a PI uploaded as new to the document it actually revises (AC-E11)."""
+    out = proforma_invoice_service.mark_as_revision_of(db, invoice_id, payload.previous_id)
+    db.commit()
+    return out
 
 
 @router.get("/proforma-invoices/{invoice_id}/export")

@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +30,7 @@ import {
   testProformaInvoice,
   type ProformaApplyResult,
   type ProformaInvoicePreview,
+  type RevisionSelection,
 } from '../../services/proformaInvoiceService';
 
 /**
@@ -72,6 +74,10 @@ export function ProformaUploadDialog({
   const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
   const [currency, setCurrency] = useState('');
   const trimmedCurrency = currency.trim() || null;
+  // Which of this file's documents supersede one already on file. Pre-selected from the
+  // preview's own proposal (AC-E6) and unticked by anyone who disagrees - the pre-loading
+  // list carries no invoice number, so the match is a suggestion and the operator decides.
+  const [revisionOf, setRevisionOf] = useState<RevisionSelection>({});
   const invalidateLists = useProformaInvoicesApplied();
 
   // Cleared on every open, like the file and the verdict: a supplier or currency left over
@@ -81,13 +87,15 @@ export function ProformaUploadDialog({
       setSupplierId(null);
       setSupplierOption(null);
       setCurrency('');
+      setRevisionOf({});
     }
   }, [open]);
 
   const upload = useTwoStepUpload<ProformaInvoicePreview, ProformaApplyResult>({
     open,
     preview: (file) => previewProformaInvoice(file, supplierId as string, trimmedCurrency),
-    apply: (file) => applyProformaInvoice(file, supplierId as string, trimmedCurrency),
+    apply: (file) =>
+      applyProformaInvoice(file, supplierId as string, trimmedCurrency, revisionOf),
     test: (file) => testProformaInvoice(file, supplierId as string, trimmedCurrency),
     onApplied: (result) => {
       invalidateLists();
@@ -97,6 +105,22 @@ export function ProformaUploadDialog({
 
   const { preview, result } = upload;
   const supplierName = supplierOption?.label ?? null;
+
+  // A fresh preview replaces the proposal wholesale: a tick left over from the last file
+  // would file THIS one as a revision of a document it has nothing to do with.
+  useEffect(() => {
+    if (!preview) {
+      setRevisionOf({});
+      return;
+    }
+    setRevisionOf(
+      Object.fromEntries(
+        preview.documents
+          .filter((doc) => doc.revision_candidate)
+          .map((doc) => [String(doc.index), doc.revision_candidate!.invoice_id]),
+      ),
+    );
+  }, [preview]);
 
   // A Test verdict/preview describes the prices AS READ IN THE OLD CURRENCY - changing the
   // currency mid-flow must not leave that stale verdict on screen looking current. Re-chooses
@@ -240,6 +264,36 @@ export function ProformaUploadDialog({
                           ? `Priced in ${doc.currency} (${CURRENCY_SOURCE[doc.currency_source] ?? doc.currency_source}).`
                           : 'Nothing states which money this invoice is in - enter a currency above.'}
                       </p>
+                      {doc.revision_candidate ? (
+                        <label className="flex items-start gap-2 rounded-md bg-muted/50 p-2">
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={!!revisionOf[String(doc.index)]}
+                            onCheckedChange={(checked) =>
+                              setRevisionOf((prev) => {
+                                const next = { ...prev };
+                                if (checked) {
+                                  next[String(doc.index)] = doc.revision_candidate!.invoice_id;
+                                } else {
+                                  delete next[String(doc.index)];
+                                }
+                                return next;
+                              })
+                            }
+                            aria-label={`Upload as a revision of ${doc.revision_candidate.pi_number}`}
+                          />
+                          <span className="text-2xs">
+                            <span className="font-medium">
+                              Revision of {doc.revision_candidate.pi_number}
+                            </span>
+                            <span className="ms-1 text-muted-foreground">
+                              {doc.revision_candidate.matched_items} of{' '}
+                              {doc.revision_candidate.lines} item codes match. Untick to file
+                              it as a new invoice.
+                            </span>
+                          </span>
+                        </label>
+                      ) : null}
                       {doc.unmatched_items.length ? (
                         <p className="text-2xs text-muted-foreground">
                           {doc.unmatched_items.slice(0, 8).join(', ')}
@@ -277,6 +331,9 @@ export function ProformaUploadDialog({
                   : 'Nothing new was created'}
                 {result.documents_updated > 0
                   ? `, updated ${result.documents_updated}`
+                  : ''}
+                {result.results.some((r) => r.revision_of_id)
+                  ? `. ${result.results.filter((r) => r.revision_of_id).length} filed as a revision, superseding what it replaces`
                   : ''}
                 .
               </AlertDescription>

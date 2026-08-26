@@ -10,6 +10,7 @@ import {
   deleteProformaInvoiceLine,
   getProformaInvoice,
   listProformaInvoices,
+  markProformaInvoiceAsRevisionOf,
   updateProformaInvoice,
   updateProformaInvoiceLine,
   type ListProformaInvoicesOptions,
@@ -111,6 +112,13 @@ export function useUpdateProformaInvoiceLine(invoiceId: string) {
 export function useDeleteProformaInvoiceLine(invoiceId: string) {
   return useInvoiceWrite<string>(invoiceId, (lineId) =>
     deleteProformaInvoiceLine(invoiceId, lineId),
+  );
+}
+
+/** Link a PI uploaded as new to the document it actually revises (AC-E11). */
+export function useMarkProformaInvoiceAsRevision(invoiceId: string) {
+  return useInvoiceWrite<string>(invoiceId, (previousId) =>
+    markProformaInvoiceAsRevisionOf(invoiceId, previousId),
   );
 }
 

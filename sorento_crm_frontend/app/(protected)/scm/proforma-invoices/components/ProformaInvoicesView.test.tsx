@@ -268,3 +268,23 @@ describe('ProformaInvoicesView - delete', () => {
     await waitFor(() => expect(state.deleteInvoice).toHaveBeenCalledWith('pi-1'));
   });
 });
+
+describe('F5b - a superseded revision is recognisable in the list', () => {
+  it('names which revision a row is, and that it has been superseded', async () => {
+    state.data = {
+      data: [invoiceRow({ status: 'superseded', revision_no: 1, revision_count: 2 })],
+      total: 1,
+    };
+    renderView();
+
+    expect(await screen.findByText('Revision 1 of 2 - superseded')).toBeInTheDocument();
+  });
+
+  it('says nothing about revisions on a document that has only one version', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    await screen.findByText('PI-2026-001');
+    expect(screen.queryByText(/Revision \d of \d/)).not.toBeInTheDocument();
+  });
+});

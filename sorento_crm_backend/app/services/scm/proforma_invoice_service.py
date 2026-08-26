@@ -158,6 +158,7 @@ def _summarise(
     requested_currency: Optional[str] = None,
     known: Optional[dict[str, dict]] = None,
     resolved: Optional[dict[int, tuple[Optional[str], str]]] = None,
+    revision_candidates: Optional[dict[int, dict]] = None,
 ) -> dict[str, Any]:
     """What the file holds, described. `known` and `resolved` are injectable so `apply`,
     which needs both to do the writing, does not pay for them a second time to describe
@@ -194,6 +195,9 @@ def _summarise(
                 )[:50],
                 "currency": currency,
                 "currency_source": source,
+                # The invoice on file this block looks like a new revision of, if any. A
+                # PROPOSAL for the dialog to pre-select, never applied here (AC-E6).
+                "revision_candidate": (revision_candidates or {}).get(doc.index),
             }
         )
 
@@ -220,6 +224,334 @@ def _summarise(
     }
 
 
+#: How much of a file's item codes must already sit on an un-converted invoice before the
+#: upload dialog PROPOSES it as a revision. Half is deliberate and loose: the pre-loading
+#: list carries no invoice number at all, so nothing identifies a resend except the goods it
+#: names, and a supplier who drops two lines from a five-line container is still resending
+#: the same container. It is a proposal, never a rule - the operator confirms (AC-E6).
+_REVISION_OVERLAP = 0.5
+
+
+def _revision_candidates(
+    db: Session, parsed: ProformaReadResult, *, supplier_id: Optional[str]
+) -> dict[int, dict]:
+    """Per parsed document, the invoice on file it most looks like a new revision of.
+
+    Only CURRENT, un-converted invoices of the same supplier are eligible: a superseded one
+    has already been replaced, and a converted one's goods are on a shipment, so revising it
+    would silently move the ground under a container that is already being loaded.
+    """
+    if not supplier_id or not parsed.documents:
+        return {}
+
+    rows = (
+        db.query(ProformaInvoice.id, ProformaInvoice.pi_number, ProformaInvoice.invoice_date,
+                 ProformaInvoiceLine.item_code)
+        .join(ProformaInvoiceLine, ProformaInvoiceLine.invoice_id == ProformaInvoice.id)
+        .filter(
+            ProformaInvoice.supplier_id == str(supplier_id),
+            func.coalesce(ProformaInvoice.status, "current") == "current",
+            ~ProformaInvoice.id.in_(
+                db.query(ProformaInvoiceShipmentLink.proforma_invoice_id)
+            ),
+        )
+        .all()
+    )
+    if not rows:
+        return {}
+
+    codes_by_invoice: dict[str, set[str]] = {}
+    meta: dict[str, tuple[str, Any]] = {}
+    for inv_id, number, invoice_date, item_code in rows:
+        codes_by_invoice.setdefault(str(inv_id), set()).add((item_code or "").upper())
+        meta.setdefault(str(inv_id), (number, invoice_date))
+
+    out: dict[int, dict] = {}
+    for doc in parsed.documents:
+        wanted = {ln.item_code.upper() for ln in doc.lines}
+        if not wanted:
+            continue
+        best: Optional[tuple[float, str]] = None
+        for inv_id, held in codes_by_invoice.items():
+            overlap = len(wanted & held) / len(wanted)
+            if overlap < _REVISION_OVERLAP:
+                continue
+            if best is None or overlap > best[0]:
+                best = (overlap, inv_id)
+        if best is None:
+            continue
+        number, invoice_date = meta[best[1]]
+        out[doc.index] = {
+            "invoice_id": best[1],
+            "pi_number": number,
+            "invoice_date": invoice_date.isoformat() if invoice_date else None,
+            "overlap_pct": round(best[0] * 100, 2),
+            "matched_items": len(wanted & codes_by_invoice[best[1]]),
+            "lines": len(wanted),
+        }
+    return out
+
+
+def _revision_targets(
+    db: Session, revision_of: Optional[dict], *, supplier_id: str
+) -> dict[str, ProformaInvoice]:
+    """The invoices this upload says it revises, checked before a single row is written.
+
+    Checked up front rather than per document so a five-block file naming one bad target
+    fails whole, instead of writing four revisions and then refusing.
+    """
+    if not revision_of:
+        return {}
+    ids = {str(v).strip() for v in revision_of.values() if str(v or "").strip()}
+    if not ids:
+        return {}
+    if any(not _is_uuid(i) for i in ids):
+        raise AppException(422, "That proforma invoice does not exist.", detail="revision_of")
+
+    found = {
+        str(inv.id): inv
+        for inv in db.query(ProformaInvoice).filter(ProformaInvoice.id.in_(ids)).all()
+    }
+    missing = sorted(ids - set(found))
+    if missing:
+        raise AppException(
+            422, "That proforma invoice does not exist.", detail="revision_of"
+        )
+    for inv in found.values():
+        if str(inv.supplier_id) != str(supplier_id):
+            raise AppException(
+                422,
+                f"'{inv.pi_number}' belongs to a different supplier, so this file cannot be "
+                "a revision of it.",
+                detail="revision_of",
+            )
+        if (inv.status or "current") == "superseded":
+            raise AppException(
+                409,
+                f"'{inv.pi_number}' has already been superseded by a newer revision.",
+                code="superseded",
+            )
+    return found
+
+
+def _available_number(db: Session, supplier_id: str, base: str, revision_no: int) -> str:
+    """A document number free for THIS supplier, starting from what the file derived.
+
+    Identity is (company, supplier, pi_number) and the pre-loading list derives its number
+    positionally from the file, so a revision taken from the same file lands on the number it
+    is revising. `-R2` is appended rather than a random suffix, because the number is read by
+    people and "PI-预装清单-1-R2" says what it is.
+    """
+    number = base
+    attempt = revision_no
+    while (
+        db.query(ProformaInvoice)
+        .filter(
+            ProformaInvoice.supplier_id == str(supplier_id),
+            ProformaInvoice.pi_number == number,
+        )
+        .first()
+        is not None
+    ):
+        number = f"{base[:90]}-R{attempt}"
+        attempt += 1
+    return number[:100]
+
+
+def _chain(db: Session, invoice: ProformaInvoice) -> list[ProformaInvoice]:
+    """Every revision of this document, oldest first.
+
+    Walked with two bounded loops rather than a recursive CTE: a chain is two or three
+    documents in practice, and the loop is readable by the next person. The bound is what
+    stops a `revision_of_id` cycle - which `mark_as_revision_of` refuses to create, but a
+    hand-edited row could still hold - from hanging the detail page.
+    """
+    seen: list[ProformaInvoice] = [invoice]
+    guard = 0
+    node = invoice
+    while node.revision_of_id and guard < 50:
+        prior = (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.id == str(node.revision_of_id))
+            .first()
+        )
+        if prior is None or any(str(prior.id) == str(x.id) for x in seen):
+            break
+        seen.insert(0, prior)
+        node = prior
+        guard += 1
+
+    node = invoice
+    guard = 0
+    while guard < 50:
+        nxt = (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.revision_of_id == str(node.id))
+            .first()
+        )
+        if nxt is None or any(str(nxt.id) == str(x.id) for x in seen):
+            break
+        seen.append(nxt)
+        node = nxt
+        guard += 1
+    return seen
+
+
+def _supplier_line_figures(db: Session, invoice_id: str) -> dict[tuple[str, int], dict]:
+    """Per line, what the SUPPLIER stated on that invoice.
+
+    The diff compares two of their statements, never our adjustment of one against their
+    other: `qty` and `unit_price` are ours to trim, and diffing those would report a price
+    change on a line whose price never moved.
+
+    Keyed by item code AND its occurrence on the document, which is the only line identity
+    carried across two sends: a revision's row numbers are its own, and Kailu's proforma
+    names the same model on two lines at two prices, so keying on the code alone would
+    compare one of them against neither.
+    """
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id == str(invoice_id))
+        .order_by(ProformaInvoiceLine.line_no)
+        .all()
+    )
+    out: dict[tuple[str, int], dict] = {}
+    seen: dict[str, int] = {}
+    for ln in lines:
+        occurrence = seen.get(ln.item_code, 0) + 1
+        seen[ln.item_code] = occurrence
+        qty = _f(ln.supplier_qty if ln.supplier_qty is not None else ln.qty)
+        price = _f(
+            ln.supplier_unit_price if ln.supplier_unit_price is not None else ln.unit_price
+        )
+        amount = round(qty * price, 4) if qty is not None and price is not None else _f(ln.amount)
+        out[(ln.item_code, occurrence)] = {
+            "item_code": ln.item_code,
+            "occurrence": occurrence,
+            "description": ln.description,
+            "qty": qty,
+            "unit_price": price,
+            "amount": amount,
+        }
+    return out
+
+
+def _moved(was: Optional[float], now: Optional[float]) -> bool:
+    """Whether two stated figures actually differ. Money to the cent, quantities exactly."""
+    if was is None and now is None:
+        return False
+    if was is None or now is None:
+        return True
+    return abs(was - now) > 0.005
+
+
+def _diff(db: Session, invoice: ProformaInvoice) -> Optional[dict]:
+    """What the supplier changed between the previous revision and this one (AC-E8)."""
+    if not invoice.revision_of_id:
+        return None
+    previous = (
+        db.query(ProformaInvoice)
+        .filter(ProformaInvoice.id == str(invoice.revision_of_id))
+        .first()
+    )
+    if previous is None:
+        return None
+
+    before = _supplier_line_figures(db, str(previous.id))
+    after = _supplier_line_figures(db, str(invoice.id))
+
+    changes: list[dict] = []
+    price_changed = qty_changed = 0
+    for key, now in after.items():
+        code = now["item_code"]
+        was = before.get(key)
+        if was is None:
+            changes.append({
+                "item_code": code, "occurrence": now["occurrence"],
+                "description": now["description"], "status": "added",
+                "qty_was": None, "qty_now": now["qty"], "qty_changed": True,
+                "unit_price_was": None, "unit_price_now": now["unit_price"],
+                "unit_price_changed": True,
+                "amount_was": None, "amount_now": now["amount"],
+            })
+            continue
+        price_moved = _moved(was["unit_price"], now["unit_price"])
+        qty_moved = _moved(was["qty"], now["qty"])
+        price_changed += 1 if price_moved else 0
+        qty_changed += 1 if qty_moved else 0
+        if not price_moved and not qty_moved:
+            continue
+        changes.append({
+            "item_code": code, "occurrence": now["occurrence"],
+            "description": now["description"], "status": "changed",
+            "qty_was": was["qty"], "qty_now": now["qty"], "qty_changed": qty_moved,
+            "unit_price_was": was["unit_price"], "unit_price_now": now["unit_price"],
+            "unit_price_changed": price_moved,
+            "amount_was": was["amount"], "amount_now": now["amount"],
+        })
+    for key, was in before.items():
+        if key in after:
+            continue
+        changes.append({
+            "item_code": was["item_code"], "occurrence": was["occurrence"],
+            "description": was["description"], "status": "removed",
+            "qty_was": was["qty"], "qty_now": None, "qty_changed": True,
+            "unit_price_was": was["unit_price"], "unit_price_now": None,
+            "unit_price_changed": True,
+            "amount_was": was["amount"], "amount_now": None,
+        })
+
+    return {
+        "compared_to_id": str(previous.id),
+        "compared_to_pi_number": previous.pi_number,
+        "price_changed_lines": price_changed,
+        "qty_changed_lines": qty_changed,
+        "added_lines": sum(1 for c in changes if c["status"] == "added"),
+        "removed_lines": sum(1 for c in changes if c["status"] == "removed"),
+        "changes": changes,
+    }
+
+
+def mark_as_revision_of(db: Session, invoice_id: str, previous_id: str) -> dict:
+    """Link a PI that was uploaded as new to the document it actually revises (AC-E11).
+
+    The matching in the upload dialog is a proposal, and a wrong "New PI" has to be fixable
+    without deleting and re-uploading - the pre-loading list carries no invoice number, so
+    the mistake is an easy one to make and an expensive one to be stuck with.
+    """
+    invoice = get_or_404(db, invoice_id)
+    if str(invoice_id) == str(previous_id):
+        raise AppException(
+            422, "A proforma invoice cannot be a revision of itself.", detail="previous_id"
+        )
+    previous = get_or_404(db, previous_id)
+    if str(previous.supplier_id) != str(invoice.supplier_id):
+        raise AppException(
+            422,
+            f"'{previous.pi_number}' belongs to a different supplier.",
+            detail="previous_id",
+        )
+    if (previous.status or "current") == "superseded":
+        raise AppException(
+            409,
+            f"'{previous.pi_number}' has already been superseded by a newer revision.",
+            code="superseded",
+        )
+    if invoice.revision_of_id:
+        raise AppException(
+            409,
+            f"'{invoice.pi_number}' is already a revision of another document.",
+            code="already_a_revision",
+        )
+
+    invoice.revision_of_id = str(previous.id)
+    invoice.revision_no = int(previous.revision_no or 1) + 1
+    invoice.status = "current"
+    previous.status = "superseded"
+    db.flush()
+    return serialize(db, invoice)
+
+
 def preview(
     db: Session,
     data: bytes,
@@ -233,6 +565,7 @@ def preview(
     out = _summarise(
         db, parsed, supplier_id=supplier_id, source_ref=source_ref,
         requested_currency=currency,
+        revision_candidates=_revision_candidates(db, parsed, supplier_id=supplier_id),
     )
     out["ok"] = parsed.ok
     out["missing_columns"] = parsed.missing_columns
@@ -306,6 +639,7 @@ def apply(
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
     actor: Optional[str] = None,
+    revision_of: Optional[dict] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -326,6 +660,10 @@ def apply(
     if any(d.priced_lines and not resolved.get(d.index, (None,))[0] for d in parsed.documents):
         raise AppException(422, _NO_CURRENCY, detail="currency")
 
+    # Checked before anything is written: a five-block file naming one bad revision target
+    # fails whole rather than writing four revisions and then refusing.
+    targets = _revision_targets(db, revision_of, supplier_id=supplier_id)
+
     known = _products_by_code(
         db, {ln.item_code for d in parsed.documents for ln in d.lines}
     )
@@ -342,18 +680,39 @@ def apply(
     for doc in parsed.documents:
         number = pi_number_for(doc, source_ref=source_ref)
         code, source = resolved.get(doc.index, (None, "none"))
-        invoice = (
-            db.query(ProformaInvoice)
-            .filter(
-                ProformaInvoice.supplier_id == supplier_id,
-                ProformaInvoice.pi_number == number,
+        prior = targets.get(str((revision_of or {}).get(str(doc.index)) or ""))
+
+        if prior is not None:
+            # A revision is always a NEW row: the prior one is what the supplier sent on the
+            # day, it is what the diff is read against, and overwriting it would delete the
+            # only evidence that anything changed (AC-E7).
+            revision_no = int(prior.revision_no or 1) + 1
+            invoice = ProformaInvoice(
+                id=_uuid(),
+                supplier_id=supplier_id,
+                pi_number=_available_number(db, supplier_id, number, revision_no),
+                revision_of_id=str(prior.id),
+                revision_no=revision_no,
+                status="current",
             )
-            .first()
-        )
-        existed = invoice is not None
-        if invoice is None:
-            invoice = ProformaInvoice(id=_uuid(), supplier_id=supplier_id, pi_number=number)
             db.add(invoice)
+            prior.status = "superseded"
+            existed = False
+        else:
+            invoice = (
+                db.query(ProformaInvoice)
+                .filter(
+                    ProformaInvoice.supplier_id == supplier_id,
+                    ProformaInvoice.pi_number == number,
+                )
+                .first()
+            )
+            existed = invoice is not None
+            if invoice is None:
+                invoice = ProformaInvoice(
+                    id=_uuid(), supplier_id=supplier_id, pi_number=number
+                )
+                db.add(invoice)
 
         invoice.invoice_date = doc.invoice_date
         # A PRICED document without a currency never reaches here - it was refused above. An
@@ -421,6 +780,8 @@ def apply(
                 "currency": invoice.currency or None,
                 "currency_source": source,
                 "lines": len(doc.lines),
+                "revision_no": int(invoice.revision_no or 1),
+                "revision_of_id": str(invoice.revision_of_id) if invoice.revision_of_id else None,
                 "total_amount": _f(invoice.total_amount),
                 "unmatched_items": sorted(set(unmatched))[:50],
                 "created": not existed,
@@ -1318,6 +1679,28 @@ def serialize(
         "status": invoice.status or "current",
         "revision_no": int(invoice.revision_no or 1),
     }
+
+    chain = _chain(db, invoice)
+    out["revision_count"] = len(chain)
+    if with_lines:
+        out["revisions"] = [
+            {
+                "id": str(r.id),
+                "pi_number": r.pi_number,
+                "revision_no": int(r.revision_no or 1),
+                "status": r.status or "current",
+                "invoice_date": r.invoice_date.isoformat() if r.invoice_date else None,
+                "total_amount": _f(r.total_amount),
+                "line_count": r.line_count,
+            }
+            for r in chain
+        ]
+        previous = next(
+            (r for r in chain if invoice.revision_of_id and str(r.id) == str(invoice.revision_of_id)),
+            None,
+        )
+        out["revision_of_pi_number"] = previous.pi_number if previous else None
+        out["diff"] = _diff(db, invoice)
 
     sizes_by_id, default_size = (
         container_sizes if container_sizes is not None else _container_sizes(db)

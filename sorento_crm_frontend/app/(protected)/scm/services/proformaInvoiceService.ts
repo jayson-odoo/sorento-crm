@@ -11,7 +11,9 @@
  *       multipart: file (required) + supplier_id (required) [+ currency]
  *  POST /api/v1/scm/proforma-invoices/apply    -> 200 ProformaApplyResult
  *       ?validate_only=true                    -> 200 UploadTestResult
- *       multipart: file + supplier_id [+ currency]
+ *       multipart: file + supplier_id [+ currency] [+ revision_of]
+ *       `revision_of` is JSON `{"<document index>": "<invoice id>"}` - one file holds
+ *       several documents, so whether each is a revision is answered per document (AC-E7).
  *  GET  /api/v1/scm/proforma-invoices?supplier_id&limit&offset -> 200 ProformaInvoiceListResponse
  *       Fixed `created_at DESC` sort, NO page/sort/query params - offset paging only.
  *  GET  /api/v1/scm/proforma-invoices/{id}     -> 200 ProformaInvoiceDetail
@@ -29,6 +31,10 @@
  *       already converted (names the shipment), or when one is OVER its container's capacity
  *       and no override was given (`detail: 'over_capacity'`, AC-E5). Auth: `scm.reorder.run`
  *       (a shipment write, same permission the packing-list apply path uses).
+ *  POST /api/v1/scm/proforma-invoices/{id}/mark-as-revision-of -> 200 ProformaInvoiceDetail
+ *       Body: { previous_id }. Links a PI uploaded as new to its predecessor and supersedes
+ *       that one (AC-E11). 422 on itself or another supplier's; 409 when either end is
+ *       already superseded or already a revision.
  *  PATCH /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
  *       Body: { container_size_id: string | null }. Null means "the tenant's default size".
  *  PATCH /api/v1/scm/proforma-invoices/{id}/lines/{lineId} -> 200 ProformaInvoiceDetail
@@ -59,6 +65,19 @@ import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
 /** Where a document's currency came from, in the order AC-P3.1 resolves it. */
 export type CurrencySource = 'form' | 'document' | 'supplier_price_list' | 'none';
 
+/** The invoice on file a parsed document looks like a new revision of (AC-E6). A
+ *  PROPOSAL: the pre-loading list carries no invoice number, so nothing identifies a resend
+ *  except the goods it names, and the operator confirms. */
+export interface RevisionCandidate {
+  invoice_id: string;
+  pi_number: string;
+  invoice_date: string | null;
+  /** How much of the uploaded document's item codes this invoice already carries. */
+  overlap_pct: number;
+  matched_items: number;
+  lines: number;
+}
+
 export interface ProformaDocumentSummary {
   index: number;
   pi_number: string;
@@ -75,6 +94,7 @@ export interface ProformaDocumentSummary {
   unmatched_items: string[];
   currency: string | null;
   currency_source: CurrencySource;
+  revision_candidate: RevisionCandidate | null;
 }
 
 export interface ProformaInvoicePreview {
@@ -106,6 +126,8 @@ export interface ProformaApplyResultDocument {
   currency: string | null;
   currency_source: CurrencySource;
   lines: number;
+  revision_no: number;
+  revision_of_id: string | null;
   total_amount: number | null;
   unmatched_items: string[];
   created: boolean;
@@ -209,9 +231,52 @@ export interface ConvertedShipmentRef {
   shipment_number: string | null;
 }
 
+/** One document in the revision chain, oldest first on the detail payload. */
+export interface RevisionRef {
+  id: string;
+  pi_number: string;
+  revision_no: number;
+  status: ProformaInvoiceStatus;
+  invoice_date: string | null;
+  total_amount: number | null;
+  line_count: number;
+}
+
+/** One line the supplier changed between the previous revision and this one (AC-E8).
+ *  `occurrence` tells two lines naming the SAME model apart - Kailu's proforma prices one
+ *  model on two lines, so the code alone is not a line identity. */
+export interface RevisionLineChange {
+  item_code: string;
+  occurrence: number;
+  description: string | null;
+  status: 'added' | 'changed' | 'removed';
+  qty_was: number | null;
+  qty_now: number | null;
+  qty_changed: boolean;
+  unit_price_was: number | null;
+  unit_price_now: number | null;
+  unit_price_changed: boolean;
+  amount_was: number | null;
+  amount_now: number | null;
+}
+
+/** What the supplier changed. Null on an original - it has nothing to be compared with. */
+export interface RevisionDiff {
+  compared_to_id: string;
+  compared_to_pi_number: string;
+  price_changed_lines: number;
+  qty_changed_lines: number;
+  added_lines: number;
+  removed_lines: number;
+  changes: RevisionLineChange[];
+}
+
 export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   lines: ProformaInvoiceLine[];
   converted_shipments: ConvertedShipmentRef[];
+  revisions: RevisionRef[];
+  revision_of_pi_number: string | null;
+  diff: RevisionDiff | null;
 }
 
 /** One PI's outcome inside a convert - always present, so the caller can name every
@@ -285,13 +350,26 @@ async function codedError(res: Response, fallback: string): Promise<CodedError> 
   return error;
 }
 
-function proformaForm(file: File, supplierId: string, currency?: string | null): FormData {
+/** `{ "<document index>": "<invoice id>" }` - which blocks of THIS file revise which
+ *  invoice already on file. One file holds several documents, so the answer is per
+ *  document, not per upload. */
+export type RevisionSelection = Record<string, string>;
+
+function proformaForm(
+  file: File,
+  supplierId: string,
+  currency?: string | null,
+  revisionOf?: RevisionSelection | null,
+): FormData {
   const body = new FormData();
   body.append('file', file);
   body.append('supplier_id', supplierId);
   // Only when the operator typed one: an empty string would be read as a currency the
   // backend cannot resolve and refuse a file the document itself could have answered.
   if (currency) body.append('currency', currency);
+  if (revisionOf && Object.keys(revisionOf).length > 0) {
+    body.append('revision_of', JSON.stringify(revisionOf));
+  }
   return body;
 }
 
@@ -311,10 +389,11 @@ export async function applyProformaInvoice(
   file: File,
   supplierId: string,
   currency?: string | null,
+  revisionOf?: RevisionSelection | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, currency),
+    body: proformaForm(file, supplierId, currency, revisionOf),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
@@ -410,6 +489,27 @@ export async function deleteProformaInvoiceLine(
     { method: 'DELETE' },
   );
   return readJson<ProformaInvoiceDetail>(res, 'Failed to remove the line');
+}
+
+/**
+ * Link a PI uploaded as new to the document it actually revises (AC-E11).
+ *
+ * The upload dialog's matching is a proposal, and the pre-loading list carries no invoice
+ * number - so a wrong "New PI" is an easy mistake, and an expensive one to be stuck with.
+ */
+export async function markProformaInvoiceAsRevisionOf(
+  invoiceId: string,
+  previousId: string,
+): Promise<ProformaInvoiceDetail> {
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/${invoiceId}/mark-as-revision-of`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previous_id: previousId }),
+    },
+  );
+  return readJson<ProformaInvoiceDetail>(res, 'Failed to link this revision');
 }
 
 /** Which box this invoice is being fitted into. Null means the tenant's default size. */

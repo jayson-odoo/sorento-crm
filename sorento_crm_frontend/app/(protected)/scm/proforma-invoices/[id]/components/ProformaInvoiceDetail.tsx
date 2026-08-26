@@ -40,6 +40,7 @@ import {
 } from '../../../services/proformaInvoiceService';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
+import { ProformaRevisionsCard } from './ProformaRevisionsCard';
 import { ProformaVolumeFill } from './ProformaVolumeFill';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
@@ -517,6 +518,11 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <CardTitle className="text-lg">{invoice.pi_number}</CardTitle>
               {invoice.currency ? <Badge variant="secondary">{invoice.currency}</Badge> : null}
+              {invoice.revision_count > 1 ? (
+                <Badge variant="secondary" appearance="light">
+                  Revision {invoice.revision_no} of {invoice.revision_count}
+                </Badge>
+              ) : null}
               {superseded ? (
                 <Badge variant="secondary" appearance="light">
                   Superseded
@@ -690,6 +696,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           </CardTable>
         </Card>
       </DataGrid>
+
+      {/* Revisions - always rendered with its own empty state, per the CRUD standard. */}
+      <ProformaRevisionsCard invoice={invoice} canEdit={canAdjust && !superseded} />
 
       <ConfirmDeleteDialog
         open={!!lineToRemove}

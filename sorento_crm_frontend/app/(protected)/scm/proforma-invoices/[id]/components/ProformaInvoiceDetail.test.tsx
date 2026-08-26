@@ -57,6 +57,7 @@ const writes = {
   updateLine: vi.fn(),
   removeLine: vi.fn(),
   updateInvoice: vi.fn(),
+  markAsRevision: vi.fn(),
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
@@ -72,6 +73,10 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
   useUpdateProformaInvoiceLine: () => ({ mutateAsync: writes.updateLine, isPending: false }),
   useDeleteProformaInvoiceLine: () => ({ mutateAsync: writes.removeLine, isPending: false }),
   useUpdateProformaInvoice: () => ({ mutateAsync: writes.updateInvoice, isPending: false }),
+  useMarkProformaInvoiceAsRevision: () => ({
+    mutateAsync: writes.markAsRevision,
+    isPending: false,
+  }),
 }));
 
 vi.mock('../../../hooks/useFulfilment', () => ({
@@ -143,6 +148,19 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
       },
     ],
     converted_shipments: [],
+    revisions: [
+      {
+        id: 'pi-1',
+        pi_number: 'PI-2026-001',
+        revision_no: 1,
+        status: 'current',
+        invoice_date: '2026-08-01',
+        total_amount: 1000,
+        line_count: 1,
+      },
+    ],
+    revision_of_pi_number: null,
+    diff: null,
     ...over,
   };
 }
@@ -165,6 +183,7 @@ beforeEach(() => {
   writes.updateLine.mockReset();
   writes.removeLine.mockReset();
   writes.updateInvoice.mockReset();
+  writes.markAsRevision.mockReset();
 });
 
 describe('ProformaInvoiceDetail - loading / error / data states', () => {
@@ -357,5 +376,118 @@ describe('F5 - volume, and adjusting the invoice to fit the container', () => {
 
     expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Already in a packing list/)).toBeInTheDocument();
+  });
+});
+
+describe('F5b - revisions', () => {
+  const revised = () =>
+    detail({
+      pi_number: 'PI-2026-001-R2',
+      status: 'current',
+      revision_no: 2,
+      revision_count: 2,
+      revision_of_pi_number: 'PI-2026-001',
+      revisions: [
+        {
+          id: 'pi-0',
+          pi_number: 'PI-2026-001',
+          revision_no: 1,
+          status: 'superseded',
+          invoice_date: '2026-07-20',
+          total_amount: 900,
+          line_count: 1,
+        },
+        {
+          id: 'pi-1',
+          pi_number: 'PI-2026-001-R2',
+          revision_no: 2,
+          status: 'current',
+          invoice_date: '2026-08-01',
+          total_amount: 1000,
+          line_count: 1,
+        },
+      ],
+      diff: {
+        compared_to_id: 'pi-0',
+        compared_to_pi_number: 'PI-2026-001',
+        price_changed_lines: 1,
+        qty_changed_lines: 0,
+        added_lines: 0,
+        removed_lines: 0,
+        changes: [
+          {
+            item_code: 'ITEM-1',
+            occurrence: 1,
+            description: 'Widget',
+            status: 'changed' as const,
+            qty_was: 10,
+            qty_now: 10,
+            qty_changed: false,
+            unit_price_was: 90,
+            unit_price_now: 100,
+            unit_price_changed: true,
+            amount_was: 900,
+            amount_now: 1000,
+          },
+        ],
+      },
+    });
+
+  it('says which revision this is, in the header and in the section (AC-E7)', () => {
+    state.data = revised();
+    renderDetail();
+
+    // Once in the header badge, once in the Revisions section - both places a reader looks.
+    expect(screen.getAllByText('Revision 2 of 2')).toHaveLength(2);
+    expect(screen.getByText('Revision 1 - superseded')).toBeInTheDocument();
+  });
+
+  it('names how many lines the supplier repriced, and by what (AC-E8)', () => {
+    state.data = revised();
+    renderDetail();
+
+    expect(screen.getByText('Price changed on 1 line')).toBeInTheDocument();
+    expect(screen.getByText(/against PI-2026-001/)).toBeInTheDocument();
+    // The old price appears only in the diff; the new one also sits in the lines grid.
+    expect(screen.getByText('CNY 90.00')).toBeInTheDocument();
+    expect(screen.getAllByText('CNY 100.00').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders the revisions section on an original too, with an empty state', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(screen.getByText('Revisions')).toBeInTheDocument();
+    expect(
+      screen.getByText('This is the only version the supplier has sent.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers no Edit and no Convert on a superseded revision (AC-E7, AC-E10)', () => {
+    state.data = detail({ status: 'superseded' });
+    renderDetail();
+
+    expect(screen.getByText('Superseded')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /convert to draft shipment/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('A superseded revision is read-only.')).toBeInTheDocument();
+  });
+
+  it('offers to link a mis-filed new PI to the one it revises (AC-E11)', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: /mark as revision of/i })).toBeInTheDocument();
+  });
+
+  it('does not offer to link one that is already a revision', () => {
+    state.data = revised();
+    renderDetail();
+
+    expect(
+      screen.queryByRole('button', { name: /mark as revision of/i }),
+    ).not.toBeInTheDocument();
   });
 });

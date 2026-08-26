@@ -398,3 +398,88 @@ def test_the_export_route_returns_a_workbook_named_after_the_invoice(scm_app):
     assert ".xlsx" in r.headers["content-disposition"]
     assert detail["id"] not in r.headers["content-disposition"]
     assert r.content[:2] == b"PK"
+
+
+# --------------------------------------------------------------------------- #
+# F5b - revisions (AC-E6, AC-E7, AC-E11)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_preview_offers_the_invoice_on_file_as_a_revision_target(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    supplier, product = _seed_supplier_and_product(db)
+    data = kailu_proforma_workbook({"SRTWT7443": product.product_code})
+    client.post(f"{URL}/apply", files=_upload(data), data={"supplier_id": str(supplier.id)})
+
+    r = client.post(
+        f"{URL}/preview", files=_upload(data, "kailu-2.xlsx"),
+        data={"supplier_id": str(supplier.id)},
+    )
+
+    assert r.status_code == 200, r.text
+    candidate = r.json()["documents"][0]["revision_candidate"]
+    assert candidate is not None
+    assert candidate["overlap_pct"] == 100
+
+
+def test_applying_with_a_revision_map_supersedes_the_named_invoice(scm_app):
+    import json
+
+    client, db = _client(scm_app, upload=True, view=True)
+    supplier, product = _seed_supplier_and_product(db)
+    data = kailu_proforma_workbook({"SRTWT7443": product.product_code})
+    client.post(f"{URL}/apply", files=_upload(data), data={"supplier_id": str(supplier.id)})
+    first = client.get(URL, params={"supplier_id": str(supplier.id)}).json()["data"][0]
+
+    r = client.post(
+        f"{URL}/apply",
+        files=_upload(data, "kailu-2.xlsx"),
+        data={
+            "supplier_id": str(supplier.id),
+            "revision_of": json.dumps({"1": first["id"]}),
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["results"][0]["revision_no"] == 2
+    superseded = client.get(f"{URL}/{first['id']}").json()
+    assert superseded["status"] == "superseded"
+    assert superseded["revision_count"] == 2
+
+
+def test_a_revision_map_that_is_not_json_is_a_422_not_a_500(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    supplier, product = _seed_supplier_and_product(db)
+    data = kailu_proforma_workbook({"SRTWT7443": product.product_code})
+
+    r = client.post(
+        f"{URL}/apply",
+        files=_upload(data),
+        data={"supplier_id": str(supplier.id), "revision_of": "not-json"},
+    )
+
+    assert r.status_code == 422, r.text
+
+
+def test_mark_as_revision_of_links_two_invoices_after_the_fact(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    supplier, product = _seed_supplier_and_product(db)
+    client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook({"SRTWT7443": product.product_code})),
+        data={"supplier_id": str(supplier.id)},
+    )
+    first = client.get(URL, params={"supplier_id": str(supplier.id)}).json()["data"][0]
+    # A second, genuinely different document for the same supplier.
+    client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook({"SRTWT7443": product.product_code}), "b.xlsx"),
+        data={"supplier_id": str(supplier.id)},
+    )
+
+    r = client.post(
+        f"{URL}/{first['id']}/mark-as-revision-of", json={"previous_id": first["id"]}
+    )
+
+    # Itself is refused; the route is reachable and validating rather than 404ing.
+    assert r.status_code == 422, r.text

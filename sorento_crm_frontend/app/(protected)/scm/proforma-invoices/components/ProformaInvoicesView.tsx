@@ -99,14 +99,25 @@ export function ProformaInvoicesView() {
       {
         accessorKey: 'pi_number',
         header: ({ column }) => <DataGridColumnHeader title="PI number" column={column} />,
+        // A superseded revision says so HERE rather than only on its detail page: it is
+        // still listed, still readable, and picking it for a convert is refused - so the
+        // list has to explain the refusal before it happens (AC-E7).
         cell: ({ row }) => (
-          <Link
-            href={`/scm/proforma-invoices/${row.original.id}`}
-            className="font-medium text-primary hover:underline"
-            title={`Open ${row.original.pi_number}`}
-          >
-            {row.original.pi_number}
-          </Link>
+          <div className="flex flex-col gap-0.5">
+            <Link
+              href={`/scm/proforma-invoices/${row.original.id}`}
+              className="truncate font-medium text-primary hover:underline"
+              title={`Open ${row.original.pi_number}`}
+            >
+              {row.original.pi_number}
+            </Link>
+            {row.original.revision_count > 1 ? (
+              <span className="text-xs text-muted-foreground">
+                Revision {row.original.revision_no} of {row.original.revision_count}
+                {row.original.status === 'superseded' ? ' - superseded' : ''}
+              </span>
+            ) : null}
+          </div>
         ),
         size: 170,
         enableSorting: false,

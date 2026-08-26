@@ -426,7 +426,9 @@ describe('ProformaUploadDialog - currency, the last resort (AC-P3.1)', () => {
 
     fireEvent.click(confirmButton());
     await waitFor(() =>
-      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD'),
+      // The fourth argument is the per-document revision selection - empty here, because
+      // nothing on file matches this upload (F5b).
+      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD', {}),
     );
   });
 });
