@@ -12,9 +12,11 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
+  Check,
   Download,
   Info,
   LayoutGrid,
+  Link2,
   LoaderCircle,
   PackageSearch,
   RefreshCw,
@@ -180,6 +182,7 @@ export function ContainerRequestSection({
   const [matrixGranularity, setMatrixGranularity] =
     useState<ContainerRequestMatrixGranularity>('week');
   const [openingDocId, setOpeningDocId] = useState<string | null>(null);
+  const [copiedNoticeId, setCopiedNoticeId] = useState<string | null>(null);
   // The product whose breakdown is open. Held as an id, not the row object, so a refresh
   // behind an open dialog shows the NEW numbers rather than the ones it opened on.
   const [openProductId, setOpenProductId] = useState<string | null>(null);
@@ -580,15 +583,29 @@ export function ContainerRequestSection({
   // also drive `useSendContainerRequest` risked the panel's own, already-covered tests for a
   // few lines of overlap. Noted per the CLAUDE.md lesson on not silently duplicating shared
   // list/detail rendering: this IS a duplication, made deliberately and in the open.
-  async function openDocument(notice: SupplierNotice) {
-    setOpeningDocId(notice.id);
+  async function openDocument(notice: SupplierNotice, kind: 'pdf' | 'xlsx') {
+    setOpeningDocId(`${notice.id}:${kind}`);
     try {
-      const { url } = await getNoticeDocumentUrl(notice.id);
+      const { url } = await getNoticeDocumentUrl(notice.id, kind);
       window.open(url, '_blank', 'noopener');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setOpeningDocId(null);
+    }
+  }
+
+  // The link the supplier already has in their inbox, copied so Ms Tee can paste it into
+  // WeChat herself - which is how she reaches the factories that never open email.
+  async function copyLink(notice: SupplierNotice) {
+    if (!notice.public_url) return;
+    try {
+      await navigator.clipboard.writeText(notice.public_url);
+      setCopiedNoticeId(notice.id);
+      toast.success('Link copied');
+      window.setTimeout(() => setCopiedNoticeId(null), 2000);
+    } catch {
+      toast.error('Could not copy the link. Copy it from the address bar instead.');
     }
   }
 
@@ -635,16 +652,44 @@ export function ContainerRequestSection({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!n.has_document || openingDocId === n.id}
-                  onClick={() => openDocument(n)}
+                  disabled={!n.has_document || openingDocId === `${n.id}:pdf`}
+                  onClick={() => openDocument(n, 'pdf')}
                 >
-                  {openingDocId === n.id ? (
+                  {openingDocId === `${n.id}:pdf` ? (
                     <LoaderCircle className="size-4 animate-spin" />
                   ) : (
                     <Download className="size-4" />
                   )}
-                  Document
+                  PDF
                 </Button>
+                {/* Their own stock list with the quantity to load filled in (AC-C4). Absent
+                    on notices sent before F4, which is why the button is conditional rather
+                    than merely disabled. */}
+                {n.has_xlsx ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={openingDocId === `${n.id}:xlsx`}
+                    onClick={() => openDocument(n, 'xlsx')}
+                  >
+                    {openingDocId === `${n.id}:xlsx` ? (
+                      <LoaderCircle className="size-4 animate-spin" />
+                    ) : (
+                      <Download className="size-4" />
+                    )}
+                    XLSX
+                  </Button>
+                ) : null}
+                {n.public_url ? (
+                  <Button size="sm" variant="outline" onClick={() => copyLink(n)}>
+                    {copiedNoticeId === n.id ? (
+                      <Check className="size-4" />
+                    ) : (
+                      <Link2 className="size-4" />
+                    )}
+                    Copy link
+                  </Button>
+                ) : null}
               </div>
             </div>
           ))}

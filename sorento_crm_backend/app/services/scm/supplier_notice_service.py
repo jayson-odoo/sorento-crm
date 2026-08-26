@@ -35,13 +35,15 @@ Frontend contract (Phase 1):
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope, set_company_scope
 from app.models.scm import LoadingPlan, LoadingPlanLine
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.services.company_scope_sql import company_sql_predicate
@@ -506,6 +508,11 @@ def request_and_notify(
             exc_info=True,
         )
 
+    # F8/AC-C7: this send is the current ask, so every link already out there stops
+    # answering. Done BEFORE the new rows exist so the unique token index cannot see two
+    # live links for one supplier at any point.
+    _retire_public_tokens(db, str(supplier_id))
+
     notices: list[SupplierNotice] = []
     for channel in CHANNELS:
         notice = SupplierNotice(
@@ -522,6 +529,18 @@ def request_and_notify(
             line_count=len(pack),
             production_line_count=0,
             created_by=actor,
+            # ONE token per send (PLAN section 5), on the channel that carries the link.
+            # The chat row is declared and dark - nothing sends on it - so a token there
+            # would be a second live link to the same request that nobody ever receives,
+            # and every extra live link is another way for one to leak.
+            public_token=(
+                secrets.token_urlsafe(_PUBLIC_TOKEN_BYTES) if channel == "email" else None
+            ),
+            public_token_expires_at=(
+                datetime.utcnow() + timedelta(days=PUBLIC_TOKEN_TTL_DAYS)
+                if channel == "email"
+                else None
+            ),
         )
         db.add(notice)
         db.flush()
@@ -550,6 +569,177 @@ def request_and_notify(
         "notices": [serialize(db, n) for n in notices],
         "document_filename": filename,
     }
+
+
+# --------------------------------------------------------------------------- public link
+
+
+#: How long the supplier's link answers for (F8, AC-C7). Thirty days is the whole of its
+#: life; nothing renews it, and a resend replaces it rather than extending it.
+PUBLIC_TOKEN_TTL_DAYS = 30
+
+#: 32 random bytes, the same width as the quotation counter-sign token
+#: (`project_quotation_document_service.issue_sign_link`). The token IS the credential, so
+#: its only real property is being unguessable.
+_PUBLIC_TOKEN_BYTES = 32
+
+#: One answer for "no such token", "expired" and "superseded by a resend". Saying which
+#: confirms to anybody guessing that a token exists, and this endpoint is public.
+_LINK_GONE = "This link is no longer available. Ask your contact at Sorento to resend it."
+
+
+def _retire_public_tokens(db: Session, supplier_id: str) -> None:
+    """Expire every live container-request link this supplier holds.
+
+    The token is KEPT, not cleared: a notice is the record of what left the building, and
+    "there was a link, it ran out on this date" is part of that record. Expiring it is what
+    stops it answering, which is all that is needed - and it means the old link and a token
+    that never existed fail through the same branch below.
+    """
+    now = datetime.utcnow()
+    (
+        db.query(SupplierNotice)
+        .filter(
+            SupplierNotice.supplier_id == supplier_id,
+            SupplierNotice.notice_type == "container_request",
+            SupplierNotice.public_token.isnot(None),
+            SupplierNotice.public_token_expires_at > now,
+        )
+        .update({"public_token_expires_at": now}, synchronize_session=False)
+    )
+    db.flush()
+
+
+def request_by_public_token(db: Session, token: str) -> SupplierNotice:
+    """Resolve a supplier link, refusing anything unknown or expired with the SAME message.
+
+    Resolved with the company scope OPEN, then pinned shut to the notice's own company -
+    exactly the shape `project_quotation_document_service.get_issue_by_sign_token` carries,
+    and for the same reason. The reader is a stranger with no session and no API key, so the
+    scope resolver leaves the request at UNSET, which is fail-closed and reads zero rows from
+    every owned table: without the open window a live link would answer "no longer available"
+    and a supplier would be told to ask for a resend of something that was never broken. The
+    token is what makes opening it safe, being globally unique and the whole credential.
+    Pinning afterwards is not optional: the lines and the supplier name read next must stay
+    inside the company the token belongs to.
+    """
+    if not token:
+        raise AppException(404, _LINK_GONE)
+    with company_scope(db, None):
+        notice = (
+            db.query(SupplierNotice)
+            .filter(SupplierNotice.public_token == token)
+            .first()
+        )
+    if notice is not None and notice.company_id:
+        set_company_scope(db, frozenset({str(notice.company_id)}))
+    if (
+        notice is None
+        or notice.public_token_expires_at is None
+        or notice.public_token_expires_at <= datetime.utcnow()
+    ):
+        raise AppException(404, _LINK_GONE)
+    return notice
+
+
+def public_request_page(db: Session, token: str) -> dict:
+    """What the supplier sees: this request's lines, and their own figures beside them.
+
+    NARROW on purpose (AC-C6). No price, no cost, no supplier id, no notice id, no other
+    request - a leaked URL exposes one ask and nothing that would let its holder find a
+    second. The lines are the notice's own frozen copy, so the page says what was actually
+    sent rather than what the plan would compute today.
+
+    Their packed / unfinished come off the CURRENT stock-list snapshot rather than the
+    notice, which stores no holdings. That is their own latest statement about their own
+    warehouse, which is the honest thing to show them; a product they have never listed
+    reads as null rather than as zero.
+    """
+    notice = request_by_public_token(db, token)
+    lines = (
+        db.query(SupplierNoticeLine)
+        .filter(SupplierNoticeLine.notice_id == str(notice.id))
+        .order_by(SupplierNoticeLine.sort_order)
+        .all()
+    )
+    held = _held_by_item_code(db, str(notice.supplier_id))
+    return {
+        "supplier_name": _supplier_name(db, str(notice.supplier_id)),
+        "requested_at": notice.created_at.isoformat() if notice.created_at else None,
+        "line_count": len(lines),
+        "lines": [
+            {
+                "item_code": ln.item_code,
+                "product_name": ln.product_name,
+                "qty": _f(ln.qty) or 0.0,
+                "qty_packed": (held.get(str(ln.item_code)) or {}).get("qty_packed"),
+                "qty_unfinished": (held.get(str(ln.item_code)) or {}).get("qty_unfinished"),
+            }
+            for ln in lines
+        ],
+        "has_pdf": bool(notice.storage_key),
+        "has_xlsx": bool(notice.xlsx_storage_key),
+    }
+
+
+def _held_by_item_code(db: Session, supplier_id: str) -> dict[str, dict]:
+    from app.models.scm import SupplierInventory
+
+    rows = (
+        db.query(
+            SupplierInventory.item_code,
+            SupplierInventory.qty_packed,
+            SupplierInventory.qty_unfinished,
+        )
+        .filter(SupplierInventory.supplier_id == supplier_id)
+        .all()
+    )
+    return {
+        str(r.item_code): {
+            "qty_packed": _f(r.qty_packed),
+            "qty_unfinished": _f(r.qty_unfinished),
+        }
+        for r in rows
+    }
+
+
+def public_document_url(db: Session, token: str, kind: str) -> dict:
+    """One of the request's two files, off the same token and the same 404."""
+    notice = request_by_public_token(db, token)
+    return document_url(db, str(notice.id), kind=kind)
+
+
+def _public_base_url() -> Optional[str]:
+    """Where this CRM's public pages live, or None when nobody has configured it.
+
+    Its own function so the send path can be tested without an environment: a link is a
+    promise to a supplier, and "None/c/.../token" in front of one is worse than no link.
+    """
+    from app.config import settings
+
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    return base or None
+
+
+def public_request_url(db: Session, notice: SupplierNotice) -> Optional[str]:
+    """`{base}/c/{company_code}/supplier-request/{token}`, or None if it cannot be built.
+
+    The company segment is cosmetic - the token is globally unique and is the whole
+    credential - but every public page this system hands out has that shape, and one shape is
+    what makes them recognisable as ours.
+    """
+    base = _public_base_url()
+    if not base or not notice.public_token:
+        return None
+    code = _company_code(db, str(notice.company_id)) if notice.company_id else None
+    return f"{base}/c/{code or 'SRT'}/supplier-request/{notice.public_token}"
+
+
+def _company_code(db: Session, company_id: str) -> Optional[str]:
+    row = db.execute(
+        text("SELECT code FROM companies WHERE id = :i"), {"i": company_id}
+    ).first()
+    return row[0] if row else None
 
 
 #: What each file this module stores is served as. Taken off the extension rather than passed
@@ -610,6 +800,17 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
     copy = _EMAIL_COPY.get(notice.notice_type, _EMAIL_COPY["loading"])
     subject = f"{copy['subject']} - {supplier.get('supplier_name') or ''}".strip()
     body = copy["body"]
+
+    # The third thing in the one email (AC-C1): a link to the same request, for the reader who
+    # will not open an attachment on a phone. Appended only when a URL can actually be built -
+    # an unconfigured base would otherwise put "None/c/..." in front of a supplier.
+    link = public_request_url(db, notice)
+    if link:
+        body = (
+            f"{body}\n\n"
+            f"在线查看 / View online:\n{link}\n"
+            f"此链接30天内有效。 / This link works for 30 days."
+        )
 
     try:
         from app.services import email_outbox_service
@@ -714,6 +915,15 @@ def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
         "has_document": bool(notice.storage_key),
         "xlsx_filename": notice.xlsx_filename,
         "has_xlsx": bool(notice.xlsx_storage_key),
+        # Built here, never in the browser: the address of a public page is a server fact
+        # (it has to match what went out in the email), and null when it has run out or when
+        # no public base URL is configured - which is what hides the Copy link button.
+        "public_url": (
+            public_request_url(db, notice)
+            if notice.public_token_expires_at
+            and notice.public_token_expires_at > datetime.utcnow()
+            else None
+        ),
         "container_type": notice.container_type,
         "container_count": notice.container_count,
         "planned_cbm": _f(notice.planned_cbm),
