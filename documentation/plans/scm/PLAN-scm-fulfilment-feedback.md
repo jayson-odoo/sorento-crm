@@ -108,3 +108,13 @@ Total ~29 dev-days (r1 14.5; r2 +9.5; r3 +2; r5 +3 for F10).
 - **r5 (fourth pass):** the PI-to-packing-list connection must be visible on the packing list, on the PI, and in the PI list so a converted PI is not chosen again; maybe one PI in two packing lists (Q9).
 - **r4 (third pass):** keep the columns as they are today (cards above, popover behind); no legend when the cards carry it; SO and PO interface for the SPO linkage = the existing G / I tables with an SPO row kind.
 - **r3 (second pass):** loading plan row "too messy for one product", redraw with the fulfilment planning / reorder planning design elements (section 2b); SPO links must be visible on SO and PO detail (confirmed, AC-G7); every dropdown must show the whole option text, supplier names truncate today (F0).
+
+### Rulings added during the build (26 Aug, captain + firstmate)
+
+- **R1 Project demand on the loading plan = `projects.order_inquiry_rows`, not SO lines.** Part 2's P3 ruling (`demand.py` `PLAN_DEMAND_ORDER_SQL` excludes project class from the book; project demand has ONE source, the unlinked order-inquiry row) stands. F1 reads the Project column from the same helpers the fulfilment board uses; the 7 `test_container_request.py` cases that seeded project SO lines are rewritten to seed inquiry rows. Section 2b's grid and AC-B1's worked example keep their numbers, the source changes.
+- **R2 AC-B6 history split = `sales_orders.demand_class`**, not warehouse segment (6,004 lines / 764,411 qty carry no warehouse; every line of the last 12 months carries a class). Buckets end at the last FULL month (`trajectory_service` window rule).
+- **R3 Row breakdown is a Dialog**, not a Popover: a popover anchored inside a horizontally scrolling grid cannot fill a 375px screen.
+- **R4 AC-E9 honest equivalent.** `summary_order_service._last_incoming_cost` reads `inbound_shipment_lines.unit_cost`, and nothing reads PI lines for cost. The guarantee is: a superseded revision cannot be converted, so its price never reaches a shipment line (pinned by test). A literal PI-line cost reader is new work, not asked.
+- **R5 Migration split.** 428 = F5 + F5b + F8 columns + 40HQ 65 seed (slot B, cherry-picked into slot A for F8). F10's `proforma_invoice_shipment_link.qty` = 429 on top of 428.
+- **R6 Re-uploading the same PI file replaces its lines** (pre-existing idempotency) and discards an adjustment; a supplier resend goes through the revision path. User-guide note, not a code change.
+- Follow-up issue, not this lane: older `AppException(detail="already_converted")` refusals toast the raw code because `extractApiError` surfaces `detail`; new refusals pass `code=`.
