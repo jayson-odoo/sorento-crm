@@ -964,14 +964,17 @@ def test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requeste
     ), "no requested-state claim should ever exist on the confirmation path"
 
 
-def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_donor(api):
-    """PLAN 13.11. The captain: "when borrowed, does it / should it trigger an order back
-    via order inquiries? ... or we should order back only if the available quantity of the
-    borrowed location is negative?"
+def test_a_borrow_from_another_group_raises_an_order_back_for_the_whole_take(api):
+    """LADDER V4, ruled 26 August 2026 (`PLAN-scm-cs-planning-uat.md` section 1d): "a
+    borrow from another `-xx` group or from another order raises an ORDER BACK row against
+    the donor".
 
-    Only then. The donor here holds 100 and the book has already sold 90 of it, so its
-    availability is 10 and a borrow of 20 opens a hole of 10 - and purchasing is told about
-    the 10, at the DONOR's location, not the 20 that was taken.
+    For the WHOLE quantity taken, and no longer only where the donor's own availability
+    went negative. That older rule (PLAN 13.11) was right while a warehouse's own reading
+    decided what it could lend; under v4 rung 4 borrows only within the donor GROUP's own
+    net, so no borrow the engine proposes can push a donor below zero and the negativity
+    test would raise nothing at all, ever. What is left to record is the fact itself: the
+    donor lent 20 and is owed 20 back, at the DONOR's location.
     """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
@@ -1019,19 +1022,24 @@ def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_do
     )
     assert len(rows) == 1
     row = rows[0]
-    assert str(row.qty) in ("10", "10.0000")
+    assert str(row.qty) in ("20", "20.0000")
     assert row.stock_location == donor_wh.warehouse_code
     assert row.state == "raised"
     assert row.so_line_id == line.id
-    # The sentence purchasing reads: what was taken, for whom, and who it left short.
+    # The sentence purchasing reads: who lent what, and to whom.
     assert "20" in row.note and donor_wh.warehouse_code in row.note
-    assert "short by 10" in row.note
+    assert "lent 20" in row.note
     assert order.provisional_ref in row.note
 
 
-def test_a_borrow_a_donor_can_afford_raises_nothing(api):
-    """A donor whose availability stays at or above zero needs nothing back. Borrowing from
-    them is a plain transfer, and raising a buy for it would order stock nobody is short of.
+def test_a_donor_that_can_easily_afford_the_borrow_is_still_owed_it_back(api):
+    """The other half of the 26 August ruling, and the one that changed direction.
+
+    This donor holds 100 with nothing sold against it, so under PLAN 13.11 the borrow left
+    no hole and raised nothing. Under ladder v4 what is recorded is not a hole, it is a
+    DEBT: another ownership group's 20 units are now on this order, and the row against the
+    donor is how anybody ever learns that. A pool draw still raises nothing (AC-L13) -
+    the pool is shared and nobody is owed it back.
     """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
@@ -1065,13 +1073,15 @@ def test_a_borrow_a_donor_can_afford_raises_nothing(api):
         },
     )
     assert response.status_code == 200, response.text
-    assert response.json()["inquiry_rows_created"] == 0
-    assert (
+    assert response.json()["inquiry_rows_created"] == 1
+    rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
-        .count()
-        == 0
+        .all()
     )
+    assert len(rows) == 1
+    assert str(rows[0].qty) in ("20", "20.0000")
+    assert rows[0].stock_location == donor_wh.warehouse_code
 
 
 def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api):
@@ -1677,12 +1687,16 @@ def test_a_pool_reserve_across_two_lines_of_one_confirmation_shares_the_pools_av
 # --------------------------------------------------- the donor's availability nets holds
 
 
-def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api):
-    """F4(a). A confirmed borrow writes a hold that the donor's `on hand - SO + SPO`
-    knows nothing about (a borrow is an allocation, not a sales-order line at the donor),
-    so a second borrower judged on the triple alone sees stock the first one has already
-    taken. Donor: 100 on hand, 60 sold on its own book, so 40 available. Order B borrows
-    30 (fine, 10 left). Order A then borrows 30: the hole is 20, not nothing."""
+def test_two_borrowers_of_one_donor_each_owe_back_what_they_took(api):
+    """F4(a), re-expressed for ladder v4 (26 August 2026).
+
+    It used to test that the SECOND borrower's hole counted the first one's hold, because
+    the donor's `on hand - SO + SPO` cannot see an allocation and the two would otherwise
+    have been offered the same stock twice. The order back is no longer a hole, so there is
+    nothing to net between them: each order took 30 from another group and each owes 30
+    back. What stops the two being promised the same stock is the borrow check itself
+    (`_check_borrow`, free stock net of holds), which is where that guard belongs.
+    """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
     client, world = api
@@ -1725,7 +1739,7 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
 
     first = borrow(order_b, line_b)
     assert first.status_code == 200, first.text
-    assert first.json()["inquiry_rows_created"] == 0, "40 available, 30 taken: no hole"
+    assert first.json()["inquiry_rows_created"] == 1
 
     second = borrow(order_a, line_a)
     assert second.status_code == 200, second.text
@@ -1734,12 +1748,11 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
     rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .order_by(OrderInquiryRow.created_at.asc())
         .all()
     )
-    assert len(rows) == 1
-    assert rows[0].so_line_id == line_a.id
-    assert str(rows[0].qty) in ("20", "20.0000")
-    assert "short by 20" in rows[0].note
+    assert {row.so_line_id for row in rows} == {line_a.id, line_b.id}
+    assert [str(row.qty) for row in rows] == ["30.0000", "30.0000"]
 
 
 def test_a_dealer_hot_selling_line_reserving_the_pool_still_opens_no_hole_when_it_fits(api):
@@ -1820,10 +1833,9 @@ def test_a_dealer_hot_selling_line_may_not_borrow_its_own_location_as_free_stock
 
 
 def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(api):
-    """F5. Revision 1 opens a hole of 10 at the donor and purchasing actions it. A re-confirm
-    of the same hole raises nothing new; a re-confirm that widens the hole to 15 raises only
-    the 5 still outstanding - the same rule the ORDER rows already follow, because placed
-    supply is in the ledger and this service does not get to ask for it twice."""
+    """F5. Revision 1 owes the donor 25 back and purchasing actions it; a re-confirm of the
+    same borrow raises nothing new - the same rule the ORDER rows already follow, because
+    placed supply is in the ledger and this service does not get to ask for it twice."""
     from app.models.project_so import (
         INQUIRY_ACTIONED,
         IV_BORROW_SHORTFALL,
@@ -1874,28 +1886,26 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
             .all()
         )
 
-    # Revision 1: 10 available at the donor, 25 borrowed, hole of 15. Purchasing places it.
+    # Revision 1: 25 borrowed from another group, so 25 is owed back. Purchasing places it.
     assert confirm().status_code == 200
     rows = shortfall_rows()
-    assert len(rows) == 1 and str(rows[0].qty) in ("15", "15.0000")
+    assert len(rows) == 1 and str(rows[0].qty) in ("25", "25.0000")
     rows[0].state = INQUIRY_ACTIONED
     db.commit()
 
-    # Revision 2, the same hole: nothing outstanding, so nothing new.
+    # Revision 2, the same borrow: nothing outstanding, so nothing new.
     assert confirm().status_code == 200
     db.expire_all()
     rows = shortfall_rows()
     assert [row.state for row in rows] == [INQUIRY_ACTIONED]
 
-    # The donor's own book then grows by 5, so the same borrow opens a hole of 20 - and
-    # only the 5 nobody has placed yet is raised.
+    # And the donor's own book growing underneath it changes nothing, which is the ladder-v4
+    # part: what is owed back is what was TAKEN, so it moves only when the borrow moves.
     _core_line(db, theirs, world.product, donor_wh, qty_ordered="5")
     db.commit()
     assert confirm().status_code == 200
     db.expire_all()
-    rows = shortfall_rows()
-    assert [row.state for row in rows] == [INQUIRY_ACTIONED, "raised"]
-    assert str(rows[1].qty) in ("5", "5.0000")
+    assert [row.state for row in shortfall_rows()] == [INQUIRY_ACTIONED]
 
 
 # ------------------------------------------------------- carried holds (defect A)

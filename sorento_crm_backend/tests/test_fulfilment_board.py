@@ -2198,7 +2198,13 @@ def test_the_locations_include_the_site_pool_the_suggestion_cites():
         assert pool_row["available_qty"] == "1716"
         source = cell["contributions"][0]["sources"][0]
         assert source["location"] == pool.warehouse_code
-        assert source["reason"] == f"Pool {pool.warehouse_code} has 1716 available."
+        # Ladder v4: the quantity is a share of what the five pools net BETWEEN them, so
+        # the reason names that number rather than reading as though this pool held it
+        # alone. Here it is the same 1716, because this is the only pool with anything.
+        assert source["reason"] == (
+            f"Pool {pool.warehouse_code} lends 1716 of the 1716 the site pools net "
+            "between them."
+        )
 
 
 def test_a_line_with_no_location_states_no_pressure_either():
@@ -3481,8 +3487,13 @@ def test_the_own_rung_why_names_the_queue_in_words_a_planner_uses():
         own = _step(contribution, "reserve_own")
         assert own["outcome"] == "not_eligible"
         assert "ranked ahead of this line" in own["why"]
-        # The captain's own answer to "what happens there": borrow, not reserve.
-        assert "borrow from another sales order" in own["why"]
+        # Ladder v4: it says what this rung IS - the queue - and points at the rung that
+        # decides what may be taken. It used to end "borrow from another sales order
+        # instead", which was v2's rule that the own location is never a source; v3 made it
+        # a group location again and v4 made the whole group one pile, so the sentence was
+        # naming a rule two rulings out of date.
+        assert "The queue, not a source" in own["why"]
+        assert "ownership group's position" in own["why"]
 
 
 def test_a_line_first_in_the_queue_says_so_rather_than_naming_nobody():
