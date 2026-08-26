@@ -64,7 +64,6 @@ import type {
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
-import { SupplyLegend } from './SupplyLegend';
 import { DecisionStrip } from './DecisionStrip';
 import { cellCarriesKind, contributionCarriesKind } from '../../_shared/lib/decisionStrip';
 import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
@@ -772,23 +771,6 @@ export function FulfilmentBoardPanel({
     );
   }, [openCell, board.data, axis]);
 
-  /**
-   * How many LINES of the selection are already past their delivery date.
-   *
-   * The server's two selection-scoped totals, read straight. NOT summed off the cells: cells
-   * are what a window is showing, so the same board reported a different number on day than on
-   * week and reported none at all when the window was scrolled somewhere empty. The per-cell
-   * `past_count` is still right for its own cell; it was only wrong as a banner source.
-   *
-   * It also is not the count of TINTED columns, which is a different question: a line due
-   * yesterday sits in the week containing `as_of`, whose period has not ended, so that week is
-   * not tinted while the line is certainly late.
-   */
-  const pastTotal = {
-    lines: board.data?.past_line_count ?? 0,
-    allLines: board.data?.line_count ?? 0,
-  };
-
   return (
     <div className="space-y-4">
       {/* Title left, actions right, and the row WRAPS. A plain `items-center justify-between`
@@ -1034,21 +1016,10 @@ export function FulfilmentBoardPanel({
             </Alert>
           )}
 
-          {/* The fact, and only the fact. The columns and their tint say where those lines
-              are; a paragraph explaining the tint would be a feature explanation in the UI,
-              and a tint that needs one has failed. */}
-          {pastTotal.lines > 0 && (
-            <Alert appearance="light">
-              <AlertIcon>
-                <AlertTriangle />
-              </AlertIcon>
-              <AlertContent>
-                <AlertTitle>
-                  {`${pastTotal.lines} of ${pastTotal.allLines} lines are already past their delivery date`}
-                </AlertTitle>
-              </AlertContent>
-            </Alert>
-          )}
+          {/* NO "N of M lines are already past their delivery date" BANNER (retired 26
+              August 2026, AC-C5). The column headers already say "Already past" over the
+              periods it is talking about, so the banner restated the screen in words and
+              pushed the grid down a row to do it. */}
 
           {/* NO POLICY BANNER. It named the rule and listed its weights across the top of the
               board, and the captain's verdict on it was "this text is not needed at the top":
@@ -1057,13 +1028,11 @@ export function FulfilmentBoardPanel({
               popover on a row names the policy above its factor table, which is where somebody
               IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
-          {/* What the colours mean, above whichever view is on screen and never behind a
-              scroll (AC-C5). One instance, so the grid and the list cannot drift apart. */}
-          <SupplyLegend />
+          {/* NO LEGEND ROW (retired 26 August 2026, AC-C5). The decision strip below carries
+              every label in its own colour, so a legend was the same six words twice - and
+              the one a reader meets first should be the one with the numbers on it. */}
 
-          {/* Suggested vs decided across the selection, card per kind (AC-D2). Under the
-              legend, because the legend is what says what each colour means and the cards
-              are the first thing read in those colours. */}
+          {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
           <DecisionStrip
             contributions={stripContributions}
             draft={draft}

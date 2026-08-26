@@ -1218,6 +1218,18 @@ export interface BoardCellLocation {
    * project line through a link, never by sitting at the location.
    */
   po_open_qty?: string | null;
+  /**
+   * Ladder v4: what the SET this row belongs to nets between ITS OWN locations, signed -
+   * the ownership group for an `own` / `group` row, the five site pools for a `site_pool`
+   * row, the donor group for an `other_group` row.
+   *
+   * THE NUMBER THE ENGINE DECIDED ON. `MWH-IB` reads 7000 available and lends nothing,
+   * because the IB group it belongs to nets -15514; the row's own figure explains none of
+   * that, and the subtotal prints this instead of a sum of whichever rows are on screen.
+   */
+  net?: string | null;
+  /** Which set that net covers, for the subtotal's label: a group code, or `pools`. */
+  net_of?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;

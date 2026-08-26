@@ -2370,10 +2370,16 @@ class FulfilmentBoardService:
     def _reserve_own_why(
         location: Optional[str], left: Decimal, ahead_qty: Decimal, ahead_lines: int
     ) -> str:
-        """Why the own-location rung is read-only, in the captain's own words (section E
-        rule 7: "own location has no reservation ... what happens there is borrow from
-        another sales order"), with the queue that emptied it named beside it - the
-        trail's ONE rung with a queue, because `QueueLink` opens exactly this location's.
+        """Why the own-location rung is read-only: it is the QUEUE, not a source.
+
+        The trail's one rung with a queue, because `QueueLink` opens exactly this location's.
+        What it shows is the order lines are SERVED in at this pile - who is in front of this
+        one, and why.
+
+        LADDER V4 (section 1d): it says nothing about how much is available. That is the
+        ownership GROUP's number now (rung 2 below), and this location is one of the group's
+        members - so a figure here of zero beside a group that nets 4,000 is not a
+        contradiction, it is the queue at one warehouse beside the pile the group shares.
         """
         where = location or "this location"
         if ahead_lines > 0:
@@ -2385,8 +2391,8 @@ class FulfilmentBoardService:
         else:
             base = f"{qty_text(left)} at {where}, nothing ranked ahead of this line there."
         return (
-            f"{base} Never reserved: stock at {where} is committed to whichever sales "
-            "order is queued for it - borrow from another sales order instead."
+            f"{base} The queue, not a source: what this line may take is the whole "
+            "ownership group's position, on the group rung below."
         )
 
     @staticmethod
@@ -2455,6 +2461,16 @@ class FulfilmentBoardService:
             return (
                 f"{self._hot_prefix(fact, dealer=True)}: {code} is kept for retail, so the "
                 "pool is not offered."
+            )
+        # LADDER V4 (section 1d): the five site pools are ONE pile. `BRW -103` beside
+        # `DC1 +1` nets -102 and offers nothing, and the sentence has to be about the pile
+        # rather than about whichever pool this line happens to sit under - reading the +1
+        # alone is how a line came to be promised stock the shared book already owes.
+        pools_net = _dec(getattr(fact, "pools_net", _ZERO))
+        if pools_net <= _ZERO:
+            return (
+                f"The site pools net {qty_text(pools_net)} between them, so no pool is "
+                "offered."
             )
         available = _dec(pile.get("available"))
         if fact.is_project_hot_selling:
@@ -2542,14 +2558,27 @@ class FulfilmentBoardService:
                 "This location carries no ownership group, so there is no group to take "
                 "from."
             )
+        net = _dec(getattr(fact, "group_net", _ZERO))
         if not candidates:
+            # LADDER V4 (section 1d): the group is ONE pile, so the sentence is about the
+            # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
+            # an answer to "why nothing" while `BRW-IB` owes 27,804 against 5,290.
+            if net <= _ZERO:
+                return (
+                    f"The {fact.group_code} group nets {qty_text(net)}, so there is "
+                    "nothing to take - whatever sits at any one of its locations is "
+                    "already owed at another."
+                )
             return (
-                f"No {fact.group_code} location, this line's own included, has stock "
-                "available to it."
+                f"The {fact.group_code} group nets {qty_text(net)}, and none of it sits "
+                "free at a location this line can draw from."
             )
         if outcome == "took":
             taken_at = ", ".join(c["location"] for c in candidates)
-            return f"Available stock at {taken_at} was taken."
+            return (
+                f"The {fact.group_code} group nets {qty_text(net)}; it was drawn at "
+                f"{taken_at}."
+            )
         return "Not reached - the line was already covered by an earlier rung."
 
     @staticmethod
@@ -2641,6 +2670,23 @@ class FulfilmentBoardService:
         if outcome == "none_needed":
             return _COVERED_BEFORE
         refs = list(fact.timely_refs or [])
+        # LADDER V4 (section 1d): an SPO arriving at `BRW-IB` is owed to the IB backlog
+        # before it is owed to any one line, so it counts here only as far as the GROUP's
+        # net allows. The document is still named - it exists, and a buyer chasing it needs
+        # to know it does - and the sentence says why none of it reached this line.
+        if (
+            refs
+            and fact.group_code
+            and _dec(fact.timely_qty) <= _ZERO
+            and _dec(getattr(fact, "timely_qty_before_group_net", _ZERO)) > _ZERO
+        ):
+            first = refs[0]
+            when = _date_words(first.arrival_date) if first.arrival_date else "an unstated date"
+            return (
+                f"{first.spo_number} arrives {when}, and the {fact.group_code} group nets "
+                f"{qty_text(_dec(fact.group_net))} with it counted - it is owed to that "
+                "backlog, not to this line."
+            )
         if refs:
             first = refs[0]
             when = _date_words(first.arrival_date) if first.arrival_date else "an unstated date"
@@ -3225,6 +3271,11 @@ class FulfilmentBoardService:
             "po_open_qty": (
                 qty_text(self._po_open.get(key, _ZERO)) if counted else None
             ),
+            #: LADDER V4 (section 1d): what the SET this row belongs to nets between all of
+            #: its locations, which is what the engine drew on. Stated per row so the table's
+            #: subtotal can print the net rather than a sum of the rows it happens to show -
+            #: the net is over the whole group, silent members included.
+            **self._net_fields(product_id, warehouse_id, where, stated),
             "incoming": [
                 {
                     "spo_number": ref.spo_number,
@@ -3238,6 +3289,39 @@ class FulfilmentBoardService:
             "qty_proposed_reserve": self._proposed_text(rows, RESERVE),
             "qty_proposed_incoming": self._proposed_text(rows, TIMELY_SPO),
             "qty_proposed_buy": self._proposed_text(rows, BUY),
+        }
+
+    def _net_fields(
+        self,
+        product_id: Optional[str],
+        warehouse_id: Optional[str],
+        where: str,
+        stated: bool,
+    ) -> Dict[str, Optional[str]]:
+        """`net` / `net_of` for one row of the cell table (ladder v4, section 1d).
+
+        The set a row belongs to, and never the row itself: an `own` or `group` row is
+        netted with its whole ownership group (so both carry the same figure, which is what
+        lets the Group subtotal print it once), a `site_pool` row with all five pools, and
+        an `other_group` row with the donor group it sits in. A row with no location, or one
+        outside any set, states nothing rather than a zero - "no set" and "a set that nets
+        zero" are different answers.
+
+        Read through the supply service's own `netting()`, which is the SAME reader the
+        ladder drew on, so the subtotal a planner checks and the number the engine obeyed
+        cannot come apart.
+        """
+        if not stated or not product_id or not warehouse_id:
+            return {"net": None, "net_of": None}
+        netting = self.supply.netting()
+        if where == WHERE_SITE_POOL or netting.is_pool(warehouse_id):
+            return {"net": qty_text(netting.pools_net(product_id).net), "net_of": "pools"}
+        group = netting.group_of(warehouse_id)
+        if not group:
+            return {"net": None, "net_of": None}
+        return {
+            "net": qty_text(netting.group_net(product_id, group).net),
+            "net_of": group,
         }
 
     @staticmethod

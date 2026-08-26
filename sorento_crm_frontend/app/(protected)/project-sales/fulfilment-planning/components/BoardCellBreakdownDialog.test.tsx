@@ -626,7 +626,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     ).toBe('Not ranked');
   });
 
-  it('names line order when one sales order is competing with itself', () => {
+  it('says nothing when one sales order is competing with itself (ladder v4)', () => {
     const cell = cellOf([
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
       demand({ line_no: 2, so_number: 'SO000001', sales_order_id: 'so-a' }),
@@ -634,8 +634,8 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
 
     expect(
-      screen.getByText('Same sales order; line order decided which line was served first'),
-    ).toBeInTheDocument();
+      screen.queryByText('Same sales order; line order decided which line was served first'),
+    ).toBeNull();
   });
 
   it('keeps the policy sentence for a real tie between different orders', () => {

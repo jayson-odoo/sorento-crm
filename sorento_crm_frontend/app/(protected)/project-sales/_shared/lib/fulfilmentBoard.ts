@@ -803,9 +803,14 @@ export function rankingNote(
   // in this cell" restated the single row the reader was already looking at, and a sentence
   // that repeats the screen is one more thing to read past on the way to the decision.
   if (cell.contributions.length === 1) return { cell: 'Not ranked', note: null };
+  // LADDER V4 (26 August 2026): "Same sales order; line order decided which line was served
+  // first" is retired. It was true while the rank queue decided how much a line could take at
+  // its own location; availability is the ownership GROUP's now, and rank decides the order
+  // lines are served in, not what exists - so the sentence claimed a cause the engine no
+  // longer has. Lines of one sales order that tie carry no note at all.
   const note =
     (cell.distinct_order_count ?? 0) === 1
-      ? 'Same sales order; line order decided which line was served first'
+      ? null
       : 'The active policy separates none of these rows';
   return { cell: 'Not ranked', note };
 }

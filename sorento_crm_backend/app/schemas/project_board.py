@@ -759,6 +759,20 @@ class BoardCellLocation(BaseModel):
     #: INFORMATION ONLY, and deliberately outside `available_qty`: a purchase order reaches a
     #: project line through a link, never by sitting at the location (PLAN section I).
     po_open_qty: Optional[str] = None
+    #: LADDER V4 (`PLAN-scm-cs-planning-uat.md` section 1d): what the SET this row belongs
+    #: to nets between its locations, signed - the ownership group for an `own` / `group`
+    #: row, the five site pools for a `site_pool` row, and the donor group's own net for an
+    #: `other_group` row. THE NUMBER THE ENGINE ACTUALLY DECIDED ON: `MWH-IB` reading 7000
+    #: available offers nothing while the IB group nets -15514, so a table that showed only
+    #: the per-row figure could not explain why nothing was taken from it.
+    #:
+    #: Stated by the server rather than summed on the client, because the rows shown are the
+    #: ones this cell consulted and the net is over the whole set, `RSW-IB` and every other
+    #: silent member included.
+    net: Optional[str] = None
+    #: Which set that net is over, for the subtotal's own label: the group code (`IB`),
+    #: `pools`, or None where no set applies.
+    net_of: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
