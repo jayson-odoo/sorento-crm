@@ -60,6 +60,12 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
+    ACK_ACKNOWLEDGEABLE,
+    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
+    ACK_CHANGED,
+    ACK_LINKABLE,
+    ACK_REJECTED,
     AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
@@ -549,6 +555,13 @@ class ProjectOrderInquiryService:
                         else f"Remainder superseded by revision {decision.revision_no}"
                     )
 
+            # Did purchasing already take this line's instruction on? The replacement
+            # row inherits it as a CHANGE (AC-H9): a supersede is still the same line
+            # moving under them, and raising the replacement plain `awaiting` would hide
+            # from the buyer that this is one they had already acknowledged.
+            was_acknowledged = any(
+                row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED) for row in rows
+            )
             outstanding = need - placed
             if outstanding > _ZERO:
                 # An ORDER BACK is the same Buy said differently: the quantity is owed
@@ -575,6 +588,8 @@ class ProjectOrderInquiryService:
                         covered_by=None,
                         supply_decision_id=decision.id,
                         state=INQUIRY_RAISED,
+                        ack_state=ACK_CHANGED if was_acknowledged else ACK_AWAITING,
+                        changed_at=datetime.utcnow() if was_acknowledged else None,
                     )
                 )
                 raised += 1
@@ -753,6 +768,15 @@ class ProjectOrderInquiryService:
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
         row.note = f"{row.note}; {moved}" if row.note else moved
+        # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md` section
+        # 3). A row purchasing had already taken on has just been amended under them, so it
+        # reads CHANGED until they acknowledge it again - with its links kept, because the
+        # buyer's arrangements are still good for most of the new quantity. A row still
+        # AWAITING is left alone and says nothing: CS is free to change what nobody has
+        # read, and marking it would ask purchasing to re-read something they never read.
+        if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+            row.ack_state = ACK_CHANGED
+            row.changed_at = datetime.utcnow()
         self._retire_settled_cancel_balance(rows, decision)
         self._refresh_link_state([row])
         self.db.flush()
@@ -1602,6 +1626,15 @@ class ProjectOrderInquiryService:
                     "actioned_at": row.actioned_at,
                     "actioned_by_name": names.get(row.actioned_by),
                     "created_at": row.created_at,
+                    # The handshake, beside the supply state (AC-H14). Every column on
+                    # the wire: `response_model` drops what it has not been declared.
+                    "ack_state": row.ack_state,
+                    "acknowledged_by_name": names.get(row.acknowledged_by),
+                    "acknowledged_at": row.acknowledged_at,
+                    "rejected_by_name": names.get(row.rejected_by),
+                    "rejected_at": row.rejected_at,
+                    "rejected_reason": row.rejected_reason,
+                    "changed_at": row.changed_at,
                 }
             )
         return out
@@ -1754,8 +1787,17 @@ class ProjectOrderInquiryService:
 
         from app.services.project_service import resolve_user_names
 
+        # Every person a row can name, resolved in ONE call: who acted on it, who
+        # acknowledged it and who rejected it are three different people and the screen
+        # prints all three by name (`PLAN-scm-oi-handshake.md` section 4).
         names = resolve_user_names(
-            self.db, [row.actioned_by for row in rows if row.actioned_by]
+            self.db,
+            [
+                user_id
+                for row in rows
+                for user_id in (row.actioned_by, row.acknowledged_by, row.rejected_by)
+                if user_id
+            ],
         )
         return context, names
 
@@ -1930,6 +1972,162 @@ class ProjectOrderInquiryService:
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
         return self.serialize_rows(rows)
+
+    # ----------------------------------------------------------- the handshake
+
+    def acknowledge_rows(
+        self, row_ids: Sequence[str], *, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Purchasing takes these instructions on, and the cascade runs for exactly them.
+
+        `PLAN-scm-oi-handshake.md` section 3 (captain, 27 Aug 2026). Two things happen in
+        one press and they are one decision: the row becomes purchasing's work, and the
+        documents that can cover it are tied to it. Before this the tie happened at CS's
+        confirm, which meant a buyer found their own purchase orders already dealt out to
+        instructions they had never read.
+
+        Only `awaiting` and `changed` rows may be acknowledged. An already-acknowledged one
+        is refused rather than silently re-stamped - the second press would move the time
+        and the name onto somebody who only pressed a button twice - and a rejected one is
+        refused because taking it back is CS re-deciding the line, not purchasing changing
+        its mind about a row that no longer counts.
+        """
+        rows = self._rows_or_404(row_ids)
+        refused = [row for row in rows if row.ack_state not in ACK_ACKNOWLEDGEABLE]
+        if refused:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{len(refused)} of those rows cannot be acknowledged: a row is "
+                    "acknowledged once, and a rejected one goes back to CS."
+                ),
+                code="order_inquiry_not_acknowledgeable",
+            )
+        now = datetime.utcnow()
+        for row in rows:
+            row.ack_state = ACK_ACKNOWLEDGED
+            row.acknowledged_by = actor_user_id
+            row.acknowledged_at = now
+        # FLUSHED before the cascade: the session runs `autoflush=False` the way the
+        # application's does, so the pass below would read these rows at their OLD
+        # acknowledgement state and link none of them.
+        self.db.flush()
+        placed = self.auto_place_for_products(
+            None,
+            actor_user_id=actor_user_id,
+            trigger="acknowledge",
+            row_ids=[str(row.id) for row in rows],
+        )
+        return {
+            "acknowledged": len(rows),
+            "linked_rows": placed["placed_rows"],
+            "links": placed["allocations"],
+        }
+
+    def reject_row(
+        self, row_id: str, *, reason: str, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Purchasing refuses one instruction, with a reason CS reads on the board cell.
+
+        The row leaves netting and the LINE goes back to the board undecided, carrying the
+        refusal - `ProjectSupplyService.uncover_lines`, which is `confirm`'s own un-decide
+        seam. A rejection that only marked the row would leave the line reading as decided
+        and promised while nobody was buying anything for it, which is the exact state the
+        board exists to make impossible.
+
+        The reason is required at the schema. It is required again here because a service
+        caller (a test, a script) reaches this without one.
+        """
+        text_reason = (reason or "").strip()
+        if not text_reason:
+            raise AppException(
+                status_code=422,
+                message="Say why this row is being rejected.",
+                code="order_inquiry_reject_reason_required",
+            )
+        row = self._row_or_404(row_id)
+        if row.ack_state == ACK_REJECTED:
+            raise AppException(
+                status_code=422,
+                message="This row has already been rejected.",
+                code="order_inquiry_already_rejected",
+            )
+        row.ack_state = ACK_REJECTED
+        row.rejected_by = actor_user_id
+        row.rejected_at = datetime.utcnow()
+        row.rejected_reason = text_reason
+        self.db.flush()
+        self._uncover_rejected_line(row, actor_user_id=actor_user_id)
+        return self.serialize_rows([row])[0]
+
+    def _uncover_rejected_line(self, row: OrderInquiryRow, *, actor_user_id: str) -> None:
+        """Send the rejected row's sales-order line back to the board undecided.
+
+        Best-effort in the same sense the cascade is not: a row that traces to no line
+        (an amendment exception, a form row the book carries no line for) has no decision
+        to uncover, and that is an ordinary answer rather than a failure. Everything else
+        goes through the ONE seam - a fresh revision carrying every line but this one.
+        """
+        if not row.so_line_id:
+            return
+        line = self._line_or_none(str(row.so_line_id))
+        if line is None:
+            return
+        order = (
+            self.db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.id == line.project_sales_order_id)
+            .first()
+        )
+        if order is None:
+            return
+        from app.services.project_supply_service import ProjectSupplyService
+
+        ProjectSupplyService(self.db).uncover_lines(
+            order,
+            [str(line.id)],
+            actor_user_id=actor_user_id,
+            reason="Purchasing rejected the order inquiry row for this line.",
+        )
+
+    def link_now(
+        self, product_ids: Optional[Sequence[str]], *, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """The cascade over ACKNOWLEDGED rows, now (AC-H13).
+
+        What the buyer presses after uploading a purchase-order or SPO book from their own
+        page: the documents that arrived a moment ago meet the instructions already taken
+        on. Narrowed to the products the upload touched when the caller knows them, because
+        one book must not re-deal every open instruction in the company.
+        """
+        return self.auto_place_for_products(
+            list(product_ids) if product_ids else None,
+            actor_user_id=actor_user_id,
+            trigger="link_now",
+        )
+
+    def _rows_or_404(self, row_ids: Sequence[str]) -> List[OrderInquiryRow]:
+        """The named rows, or a 404 naming how many of them are gone."""
+        wanted = [str(row_id) for row_id in row_ids if row_id]
+        if not wanted:
+            raise AppException(
+                status_code=422,
+                message="Name at least one row.",
+                code="order_inquiry_no_rows",
+            )
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.id.in_(wanted))
+            .all()
+        )
+        found = {str(row.id) for row in rows}
+        missing = [row_id for row_id in wanted if row_id not in found]
+        if missing:
+            raise AppException(
+                status_code=404,
+                message=f"{len(missing)} of those rows no longer exist.",
+                code="order_inquiry_row_not_found",
+            )
+        return rows
 
     def _refresh_inquiry_states(self, inquiry_ids: set) -> None:
         """An inquiry is closed when nothing on it is still waiting."""
@@ -3027,6 +3225,13 @@ class ProjectOrderInquiryService:
             # should finish, and before this it left the query the moment it was touched.
             OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
             OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
+            # ACKNOWLEDGED (or changed since) and nothing else - the handshake
+            # (`PLAN-scm-oi-handshake.md` section 3). Held HERE rather than at each of the
+            # three callers, because it is one rule and three doors: the Acknowledge press,
+            # Link now, and a purchase-order confirm. An awaiting row is an instruction
+            # purchasing has not read, and tying a document to it commits the buyer to
+            # something they never saw.
+            OrderInquiryRow.ack_state.in_(ACK_LINKABLE),
         )
         if row_ids is not None:
             # The NAMED rows and nothing else. A product scope is right for "this purchase

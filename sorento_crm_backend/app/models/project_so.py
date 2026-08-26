@@ -752,6 +752,31 @@ INQUIRY_PARTLY_LINKED = "partly_linked"
 #: person's word about the row and are never overwritten by a link change.
 INQUIRY_LINK_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
 
+#: The HANDSHAKE, which is a different question from the supply state beside it
+#: (`PLAN-scm-oi-handshake.md` section 2, captain 27 Aug 2026). `state` says where the
+#: quantity sits; these say whether purchasing has taken the instruction on.
+#:
+#: `awaiting` -> `acknowledged` | `rejected`, and an acknowledged row CS then amends
+#: becomes `changed` until purchasing acknowledges it again. Nothing links a document to
+#: a row before it is acknowledged: links are purchasing's, and a row nobody has read is
+#: one CS is still free to change.
+ACK_AWAITING = "awaiting"
+ACK_ACKNOWLEDGED = "acknowledged"
+#: CS amended a row purchasing had ALREADY acknowledged. The links stay, the previous
+#: value is carried on the note (part 3's settle-in-place), and purchasing sees the row as
+#: a change rather than as something it has already dealt with.
+ACK_CHANGED = "changed"
+#: Purchasing refused it, with a reason. The row leaves netting and the line goes back to
+#: the board undecided, carrying the reason.
+ACK_REJECTED = "rejected"
+ACK_STATES = (ACK_AWAITING, ACK_ACKNOWLEDGED, ACK_CHANGED, ACK_REJECTED)
+#: The two an acknowledgement may be taken on: a row nobody has looked at, and one that
+#: has changed since somebody did.
+ACK_ACKNOWLEDGEABLE = (ACK_AWAITING, ACK_CHANGED)
+#: What a cascade may link. Links are purchasing's word, so an awaiting row gets none
+#: (`ProjectOrderInquiryService.auto_place_for_products`).
+ACK_LINKABLE = (ACK_ACKNOWLEDGED, ACK_CHANGED)
+
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
 IV_ADVANCE = "ADVANCE"
@@ -964,10 +989,31 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     # with nobody's name and no time on it cannot say when, or who to ask.
     actioned_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     actioned_at = Column(DateTime(timezone=False), nullable=True)
+    #: The handshake (`PLAN-scm-oi-handshake.md`), beside the supply state above and never
+    #: merged with it: `state` says where the quantity sits, this says whether purchasing
+    #: has taken the instruction on. Defaulted rather than nullable - a NULL would be a
+    #: second spelling of `awaiting` that every reader would have to know about.
+    ack_state = Column(String(16), nullable=False, server_default=ACK_AWAITING, default=ACK_AWAITING)
+    acknowledged_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    acknowledged_at = Column(DateTime(timezone=False), nullable=True)
+    rejected_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rejected_at = Column(DateTime(timezone=False), nullable=True)
+    #: Required when rejecting. A refusal with no reason sends CS back to a person to ask,
+    #: which is the thing the board cell's "Rejected by X: Y" exists to stop.
+    rejected_reason = Column(Text, nullable=True)
+    #: When CS last amended a row purchasing had already acknowledged. Its own column, not
+    #: a reading of some general updated-at: every other write to the row would move that,
+    #: and "what has changed since I looked" is the only question this answers.
+    changed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
+        Index("ix_project_order_inquiry_rows_ack_state", "ack_state"),
         Index("ix_project_order_inquiry_rows_state", "state"),
         Index("ix_project_order_inquiry_rows_po_line", "po_line_id"),
         # Stage 1C's name, because 1C's `374_so_supply_decisions` is the migration that

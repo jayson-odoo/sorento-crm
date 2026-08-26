@@ -332,6 +332,7 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
     them, so this helper builds a row in 1C's shape.
     """
     from app.models.project_so import (  # noqa: PLC0415 - deliberately deferred, see docstring
+        ACK_ACKNOWLEDGED,
         IV_ORDER,
         INQUIRY_RAISED,
         OrderInquiry,
@@ -406,6 +407,12 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=inquiry.id,
         so_line_id=pso_line.id, qty=buy_qty, verb=IV_ORDER,
         state=inquiry_state or INQUIRY_RAISED, supply_decision_id=decision.id,
+        # ACKNOWLEDGED (`PLAN-scm-oi-handshake.md`): the reorder plan buys against
+        # instructions purchasing has taken on, and an awaiting one is a count on the plan
+        # page rather than demand. `scm.committed_v` counts either, so the view-level tests
+        # in this file read the same figure whichever way this is seeded; the RUN-level
+        # ones do not, and a confirmed Buy a buyer is working is what they are about.
+        ack_state=ACK_ACKNOWLEDGED,
     )
     db.add(row)
     db.flush()

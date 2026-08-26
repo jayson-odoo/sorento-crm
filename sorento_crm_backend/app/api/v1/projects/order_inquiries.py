@@ -21,8 +21,11 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_order_inquiry import (
+    AcknowledgeResult,
+    AcknowledgeRowsRequest,
     AutoPlaceRequest,
     AutoPlaceResult,
+    LinkNowRequest,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
     OrderInquiryPoCandidate,
@@ -32,6 +35,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
+    RejectRowRequest,
     UnlinkRequest,
     UnplaceAllPreview,
     UnplaceAllRequest,
@@ -49,6 +53,11 @@ router = APIRouter()
 
 VIEW = "projects.projects.view"
 ACTION = "projects.order_inquiry.action"
+#: The handshake (`PLAN-scm-oi-handshake.md`, captain 27 Aug 2026): acknowledging is
+#: purchasing taking CS's instruction on, and it is what links documents to a row. Its own
+#: grant rather than `ACTION`, because CS holds that one for their own screens and must
+#: not be able to acknowledge their own instructions.
+ACKNOWLEDGE = "project_sales.order_inquiries.acknowledge"
 
 #: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
@@ -84,6 +93,7 @@ def _worklist_filters(
     raised_by: Optional[str] = None,
     linked: Optional[str] = None,
     kind: Optional[str] = None,
+    ack: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
@@ -100,6 +110,7 @@ def _worklist_filters(
         "raised_by": raised_by,
         "linked": linked,
         "kind": kind,
+        "ack": ack,
     }
 
 
@@ -149,6 +160,15 @@ def list_order_inquiry_worklist(
             "links point."
         ),
     ),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(
+        None,
+        description=(
+            "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
+            "taken on yet, `changed` is a row CS amended after it was acknowledged, and "
+            "`rejected` is one purchasing refused with a reason. A third question beside "
+            "`state` and `linked`, and a closed set for the same reason both of those are."
+        ),
+    ),
     sort: Optional[WorklistSort] = Query(
         None, description="Defaults to delivery_date. Nulls always last."
     ),
@@ -188,6 +208,7 @@ def list_order_inquiry_worklist(
                 raised_by,
                 linked,
                 kind,
+                ack,
             ),
         )
     except Exception as exc:
@@ -212,6 +233,15 @@ def order_inquiry_worklist_summary(
             "the two beside it could not be pressed a second time."
         ),
     ),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(
+        None,
+        description=(
+            "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
+            "taken on yet, `changed` is a row CS amended after it was acknowledged, and "
+            "`rejected` is one purchasing refused with a reason. A third question beside "
+            "`state` and `linked`, and a closed set for the same reason both of those are."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -228,6 +258,7 @@ def order_inquiry_worklist_summary(
                 raised_by,
                 linked,
                 kind,
+                ack,
             ),
         )
     except Exception as exc:
@@ -245,6 +276,7 @@ def export_order_inquiry_worklist(
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -266,6 +298,7 @@ def export_order_inquiry_worklist(
                 raised_by,
                 linked,
                 kind,
+                ack,
             )
         )
         return Response(
@@ -274,6 +307,79 @@ def export_order_inquiry_worklist(
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+
+@router.post("/order-inquiries/acknowledge", response_model=AcknowledgeResult)
+async def acknowledge_order_inquiry_rows(
+    payload: AcknowledgeRowsRequest,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Purchasing takes these instructions on, one row or a batch (AC-H2).
+
+    One press does two things because they are one decision: the rows become purchasing's
+    work, stamped with who and when, and the cascade runs for EXACTLY these rows, so the
+    open documents that can cover them are linked at that moment. Nothing linked before
+    this - a row CS raised is one they are still free to change."""
+    try:
+        for row_id in payload.row_ids:
+            validate_uuid_path(row_id, resource="Order inquiry row")
+        body = ProjectOrderInquiryService(db).acknowledge_rows(
+            payload.row_ids, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/{row_id}/reject", response_model=OrderInquiryRowOut)
+async def reject_order_inquiry_row(
+    row_id: str,
+    payload: RejectRowRequest,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Purchasing refuses one row, with a reason (AC-H5/AC-H6).
+
+    The row leaves netting and its sales-order LINE goes back to the board undecided
+    carrying the refusal, so CS decides it again rather than waiting on a purchase nobody
+    is making. Never one-click and never silent: the reason is what the board cell shows."""
+    try:
+        validate_uuid_path(row_id, resource="Order inquiry row")
+        body = ProjectOrderInquiryService(db).reject_row(
+            row_id, reason=payload.reason, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/link-now", response_model=AutoPlaceResult)
+async def link_acknowledged_order_inquiry_rows(
+    payload: LinkNowRequest,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Run the cascade over ACKNOWLEDGED rows now (AC-H13) - what the buyer presses after
+    uploading a purchase order or SPO book from this page. `product_ids` narrows it to
+    what the upload touched; omitted, it is every acknowledged row with something still
+    unlinked. Idempotent: a second call links nothing more."""
+    try:
+        for product_id in payload.product_ids or []:
+            validate_uuid_path(product_id, resource="Product")
+        body = ProjectOrderInquiryService(db).link_now(
+            payload.product_ids, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 

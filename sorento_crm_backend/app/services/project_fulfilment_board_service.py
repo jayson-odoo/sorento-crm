@@ -46,7 +46,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import case, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -62,6 +62,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.models.sales_agent import SalesAgent
+from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -1154,11 +1155,19 @@ class FulfilmentBoardService:
         """
         if not core_line_ids:
             return {}
+        rejecter = aliased(User)
         rows = (
             self.db.query(
                 ProjectSalesOrderLine.core_sales_order_line_id,
                 OrderInquiry.inquiry_no,
                 OrderInquiryRow.state,
+                # The handshake, so a REJECTED line says who refused it and why
+                # (`PLAN-scm-oi-handshake.md`, AC-H6). The line is undecided again by then
+                # - purchasing's rejection uncovers it - and a cell that only went back to
+                # blank would tell CS nothing about why.
+                OrderInquiryRow.ack_state,
+                OrderInquiryRow.rejected_reason,
+                rejecter.name,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -1166,13 +1175,21 @@ class FulfilmentBoardService:
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
             )
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .outerjoin(rejecter, rejecter.id == OrderInquiryRow.rejected_by)
             .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(list(core_line_ids)))
             .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
             .all()
         )
         return {
-            str(core_id): {"inquiry_no": inquiry_no, "state": state}
-            for core_id, inquiry_no, state in rows
+            str(core_id): {
+                "inquiry_no": inquiry_no,
+                "state": state,
+                "ack_state": ack_state,
+                "rejected_reason": rejected_reason,
+                "rejected_by_name": rejected_by_name,
+            }
+            for core_id, inquiry_no, state, ack_state, rejected_reason, rejected_by_name
+            in rows
         }
 
     def _frozen_decisions(

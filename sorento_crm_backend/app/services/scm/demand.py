@@ -203,6 +203,24 @@ UNLINKED_INQUIRY_STATES = ("raised", "partly_linked")
 #: history, and counting it would buy the same requirement twice.
 ACTIVE_DECISION_STATE = "active"
 
+#: The acknowledgement state a row is NOT counted in (`PLAN-scm-oi-handshake.md` section
+#: 3): purchasing looked at the instruction and refused it, with a reason, so the quantity
+#: is not owed by anybody until CS decides the line again. `scm.committed_v` drops it and
+#: so does every reader of the view.
+REJECTED_ACK_STATE = "rejected"
+
+#: What the REORDER PLAN counts, which is narrower than what the view counts (the captain,
+#: 27 Aug 2026): "reorder planning's project demand reads ACKNOWLEDGED rows only (and rows
+#: changed after acknowledgement); awaiting rows are a count on the plan page, never
+#: demand". An awaiting row is an instruction purchasing has not read yet, and buying
+#: against it is buying against something that may still be amended or refused.
+#:
+#: The two rules are deliberately different and both are stated here so neither can be
+#: read as the other: `scm.committed_v` (the board, the dashboard, the demand drill) says
+#: what is owed, and `horizon_committed_select_sql` - which every plan run now reads
+#: through - says what may be BOUGHT today.
+PLANNED_ACK_STATES = ("acknowledged", "changed")
+
 #: The body of `scm.committed_v`. Kept as a constant so the migration that installs it and
 #: the expression above are edited in the same file.
 #:
@@ -311,6 +329,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      AND oir.ack_state <> 'rejected'
       AND oir.qty > 0
       AND oir.qty > COALESCE(lk.linked, 0)
     UNION ALL
@@ -383,6 +402,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      AND oir.ack_state <> 'rejected'
       AND oir.qty > 0
       AND oir.qty > COALESCE(flk.linked, 0)
 )
@@ -403,21 +423,29 @@ GROUP BY product_id, warehouse_id;
 
 
 def horizon_committed_select_sql() -> str:
-    """`COMMITTED_V_SQL`'s body, as a bare SELECT (no `CREATE VIEW`) with a `:horizon`
-    bind narrowing both legs to demand due at or before it.
+    """THE PLAN'S committed figure: `COMMITTED_V_SQL`'s body as a bare SELECT (no
+    `CREATE VIEW`), with a `:horizon` bind narrowing both legs to demand due at or before
+    it, and with the project legs narrowed to ACKNOWLEDGED demand.
 
     Planning horizon (captain, 20 Aug): "SOs needed in 2030" a buyer never asked about
     should not distort a plan they only want through December. `scm.committed_v` itself
     is untouched and every OTHER reader (the demand-drill popover, the dashboard, the
     coverage timeline) keeps reading it unfiltered - this is used ONLY by
-    `reorder_run_service._planning_rows` to override a single run's own committed figure
-    when that run was asked for a horizon.
+    `reorder_run_service._planning_rows`, to give a plan run its own committed figure.
 
-    A NULL `:horizon` reproduces `scm.committed_v` exactly: every date comparison short-
-    circuits true, so an unhorizoned run (the daily scheduled one, and any manual run
-    that leaves the field empty) nets byte-for-byte as before. Demand carrying NO date at
-    all is always counted, whatever the bind - unscheduled demand is still demand, not a
-    reason to guess it is late.
+    The acknowledgement rule (captain, 27 Aug, `PLAN-scm-oi-handshake.md`) is why this is
+    now read on EVERY run rather than only on a horizoned one: an order-inquiry row
+    purchasing has not acknowledged yet is not something to buy against - CS may still
+    amend it and purchasing may still refuse it - so the two project legs count
+    `PLANNED_ACK_STATES` alone. The view goes on counting an awaiting row, because it is
+    still owed to the customer; what the plan page shows for the difference is the
+    "N awaiting acknowledgement" chip, never a purchase.
+
+    A NULL `:horizon` reproduces `scm.committed_v`'s DATE handling exactly: every date
+    comparison short-circuits true, so an unhorizoned run (the daily scheduled one, and
+    any manual run that leaves the field empty) nets as it always did except for the
+    acknowledgement rule above. Demand carrying NO date at all is always counted, whatever
+    the bind - unscheduled demand is still demand, not a reason to guess it is late.
 
     Kept beside `COMMITTED_V_SQL` rather than derived from it: the view body is frozen
     for the migration/downgrade pair (`test_committed_v_migration_chain.py`) and must
@@ -469,6 +497,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      AND oir.ack_state IN ('acknowledged', 'changed')
       AND oir.qty > 0
       AND oir.qty > COALESCE(lk.linked, 0)
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
@@ -545,6 +574,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      AND oir.ack_state IN ('acknowledged', 'changed')
       AND oir.qty > 0
       AND oir.qty > COALESCE(flk.linked, 0)
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no

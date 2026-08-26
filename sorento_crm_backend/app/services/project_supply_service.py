@@ -2110,14 +2110,12 @@ class ProjectSupplyService:
         re-raised. Only a planning change sets it: it is the one caller that knows the
         book moved the same instruction rather than issuing a new one.
 
-        **`defer_auto_place`** hands the cascade back to the caller instead of running it
-        here, and only a planning change asks for it. The order matters: a planning change
-        cancels the CLOSED lines' rows and shifts their documents to the survivor AFTER
-        this call returns, so a cascade run here fills the survivor's headroom from any
-        free purchase-order line it can find first, and the closed lines' own documents
-        arrive to a row with nothing left to give them - re-dealt to a stranger instead of
-        following the line that still needs them. The product ids come back on
-        `auto_place_products`; `auto_place_for_confirmed_products` is the run.
+        **No confirmation links anything** (`PLAN-scm-oi-handshake.md`, captain 27 Aug
+        2026). The rows this raises come out `awaiting`, and a document is tied to one only
+        when purchasing ACKNOWLEDGES it. `auto_place_products` still comes back - the
+        planning-change apply runs its own pass after it has shifted a closed line's
+        documents to the survivor - but that pass links an acknowledged row and nothing
+        else, so an ordinary board confirm ends with every new row unlinked.
 
         The caller owns the commit. Everything here runs inside it, including the Order
         Inquiry refresh, so purchasing can never be told to buy something that was not
@@ -2143,7 +2141,7 @@ class ProjectSupplyService:
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])
-        if not payload_lines:
+        if not payload_lines and not uncover_line_ids:
             raise AppException(
                 status_code=422,
                 message=(
@@ -3052,10 +3050,15 @@ class ProjectSupplyService:
                 if entry["line"].product_id
             }
         )
-        if not defer_auto_place:
-            self.auto_place_for_confirmed_products(
-                auto_place_products, actor_user_id=actor_user_id
-            )
+        # NO CASCADE HERE any more (`PLAN-scm-oi-handshake.md` section 3, captain 27 Aug
+        # 2026). Links are purchasing's: a row raised on the board is an instruction CS is
+        # still free to change, and a document tied to it before anybody has read it is a
+        # commitment nobody made. The cascade now runs at ACKNOWLEDGE, at Link now and at a
+        # purchase-order confirm, and each of those is restricted to acknowledged rows
+        # (`ProjectOrderInquiryService.auto_place_for_products`). `defer_auto_place` and
+        # `auto_place_products` survive because the planning-change apply still asks for the
+        # products it owes a pass over, and that pass is now a no-op for an awaiting row
+        # rather than a link nobody asked for.
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -3080,8 +3083,62 @@ class ProjectSupplyService:
             # The products whose cascade this confirmation OWES, when the caller asked to
             # run it itself (`defer_auto_place`). Empty on every ordinary confirm, which
             # has already run it by the time this returns. In-process only, like the above.
-            "auto_place_products": auto_place_products if defer_auto_place else [],
+            "auto_place_products": auto_place_products,
         }
+
+    def uncover_lines(
+        self,
+        order: ProjectSalesOrder,
+        line_ids: Sequence[str],
+        *,
+        actor_user_id: str,
+        reason: str,
+    ) -> bool:
+        """Take these lines OUT of the active revision and leave the rest exactly as it is.
+
+        The un-decide seam, called for its own sake (`PLAN-scm-oi-handshake.md`: purchasing
+        rejects an order inquiry row, so the LINE is undecided again and CS decides it
+        afresh). `confirm`'s carry-forward rule does the work: a revision is written naming
+        no line, `uncover_line_ids` drops these from the carry, and every other covered line
+        arrives verbatim with its holds.
+
+        Two cases it answers itself rather than writing a revision that says nothing:
+
+        * no active revision - there is nothing to uncover, and CS was never holding stock
+          for this line;
+        * the active revision covers ONLY the lines being uncovered - a revision covering
+          no line at all is worse than none, because the board would read it as a decision.
+          `supersede_for_material_change` retires it instead, which is exactly "this order
+          is undecided again".
+
+        The new revision is attributed to whoever took the ORIGINAL decision, never to the
+        buyer who rejected a row: this is CS's own decision minus one line, and stamping
+        purchasing on it would make every order inquiry row of the order read as raised by
+        the person who refused one of them.
+        """
+        from app.schemas.project_supply import ConfirmSupplyBody
+
+        active = self.active_decision(str(order.id))
+        if active is None:
+            return False
+        covered = {
+            str(snapshot.get("project_line_id") or "")
+            for snapshot in (active.line_snapshots or [])
+        }
+        covered.discard("")
+        wanted = {str(line_id) for line_id in line_ids} & covered
+        if not wanted:
+            return False
+        if covered - wanted:
+            self.confirm(
+                order,
+                ConfirmSupplyBody(lines=[]),
+                actor_user_id=str(active.confirmed_by or actor_user_id),
+                uncover_line_ids=sorted(wanted),
+            )
+        else:
+            self.supersede_for_material_change(order, reason)
+        return True
 
     def auto_place_for_confirmed_products(
         self, product_ids: Sequence[str], *, actor_user_id: str

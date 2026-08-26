@@ -37,13 +37,18 @@ from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Date, String, cast, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
+    ACK_CHANGED,
+    ACK_REJECTED,
+    ACK_STATES,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
@@ -82,6 +87,11 @@ INQUIRY_STATES = (
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
 )
+
+#: The four acknowledgement states, pre-seeded at zero on the facet so a state nothing is
+#: in still offers itself in the filter (`PLAN-scm-oi-handshake.md` section 4). Read off
+#: the model's own tuple rather than retyped, so a fifth one cannot arrive here unnoticed.
+ACK_FILTER_STATES = ACK_STATES
 
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
 #: value is a 422 rather than a silent fall back to the default, for the same reason it
@@ -150,6 +160,9 @@ EXPORT_HEADINGS = (
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
+    # APPENDED, never inserted: their own filters and habits are keyed on the columns
+    # above being where they have always been (`PLAN-scm-oi-handshake.md` section 4).
+    "ACKNOWLEDGED",
 )
 
 # The two routes a row can be attributed by, joined ONCE through a coalesce rather than
@@ -325,6 +338,14 @@ _RAISED_BY_NAME = User.name
 # confirmed themselves. Blank only when the row traces to no line at all.
 _LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_code)
 
+#: WHO acknowledged the row and who rejected it, by name. Two aliases of `users`, because
+#: the same query already joins that table once for the person who RAISED the row and the
+#: three answers are different people. Both OUTER and both on a primary key, so a row
+#: nobody has acknowledged - or one whose acknowledger has since been removed - still
+#: reaches the list.
+_ACK_USER = aliased(User)
+_REJECT_USER = aliased(User)
+
 _SORT_EXPRESSIONS = {
     "inquiry_no": OrderInquiry.inquiry_no,
     "so_date": _SO_DATE,
@@ -376,6 +397,15 @@ _COLUMNS = (
     _LOCATION.label("location"),
     SalesAgent.sales_agent.label("agent_code"),
     SalesAgent.person_label.label("agent_label"),
+    # The handshake (`PLAN-scm-oi-handshake.md`). Every one of them on the wire, because
+    # the column prints a different sentence per state and the filter counts all four.
+    OrderInquiryRow.ack_state.label("ack_state"),
+    OrderInquiryRow.acknowledged_at.label("acknowledged_at"),
+    OrderInquiryRow.rejected_at.label("rejected_at"),
+    OrderInquiryRow.rejected_reason.label("rejected_reason"),
+    OrderInquiryRow.changed_at.label("changed_at"),
+    _ACK_USER.name.label("acknowledged_by_name"),
+    _REJECT_USER.name.label("rejected_by_name"),
 )
 
 
@@ -393,6 +423,30 @@ def _dec(value: Any) -> Decimal:
 def _qty_str(value: Decimal) -> str:
     """`600`, not `600.0000`. ``normalize()`` alone turns 100 into `1E+2`."""
     return format(_dec(value).normalize(), "f")
+
+
+def ack_label(row: Dict[str, Any]) -> str:
+    """The handshake as one printed phrase, for the export (AC-H14).
+
+    The same four readings the column on screen carries, written out rather than coloured:
+    a spreadsheet has no badge, and "Awaiting" beside a blank name is what tells a buyer
+    reading the file that nobody has taken this instruction on yet.
+    """
+    state = row.get("ack_state") or ACK_AWAITING
+    if state == ACK_ACKNOWLEDGED:
+        who = row.get("acknowledged_by_name")
+        when = row.get("acknowledged_at")
+        stamp = when.strftime("%Y-%m-%d %H:%M") if when else ""
+        return " ".join(part for part in ("Acknowledged", who, stamp) if part)
+    if state == ACK_CHANGED:
+        when = row.get("changed_at")
+        return f"Changed {when.strftime('%Y-%m-%d')}" if when else "Changed"
+    if state == ACK_REJECTED:
+        reason = (row.get("rejected_reason") or "").strip()
+        who = row.get("rejected_by_name")
+        head = f"Rejected by {who}" if who else "Rejected"
+        return f"{head}: {reason}" if reason else head
+    return "Awaiting"
 
 
 def month_label(month: str) -> str:
@@ -448,6 +502,7 @@ class OrderInquiryWorklistService:
         raised_by: Optional[str] = None,
         linked: Optional[str] = None,
         kind: Optional[str] = None,
+        ack: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -473,6 +528,8 @@ class OrderInquiryWorklistService:
                 SOSupplyDecision.id == OrderInquiryRow.supply_decision_id,
             )
             .outerjoin(User, User.id == _RAISED_BY_ID)
+            .outerjoin(_ACK_USER, _ACK_USER.id == OrderInquiryRow.acknowledged_by)
+            .outerjoin(_REJECT_USER, _REJECT_USER.id == OrderInquiryRow.rejected_by)
             .outerjoin(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
@@ -567,6 +624,21 @@ class OrderInquiryWorklistService:
                 base = base.filter(_HAS_PO_LINK)
             else:
                 base = base.filter(_UNLINKED_QTY > 0)
+        if ack:
+            # WHERE THE HANDSHAKE STANDS (`PLAN-scm-oi-handshake.md` section 4), which is
+            # a third question beside `state` and `linked`: purchasing's own worklist is
+            # "what have I not acknowledged yet", and CS's reading of the same list is
+            # "what has purchasing refused". A closed set, refused rather than ignored,
+            # for the same reason `state` and `kind` are - a filter nothing can equal
+            # reads on screen as "no work to do".
+            if ack not in ACK_FILTER_STATES:
+                raise AppException(
+                    422,
+                    f"'{ack}' is not an acknowledgement state. Use "
+                    f"{', '.join(ACK_FILTER_STATES)}.",
+                    code="invalid_ack_filter",
+                )
+            base = base.filter(OrderInquiryRow.ack_state == ack)
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -790,6 +862,13 @@ class OrderInquiryWorklistService:
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,
             "state": row.state,
+            "ack_state": row.ack_state,
+            "acknowledged_by_name": row.acknowledged_by_name,
+            "acknowledged_at": row.acknowledged_at,
+            "rejected_by_name": row.rejected_by_name,
+            "rejected_at": row.rejected_at,
+            "rejected_reason": row.rejected_reason,
+            "changed_at": row.changed_at,
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             "verb": row.verb,
@@ -904,7 +983,31 @@ class OrderInquiryWorklistService:
             # reason every other axis here drops its own: a card that empties the two
             # beside it the moment it is pressed cannot be pressed a second time.
             "kinds": self._kinds({**filters, "kind": None}),
+            # The four acknowledgement counts, computed with the ACK FILTER ITSELF
+            # DROPPED, for the reason every other axis here drops its own.
+            "ack": self._acks({**filters, "ack": None}),
         }
+
+    def _acks(self, filters: Dict[str, Any]) -> Dict[str, int]:
+        """How many rows sit at each acknowledgement state (AC-H4).
+
+        ROWS, not quantity: acknowledging is a decision per instruction, and "three rows
+        awaiting" is what the press says. Pre-seeded at zero so a state nothing is in is
+        still offered - a filter value that disappears the moment it empties cannot be
+        used to check that it emptied.
+        """
+        counts = {state: 0 for state in ACK_FILTER_STATES}
+        rows = (
+            self._base(**filters)
+            .with_entities(OrderInquiryRow.ack_state, func.count(OrderInquiryRow.id))
+            .group_by(OrderInquiryRow.ack_state)
+            .order_by(None)
+            .all()
+        )
+        for state, count in rows:
+            if state in counts:
+                counts[state] = int(count)
+        return counts
 
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
         """Quantity per kind over every matching row (AC-I11): on SPO allocations, on
@@ -1180,5 +1283,6 @@ class OrderInquiryWorklistService:
                         row.get("supplier") or "",
                         row.get("po_number") or "",
                         row.get("location") or "",
+                        ack_label(row),
                     ]
                 )

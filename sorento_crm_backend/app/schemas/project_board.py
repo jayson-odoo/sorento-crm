@@ -350,6 +350,14 @@ class BoardLineOrderInquiry(BaseModel):
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
     state: str
+    #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
+    #: `rejected`. Defaulted so a row written before the handshake existed still reads.
+    ack_state: str = "awaiting"
+    #: Why purchasing refused it, and who did. Both null unless `ack_state` is `rejected`,
+    #: and both are what the cell prints beside an undecided line - a decision that came
+    #: back with no reason is the thing this exists to stop.
+    rejected_reason: Optional[str] = None
+    rejected_by_name: Optional[str] = None
 
 
 class BoardLineLending(BaseModel):

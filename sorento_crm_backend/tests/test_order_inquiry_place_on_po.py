@@ -32,6 +32,8 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.inventory import Warehouse
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -163,8 +165,15 @@ def _po_line(
 def _row(
     db, company_id: str, inquiry: OrderInquiry, *,
     verb=IV_ORDER, state=INQUIRY_RAISED, qty="10", item_code=None,
-    po_ref=None, po_line_id=None, note=None,
+    po_ref=None, po_line_id=None, note=None, ack_state=ACK_ACKNOWLEDGED,
 ) -> OrderInquiryRow:
+    """One instruction, ACKNOWLEDGED by default (`PLAN-scm-oi-handshake.md`).
+
+    Linking is purchasing's word since the handshake, and the cascade this file exercises
+    refuses a row nobody has taken on. These rows stand for instructions a buyer is
+    working, so they are seeded as such; `ack_state` is a parameter for the test that
+    wants an awaiting one.
+    """
     row = OrderInquiryRow(
         id=_uid(),
         company_id=company_id,
@@ -173,6 +182,7 @@ def _row(
         qty=Decimal(str(qty)),
         verb=verb,
         state=state,
+        ack_state=ack_state,
         po_ref=po_ref,
         po_line_id=po_line_id,
         note=note,
@@ -802,7 +812,7 @@ def test_placing_leaves_committed_v_confirmed_leg_and_unplacing_restores_it():
         row = OrderInquiryRow(
             id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
             item_code=product.product_code, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_RAISED,
-            supply_decision_id=decision.id,
+            supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
         )
         db.add(row)
 
@@ -1083,11 +1093,15 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_auto_places_the_buy_row_it_raises():
-    """G2 rule 4, second of the three triggers: a decision confirm that raises a Buy
-    cascades it against the product's own open PO lines in the SAME transaction, best
-    effort. No `pg_session` needed here - only the row's own state is asserted, not
-    `committed_v`, which the netting tests above already prove independently."""
+def test_a_decision_confirm_raises_the_buy_row_awaiting_and_links_nothing():
+    """The handshake REPLACED G2's second trigger (`PLAN-scm-oi-handshake.md`, captain 27
+    Aug 2026): a decision confirm no longer cascades at all.
+
+    It used to link the Buy it raised against the product's open purchase-order lines in
+    the same transaction. That put a buyer's own documents onto instructions they had
+    never read, and CS could still amend the instruction afterwards. So the row comes out
+    `awaiting` and unlinked, and the cascade runs when purchasing ACKNOWLEDGES it -
+    `tests/test_order_inquiry_handshake.py` is where that half is pinned."""
     from app.models.base import company_scope
     from app.services.project_service import register_project
 
@@ -1132,9 +1146,10 @@ def test_a_decision_confirm_auto_places_the_buy_row_it_raises():
             .first()
         )
         assert row is not None
-        assert row.state == INQUIRY_PLACED, "the confirm hook must cascade the Buy it just raised"
-        assert row.po_line_id == po_line.id
-        assert "auto: decision_confirm" in (row.note or "")
+        assert row.state == INQUIRY_RAISED, "nothing is linked until purchasing acknowledges"
+        assert row.ack_state == ACK_AWAITING
+        assert row.po_line_id is None
+        assert po_line.id is not None, "the open line is still free for whoever is acknowledged"
 
 
 def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
@@ -1183,7 +1198,7 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
         row = OrderInquiryRow(
             id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
             item_code=product.product_code, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_RAISED,
-            supply_decision_id=decision.id,
+            supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
         )
         db.add(row)
 
@@ -1284,6 +1299,9 @@ def _competing_row(
     row = OrderInquiryRow(
         id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, item_code=item_code,
         qty=Decimal(qty), delivery_date=delivery_date, verb=IV_ORDER, state=INQUIRY_RAISED,
+        # Acknowledged, because the cascade this ranks is the one that runs when a buyer
+        # takes an instruction on (`PLAN-scm-oi-handshake.md`).
+        ack_state=ACK_ACKNOWLEDGED,
     )
     db.add(row)
     db.flush()
