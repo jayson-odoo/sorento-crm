@@ -136,12 +136,20 @@ export function PurchaseOrderAllocations({
                           <td className="py-1.5">
                             <span className="flex flex-wrap items-center gap-1.5">
                               <span>
+                                {/* Where it lands AND when. The date used to be a fallback
+                                    for having no warehouse, so on a real take - which
+                                    always has one - it never showed at all (AC-G7). */}
                                 {placement.kind === 'spo'
-                                  ? (placement.warehouses ?? [])
-                                      .map((w) => `${w.warehouse_code} ${fmtInt(w.qty)}`)
-                                      .join(', ') ||
-                                    placement.arrival_date ||
-                                    EM_DASH
+                                  ? [
+                                      (placement.warehouses ?? [])
+                                        .map((w) => `${w.warehouse_code} ${fmtInt(w.qty)}`)
+                                        .join(', '),
+                                      placement.arrival_date
+                                        ? `due ${placement.arrival_date}`
+                                        : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' - ') || EM_DASH
                                   : placement.needed_at || EM_DASH}
                               </span>
                               {placement.location_differs ? (
