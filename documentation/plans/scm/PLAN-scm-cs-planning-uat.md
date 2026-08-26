@@ -80,6 +80,19 @@ has been applied to the shared dev database once; the review added two guarded s
 (`add_claim_spo_side`, `repoint_spo_claims`), so it must be re-applied, and until it is every
 `pg_session` test touching `scm.order_link_claim` reads `UndefinedColumn`.
 
+Section 4 item 4's second half, **I (Link PO / Link SPO)**, is BUILT on
+`feat/scm-uat-oi-links` (stacked on K): migration `421_order_inquiry_links` gives a row a
+child table and merges the split rows back, `422_committed_v_link_netting` makes the
+confirmed leg carry `qty - linked` instead of testing a state, and every screen reads Link
+PO / Auto-link / Unlink with Linked / Partly linked. The walk is Q5 then Q7, location only
+RANKS a candidate, a cited document comes first, and an SPO allocation is a candidate for
+an ORDER BACK row alone. See the BUILT block under section I for the eight ways the build
+differs from the paragraphs there. **Migrations 421 and 422 are NOT yet applied to the
+shared dev database**, so until they are the order-inquiry worklist, the SCM sales-order
+detail and two `pg_session` tests read `UndefinedColumn` / `UndefinedTable`. Dry run on the
+dev copy: 4 groups (12 rows) merge to 4, 19 links are written, 0 rows carry
+`BORROW_SHORTFALL`, 34 rows become 26, and SO414285 goes from 11 to 9 (AC-I6).
+
 Lane: `.claude/worktrees/scm-uat` (FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).
 
