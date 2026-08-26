@@ -238,6 +238,31 @@ _HAS_ANY_LINK = (
     .exists()
 )
 
+
+def _linked_qty(*where) -> Any:
+    """How much of this row sits on documents, correlated to the row itself.
+
+    One builder for the three sums the cards need (SPO, PO, everything), so the three
+    cannot come apart from each other or from `_HAS_PO_LINK` / `_HAS_SPO_LINK` above.
+    """
+    return (
+        select(func.coalesce(func.sum(OrderInquiryLink.qty), 0))
+        .where(OrderInquiryLink.row_id == OrderInquiryRow.id, *where)
+        .correlate(OrderInquiryRow)
+        .scalar_subquery()
+    )
+
+
+#: The three quantities the strip's cards are (section 3.I2, AC-I11): what sits on SPO
+#: allocations, what sits on purchase order lines, and the remainder nobody has put
+#: anywhere - which is what still flows to reorder planning.
+#:
+#: NEVER NEGATIVE. A row linked beyond its own quantity is a data question, and a negative
+#: Buy would quietly cancel out a real one somewhere else in the same total.
+_SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
+_PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
+_UNLINKED_QTY = func.greatest(OrderInquiryRow.qty - _linked_qty(), 0)
+
 # `SO DATE` is the date on the DOCUMENT. For an adopted order that is the core sales
 # order's own order date; an authored one that has never been to AutoCount falls back to
 # when it published, and then to when it was written, so the column is never empty for a
@@ -410,6 +435,7 @@ class OrderInquiryWorklistService:
         supplier_id: Optional[str] = None,
         raised_by: Optional[str] = None,
         linked: Optional[str] = None,
+        kind: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -507,6 +533,27 @@ class OrderInquiryWorklistService:
                     f"'{linked}' is not a link filter. Use po, spo or none.",
                     code="invalid_linked_filter",
                 )
+        if kind:
+            # WHAT the row still needs, which is what the three cards above both views
+            # ask (section 3.I2) and a different question from `linked`: a row linked 5
+            # of 8 to a purchase order carries `po` AND `buy`, so it answers to either
+            # card, while `linked=po` only asks where its links point. A CANCELLED row
+            # carries no kind at all - its quantity is not owed any more, and its links
+            # are history (`links_for_rows` already hides them), so counting it would
+            # tell purchasing to buy something somebody has called off.
+            if kind not in ("spo", "po", "buy"):
+                raise AppException(
+                    422,
+                    f"'{kind}' is not a supply kind. Use spo, po or buy.",
+                    code="invalid_kind_filter",
+                )
+            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            if kind == "spo":
+                base = base.filter(_HAS_SPO_LINK)
+            elif kind == "po":
+                base = base.filter(_HAS_PO_LINK)
+            else:
+                base = base.filter(_UNLINKED_QTY > 0)
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -840,6 +887,35 @@ class OrderInquiryWorklistService:
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
             "projects": self._projects({**filters, "project_id": None}),
             "raised_by": self._raised_by({**filters, "raised_by": None}),
+            # The three cards, computed with the CARD FILTER ITSELF DROPPED, for the
+            # reason every other axis here drops its own: a card that empties the two
+            # beside it the moment it is pressed cannot be pressed a second time.
+            "kinds": self._kinds({**filters, "kind": None}),
+        }
+
+    def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
+        """Quantity per kind over every matching row (AC-I11): on SPO allocations, on
+        purchase order lines, and the unlinked remainder that still has to be bought.
+
+        SUMMED SERVER-SIDE OVER THE WHOLE MATCHING SET, never over a page, so a card
+        cannot claim less than pressing it reveals. Cancelled rows are dropped by the
+        same rule the `kind` filter drops them, so the cards and the rows agree.
+        """
+        spo, po, buy = (
+            self._base(**filters)
+            .with_entities(
+                func.coalesce(func.sum(_SPO_LINKED_QTY), 0),
+                func.coalesce(func.sum(_PO_LINKED_QTY), 0),
+                func.coalesce(func.sum(_UNLINKED_QTY), 0),
+            )
+            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .order_by(None)
+            .one()
+        )
+        return {
+            "spo": _qty_str(_dec(spo)),
+            "po": _qty_str(_dec(po)),
+            "buy": _qty_str(_dec(buy)),
         }
 
     def _by_month(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -83,6 +83,7 @@ def _worklist_filters(
     supplier_id: Optional[str],
     raised_by: Optional[str] = None,
     linked: Optional[str] = None,
+    kind: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
@@ -98,6 +99,7 @@ def _worklist_filters(
         # `users.id` is a plain string, not a UUID column - it is never validated as one.
         "raised_by": raised_by,
         "linked": linked,
+        "kind": kind,
     }
 
 
@@ -135,6 +137,16 @@ def list_order_inquiry_worklist(
             "WHERE the row is linked (AC-I5). `po` / `spo` mean it holds at least one "
             "link of that kind; `none` means no link at all, which is the buyer's own "
             "worklist. A closed set for the same reason `state` is."
+        ),
+    ),
+    kind: Optional[Literal["spo", "po", "buy"]] = Query(
+        None,
+        description=(
+            "WHAT the row still needs - the three cards above the schedule and the list "
+            "(AC-I11). Every row CARRYING that kind, so a row linked 5 of 8 to a "
+            "purchase order answers to `po` and to `buy` alike, and a cancelled row to "
+            "neither. A different question from `linked`, which asks only where a row's "
+            "links point."
         ),
     ),
     sort: Optional[WorklistSort] = Query(
@@ -175,6 +187,7 @@ def list_order_inquiry_worklist(
                 supplier_id,
                 raised_by,
                 linked,
+                kind,
             ),
         )
     except Exception as exc:
@@ -191,6 +204,14 @@ def order_inquiry_worklist_summary(
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
+    kind: Optional[Literal["spo", "po", "buy"]] = Query(
+        None,
+        description=(
+            "The pressed card (AC-I11). The TOTALS honour it, because they describe what "
+            "is on screen; the `kinds` facet itself drops it, because a card that emptied "
+            "the two beside it could not be pressed a second time."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -206,6 +227,7 @@ def order_inquiry_worklist_summary(
                 supplier_id,
                 raised_by,
                 linked,
+                kind,
             ),
         )
     except Exception as exc:
@@ -222,6 +244,7 @@ def export_order_inquiry_worklist(
     supplier_id: Optional[str] = Query(None),
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
+    kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -242,6 +265,7 @@ def export_order_inquiry_worklist(
                 supplier_id,
                 raised_by,
                 linked,
+                kind,
             )
         )
         return Response(
