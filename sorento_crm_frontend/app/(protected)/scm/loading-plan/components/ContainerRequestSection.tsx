@@ -153,6 +153,39 @@ function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
   );
 }
 
+/**
+ * What the supplier says they hold, in the words of whichever document said it (F1).
+ *
+ * A stock list states two quantities and they are never summed - packed can go on a
+ * container this week, unfinished is a request to their production line. A proforma states
+ * one, for one container, and carries a badge saying so, because a promise for a container is
+ * not the same fact as stock in their warehouse. Neither reads as a dash rather than a zero:
+ * "they have told us nothing" and "they told us they have none" are different answers.
+ */
+function HoldingCell({ row }: { row: ContainerRequestRow }) {
+  if (row.holding_source === 'proforma') {
+    return (
+      <div className="flex flex-col text-2xs">
+        <span className="tabular-nums">{fmtInt(row.holding_qty ?? 0)}</span>
+        <span className="text-muted-foreground">
+          PI {row.holding_as_of ? formatDateInMalaysia(row.holding_as_of) : EM_DASH}
+        </span>
+      </div>
+    );
+  }
+  if (row.holding_source === 'none') {
+    return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
+  }
+  return (
+    <div className="flex flex-col text-2xs">
+      <span className="tabular-nums">{fmtInt(row.qty_packed)} packed</span>
+      <span className="tabular-nums text-muted-foreground">
+        {fmtInt(row.qty_unfinished)} unfinished
+      </span>
+    </div>
+  );
+}
+
 export function ContainerRequestSection({
   supplierId,
   supplierName,
@@ -484,16 +517,9 @@ export function ContainerRequestSection({
         // Sortable on purpose (captain follow-up): this cell replaced the standalone
         // "Waiting on production" list, which was ordered by unfinished quantity descending.
         // `accessorFn` gives the sort its number; the cell itself still shows both figures.
-        accessorFn: (row) => row.qty_unfinished,
+        accessorFn: (row) => row.holding_qty ?? -1,
         header: ({ column }) => <DataGridColumnHeader title="They hold" column={column} />,
-        cell: ({ row }) => (
-          <div className="flex flex-col text-2xs">
-            <span className="tabular-nums">{fmtInt(row.original.qty_packed)} packed</span>
-            <span className="tabular-nums text-muted-foreground">
-              {fmtInt(row.original.qty_unfinished)} unfinished
-            </span>
-          </div>
-        ),
+        cell: ({ row }) => <HoldingCell row={row.original} />,
         size: 110,
         enableSorting: true,
         sortDescFirst: true,
@@ -753,41 +779,26 @@ export function ContainerRequestSection({
     );
   }
 
-  if (!build.data || build.data.stock_list_as_of === null) {
-    return (
-      <div className="space-y-4">
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Upload className="size-5" />
-          </span>
-          <p className="text-sm font-medium">No stock list for {supplierName} yet.</p>
-          <p className="text-2xs text-muted-foreground">
-            The request is built from what their stock list says is theirs. Upload it to see
-            what to ask for.
-          </p>
-          <Button size="sm" onClick={onUploadStockList}>
-            <Upload className="size-4" />
-            Upload stock list
-          </Button>
-        </Card>
-        {noticesCard}
-      </div>
-    );
-  }
-
-  if (rows.length === 0) {
+  // AC-A1: the "no stock list yet" card is GONE. The plan is built from what we buy from
+  // this supplier crossed with what customers are owed, so a supplier who has never sent a
+  // stock list still gets a table; "They hold" reads their newest proforma, or a dash.
+  if (!build.data || rows.length === 0) {
     return (
       <div className="space-y-4">
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <PackageSearch className="size-5" />
           </span>
-          <p className="text-sm font-medium">No open customer demand for what {supplierName} supplies.</p>
-          <p className="text-2xs text-muted-foreground">
-            As of {formatDateInMalaysia(build.data.stock_list_as_of)}, nothing on their stock
-            list has an outstanding sales order behind it, and nothing on it carries any
-            quantity.
+          <p className="text-sm font-medium">
+            Nothing to ask {supplierName} for right now.
           </p>
+          <p className="text-2xs text-muted-foreground">
+            No open customer demand on what they supply, and nothing of theirs on file.
+          </p>
+          <Button size="sm" variant="outline" onClick={onUploadStockList}>
+            <Upload className="size-4" />
+            Upload stock list
+          </Button>
         </Card>
         {unmatchedCard}
         {noticesCard}
@@ -826,7 +837,13 @@ export function ContainerRequestSection({
                 <SourceStamp label="SO book" iso={sources.so_book_as_of} /> -{' '}
                 <SourceStamp label="PO book" iso={sources.po_book_as_of} /> -{' '}
                 <SourceStamp label="SPO" iso={sources.spo_as_of} /> -{' '}
-                <SourceStamp label="Stock list" iso={sources.stock_list_as_of} />
+                {/* Whichever document the holdings actually came from - never both, because
+                    the proforma is not consulted while a stock list exists (AC-A2/A3). */}
+                {sources.stock_list_as_of || !sources.proforma_as_of ? (
+                  <SourceStamp label="Stock list" iso={sources.stock_list_as_of} />
+                ) : (
+                  <SourceStamp label="PI" iso={sources.proforma_as_of} />
+                )}
               </p>
               {/* What was actually applied, read off the build's own echo rather than the
                   prop - never lets the numbers on screen disagree with what this line says

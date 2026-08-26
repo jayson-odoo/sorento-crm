@@ -34,6 +34,7 @@ from app.models.scm import PriorityPolicy
 from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
 from tests.scm.test_outstanding_import_routes import as_company_user
 
@@ -86,7 +87,7 @@ def _so(
     key: str,
     qty: float,
     *,
-    demand_class: str | None = "project",
+    demand_class: str | None = "retail",
     demand_origin: str | None = _AUTO_ORIGIN,
     required_date: date | None = None,
     order_date: date | None = None,
@@ -335,17 +336,18 @@ def _foreign_supplier(db) -> str:
 
 
 def test_build_scope_is_the_whole_stock_list_ranked_rows_then_no_demand_rows(scm_app):
-    # CHANGE 1: row scope is now the WHOLE stock list - a product on the list with no
-    # open need still gets a row (has_demand false, rank null), sorted after the ranked
-    # demand rows. A product with need but off the list is still absent - the stock list
-    # is what makes a product a candidate at all.
+    # CHANGE 1: row scope is the WHOLE stock list - a product on the list with no open need
+    # still gets a row (has_demand false, rank null), sorted after the ranked demand rows.
+    # A product with need that this supplier neither lists nor is sourced from is still
+    # absent: since F1 the universe is the stock list UNION `product_suppliers`, and product
+    # C is in neither.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=5, cbm=0.5)  # on the list, has open need
     w.stock("B", packed=5, cbm=0.5)  # on the list, no open need
-    _so(db, w, "A", 20, demand_class="project")
-    _so(db, w, "C", 30, demand_class="project")  # need exists, but not on the list
+    _so(db, w, "A", 20)
+    _so(db, w, "C", 30)  # need exists, but neither on the list nor sourced from them
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -376,7 +378,7 @@ def test_build_no_demand_rows_with_stock_but_zero_quantity_are_left_out_entirely
     w.stock("A", packed=5, cbm=0.5)  # has open need
     w.stock("B", packed=0, unfinished=0, cbm=0.5)  # no need, no quantity either
 
-    _so(db, w, "A", 20, demand_class="project")
+    _so(db, w, "A", 20)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -397,7 +399,7 @@ def test_build_suggested_qty_nets_stock_and_incoming_spo_but_not_outstanding_po(
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=10, cbm=0.5)
-    _so(db, w, "A", 120, demand_class="project")
+    _so(db, w, "A", 120)
     wh = _warehouse(db)
     _on_hand(db, w, "A", wh, 20)
     _outstanding_po(db, w, "A", wh, 30)
@@ -420,7 +422,7 @@ def test_build_suggested_qty_floors_at_zero_when_stock_and_incoming_cover_the_ne
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=10, cbm=0.5)
-    _so(db, w, "A", 50, demand_class="project")
+    _so(db, w, "A", 50)
     wh = _warehouse(db)
     _on_hand(db, w, "A", wh, 200)
 
@@ -621,7 +623,7 @@ def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_a
     company_id = next(iter(scope))
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
-    _so(db, w, "A", 10, demand_class="project")
+    _so(db, w, "A", 10)
     _import_job(db, company_id, "outstanding_so_import")
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
@@ -634,23 +636,30 @@ def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_a
         "po_book_as_of",
         "spo_as_of",
         "stock_list_as_of",
+        "proforma_as_of",
+        "proforma_pi_number",
     }
     assert sources["so_book_as_of"] is not None
     assert sources["stock_list_as_of"] == body["stock_list_as_of"]
     # Nothing seeded for these two families - honest absence, not a stale guess.
     assert sources["po_book_as_of"] is None
     assert sources["spo_as_of"] is None
+    # A stock list exists, so the proforma stand-in is not consulted and does not name
+    # itself (AC-A3).
+    assert sources["proforma_as_of"] is None
 
 
-def test_build_include_lines_returns_flat_lines_summing_to_open_so_need(scm_app):
-    # CHANGE 2 + the invariant `build`'s docstring states: sum(lines.qty per product) ==
-    # open_so_need (the GROSS need, not the netted suggestion).
+def test_build_include_lines_returns_flat_lines_summing_to_the_retail_need(scm_app):
+    # CHANGE 2 + the invariant `build`'s docstring states, as P3 leaves it: sum(lines.qty per
+    # product) == retail_qty. The flat lines are the sales-order BOOK, and the book speaks for
+    # retail alone - project need lives on `projects.order_inquiry_rows` and has no book line
+    # to list (`test_container_request_universe.py` covers that half).
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
-    so1 = _so(db, w, "A", 20, demand_class="project")
-    so2 = _so(db, w, "A", 15, demand_class="retail")
+    so1 = _so(db, w, "A", 20)
+    so2 = _so(db, w, "A", 15)
 
     r = TestClient(app).post(
         BUILD_URL,
@@ -663,7 +672,7 @@ def test_build_include_lines_returns_flat_lines_summing_to_open_so_need(scm_app)
     row = _row(body["rows"], "A", w)
     lines = [ln for ln in body["lines"] if ln["product_id"] == row["product_id"]]
     assert len(lines) == 2
-    assert sum(ln["qty"] for ln in lines) == row["open_so_need"] == 35
+    assert sum(ln["qty"] for ln in lines) == row["retail_qty"] == row["open_so_need"] == 35
     assert {ln["so_number"] for ln in lines} == {so1.so_number, so2.so_number}
 
 
@@ -672,7 +681,7 @@ def test_build_without_include_lines_omits_the_lines_key(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
-    _so(db, w, "A", 10, demand_class="project")
+    _so(db, w, "A", 10)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -700,11 +709,14 @@ def test_build_with_a_malformed_supplier_id_is_a_404_not_a_500(scm_app):
 
 
 def test_build_splits_project_and_retail_qty(scm_app):
+    # The two channels, from the two books that own them (P3, captain 26 Aug): retail off the
+    # sales-order book, project off `projects.order_inquiry_rows`. `so_count` counts the
+    # BOOK's orders, which is what the "Open SOs" drill lists - an inquiry row is not one.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
-    _so(db, w, "A", 80, demand_class="project")
+    project_need(db, w, "A", 80)
     _so(db, w, "A", 40, demand_class="retail")
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
@@ -715,7 +727,7 @@ def test_build_splits_project_and_retail_qty(scm_app):
     assert row["project_qty"] == 80
     assert row["retail_qty"] == 40
     assert row["unclassified_qty"] == 0
-    assert row["so_count"] == 2
+    assert row["so_count"] == 1
 
 
 def test_build_a_project_row_outranks_a_retail_row_at_equal_dates(scm_app):
@@ -732,7 +744,7 @@ def test_build_a_project_row_outranks_a_retail_row_at_equal_dates(scm_app):
     w.stock("B", packed=1, cbm=0.5)
     same_date = date(2026, 9, 1)
     _so(db, w, "A", 10, demand_class="retail", required_date=same_date, order_date=same_date)
-    _so(db, w, "B", 10, demand_class="project", required_date=same_date, order_date=same_date)
+    project_need(db, w, "B", 10, delivery=same_date)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -755,8 +767,11 @@ def test_build_a_sooner_required_date_outranks_within_the_same_class(scm_app):
     )
     w.stock("A", packed=1, cbm=0.5)
     w.stock("B", packed=1, cbm=0.5)
-    _so(db, w, "A", 10, demand_class="project", required_date=date(2026, 9, 4))
-    _so(db, w, "B", 10, demand_class="project", required_date=date(2027, 5, 15))
+    # Both project, both dated, and the date is read off the inquiry row's own delivery date
+    # (`_project_need_dates`) rather than off a sales-order line - which is the whole reason
+    # that helper reads the form leg as well as the confirmed one.
+    project_need(db, w, "A", 10, delivery=date(2026, 9, 4))
+    project_need(db, w, "B", 10, delivery=date(2027, 5, 15))
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 

@@ -484,6 +484,16 @@ export interface ContainerRequestRow {
   unclassified_qty: number;
   earliest_required_date: string | null;
   so_count: number;
+  /** WHICH document says what they hold (F1). `stock_list` reads packed / unfinished;
+   *  `proforma` is the newest un-converted PI standing in for a missing stock list (Q2);
+   *  `none` means neither exists and the plan is built on demand alone. */
+  holding_source: 'stock_list' | 'proforma' | 'none';
+  /** The one figure the "They hold" cell shows: packed on a stock-list row, the invoiced
+   *  quantity on a proforma row. Null - never 0 - when neither document names it. */
+  holding_qty: number | null;
+  holding_as_of: string | null;
+  /** The stock list's own two figures. Both 0 on a proforma row: a proforma states one
+   *  quantity per line and there is no unfinished half of it to report. */
   qty_packed: number;
   qty_unfinished: number;
   cbm_per_unit: number | null;
@@ -531,7 +541,9 @@ export interface ContainerRequestPoLine {
 
 /** One open SO line behind a demand row - `include_lines=true` on the build. Flat, so the FE
  *  can bucket them into a schedule matrix or answer "which order does this cover" without a
- *  second fetch. `sum(qty per product) === that row's open_so_need`. */
+ *  second fetch. `sum(qty per product) === that row's retail_qty`: these are the sales-order
+ *  BOOK, and since P3 the book speaks for retail alone - project need comes off the Order
+ *  Inquiry and has no book line to list. */
 export interface ContainerRequestSoLine {
   product_id: string;
   item_code: string | null;
@@ -549,12 +561,17 @@ export interface ContainerRequestSources {
   po_book_as_of: string | null;
   spo_as_of: string | null;
   stock_list_as_of: string | null;
+  /** The proforma standing in for a missing stock list, so the strip can say "PI 31/07"
+   *  (AC-A2). Null whenever a stock list exists - it is then not consulted. */
+  proforma_as_of: string | null;
+  proforma_pi_number: string | null;
 }
 
 export interface ContainerRequestBuild {
   supplier_id: string;
-  /** Null when this supplier has no stock list applied yet - the FE's cue for the "upload a
-   *  stock list first" empty state. */
+  /** Null when this supplier has no stock list applied yet. NOT an empty state since F1: the
+   *  plan builds from `product_suppliers` and the open order book regardless, and "They hold"
+   *  reads the stand-in proforma or a dash. */
   stock_list_as_of: string | null;
   rows: ContainerRequestRow[];
   sources: ContainerRequestSources;

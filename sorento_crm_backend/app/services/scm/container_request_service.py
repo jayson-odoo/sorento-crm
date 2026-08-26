@@ -56,8 +56,9 @@ from sqlalchemy import case, func, text
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
+from app.models.procurement import ProductSupplier
 from app.models.product import Product
-from app.models.scm import SupplierInventory
+from app.models.scm import ProformaInvoiceLine, SupplierInventory
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import priority, supplier_notice_service
@@ -66,6 +67,7 @@ from app.services.scm.demand import (
     PLAN_DEMAND_LINE_SQL,
     PLAN_DEMAND_ORDER_SQL,
     demand_qty,
+    horizon_committed_select_sql,
     is_open_demand,
     is_plan_demand_line,
     is_plan_demand_order,
@@ -150,6 +152,243 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
         if r.as_of is not None and (cur["row_as_of"] is None or r.as_of > cur["row_as_of"]):
             cur["row_as_of"] = r.as_of
     return as_of, stock
+
+
+def _linked_products(db: Session, supplier_id: str) -> set[str]:
+    """Every product we buy from this supplier - the universe's first leg (F1, AC-A1).
+
+    `product_suppliers` is the sourcing link the reorder engine already reads, so "what does
+    this supplier make for us" has one answer across the module. Company scope comes free:
+    the ORM's loader criteria apply to `Product`, and a link to a foreign company's product
+    therefore names nothing here.
+
+    Without this leg the universe was the supplier's stock list ALONE, which is why a
+    supplier who had never sent one produced an empty screen on the very page that exists to
+    say what to ask them for.
+    """
+    rows = (
+        db.query(ProductSupplier.product_id)
+        .join(Product, Product.id == ProductSupplier.product_id)
+        .filter(ProductSupplier.supplier_id == supplier_id)
+        .all()
+    )
+    return {str(r.product_id) for r in rows}
+
+
+def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
+    """The newest un-converted proforma for this supplier, as a holdings statement (Q2).
+
+    Consulted ONLY when there is no stock list (AC-A3): the stock list is what they hold
+    today, a proforma is what they promised for one container, and reading both would answer
+    one question twice.
+
+    "Un-converted" is both halves of the word: no `proforma_invoice_shipment_link` row (its
+    goods have already become a packing list, so what it said they could pack is spent) and
+    `status = 'current'` (a superseded revision is history - F5b's chain).
+
+    The order is TOTAL - `invoice_date DESC, created_at DESC, id DESC` - because two
+    proformas uploaded from one file share an invoice date and a transaction timestamp, and a
+    non-total order would pick a different one on every refresh.
+    """
+    scope, params = company_sql_predicate(db, "pi.company_id", param_prefix="spi")
+    sql = f"""
+        SELECT pi.id::text AS id, pi.pi_number, pi.invoice_date
+        FROM scm.proforma_invoice pi
+        WHERE pi.supplier_id = CAST(:sid AS uuid)
+          AND COALESCE(pi.status, 'current') = 'current'
+          AND NOT EXISTS (
+              SELECT 1 FROM scm.proforma_invoice_shipment_link l
+              WHERE l.proforma_invoice_id = pi.id)
+          {("AND " + scope) if scope else ""}
+        ORDER BY pi.invoice_date DESC NULLS LAST, pi.created_at DESC, pi.id DESC
+        LIMIT 1
+    """
+    head = db.execute(text(sql), {"sid": str(supplier_id), **params}).mappings().first()
+    if head is None:
+        return None
+
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .filter(
+            ProformaInvoiceLine.invoice_id == head["id"],
+            ProformaInvoiceLine.product_id.isnot(None),
+        )
+        .all()
+    )
+    holdings: dict[str, dict] = {}
+    for ln in lines:
+        pid = str(ln.product_id)
+        cur = holdings.setdefault(pid, {"qty": 0.0, "cbm_per_unit": None})
+        cur["qty"] += float(ln.qty or 0)
+        if cur["cbm_per_unit"] is None and ln.cbm_per_unit is not None:
+            cur["cbm_per_unit"] = float(ln.cbm_per_unit)
+    if not holdings:
+        return None
+    return {
+        "pi_number": head["pi_number"],
+        "as_of": head["invoice_date"],
+        "holdings": holdings,
+    }
+
+
+def _project_open_need(
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+) -> dict[str, float]:
+    """Project need per product, off `projects.order_inquiry_rows` - P3, captain 26 Aug.
+
+    "Project demand has ONE source: `projects.order_inquiry_rows`" (`demand.py`, near line
+    216). The sales-order book speaks for the retail side and for nothing else, which
+    `PLAN_DEMAND_ORDER_SQL` enforces - so a loading plan that read the book for project need
+    would count zero for every project product, which is exactly what it did.
+
+    REUSED, never re-derived: `demand.horizon_committed_select_sql()` is the same expression
+    `scm.committed_v` carries and the reorder run reads, with the horizon bind already in
+    each leg. Restating its two project legs here would be a second definition of project
+    demand, and the first symptom of the two disagreeing is a container ordered for a
+    quantity the fulfilment board does not recognise.
+
+    No company predicate of its own: `product_ids` was resolved company-scoped upstream
+    (`_linked_products` / `_stock_list` / `_standin_proforma`), and a product id belongs to
+    exactly one company, so filtering on it IS the scope.
+    """
+    if not product_ids:
+        return {}
+    sql = f"""
+        SELECT product_id::text AS product_id, SUM(project_committed) AS qty
+        FROM ({horizon_committed_select_sql()}) c
+        WHERE product_id::text = ANY(:pids)
+        GROUP BY 1
+        HAVING SUM(project_committed) > 0
+    """
+    rows = db.execute(
+        text(sql), {"pids": list(product_ids), "horizon": horizon}
+    ).mappings().all()
+    return {r["product_id"]: float(r["qty"] or 0) for r in rows}
+
+
+def _project_need_dates(db: Session, product_ids: list[str]) -> dict[str, Any]:
+    """When project need on each product is owed - the two Order Inquiry legs, earliest wins.
+
+    The CONFIRMED leg is `summary_order_service._earliest_project_need_dates` unchanged,
+    because the Order Summary already answers exactly this question through the section-4
+    join path and a second spelling of it would let two screens disagree about when a
+    container is late.
+
+    The FORM leg is read here, and it has to be: a CS Order Inquiry Form row states its own
+    delivery date and belongs to no decision, so that helper cannot see it - and the loading
+    plan RANKS on this date. Reading only the confirmed leg would make every form-raised
+    project row look undated, which the priority policy scores as no urgency at all. Only the
+    date is read; the quantity stays `_project_open_need`'s, off `committed_v`'s own body.
+
+    "A Buy nobody has dated contributes no date at all" still holds - `MIN` over NULLs is
+    NULL and the row simply carries no need-by.
+    """
+    from app.services.scm.demand import BUY_VERB, UNLINKED_INQUIRY_STATES
+    from app.services.scm.summary_order_service import _earliest_project_need_dates
+
+    if not product_ids:
+        return {}
+    dates = dict(_earliest_project_need_dates(db, list(product_ids)))
+
+    scope, params = company_sql_predicate(db, "oir.company_id", param_prefix="pnd")
+    rows = db.execute(
+        text(
+            f"""
+            SELECT fp.id::text AS pid, MIN(oir.delivery_date) AS needed
+            FROM projects.order_inquiry_rows oir
+            JOIN products fp
+              ON fp.product_code = oir.item_code
+             AND fp.company_id = oir.company_id
+            WHERE oir.supply_decision_id IS NULL
+              AND oir.verb IN ('ORDER', 'ORDER_BACK')
+              AND oir.state = ANY(:states)
+              AND oir.qty > 0
+              AND fp.id::text = ANY(:pids)
+              {("AND " + scope) if scope else ""}
+            GROUP BY 1
+            """
+        ),
+        {
+            "pids": list(product_ids),
+            "states": list(UNLINKED_INQUIRY_STATES),
+            "verb": BUY_VERB,
+            **params,
+        },
+    ).mappings().all()
+    for r in rows:
+        if r["needed"] is None:
+            continue
+        current = dates.get(r["pid"])
+        if current is None or r["needed"] < current:
+            dates[r["pid"]] = r["needed"]
+    return dates
+
+
+def _earliest_need_by(need_row: Any, project_date: Any) -> Any:
+    """The soonest date either channel is owed on, or None when neither states one."""
+    dates = [
+        d
+        for d in (getattr(need_row, "earliest_required_date", None) if need_row else None,
+                  project_date)
+        if d is not None
+    ]
+    return min(dates) if dates else None
+
+
+def _empty_holding() -> dict:
+    """What "they hold" reads on a product neither statement names (AC-A1).
+
+    `holding_qty` is None, never 0: "we have no statement from them" and "they told us they
+    have none" are different answers, and only one of them means the plan can proceed on the
+    supplier's word.
+    """
+    return {
+        "holding_source": "none",
+        "holding_qty": None,
+        "holding_as_of": None,
+        "qty_packed": 0.0,
+        "qty_unfinished": 0.0,
+        "cbm_per_unit": None,
+        "row_as_of": None,
+    }
+
+
+def _holdings(stock: dict[str, dict], proforma: Optional[dict]) -> dict[str, dict]:
+    """One shape for "what they hold", whichever document said it.
+
+    `qty_packed` / `qty_unfinished` stay the STOCK LIST's own two figures and are 0 on a
+    proforma row, because a proforma states one quantity per line and inventing an unfinished
+    half of it would be a number the supplier never wrote. `holding_qty` is the one the screen
+    reads: packed on a stock-list row, the invoiced quantity on a proforma row.
+    """
+    if stock:
+        return {
+            pid: {
+                "holding_source": "stock_list",
+                "holding_qty": v["qty_packed"],
+                "holding_as_of": v["row_as_of"].isoformat() if v["row_as_of"] else None,
+                "qty_packed": v["qty_packed"],
+                "qty_unfinished": v["qty_unfinished"],
+                "cbm_per_unit": v["cbm_per_unit"],
+                "row_as_of": v["row_as_of"].isoformat() if v["row_as_of"] else None,
+            }
+            for pid, v in stock.items()
+        }
+    if proforma:
+        as_of = proforma["as_of"].isoformat() if proforma["as_of"] else None
+        return {
+            pid: {
+                "holding_source": "proforma",
+                "holding_qty": v["qty"],
+                "holding_as_of": as_of,
+                "qty_packed": 0.0,
+                "qty_unfinished": 0.0,
+                "cbm_per_unit": v["cbm_per_unit"],
+                "row_as_of": as_of,
+            }
+            for pid, v in proforma["holdings"].items()
+        }
+    return {}
 
 
 def _open_need(
@@ -599,7 +838,12 @@ _PO_BOOK_JOB_TYPES = ("outstanding_po_import", "po_history_import")
 _LIVE_UPLOAD_SOURCE = "scm_upload"
 
 
-def _sources(db: Session, *, stock_list_as_of: Optional[str]) -> dict:
+def _sources(
+    db: Session,
+    *,
+    stock_list_as_of: Optional[str],
+    proforma: Optional[dict] = None,
+) -> dict:
     """The latest ingest per document family, so the screen can say "as of when" for every
     number it shows (CHANGE 5) - trust, not just a value.
 
@@ -658,6 +902,13 @@ def _sources(db: Session, *, stock_list_as_of: Optional[str]) -> dict:
         "po_book_as_of": po_book_as_of,
         "spo_as_of": spo_as_of,
         "stock_list_as_of": stock_list_as_of,
+        # The stand-in, so the freshness strip can say "PI 31/07" rather than nothing at all
+        # (AC-A2). Null whenever a stock list exists, because the proforma is then not
+        # consulted and naming it would suggest the numbers came from it.
+        "proforma_as_of": (
+            proforma["as_of"].isoformat() if proforma and proforma["as_of"] else None
+        ),
+        "proforma_pi_number": proforma["pi_number"] if proforma else None,
     }
 
 
@@ -688,57 +939,67 @@ def build(
     exactly rather than inventing a second one.
 
     INVARIANT this endpoint guarantees when `include_lines` is set: for every demand row,
-    `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["open_so_need"]`
-  - the GROSS need, not the netted `suggested_qty` (CHANGE 4 nets stock/incoming off the ask,
-    which the line-level SO book knows nothing about). Both numbers come off the
-    identical predicate (`_open_need` aggregates it, `_open_lines` emits it at line grain), so
-    a caller building a schedule matrix off `lines` can trust its per-product total to foot to
-    `open_so_need` without re-summing anything itself. The horizon does not disturb this: both
-    sides apply it identically.
+    `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["retail_qty"]`.
+    The flat lines are the sales-order BOOK, and since P3 the book speaks for the retail side
+    alone - project need comes off `projects.order_inquiry_rows`, which has no book line to
+    list. Before P3 this footed to `open_so_need`; that is now the sum of the two channels and
+    only its retail half has lines behind it. Both numbers still come off the identical
+    predicate (`_open_need` aggregates it, `_open_lines` emits it at line grain), and the
+    horizon does not disturb it: both sides apply it identically.
     """
     _supplier(db, supplier_id)
     as_of, stock = _stock_list(db, supplier_id)
     stock_list_as_of = as_of.isoformat() if as_of else None
-    if not stock:
-        # No stock list uploaded yet for this supplier - the FE reads a null `stock_list_as_of`
-        # as the cue for its "upload a stock list first" empty state (PLAN section 5).
-        result = {
-            "supplier_id": str(supplier_id),
-            "stock_list_as_of": None,
-            "rows": [],
-            "sources": _sources(db, stock_list_as_of=None),
-            "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
-        }
-        if include_lines:
-            result["lines"] = []
-        return result
 
-    need = _open_need(db, set(stock.keys()), horizon=plan_horizon_date)
-    demand_ids = [pid for pid in stock if pid in need]
-    # Held but not owed: on the stock list, carrying real quantity, but no open SO need.
-    # Zero-quantity, zero-need rows are left out - they name nothing worth asking about or
-    # holding, same as before this change.
-    no_demand_ids = [
+    # THE UNIVERSE (F1, AC-A1): what we buy from them, what customers are owed on it, and
+    # whatever their own latest statement names. The statement is the stock list when there
+    # is one and the newest un-converted proforma when there is not (Q2, AC-A3) - never both,
+    # because they answer the same question about the same warehouse.
+    proforma = _standin_proforma(db, supplier_id) if not stock else None
+    holdings = _holdings(stock, proforma)
+    holding_source = "stock_list" if stock else "proforma" if proforma else "none"
+
+    universe = _linked_products(db, supplier_id) | set(holdings)
+    need = _open_need(db, universe, horizon=plan_horizon_date)
+    project = _project_open_need(db, universe, horizon=plan_horizon_date)
+
+    demand_ids = sorted(pid for pid in universe if pid in need or pid in project)
+    # Held but not owed: named by their own statement, carrying real quantity, no open need.
+    # A zero-quantity, zero-need row names nothing worth asking about or holding, so it is
+    # left out exactly as it always was.
+    no_demand_ids = sorted(
         pid
-        for pid in stock
-        if pid not in need and (stock[pid]["qty_packed"] or stock[pid]["qty_unfinished"])
-    ]
+        for pid in holdings
+        if pid not in need and pid not in project and holdings[pid]["holding_qty"]
+    )
     catalogue = _product_catalogue(db, demand_ids + no_demand_ids)
     stock_context = _stock_context(db, demand_ids + no_demand_ids)
+
+    # Only where there IS project need: a date read off an inquiry row whose quantity this
+    # plan did not count would make a retail row look more urgent than it is.
+    project_dates = (
+        {
+            pid: d
+            for pid, d in _project_need_dates(db, sorted(project)).items()
+            if pid in project
+        }
+        if project
+        else {}
+    )
 
     prepared: list[dict] = []
     if demand_ids:
         demand_rows = []
         for pid in demand_ids:
-            n = need[pid]
-            project_qty = float(n.project_qty or 0)
-            retail_qty = float(n.retail_qty or 0)
+            n = need.get(pid)
+            project_qty = project.get(pid, 0.0)
+            retail_qty = float(getattr(n, "retail_qty", 0) or 0) if n else 0.0
             klass = "project" if project_qty > 0 else "retail" if retail_qty > 0 else "unclassified"
             demand_rows.append(
                 {
                     "row_key": pid,
-                    "required_date": n.earliest_required_date,
-                    "order_date": n.oldest_order_date,
+                    "required_date": _earliest_need_by(n, project_dates.get(pid)),
+                    "order_date": getattr(n, "oldest_order_date", None) if n else None,
                     # Absent, per the module's own rule: a product row spans every customer
                     # behind it, so no single payment-terms figure applies (priority.py's
                     # docstring on `factors_for_demand_rows`).
@@ -751,14 +1012,20 @@ def build(
         scores = priority.scores_for(factors_by_row)
 
         for pid in demand_ids:
-            n = need[pid]
+            n = need.get(pid)
             info = catalogue.get(pid, {})
-            s = stock[pid]
+            held = holdings.get(pid) or _empty_holding()
             ctx = stock_context.get(pid) or _empty_context()
-            open_so_need = _f(n.total_qty) or 0.0
+            # The two channels, from the two places that own them (P3): retail off the
+            # sales-order book, project off `projects.order_inquiry_rows`.
+            retail_qty = float(getattr(n, "retail_qty", 0) or 0) if n else 0.0
+            unclassified_qty = float(getattr(n, "unclassified_qty", 0) or 0) if n else 0.0
+            project_qty = project.get(pid, 0.0)
+            open_so_need = retail_qty + unclassified_qty + project_qty
             # Site pools only, and neither the packing list nor the outstanding PO is
             # subtracted - `_stock_context`'s docstring is the record of that rule.
             suggested_qty = max(open_so_need - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
+            need_by = _earliest_need_by(n, project_dates.get(pid))
             prepared.append(
                 {
                     "product_id": pid,
@@ -768,17 +1035,12 @@ def build(
                     "suggested_qty": suggested_qty,
                     **_context_payload(ctx),
                     # Gross split - it explains the NEED, not the netted suggestion above.
-                    "project_qty": _f(n.project_qty) or 0.0,
-                    "retail_qty": _f(n.retail_qty) or 0.0,
-                    "unclassified_qty": _f(n.unclassified_qty) or 0.0,
-                    "earliest_required_date": (
-                        n.earliest_required_date.isoformat() if n.earliest_required_date else None
-                    ),
-                    "so_count": int(n.so_count or 0),
-                    "qty_packed": s["qty_packed"],
-                    "qty_unfinished": s["qty_unfinished"],
-                    "cbm_per_unit": s["cbm_per_unit"],
-                    "row_as_of": s["row_as_of"].isoformat() if s["row_as_of"] else None,
+                    "project_qty": project_qty,
+                    "retail_qty": retail_qty,
+                    "unclassified_qty": unclassified_qty,
+                    "earliest_required_date": need_by.isoformat() if need_by else None,
+                    "so_count": int(getattr(n, "so_count", 0) or 0) if n else 0,
+                    **held,
                     "rank_score": scores[pid],
                     "rank_factors": [f.as_dict() for f in factors_by_row[pid]],
                     "has_demand": True,
@@ -794,7 +1056,6 @@ def build(
     no_demand_rows = []
     for pid in no_demand_ids:
         info = catalogue.get(pid, {})
-        s = stock[pid]
         ctx = stock_context.get(pid) or _empty_context()
         no_demand_rows.append(
             {
@@ -809,10 +1070,7 @@ def build(
                 "unclassified_qty": 0.0,
                 "earliest_required_date": None,
                 "so_count": 0,
-                "qty_packed": s["qty_packed"],
-                "qty_unfinished": s["qty_unfinished"],
-                "cbm_per_unit": s["cbm_per_unit"],
-                "row_as_of": s["row_as_of"].isoformat() if s["row_as_of"] else None,
+                **(holdings.get(pid) or _empty_holding()),
                 "rank": None,
                 "rank_score": None,
                 "rank_factors": [],
@@ -827,7 +1085,7 @@ def build(
         "supplier_id": str(supplier_id),
         "stock_list_as_of": stock_list_as_of,
         "rows": prepared + no_demand_rows,
-        "sources": _sources(db, stock_list_as_of=stock_list_as_of),
+        "sources": _sources(db, stock_list_as_of=stock_list_as_of, proforma=proforma),
         "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
     }
     if include_lines:
