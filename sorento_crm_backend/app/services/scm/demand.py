@@ -283,12 +283,27 @@ legs AS (
                                WHERE dd.core_line_id = sol.id)))
     UNION ALL
     -- The confirmed leg: what CS decided must be bought, at the reconciled core line's
-    -- product and fulfilment location. Never matched on provisional_ref, autocount_doc_no
-    -- or item code (plan 4).
+    -- product and fulfilment location, LESS whatever of it now sits on a document
+    -- (PLAN-scm-cs-planning-uat.md section 3.I). Never matched on provisional_ref,
+    -- autocount_doc_no or item code (plan 4).
+    --
+    -- Netted per ROW rather than tested per STATE. Before `order_inquiry_links` a row was
+    -- all or nothing - `raised` counted the whole quantity, `placed` counted none - so a
+    -- cascade that could only cover part of a row had to SPLIT the row for the arithmetic
+    -- to come out, which is how nine sales-order lines became eleven instructions. A fully
+    -- linked row now leaves confirmed demand exactly as `placed` did, and a half-linked
+    -- one leaves half of it.
+    --
+    -- ORDER_BACK counts here too (PLAN-scm-purchasing-uat-journey.md section 4b): it is
+    -- still demand until it is linked. At the DONOR's location, which is what the row's
+    -- own `stock_location` names: the row hangs off the BORROWING line, so reading the
+    -- core line's warehouse would put the hole in a warehouse that never had one.
     SELECT sol.product_id,
-           sol.warehouse_id,
-           oir.qty AS project_qty,
-           oir.qty AS project_confirmed_qty,
+           CASE WHEN oir.verb = 'ORDER_BACK'
+                THEN COALESCE(donor.id, sol.warehouse_id)
+                ELSE sol.warehouse_id END AS warehouse_id,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
            0 AS retail_qty,
            0 AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -297,9 +312,16 @@ legs AS (
      AND d.state = 'active'
     JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
     JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
-    WHERE oir.verb = 'ORDER'
-      AND oir.state = 'raised'
+    LEFT JOIN warehouses donor ON donor.warehouse_code = oir.stock_location
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) lk ON TRUE
+    WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
+      AND oir.qty > COALESCE(lk.linked, 0)
 )
 SELECT product_id,
        warehouse_id,
@@ -381,9 +403,11 @@ legs AS (
            OR sol.required_date <= CAST(:horizon AS date))
     UNION ALL
     SELECT sol.product_id,
-           sol.warehouse_id,
-           oir.qty AS project_qty,
-           oir.qty AS project_confirmed_qty,
+           CASE WHEN oir.verb = 'ORDER_BACK'
+                THEN COALESCE(donor.id, sol.warehouse_id)
+                ELSE sol.warehouse_id END AS warehouse_id,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_qty,
+           GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS project_confirmed_qty,
            0 AS retail_qty,
            0 AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -392,9 +416,16 @@ legs AS (
      AND d.state = 'active'
     JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
     JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
-    WHERE oir.verb = 'ORDER'
-      AND oir.state = 'raised'
+    LEFT JOIN warehouses donor ON donor.warehouse_code = oir.stock_location
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) lk ON TRUE
+    WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
+      AND oir.qty > COALESCE(lk.linked, 0)
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL

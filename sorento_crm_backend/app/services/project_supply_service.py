@@ -1719,6 +1719,8 @@ class ProjectSupplyService:
                 # this line" and reads identically on screen.
                 "amend_reason": snapshot.get("amend_reason"),
                 "buy_reason": snapshot.get("buy_reason"),
+                "order_back": bool(snapshot.get("order_back")),
+                "cited_document": snapshot.get("cited_document"),
             }
         return out
 
@@ -2778,6 +2780,12 @@ class ProjectSupplyService:
                     "buy_qty": _dec(entry.buy_qty),
                     "required_date": fact.required_date or line.delivery_date,
                     "stock_location": line.stock_location,
+                    # Part 2 section 4b: this Buy is owed against something already
+                    # ordered, and CS may have named which document.
+                    "order_back": bool(getattr(entry, "order_back", False)),
+                    "cited_document": (
+                        (getattr(entry, "cited_document", None) or "").strip() or None
+                    ),
                 }
             )
         for entry in carried:
@@ -3209,6 +3217,16 @@ class ProjectSupplyService:
                 "This product is discontinued." if fact.is_discontinued else None
             ),
             "buy_reason": (entry.buy_reason or "").strip() or None,
+            # An ORDER BACK Buy and the document CS cited for it (part 2 section 4b).
+            # Frozen with the line for the same reason the reasons above are: re-opening
+            # the Amend editor on a covered line has to show what was decided, and the
+            # order inquiry row is raised from these two.
+            "order_back": bool(getattr(entry, "order_back", False)) and _dec(entry.buy_qty) > _ZERO,
+            "cited_document": (
+                (getattr(entry, "cited_document", None) or "").strip() or None
+                if getattr(entry, "order_back", False)
+                else None
+            ),
             # Why the composition above is not the one the engine proposed. Frozen with the
             # line rather than discarded at the call: every other component carries the
             # sentence of the RULE that produced it, and on an amended line those sentences

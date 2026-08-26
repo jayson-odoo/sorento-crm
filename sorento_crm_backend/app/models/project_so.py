@@ -30,6 +30,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -741,6 +742,15 @@ INQUIRY_CANCELLED = "cancelled"
 #: supply" (`on_order_v` still reads `spo_allocations` only). Untagging returns the row
 #: to `raised` and clears `po_ref` / `po_line_id`.
 INQUIRY_PLACED = "placed"
+#: Some of the row's quantity sits on documents and the rest is still demand
+#: (`PLAN-scm-cs-planning-uat.md` section 3.I). The middle the links table made
+#: expressible: before it, a cascade that could only cover part of a row SPLIT the row, so
+#: nine sales-order lines read as eleven instructions. Now the row keeps its full quantity
+#: and `scm.committed_v` nets exactly `qty - sum(links.qty)`. Read as "Partly linked".
+INQUIRY_PARTLY_LINKED = "partly_linked"
+#: The states a row's LINKS decide, in coverage order. `actioned` and `cancelled` are a
+#: person's word about the row and are never overwritten by a link change.
+INQUIRY_LINK_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
 
 IV_ORDER = "ORDER"
 IV_RESERVE_AND_ORDER = "RESERVE_AND_ORDER"
@@ -755,12 +765,23 @@ IV_ALREADY_INBOUND = "ALREADY_INBOUND"
 #: POOL purchase. An informational change row, exactly like DELAY/ADVANCE, never a fresh
 #: purchase of its own (`PLAN-so-book-diff-replanning.md` section 6, captain 19 Aug 2026).
 IV_RELEASE = "RELEASE"
-#: A borrow left the DONOR location oversold, so the hole it opened is buying work
-#: (PLAN-fulfilment-planning-from-autocount-so.md 13.11). Its own verb rather than
-#: `ORDER`, because the quantity belongs to the donor's location and not to the
-#: borrowing line's: counted as ORDER it would be attributed to the wrong warehouse by
-#: `confirmed_unplaced_buy_rows` and cancelled by the Buy-residual rules on re-confirm.
-IV_BORROW_SHORTFALL = "BORROW_SHORTFALL"
+#: The ORDER BACK. Two things reach it and they are the same instruction: a borrow left
+#: the DONOR location oversold, so the hole it opened is buying work
+#: (PLAN-fulfilment-planning-from-autocount-so.md 13.11), and CS writing `ORDER BACK` on
+#: the Order Inquiry Form against a quantity owed on a document already on its way
+#: (`PLAN-scm-purchasing-uat-journey.md` section 4b, captain 25 Aug 2026).
+#:
+#: Its own verb rather than `ORDER` for two reasons. The quantity belongs to the donor's
+#: location and not to the borrowing line's, so counted as ORDER it would be attributed to
+#: the wrong warehouse by `confirmed_unplaced_buy_rows` and cancelled by the Buy-residual
+#: rules on re-confirm. And it is the ONE verb whose links may name an `spo_allocations`
+#: row as well as a purchase order line: an order back is a shortfall against something
+#: already ordered or already shipped, which a fresh ORDER never is.
+IV_ORDER_BACK = "ORDER_BACK"
+#: The name this verb carried before migration 421 renamed both the constant and the
+#: stored value. Bound to the new value rather than deleted, so a reader written against
+#: the old spelling keeps meaning the same thing while it is renamed; nothing writes it.
+IV_BORROW_SHORTFALL = IV_ORDER_BACK
 
 
 class OrderInquiry(Base, CompanyScopedMixin):
@@ -892,6 +913,14 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     stock_location = Column(String(80), nullable=True)
     verb = Column(String(32), nullable=False)
     spo_ref = Column(String(80), nullable=True)
+    #: The document CS NAMED for an order back - "202604-S0083", "SPO-2026/08-0061" - as
+    #: they spelled it (`PLAN-scm-purchasing-uat-journey.md` section 4b). Not a link: a
+    #: citation is what the auto-link walk tries FIRST, before any location tier or date,
+    #: and a document this system does not hold is recorded rather than refused (AC-J2).
+    #: Its own column rather than `spo_ref` or `po_ref`, because those two are now the
+    #: DERIVED display of the first link and a citation is a different fact from a
+    #: placement - overloading either would make "where is this row linked" unanswerable.
+    cited_document = Column(String(80), nullable=True)
     # The confirmed supply decision this Buy residual came from (front planning 6.3).
     # Nullable, because amendment exception rows and every row raised before Stage 1C
     # belong to no decision. SET NULL rather than CASCADE: a decision that is deleted
@@ -905,11 +934,15 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         nullable=True,
     )
     covered_by = Column(Text, nullable=True)
-    # The outstanding supplier PO this row was tagged to (section G). `po_ref` is the
-    # PO NUMBER, printed the way the worklist's other PO column already is; `po_line_id`
-    # is the actual link the netting and the candidate query read. SET NULL, not CASCADE:
-    # a purchase order line getting deleted must not take the instruction's history with
-    # it - the row still says what it was placed on until somebody untags it.
+    # The FIRST link's document and line, kept as a one-word display for the readers that
+    # print a single PO number (`PLAN-scm-cs-planning-uat.md` section 3.I: "`po_ref` /
+    # `po_line_id` / `spo_ref` on the row become derived display (first link) and stop
+    # being written"). The TRUTH is `projects.order_inquiry_links`, one row per placement:
+    # a row may sit on two lines of one purchase order and on an SPO allocation at the
+    # same time, and a single column cannot say that. Nothing writes these two by hand any
+    # more - `_refresh_link_state` derives them from the links whenever the links change.
+    # SET NULL, not CASCADE: a purchase order line getting deleted must not take the
+    # instruction's history with it.
     po_ref = Column(String(80), nullable=True)
     po_line_id = Column(
         UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
@@ -941,6 +974,93 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         # creates this index; Stage 2 proposed `..._supply_decision` for the same column
         # and its duplicate DDL is dropped with the duplicate model above.
         Index("ix_project_order_inquiry_rows_decision", "supply_decision_id"),
+        {"schema": "projects"},
+    )
+
+
+class OrderInquiryLink(Base, CompanyScopedMixin):
+    """One placement: part of an order inquiry row's quantity, on ONE document line.
+
+    The captain, 25 August 2026, walking SO414285: "1 line here should correspond to 1
+    line in sales order, so 1 line can be placed by multiple PO and SPO". Before this
+    table `order_inquiry_rows` held exactly one `po_line_id`, so a cascade that needed two
+    purchase-order lines SPLIT the row - M310-CR-PJ's 8 became 5 + 3, MSK11C's 67 became
+    10 + 57, and nine sales-order lines read as eleven instructions on a screen whose whole
+    job is to say what to buy. The row now keeps its full quantity and carries links.
+
+    **Exactly one of the two targets is set**, held by a CHECK constraint rather than by
+    remembering: `po_line_id` for a purchase-order line, `spo_allocation_id` for a shipping
+    order (since migration 420 that is where an SPO lives). Which one is legal depends on
+    the ROW's verb, not on this table: only an `ORDER_BACK` row may name an allocation
+    (`PLAN-scm-purchasing-uat-journey.md` section 4b), because an order back is a shortfall
+    against something already ordered while a fresh ORDER is a new purchase. That rule
+    lives in the service, where the verb is readable.
+
+    **`qty` is positive and the sum across a row never exceeds the row's own quantity.**
+    The service holds the second half; the first is a CHECK, because a zero or negative
+    link is not a smaller placement, it is a row that should not exist.
+
+    **CASCADE on the row, SET NULL on both targets.** Deleting the instruction takes its
+    placements with it - they mean nothing without it. Deleting a purchase order line does
+    NOT: the link keeps its quantity and its `document` display, so "this was on
+    202607-S0105" survives the line being re-imported under a different id, exactly as
+    `order_inquiry_rows.po_line_id` already did.
+
+    `claim_id` points at the `scm.order_link_claim` this placement wrote, so an unlink can
+    take down the evidence it put up and only that. Nullable: a claim is best-effort audit
+    (the identity it keys on may already belong to another feed), and a link with no claim
+    is still a link.
+    """
+
+    __tablename__ = "order_inquiry_links"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="SET NULL",
+            name="fk_order_inquiry_links_spo_allocation",
+        ),
+        nullable=True,
+    )
+    #: The document number as it was when the link was made - `202607-S0105`,
+    #: `SPO-2026/08-0061`. Denormalised on purpose: `ON DELETE SET NULL` on both targets
+    #: means the id can go, and a link that can no longer say WHICH document it was on is
+    #: not evidence of anything.
+    document = Column(String(80), nullable=True)
+    qty = Column(Numeric(15, 4), nullable=False)
+    linked_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    linked_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    #: Written by the cascade rather than by a person clicking. The trigger that made it is
+    #: on the ROW's note, which is where "why is this linked" was already answered.
+    auto = Column(Boolean, nullable=False, server_default="false", default=False)
+    claim_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.order_link_claim.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "(po_line_id IS NOT NULL)::int + (spo_allocation_id IS NOT NULL)::int = 1",
+            name="ck_order_inquiry_links_one_target",
+        ),
+        CheckConstraint("qty > 0", name="ck_order_inquiry_links_qty_positive"),
+        Index("ix_order_inquiry_links_row", "row_id"),
+        Index("ix_order_inquiry_links_po_line", "po_line_id"),
+        Index("ix_order_inquiry_links_spo_allocation", "spo_allocation_id"),
         {"schema": "projects"},
     )
 

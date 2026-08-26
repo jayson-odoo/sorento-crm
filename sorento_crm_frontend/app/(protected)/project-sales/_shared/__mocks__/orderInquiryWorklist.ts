@@ -224,7 +224,7 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
 export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
   total_rows: 5,
   total_qty: '227',
-  by_state: { raised: 1, actioned: 1, cancelled: 1, total: 5 },
+  by_state: { raised: 1, partly_linked: 1, actioned: 1, cancelled: 1, placed: 1, total: 5 },
   by_month: [
     { month: '2026-01', label: 'JAN 26', rows: 2, qty: '120' },
     { month: '2026-03', label: 'MAR 26', rows: 1, qty: '91' },

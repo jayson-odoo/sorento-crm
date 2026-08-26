@@ -321,8 +321,12 @@ export interface OrderInquiryWorklistSummary {
   total_qty: string;
   by_state: {
     raised: number;
+    /** Some of the quantity is on documents, the rest is still demand (section 3.I). */
+    partly_linked: number;
     actioned: number;
     cancelled: number;
+    /** Wholly covered by links. Stored as `placed`, read as "Linked" (AC-I1). */
+    placed: number;
     total: number;
   };
   /**

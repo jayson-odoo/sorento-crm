@@ -350,9 +350,10 @@ class SalesOrderService:
         """One order as the API states it.
 
         ``line_planning`` attaches, per LINE, what has already been planned about it: the
-        order inquiry covering it and the revision that decided it. Two queries for the
-        WHOLE order, and off by default - the list renders neither, and paying for them
-        across a page of 50 orders would be 100 reads for a fact nothing there prints.
+        order inquiry covering it, the revision that decided it, and the documents its Buy
+        is linked to. Three reads for the WHOLE order, and off by default - the list
+        renders none of them, and paying for them across a page of 50 orders would be 150
+        reads for facts nothing there prints.
         """
         customer = so.customer
         inquiries = self._line_inquiries(so) if line_planning else {}
@@ -360,6 +361,9 @@ class SalesOrderService:
         # suggested (AC-D4). Off by default: the list prints none of it and would pay the
         # read across a page of 50 orders.
         decided = self._decided_lines(so) if line_planning else {}
+        # WHERE each line's Buy sits (AC-I9). Same gate, same reason: the list has no
+        # column for it.
+        links = self._line_links(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -425,6 +429,12 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
+                # AC-I9: WHERE this line's Buy sits, off the SAME reader the order
+                # inquiry worklist's "Linked to" column and the PO occupancy panel use.
+                # `None` when no inquiry row covers the line at all, `[]` when one does
+                # and holds no link: "nobody was told" and "told, nothing linked" are
+                # different answers and the column says so.
+                "linked_to": links.get(str(ln.id)),
                 "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
                 # line no active revision covers; `supply_proposed` also null on a revision
@@ -534,6 +544,66 @@ class SalesOrderService:
             str(core_id): {"inquiry_no": inquiry_no, "state": state}
             for core_id, inquiry_no, state in rows
         }
+
+    def _line_links(self, so: SalesOrder) -> dict[str, list[dict]]:
+        """Every document each of this order's lines is linked to, keyed by CORE line id.
+
+        The chain is the mirror the inquiry column already walks -
+        `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
+        `core_sales_order_line_id` - and then the row's own links. ONE call into
+        `ProjectOrderInquiryService.links_for_rows`, which is the single reader of
+        `projects.order_inquiry_links` for a screen, so this column, the worklist's
+        "Linked to" and the PO occupancy panel cannot come to three different answers
+        (section 3.I: "Same data as the worklist and the PO occupancy panel, one reader").
+
+        A core line with an inquiry row and no link answers `[]`; one with no row at all is
+        simply absent from the dict, and the serializer sends `None`.
+        """
+        from app.models.project_so import OrderInquiryRow
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id, OrderInquiryRow.id
+            )
+            .select_from(OrderInquiryRow)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .all()
+        )
+        if not rows:
+            return {}
+        links_by_row = ProjectOrderInquiryService(self.db).links_for_rows(
+            [row_id for _core_id, row_id in rows]
+        )
+        out: dict[str, list[dict]] = {}
+        for core_id, row_id in rows:
+            entries = out.setdefault(str(core_id), [])
+            for link in links_by_row.get(row_id, []):
+                entries.append(
+                    {
+                        "kind": link["kind"],
+                        "document": link["document"],
+                        "line_label": link["line_label"],
+                        "qty": link["qty"],
+                        "location": link["location"],
+                        # ISO strings, like every other date this schema states: the SCM
+                        # order contract spells dates as text and a `date` object would
+                        # not validate against it.
+                        "expected_date": (
+                            link["expected_date"].isoformat()
+                            if link["expected_date"]
+                            else None
+                        ),
+                    }
+                )
+        return out
 
     @staticmethod
     def _supply_components(components) -> list[dict]:

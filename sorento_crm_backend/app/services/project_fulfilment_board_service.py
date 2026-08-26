@@ -2822,7 +2822,7 @@ class FulfilmentBoardService:
 
         A line counts as ON ORDER on the same four tests every other on-order reader in this
         codebase applies (`allocation_suggestion_service`, `loading_plan_service`,
-        `scm.on_order_v`, and `project_order_inquiry_service._open_po_lines_for_product`, which
+        `scm.on_order_v`, and `project_order_inquiry_service._candidates_for_row`, which
         is the reader that decides what may be LINKED):
 
           * `line_status = 'open'` and a balance still to come. A line fully received has
@@ -2837,7 +2837,7 @@ class FulfilmentBoardService:
             that write the table stamp it differently.
 
         What an order-inquiry row already claims is then netted OFF, per line and floored at
-        zero, which is `_open_po_lines_for_product`'s own arithmetic - so the figure here and
+        zero, which is `_candidates_for_row`'s own arithmetic - so the figure here and
         the quantity that dialog offers cannot disagree.
 
         The placements are materialised by a TOP-LEVEL query first and netted in Python. As a

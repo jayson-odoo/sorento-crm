@@ -437,7 +437,7 @@ def _po_cascade_lines(
     db: Session, supplier_id: str, product_id: str
 ) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
     """Open PO lines to this supplier for this product, EARLIEST `expected_date` FIRST, then
-    document sequence - `project_order_inquiry_service._open_po_lines_for_product`'s own
+    document sequence - `project_order_inquiry_service._candidates_for_row`'s own
     ordering, so a "which PO covers this" answer here can never disagree with what the
     Place-on-PO cascade would say about the same purchase order. The PRODUCT-match (inference)
     path only - a STATED po_ref is resolved by `_pinned_po_candidates` below, which does NOT

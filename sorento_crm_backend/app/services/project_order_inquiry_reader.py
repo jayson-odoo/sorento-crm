@@ -59,6 +59,15 @@ _HEADERS: dict[str, tuple[str, ...]] = {
 #: "nothing placed".
 _NOT_ORDERED = re.compile(r"\bORDER\b", re.I)
 
+#: `ORDER BACK` written where a delivery DATE belongs. CS uses the date cell to say the
+#: quantity is not a fresh purchase at all: it is owed against something already ordered or
+#: already shipped, and the REMARK names the document (`PLAN-scm-purchasing-uat-journey.md`
+#: section 4b; every ORDER BACK row of the three SO381895 forms is shaped this way).
+#:
+#: The two words together, and only together. `ORDER` alone in that cell is the sheet's own
+#: "nothing placed yet" and means the opposite.
+_ORDER_BACK = re.compile(r"\bORDER\s+BACK\b", re.I)
+
 #: A purchase-order number in any family the customer uses: `202510-S0025`, `SPO-2020/01-0001`,
 #: `PO-2020/01-0001`. Used with `findall`, not `match`, because ONE sales-order line can wait
 #: on more than one purchase order - the sheet writes `202606-S0024 & 202607-S0043` - and
@@ -119,6 +128,11 @@ class OrderInquiryRow:
     #: the remainder of it in `202605-S0042 & ORDER`. Distinct from a sheet that simply has
     #: no PO column: "we have not bought it" and "we do not know" are different answers.
     not_ordered: bool
+    #: True when the DELIVERY DATE cell reads `ORDER BACK` - the quantity is owed against a
+    #: document already on its way rather than being a fresh purchase (part 2 section 4b).
+    #: The row then carries no delivery date, because CS wrote words where the date goes,
+    #: and `po_numbers` holds whatever document the remark cited.
+    order_back: bool
     sheet: str
     source_row: int
 
@@ -141,6 +155,13 @@ class OrderInquiryResult:
     @property
     def with_po(self) -> int:
         return sum(1 for r in self.rows if r.po_numbers)
+
+    @property
+    def order_back(self) -> int:
+        """How many rows CS marked ORDER BACK. Counted so the upload result can say so -
+        a file where every second row is one is a file about a supply problem, and it is
+        worth the uploader seeing that before anything is written."""
+        return sum(1 for r in self.rows if r.order_back)
 
     @property
     def po_claims(self) -> int:
@@ -225,6 +246,10 @@ def read_order_inquiry(file_data: bytes) -> OrderInquiryResult:
                 continue
 
             po_numbers, not_ordered = _read_po(values)
+            # The delivery-date cell is either a date or the words ORDER BACK. Read from
+            # the raw cell, not from `_as_date`, which answers None for both a blank and a
+            # sentence and so cannot tell them apart.
+            order_back = bool(_ORDER_BACK.search(_text(values.get("delivery_date"))))
             result.rows.append(
                 OrderInquiryRow(
                     so_number=so_number,
@@ -237,6 +262,7 @@ def read_order_inquiry(file_data: bytes) -> OrderInquiryResult:
                     supplier=_text(values.get("supplier")),
                     po_numbers=po_numbers,
                     not_ordered=not_ordered,
+                    order_back=order_back,
                     sheet=name,
                     source_row=row_number,
                 )
