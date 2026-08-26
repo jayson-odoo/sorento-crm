@@ -1177,11 +1177,11 @@ def test_qs_m7_hostile_leaves_never_raise_or_leak():
 
 
 def test_qs_m8_intro_states_the_page_geometry():
-    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs (showing 2 of them below)."
+    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs."          # no page geometry (amendment 5)
     assert summary_intro({"row_count": 3}, 3) == "Summary over 3 DOs."
     assert summary_intro({"row_count": 1}, 1) == "Summary over 1 DO."
     assert summary_intro({"row_count": 700, "groups_truncated": True}, 20) == (
-        "Summary over 700 DOs (showing 20 of them below). Not every breakdown is shown — add a customer, a product or a date range.")
+        "Summary over 700 DOs. Not every breakdown is shown — add a customer, a product or a date range.")
     assert "Not every breakdown" in summary_intro({"row_count": 9, "products_truncated": True}, 9)
 
 
@@ -1204,7 +1204,7 @@ def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
     out = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out["summary_items"] == summary_items(_SUM_M1)
-    assert out["intro"] == "Summary over 5 DOs (showing 1 of them below)."
+    assert out["intro"] == "Summary over 5 DOs."
     assert "summary_lines" not in out
     assert "summary_items" not in env("crm_order_management_orders_list", base)                        # no summary
     assert "summary_items" not in env("crm_order_management_orders_list", {"data": [], "summary": _SUM_M1})  # no rows

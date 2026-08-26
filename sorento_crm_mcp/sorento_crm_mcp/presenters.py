@@ -519,16 +519,18 @@ def summary_items(summary: Any) -> list[dict]:
 
 
 def summary_intro(summary: Any, n_items: int) -> Optional[str]:
-    """Page geometry, said once, in the presenter-owned intro."""
+    """The summary intro (count over the whole filter; truncation notice). `n_items` is
+    kept in the signature for callers; the page geometry is no longer stated."""
     if not isinstance(summary, dict):
         return None
     rc = _sl_num(summary.get("row_count"))
     if rc is None:
         return None
     n = int(rc)
-    text = f"Summary over {n} DO{'' if n == 1 else 's'}"
-    # "showing N of them" - never "latest": the presenter cannot see the sort.
-    text += f" (showing {n_items} of them below)." if n > n_items else "."
+    text = f"Summary over {n} DO{'' if n == 1 else 's'}."
+    # No page geometry: on a quantity ask the consumer prints the summary ONLY
+    # (order-quantity-summary amendment 5) - the DO page is not shown, so
+    # "showing N of them below" would describe something the reader cannot see.
     if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
         text += " Not every breakdown is shown — add a customer, a product or a date range."
     return text
