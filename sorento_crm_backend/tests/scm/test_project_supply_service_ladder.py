@@ -1533,10 +1533,17 @@ def _spo_line(db, product, warehouse, *, qty, arrives, spo_number=None, line_no=
     return row
 
 
-def test_an_spo_arriving_before_the_required_date_is_proposed_on_rung_1():
-    """AC-K4. The SPO has no shipment and no ETA of its own beyond the line's
-    `expected_date`, which is the only date an imported shipping order carries - and the
-    thing that made rung 1 unfireable while SPO documents sat in `purchase_orders`."""
+def test_an_spo_arriving_before_the_required_date_covers_its_line_through_the_group():
+    """AC-K4, as ladder v5 answers it (section 1e). The SPO has no shipment and no ETA of
+    its own beyond the line's `expected_date`, which is the only date an imported shipping
+    order carries.
+
+    THERE IS NO RUNG 1 ANY MORE. The document is inside the ownership group's net, where
+    AutoCount already counts it (`on hand + SPO - SO`), so what answers the line is question
+    1 - our own location - and the composition is a `reserve` at the group. Which document
+    it is stands on the cell's own location table and on the order-inquiry row, where Link
+    SPO ties a particular SPO to a particular line.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -1552,15 +1559,27 @@ def test_an_spo_arriving_before_the_required_date_is_proposed_on_rung_1():
         proposal = ProjectSupplyService(db).proposal_for(order)
         components = _components(proposal)
 
-    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert spo_number  # the document exists; the ladder simply does not have a rung for it
+    assert [c["kind"] for c in components] == ["reserve"]
     assert components[0]["qty"] == "40"
-    assert components[0]["rung"] == "incoming"
-    assert spo_number in components[0]["reason"]
+    assert components[0]["rung"] == "group_take"
+    assert components[0]["source_location"] == own.warehouse_code
+    assert "group" in components[0]["reason"]
 
 
-def test_an_spo_arriving_after_the_required_date_is_not_timely():
-    """The other half of the same rule: incoming that lands too late is not cover, and the
-    line falls through the ladder to a Buy rather than promising a date it cannot keep."""
+def test_an_spo_arriving_after_the_required_date_is_still_inside_the_groups_net():
+    """THE CONSEQUENCE OF PUTTING SPO INSIDE THE NET, said out loud (section 1d/1e).
+
+    Under v3 and v4 a late SPO was refused by rung 1's own date test, and the group rung
+    could not offer it either because that rung was additionally capped at each location's
+    FLOOR stock. Ladder v5 has neither: `group_net` is `on hand - SO + SPO` over every open
+    incoming row with no arrival-date term at all (`group_netting`'s docstring says so), and
+    the offer is that net. So a group whose only cover is a late SPO offers it.
+
+    Pinned rather than argued with, because it follows directly from the captain's ruling
+    that the group's net is THE reading of availability, and because a test that silently
+    changed answer here would be the one place the change hid.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -1573,16 +1592,18 @@ def test_an_spo_arriving_after_the_required_date_is_not_timely():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["buy"]
+    assert [c["rung"] for c in components] == ["group_take"]
 
 
-def test_a_past_dated_promise_still_fires_rung_1_and_says_it_is_overdue():
+def test_a_past_dated_promise_is_still_inside_the_groups_net():
     """TRUST THE BOOK (captain, 26 August 2026). The goods are owed until a re-uploaded PO
-    and SPO book says they arrived, so an overdue promise is still incoming supply - and it
-    is NAMED as overdue, because the buyer reading the trail is the person who can chase it.
+    and SPO book says they arrived, so an overdue promise is still supply the group holds.
 
     Dropping these rows instead would have told the planner to buy 39,110 units a second
-    time: every open SPO line on the captain's book carries a past date today.
+    time: every open SPO line on the captain's book carries a past date today. Under v5 the
+    row reaches the line through the group's net rather than through a rung of its own, and
+    "overdue" is a word for the order-inquiry row and the location table, where the document
+    is named and can be chased.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -1598,17 +1619,16 @@ def test_a_past_dated_promise_still_fires_rung_1_and_says_it_is_overdue():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert spo_number
+    assert [c["kind"] for c in components] == ["reserve"]
     assert components[0]["qty"] == "40"
-    assert components[0]["rung"] == "incoming"
-    assert spo_number in components[0]["reason"]
-    assert "(overdue 25 days)" in components[0]["reason"]
+    assert components[0]["rung"] == "group_take"
 
 
-def test_a_promise_dated_today_is_not_overdue():
-    """The boundary, said out loud on both rules: a row dated today arrives today, so it is
-    not overdue, and an arrival on the required date itself is timely. An exclusive
-    comparison on either would look like a rounding detail and cost a whole day."""
+def test_a_promise_dated_today_covers_its_line():
+    """The boundary, said out loud: a row dated today arrives today, and an arrival on the
+    required date itself is cover. An exclusive comparison on either would look like a
+    rounding detail and cost a whole day."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -1622,8 +1642,8 @@ def test_a_promise_dated_today_is_not_overdue():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["timely_spo"]
-    assert "overdue" not in components[0]["reason"]
+    assert [c["rung"] for c in components] == ["group_take"]
+    assert components[0]["qty"] == "40"
 
 
 def test_a_fully_received_line_is_not_supply_however_open_its_date_looks():
@@ -1647,9 +1667,10 @@ def test_a_fully_received_line_is_not_supply_however_open_its_date_looks():
     assert [c["kind"] for c in components] == ["buy"]
 
 
-def test_a_shipment_backed_row_reads_its_container_date():
-    """Once a container is booked the arrival is tracked, so the ladder reads the
-    shipment's date rather than the line's promise."""
+def test_a_shipment_backed_row_is_supply_the_group_holds():
+    """Once a container is booked the arrival is tracked. Under v5 the arrival date no
+    longer decides whether the row is cover - the group's net counts every open incoming -
+    so what this pins is that a shipment-backed row is still counted, and counted once."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -1664,5 +1685,5 @@ def test_a_shipment_backed_row_reads_its_container_date():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["timely_spo"]
-    assert "overdue" not in components[0]["reason"]
+    assert [c["rung"] for c in components] == ["group_take"]
+    assert components[0]["qty"] == "40"

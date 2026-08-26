@@ -25,15 +25,26 @@ Every case is traced to the criterion it comes from in
 * **AC-L2** ladder v3's reordering (25 August 2026): the ownership group, this line's own
   location included, is drawn BEFORE the shared pool. Under v2 the pool went first and a
   group that held the stock sat untouched while the shared pile paid for the line.
-* **AC-L1** ladder v3's rung 0, both sides: a line due beyond the lead-time window walks no
-  STOCK rung however much sits beside it, but rung 1 is unchanged, so supply already on its
-  way still covers it; incoming short of the whole line is dropped and the line is bought
-  entire. Under v2 such a line still walked the two surplus rungs.
+* **AC-L1** ladder v5's rung 0, both sides: a line due beyond the lead-time window walks NO
+  rung at all however much sits beside it, and is bought entire. Under v2 such a line still
+  walked the two surplus rungs; under v3 and v4 it still ran rung 1, incoming, on the
+  grounds that supply already on its way is already bought.
 * **AC-L7 / AC-L8 / AC-L10** ladder v4 (26 August 2026): availability is the OWNERSHIP
   GROUP's and the five site pools' respectively, never one warehouse's. A group that nets
   negative offers nothing however much sits at one of its sites; the pools net as one pile,
   so `BRW -103` beside `DC1 +1` offers nothing rather than the 1; and an SPO inside a
   negative group net is owed to that backlog, so it covers no line of it.
+* **AC-V7** ladder v5 (26 August 2026, section 1e): the four questions, and the pool is the
+  second of them. 24 needed against 268 free in the pile and 100 at another group within
+  the cap is Pool 24 - the borrow question is never reached.
+
+**WHAT LADDER V5 MOVED IN THIS FILE**, regenerated with the captain's sign-off (AC-V9):
+`timely_spo` is a kind the engine no longer proposes, because an SPO is inside the ownership
+group's net where AutoCount already counts it. `AC-L1`'s first case answered `timely_spo 40`
+and now answers `buy 40`; `AC-B12`'s balance invariant demonstrated `timely_spo 10 + pool 60`
+and now demonstrates `group 10 + pool 60` (same 70, same two reasons stated, one rung
+different); `AC-L10` keeps its `buy 10` and loses the sentence about netting rung 1. Nothing
+else changed answer.
 
 Quantities are `Decimal`, never float: these numbers are compared for exact equality and a
 binary-float 0.1 does not survive that.
@@ -189,7 +200,6 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
         "pools_net": Decimal("120"),
         # No SPO arrives by the required date, so timely coverage is zero and is not
         # proposed at all.
-        "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
     components=(
@@ -223,7 +233,6 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("120"), "available": Decimal("40")}
         ],
         "pools_net": Decimal("40"),
-        "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
     components=(
@@ -247,12 +256,18 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         "open_qty": Decimal("70"),
         "line_no": 10,
         "required_date": REQUIRED_DATE,
-        "fulfilment_location": OWN_LOCATION,
+        "fulfilment_location": GROUP_OWN_LOCATION,
+        "group_code": "BB",
         "is_dealer_hot_selling": False,
-        # Ten arrives on time, and the pool covers the rest - together the WHOLE line, so
-        # the whole-line rule (section E rule 6) keeps both components rather than
-        # collapsing them into a single Buy.
-        "timely_spo_qty": Decimal("10"),
+        # LADDER V5 (section 1e): the ten used to arrive as `timely_spo`, which was rung 1.
+        # There is no such rung: an SPO is inside the ownership group's own net, so the
+        # group offers the ten and the pool covers the rest - together the WHOLE line, so
+        # the whole-line rule keeps both components rather than collapsing them into a
+        # single Buy.
+        "group_take_candidates": [
+            {"location": GROUP_OWN_LOCATION, "qty": Decimal("10")},
+        ],
+        "group_offer": Decimal("10"),
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("60"), "available": Decimal("60")}
         ],
@@ -262,10 +277,10 @@ BALANCE_INVARIANT_CASE = ProposalCase(
     components=(
         # The two sentences AC-B14 quotes verbatim.
         Component(
-            kind=TIMELY_SPO,
+            kind=RESERVE,
             qty=Decimal("10"),
-            reason="incoming supply arrives by the required date",
-            source_location=OWN_LOCATION,
+            reason="BRW-BB gives 10 of the 10 the BB group can cover this line with",
+            source_location=GROUP_OWN_LOCATION,
         ),
         Component(
             kind=RESERVE,
@@ -279,7 +294,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
 #: The exact strings AC-B14 prints. Pinned separately so a reworded reason fails the test
 #: that owns the criterion rather than four unrelated ones.
 BALANCE_INVARIANT_STATED = (
-    "Timely SPO 10: incoming supply arrives by the required date",
+    "Reserve 10: BRW-BB gives 10 of the 10 the BB group can cover this line with",
     "Reserve 60: Pool BRW lends 60 of the 60 the site pools net between them",
 )
 
@@ -440,7 +455,6 @@ GROUP_BEFORE_POOL_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("1000"), "available": Decimal("1000")}
         ],
         "pools_net": Decimal("1000"),
-        "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
     components=(
@@ -470,8 +484,8 @@ GROUP_BEFORE_POOL_CASE = ProposalCase(
 BEYOND_THE_WINDOW_CASE = ProposalCase(
     ac="AC-L1",
     title=(
-        "ladder v3 rung 0: a line due beyond the lead-time window takes no STOCK however "
-        "much sits beside it, but still takes the supply already on its way"
+        "ladder v5 rung 0: a line due beyond the lead-time window takes NOTHING however "
+        "much sits beside it, incoming included - it is bought whole"
     ),
     inputs={
         "open_qty": Decimal("40"),
@@ -488,16 +502,17 @@ BEYOND_THE_WINDOW_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
         ],
         "pools_net": Decimal("400"),
-        # Already bought and on the water: buying it a second time is a double purchase.
-        "timely_spo_qty": Decimal("40"),
         "is_discontinued": False,
     },
     components=(
+        # v4 answered this case with `timely_spo 40`, because rung 1 ran on both sides of
+        # the window. v5 has no rung 1: an SPO is inside the group's own net, and the one
+        # that covers THIS line reaches it through Link SPO on its order-inquiry row, after
+        # purchasing has read the buy.
         Component(
-            kind=TIMELY_SPO,
+            kind=BUY,
             qty=Decimal("40"),
-            reason="incoming supply arrives by the required date",
-            source_location=GROUP_OWN_LOCATION,
+            reason="Delivery date beyond the lead time window; stock kept for nearer orders",
         ),
     ),
 )
@@ -506,8 +521,8 @@ BEYOND_THE_WINDOW_CASE = ProposalCase(
 BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
     ac="AC-L1",
     title=(
-        "ladder v3 rung 0, the other side: incoming that does not reach the whole line is "
-        "dropped rather than mixed with a Buy, and the reason names the window"
+        "ladder v5 rung 0, the other side: a far line with 400 in the pool beside it is "
+        "still bought whole, and the reason names the window rather than the arithmetic"
     ),
     inputs={
         "open_qty": Decimal("71"),
@@ -520,9 +535,6 @@ BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
         ],
         "pools_net": Decimal("400"),
-        # 40 of the 71 arrives in time. "Incoming 40, Buy 31" is the mix AC-L5 refuses at
-        # confirm, so the whole-line rule takes the lot.
-        "timely_spo_qty": Decimal("40"),
         "is_discontinued": False,
     },
     components=(
@@ -564,7 +576,6 @@ GROUP_NET_NEGATIVE_BUYS_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("1"), "available": Decimal("-9")}
         ],
         "pools_net": Decimal("-9"),
-        "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
     components=(
@@ -598,7 +609,6 @@ POOLS_NET_NEGATIVE_CASE = ProposalCase(
             {"location": "DC1", "free": Decimal("1"), "available": Decimal("1")},
         ],
         "pools_net": Decimal("-102"),
-        "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
     components=(
@@ -614,20 +624,21 @@ POOLS_NET_NEGATIVE_CASE = ProposalCase(
 INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE = ProposalCase(
     ac="AC-L10",
     title=(
-        "ladder v4: an SPO of 110 at BRW-IB is owed to a group that nets -1893 with it "
+        "ladder v5: an SPO of 110 at BRW-IB is owed to a group that nets -1893 with it "
         "counted, so it covers no line of that group and this one buys"
     ),
     inputs={
         # SRTWC7405-SC, measured 26 August 2026: BRW 2, BRW-IB 2 on hand against 2335 owed
-        # with the SPO's 110 already inside it, MWH-IB 330. The CALLER nets rung 1 against
-        # the group before handing it over, which is why `timely_spo_qty` is zero here and
-        # not 110 - the document exists and is named on the trail; what it is not is free.
+        # with the SPO's 110 already inside it, MWH-IB 330. Under v4 the caller netted rung
+        # 1 against the group before handing it over; under v5 there is no rung 1 to net -
+        # the 110 is simply part of the -1893, which is the whole of what the group offers
+        # (nothing). The document exists and is named on the order-inquiry row; what it is
+        # not is free.
         "open_qty": Decimal("10"),
         "line_no": 24,
         "required_date": REQUIRED_DATE,
         "fulfilment_location": GROUP_OWN_IB_LOCATION,
         "group_code": "IB",
-        "timely_spo_qty": Decimal("0"),
         "group_take_candidates": [],
         "group_offer": Decimal("0"),
         "pools": [],
@@ -644,6 +655,47 @@ INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE = ProposalCase(
 )
 
 
+#: Ladder v5's own case (section 1e), the captain's numbers on SO381895: 24 needed, the
+#: five site pools free 268 between them, and another ownership group holding 100 within
+#: the cross-group cap. The pool is question 2 and the other group is question 3, so the
+#: whole 24 comes off the pool and the donor is never reached.
+POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
+    ac="AC-V7",
+    title=(
+        "ladder v5: the pool is asked before another location, so 24 needed against 268 "
+        "free in the pile is Pool 24 and never Borrow 24"
+    ),
+    inputs={
+        "open_qty": Decimal("24"),
+        "line_no": 26,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_IB_LOCATION,
+        "group_code": "IB",
+        # The group itself is short, which is why the question reaches the pool at all.
+        "group_take_candidates": [],
+        "group_offer": Decimal("0"),
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("268"), "available": Decimal("268")}
+        ],
+        "pools_net": Decimal("268"),
+        # Within the cap and genuinely available - and still not drawn on, because the
+        # question above it was answered Yes.
+        "cross_group_borrow_candidates": [
+            {"location": "DC1-NTC", "qty": Decimal("100"), "group_code": "NTC"},
+        ],
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("24"),
+            reason="Pool BRW lends 24 of the 268 the site pools net between them",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+)
+
+
 PROPOSAL_CASES = (
     HOT_SELLING_WORKED_CASE,
     PROJECT_HOT_SELLING_WORKED_CASE,
@@ -654,5 +706,6 @@ PROPOSAL_CASES = (
     GROUP_NET_NEGATIVE_BUYS_CASE,
     POOLS_NET_NEGATIVE_CASE,
     INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE,
+    POOL_BEFORE_ANOTHER_GROUP_CASE,
 )
 ATTRIBUTION_CASES = (TWO_LINE_ATTRIBUTION_CASE, CONFIRMED_COVER_CASE)

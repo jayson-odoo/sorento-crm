@@ -124,7 +124,7 @@ _ZERO = Decimal("0")
 #: (`_proposed_component`). Read by the board so a suggestion made under an older rule can
 #: be labelled as one rather than read as today's answer. Bumped when the rungs change what
 #: they MEAN, never when a sentence is reworded.
-LADDER_VERSION = "v4"
+LADDER_VERSION = "v5"
 
 #: The statuses a Project SO may be confirmed in. A draft has not left the building and a
 #: blocked one has findings in the way.
@@ -859,10 +859,11 @@ class ProjectSupplyService:
         pool_free_left: Optional[Decimal] = None,
         as_of: Optional[date] = None,
     ) -> Tuple[Component, ...]:
-        """The source ladder for ONE line, ladder v3's own order
-        (`PLAN-scm-cs-planning-uat.md` section 1b): the lead-time window and purchasing's
-        coverage date, timely incoming, the ownership group (own location first), the
-        shared pool(s), cross-group borrow, then the whole-line rule.
+        """The source ladder for ONE line, ladder v5's four questions
+        (`PLAN-scm-cs-planning-uat.md` section 1e): the lead-time window and purchasing's
+        coverage date, then the ownership group (own location first), the shared pool as one
+        pile, cross-group borrow, then the whole-line rule. Incoming is not among them - an
+        SPO is inside the group's net (section 1e, first bullet).
 
         Public because it has two callers and must never have two implementations. The sheet
         composes one order's lines; the multi-order board composes every contributing line of a
@@ -885,11 +886,11 @@ class ProjectSupplyService:
         # states every rung with the window as its reason, so "not walked" is visible
         # rather than silent.
         #
-        # Rung 1 is NOT among them: `fact.timely_qty` / `fact.timely_refs` are read for
-        # every line by `_facts_for` / `demand_facts`, window or no window, and they are
-        # handed over below unconditionally. Incoming supply is already bought, so a far
-        # line whose SPO lands in time is covered by it rather than buying it twice
-        # (section 1b: "rung 1 unchanged").
+        # LADDER V5 (section 1e): there is no exception to that any more. Incoming used to
+        # be one - it ran on both sides of the window because supply on its way is already
+        # bought - and it is not a rung at all now: an SPO sits inside `group_net`, where
+        # AutoCount already counts it, so a far line beyond the window walks nothing and
+        # buys whole.
         outside_window = self.outside_reserve_window(fact, as_of=as_of)
         pools = [] if outside_window else self._pool_chain(fact, own_pool_free_left=pool_free_left)
         group_take = [] if outside_window else self._group_take_candidates(fact)
@@ -912,19 +913,6 @@ class ProjectSupplyService:
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
             pools=pools,
-            timely_spo_qty=fact.timely_qty,
-            timely_spo_refs=[
-                {
-                    "spo_number": ref.spo_number,
-                    "spo_line_no": ref.spo_line_no,
-                    "arrival_date": ref.arrival_date,
-                    "qty": ref.qty,
-                    # The engine names this row in the trail, so it needs to know whether
-                    # the promise it is leaning on has already been missed.
-                    "overdue_days": ref.overdue_days,
-                }
-                for ref in fact.timely_refs
-            ],
             is_discontinued=fact.is_discontinued,
             reorder_coverage_until=self._reorder_coverage_until(),
             group_take_candidates=group_take,
@@ -1140,13 +1128,22 @@ class ProjectSupplyService:
         handed and never re-sorts, so a planner reading "40 from BRW-BB, 30 from DC1-BB" is
         reading one decision about draw order, not two.
 
-        Rung 1 comes off the SAME pile (the group's SPO is inside it), so whatever incoming
-        already covers is deducted first - otherwise one SPO would be counted twice, once as
-        Incoming and once as group stock.
+        LADDER V5 (section 1e): the group's SPO is inside `group_net` and there is no
+        incoming rung above this one any more, so nothing is deducted here. The whole offer
+        belongs to this question - which is what "SPO stays inside the group net" means when
+        it is the only reading of the pile.
+
+        THE REMAINDER IS STILL OFFERED, at this line's own location, when the group's free
+        STOCK falls short of its offer. `group_net` counts what is on the water
+        (`on hand + SPO - SO`, AutoCount's own Available) and `_free_at` counts only what is
+        on the floor, so a group whose cover is an SPO has an offer and no free stock to
+        point at. Walking the locations and stopping would lose exactly that cover to a Buy -
+        which is the double purchase rung 1 existed to prevent. The locations say WHERE the
+        draw is drawn; the group's net says HOW MUCH, and the two must total the same.
         """
         if not fact.product_id or not fact.group_code:
             return []
-        left = max(_dec(fact.group_offer), _ZERO) - max(_dec(fact.timely_qty), _ZERO)
+        left = max(_dec(fact.group_offer), _ZERO)
         if left <= _ZERO:
             return []
         siblings = self._group_sibling_warehouses(fact)
@@ -1165,6 +1162,17 @@ class ProjectSupplyService:
             if capacity > _ZERO:
                 out.append({"location": code, "qty": capacity})
                 left -= capacity
+        if left > _ZERO and fact.own_code:
+            # What the group's net holds beyond its floor stock: the SPO on the water, and
+            # any of the pile a per-location free reading does not see. Booked at this
+            # line's own location, because that is where the order is booked and where the
+            # goods land.
+            for entry in out:
+                if entry["location"] == fact.own_code:
+                    entry["qty"] += left
+                    break
+            else:
+                out.insert(0, {"location": fact.own_code, "qty": left})
         return out
 
     def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:
@@ -1357,7 +1365,6 @@ class ProjectSupplyService:
             and fact.required_date > self._reorder_coverage_until()
         ):
             return remaining
-        remaining -= min(remaining, max(_dec(fact.timely_qty), _ZERO))
         for candidate in group_take:
             if remaining <= _ZERO:
                 break

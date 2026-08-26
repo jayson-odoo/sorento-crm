@@ -52,7 +52,6 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
                 }
             ],
             pools_net=Decimal("100"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -87,7 +86,6 @@ def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
                 {"location": "MWH", "free": Decimal("100"), "available": Decimal("100")},
             ],
             pools_net=Decimal("130"),
-            timely_spo_qty=Decimal("0"),
         )
     )
 
@@ -113,7 +111,6 @@ def test_every_pool_is_capped_by_its_own_signed_availability_not_only_a_hot_sell
                 {"location": POOL_LOCATION, "free": Decimal("100"), "available": Decimal("40")},
             ],
             pools_net=Decimal("40"),
-            timely_spo_qty=Decimal("0"),
         )
     )
 
@@ -153,7 +150,6 @@ def test_dealer_hot_selling_offers_no_pool_at_all():
                 }
             ],
             pools_net=Decimal("150"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -187,7 +183,6 @@ def test_the_pools_own_net_bounds_a_project_hot_selling_draw_like_any_other():
                 }
             ],
             pools_net=Decimal("40"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -224,7 +219,6 @@ def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_p
                 }
             ],
             pools_net=Decimal("-12"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -257,7 +251,6 @@ def test_dealer_hot_selling_wins_when_a_product_is_hot_on_both_demand_classes():
                 }
             ],
             pools_net=Decimal("50"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -367,7 +360,6 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
                 }
             ],
             pools_net=Decimal("100"),
-            timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
     )
@@ -487,7 +479,6 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
             pools_net=Decimal("999"),
-            timely_spo_qty=Decimal("0"),
         )
     )
 
@@ -541,15 +532,16 @@ def test_no_coverage_date_set_never_gates_a_line():
     assert proposed[0].kind == "reserve"
 
 
-def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incoming():
-    """AC-L1, the captain's own words: "if delivery date exceed lead time, directly buy" -
-    and section 1b's rung 1 is UNCHANGED, so the one thing a far line still takes is supply
-    already on its way.
+def test_a_line_beyond_the_lead_time_window_takes_nothing_at_all_incoming_included():
+    """AC-L1 as ladder v5 leaves it: "if delivery date exceed lead time, directly buy",
+    with no exception.
 
-    v2 walked the two surplus rungs for such a line and refused it only the borrow rungs.
-    v3 walks no STOCK rung at all: the pool, the group and every donor beside it are never
-    consulted, however much they hold. But incoming supply is already bought, and buying it
-    a second time is a double purchase, not a conservative one.
+    v2 walked the two surplus rungs for such a far line and refused it only the borrow
+    rungs. v3 walked no STOCK rung. v4 still ran rung 1, on the grounds that supply already
+    on its way is already bought. v5 has no rung 1 to run: an SPO is inside the ownership
+    group's own net, and a particular one reaches a particular line through Link SPO on its
+    order-inquiry row, after purchasing has read the buy. So 400 in the group, 400 in the
+    pool, 400 at a donor and 40 on the water all come to the same answer.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -560,7 +552,6 @@ def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incom
             fulfilment_location=OWN_LOCATION,
             group_code=GROUP_CODE,
             outside_reserve_window=True,
-            timely_spo_qty=Decimal("40"),
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
             ],
@@ -570,85 +561,26 @@ def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incom
         )
     )
 
-    assert [c.kind for c in proposed] == ["timely_spo"]
-    assert [c.rung for c in proposed] == ["incoming"]
-    assert proposed[0].qty == Decimal("40")
-    assert proposed[0].source_location == OWN_LOCATION
-
-
-def test_a_line_beyond_the_window_is_bought_whole_when_the_incoming_falls_short():
-    """The whole-line rule stands beyond the window too: 40 arriving against 71 owed is not
-    "incoming 40, buy 31", it is a Buy of the whole 71 with the window named as the reason.
-
-    A partial incoming beside a Buy would be exactly the mix AC-L5 refuses at confirm, and
-    the reason has to name the window rather than the arithmetic - the window is why the
-    stock rungs were never walked.
-    """
-    from app.services.scm.front_planning_engine import propose_line
-
-    proposed = _components(
-        propose_line(
-            open_qty=Decimal("71"),
-            required_date=date(2027, 6, 1),
-            fulfilment_location=OWN_LOCATION,
-            group_code=GROUP_CODE,
-            outside_reserve_window=True,
-            timely_spo_qty=Decimal("40"),
-            pools=[
-                {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
-            ],
-            pools_net=Decimal("400"),
-        )
-    )
-
     assert [c.kind for c in proposed] == ["buy"]
-    assert proposed[0].qty == Decimal("71")
-    assert proposed[0].rung == "buy"
+    assert [c.rung for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("40")
     assert proposed[0].reason == (
         "Delivery date beyond the lead time window; stock kept for nearer orders"
     )
 
 
-def test_incoming_beyond_the_window_names_the_spo_it_comes_from():
-    """Named is the useful form on a far line too: "SPO 202703-S0011 arrives on ..." is
-    something CS can look up, and the reason is the one rung 1 always writes."""
+def test_a_line_beyond_purchasings_coverage_date_is_bought_whole_the_same_way():
+    """The two bounds share one rule, and under v5 the rule has one outcome. Purchasing's
+    stated coverage date is checked first because it is a date a person set and can point
+    at, so its own sentence is the one that prints."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
-        propose_line(
-            open_qty=Decimal("40"),
-            required_date=date(2027, 6, 1),
-            fulfilment_location=OWN_LOCATION,
-            outside_reserve_window=True,
-            timely_spo_qty=Decimal("40"),
-            timely_spo_refs=[
-                {
-                    "spo_number": "202703-S0011",
-                    "spo_line_no": 1,
-                    "arrival_date": date(2027, 5, 1),
-                    "qty": Decimal("40"),
-                }
-            ],
-        )
-    )
-
-    assert [c.kind for c in proposed] == ["timely_spo"]
-    assert proposed[0].reason == (
-        "SPO 202703-S0011 arrives on 1 May 2027, by the required date"
-    )
-
-
-def test_a_line_beyond_purchasings_coverage_date_takes_its_incoming_too():
-    """The two bounds share one rule: rung 1 runs for either, and only rung 1."""
-    from app.services.scm.front_planning_engine import propose_line
-
-    covered = _components(
         propose_line(
             open_qty=Decimal("358"),
             required_date=date(2029, 1, 1),
             fulfilment_location=OWN_LOCATION,
             reorder_coverage_until=date(2026, 10, 31),
-            timely_spo_qty=Decimal("358"),
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
@@ -656,22 +588,9 @@ def test_a_line_beyond_purchasings_coverage_date_takes_its_incoming_too():
         )
     )
 
-    assert [c.rung for c in covered] == ["incoming"]
-    assert covered[0].qty == Decimal("358")
-
-    short = _components(
-        propose_line(
-            open_qty=Decimal("358"),
-            required_date=date(2029, 1, 1),
-            fulfilment_location=OWN_LOCATION,
-            reorder_coverage_until=date(2026, 10, 31),
-            timely_spo_qty=Decimal("100"),
-        )
-    )
-
-    assert [c.kind for c in short] == ["buy"]
-    assert short[0].qty == Decimal("358")
-    assert short[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert [c.kind for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("358")
+    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
 
 
 def test_a_line_inside_its_window_is_untouched_by_the_rule():
@@ -891,8 +810,11 @@ def test_borrowing_from_another_sales_order_is_never_proposed_automatically():
 
 
 def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
-    """Section 1b rung 5: "cover Q entirely in rung order" - a case that needs incoming, the
-    group, the pool AND a cross-group borrow together to reach the whole of Q."""
+    """Section 1e's last rule: "cover Q entirely in rung order" - a case that needs the
+    group, the pool AND a cross-group borrow together to reach the whole of Q.
+
+    THREE rungs now, not four. Ladder v5 retired incoming, and the 10 it used to contribute
+    is inside the group's own offer where AutoCount already counted it."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -901,8 +823,7 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
             required_date=REQUIRED_DATE,
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
-            timely_spo_qty=Decimal("10"),
-            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("30")}],
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("40")}],
             pools=[
                 {"location": "BRW", "free": Decimal("20"), "available": Decimal("20")}
             ],
@@ -913,9 +834,7 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
         )
     )
 
-    assert [c.rung for c in proposed] == [
-        "incoming", "group_take", "pool", "cross_group_borrow",
-    ]
+    assert [c.rung for c in proposed] == ["group_take", "pool", "cross_group_borrow"]
     assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("100")
     assert not any(c.kind == "buy" for c in proposed)
 
