@@ -40,6 +40,7 @@ from app.schemas.project_order_inquiry import (
     UnplaceAllPreview,
     UnplaceAllRequest,
     UnplaceAllResult,
+    UploadJobScope,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -381,6 +382,34 @@ async def link_acknowledged_order_inquiry_rows(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/upload-jobs/{job_id}", response_model=UploadJobScope)
+def get_order_inquiry_upload_job(
+    job_id: str,
+    _user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """What the book this page uploaded has written, once the worker is done with it.
+
+    The two next steps AC-H13 offers need the same fact and neither can have it at queue
+    time, because the write happens on the worker: the products to narrow "Link now" to,
+    and the documents to filter the purchase-order list by. Both are read off the job's
+    own result, which is the importer's own answer rather than a second derivation of it.
+
+    Gated on the acknowledge grant, like every other action on this page: asking what an
+    upload wrote is how the buyer decides what to link, and CS does neither.
+    """
+    from app.services.scm.import_job_scope import scope_of_job
+
+    scope = scope_of_job(db, job_id)
+    if scope is None:
+        raise AppException(
+            status_code=404,
+            message="That upload could not be found.",
+            code="import_job_not_found",
+        )
+    return scope
 
 
 @router.get("/order-inquiries/po/{po_id}", response_model=OrderInquiryPoDetail)

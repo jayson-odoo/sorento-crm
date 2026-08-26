@@ -841,6 +841,12 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             )
     summary["orders_created"] = orders_created
     summary["lines_created"] = lines_created
+    # What this upload TOUCHED, for whoever presses "Link now" after it
+    # (`PLAN-scm-oi-handshake.md` AC-H13). The products it wrote a line for, and the
+    # documents it wrote - so the cascade that follows is scoped to the book that just
+    # arrived rather than re-dealing every open instruction in the company.
+    summary["product_ids"] = sorted({str(pid) for pid in product_by_code.values()})
+    summary["documents"] = sorted({o.po_number for o in parsed.orders if o.po_number})
     summary["date_from"] = summary["date_from"].isoformat() if summary["date_from"] else None
     summary["date_to"] = summary["date_to"].isoformat() if summary["date_to"] else None
     return summary

@@ -21,6 +21,8 @@ interface UsePurchaseOrdersParams {
   outstanding?: boolean | null;
   /** true = something is linked to it, false = nothing is, null/undefined = every order. */
   allocated?: boolean | null;
+  /** Only these order numbers - the book one upload wrote (AC-H13). */
+  documents?: string[] | null;
 }
 
 export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
@@ -38,6 +40,7 @@ export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
         productCode: params.productCode ?? null,
         outstanding: params.outstanding ?? null,
         allocated: params.allocated ?? null,
+        documents: params.documents ?? null,
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,

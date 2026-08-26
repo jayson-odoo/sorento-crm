@@ -19,6 +19,7 @@ import type {
   UnplaceAllPreview,
   UnplaceAllRequest,
   UnplaceAllResult,
+  UploadJobScope,
 } from '../types/orderInquiry.types';
 
 const BASE = '/api/v1/project-sales';
@@ -274,6 +275,18 @@ export async function rejectOrderInquiryRow(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to reject this row'));
+  return response.json();
+}
+
+/**
+ * What the book this page uploaded has written (AC-H13), once the worker is done with it.
+ * The two next steps read it: the products to link against, the documents to go and look
+ * at. Asked for by the job id the upload dialog handed back.
+ */
+export async function getOrderInquiryUploadJob(jobId: string): Promise<UploadJobScope> {
+  const response = await apiFetch(`${BASE}/order-inquiries/upload-jobs/${jobId}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to read that upload'));
   return response.json();
 }
 

@@ -1605,7 +1605,11 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # operation the user asked for. A defect in the exception path must not send them back to
     # re-upload a book that would otherwise have gone in - it must cost them the batch, which
     # the next upload produces again.
-    exception_pids = _affected_product_ids(plan) if doc_type == SO else []
+    # The products this upload moved. Read once: the SO channel's plan-exception snapshot
+    # below needs them, and BOTH channels state them on the result so the Order Inquiries
+    # page can scope its "Link now" to the book that just arrived (AC-H13).
+    touched_pids = _affected_product_ids(plan)
+    exception_pids = list(touched_pids) if doc_type == SO else []
     before_positions: dict = {}
     if exception_pids:
         try:
@@ -2125,6 +2129,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "file_rows": read.total_rows,
         "counts": diff.counts,
         "applied": applied,
+        # The products whose position this upload could have moved, and the documents it
+        # names. What "Link now" is narrowed by (AC-H13); `scope_documents` is also what
+        # the purchase-order list is filtered to when the buyer goes to look at them.
+        "product_ids": touched_pids,
         "scope_documents": list(diff.scope_documents),
         "activated_documents": activated,
         "adopted_documents": adopted,

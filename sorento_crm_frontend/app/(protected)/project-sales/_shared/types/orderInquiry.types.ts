@@ -428,6 +428,27 @@ export interface OrderInquiryAckCounts {
   rejected: number;
 }
 
+/**
+ * What one upload from this page WROTE, read off the job once the worker is done with it
+ * (AC-H13). `GET .../order-inquiries/upload-jobs/{job_id}`.
+ *
+ * The page has none of this at queue time - the write happens on the worker - so the two
+ * next steps it offers wait for `finished` and then read this: `product_ids` narrows Link
+ * now to the book that just arrived, `documents` filters the purchase-order list to it.
+ * `document_count` is the whole truth where `documents` is capped, so a caller can tell
+ * "these are all of them" from "these are the first fifty".
+ */
+export interface UploadJobScope {
+  job_id: string;
+  status: string;
+  finished: boolean;
+  job_type?: string | null;
+  filename?: string | null;
+  product_ids: string[];
+  documents: string[];
+  document_count: number;
+}
+
 /** What one Acknowledge press did: rows taken on, and what linked at that moment. */
 export interface AcknowledgeResult {
   acknowledged: number;

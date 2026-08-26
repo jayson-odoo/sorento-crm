@@ -67,18 +67,43 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
   acknowledgeOrderInquiryRows: (...args: unknown[]) => acknowledgeOrderInquiryRows(...args),
   rejectOrderInquiryRow: (...args: unknown[]) => rejectOrderInquiryRow(...args),
   linkNowOrderInquiryRows: (...args: unknown[]) => linkNowOrderInquiryRows(...args),
+  getOrderInquiryUploadJob: (...args: unknown[]) => getOrderInquiryUploadJob(...args),
 }));
 
 // The two upload dialogs are their own suites' subject (`OrderInquiryUploadMenu.test.tsx`);
-// what this file needs is only the `onQueued` seam that offers Link now / Open purchase
-// orders, so the real menu is replaced with a button that fires it directly.
+// what this file needs is only the `onQueued` seam that hands the queued JOB over, so the
+// real menu is replaced with a button that fires it directly.
 vi.mock('./OrderInquiryUploadMenu', () => ({
-  OrderInquiryUploadMenu: ({ onQueued }: { onQueued?: () => void }) => (
-    <button type="button" onClick={() => onQueued?.()}>
+  OrderInquiryUploadMenu: ({
+    onQueued,
+  }: {
+    onQueued?: (queued: { job_id: string; id: string; message: string }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onQueued?.({ job_id: 'job-1', id: 'job-row-1', message: 'queued' })}
+    >
       Upload (stub)
     </button>
   ),
 }));
+
+// The drawer's feed is what says whether the worker is done with that job (AC-H13). Driven
+// here rather than provided: the page must offer nothing while the book is still being
+// read, and both next steps the moment it lands.
+let uploadSessions: { session_id: string; import_job_id: string | null; status: string }[] = [];
+vi.mock('@/components/upload-activity/useUploadActivity', () => ({
+  useUploadActivity: () => ({
+    sessions: uploadSessions,
+    badgeCount: 0,
+    hasInFlight: false,
+    refetch: vi.fn(),
+    isLoading: false,
+    dismissed: new Set<string>(),
+  }),
+}));
+
+const getOrderInquiryUploadJob = vi.fn();
 
 const saveBlobAs = vi.fn();
 vi.mock('../../_shared/services/fileDownload', () => ({
@@ -160,6 +185,15 @@ function openActionsMenu() {
 beforeEach(() => {
   vi.clearAllMocks();
   granted = new Set(['projects.order_inquiry.action']);
+  uploadSessions = [];
+  getOrderInquiryUploadJob.mockResolvedValue({
+    job_id: 'job-1',
+    status: 'finished',
+    finished: true,
+    product_ids: ['product-a', 'product-b'],
+    documents: ['202607-S0039', '202607-S0070'],
+    document_count: 2,
+  });
   currentSearchParams = new URLSearchParams('');
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
@@ -916,8 +950,24 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     expect(linkNowOrderInquiryRows).not.toHaveBeenCalled();
   });
 
-  it('AC-H13: an upload this page queued offers Link now and Open purchase orders, only for purchasing', async () => {
+  it('AC-H13: offers nothing while the worker is still reading the book', async () => {
     granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'processing' }];
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
+
+    // Queued is not landed. Linking now would link the half of the book that exists, and
+    // the purchase orders to go and look at have not been written yet.
+    await waitFor(() => expect(getOrderInquiryUploadJob).not.toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open purchase orders' })).toBeNull();
+  });
+
+  it('AC-H13: once the job lands, Link now carries the products it wrote', async () => {
+    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'linked' }];
     linkNowOrderInquiryRows.mockResolvedValue({ placed_rows: 2, allocations: 3 });
     renderClient();
     await screen.findByText('SO385126');
@@ -927,13 +977,55 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
     expect(await screen.findByRole('button', { name: 'Link now' })).toBeInTheDocument();
-    const openPurchaseOrders = screen.getByRole('link', { name: 'Open purchase orders' });
-    expect(openPurchaseOrders).toHaveAttribute('href', '/scm/purchase-orders');
+    await waitFor(() => expect(getOrderInquiryUploadJob).toHaveBeenCalledWith('job-1'));
+
+    // Filtered to the orders this upload wrote, so the buyer lands on their own book.
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'Open purchase orders' })).toHaveAttribute(
+        'href',
+        '/scm/purchase-orders?documents=202607-S0039%2C202607-S0070',
+      ),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Link now' }));
-    await waitFor(() => expect(linkNowOrderInquiryRows).toHaveBeenCalledWith({}));
+    await waitFor(() =>
+      expect(linkNowOrderInquiryRows).toHaveBeenCalledWith({
+        product_ids: ['product-a', 'product-b'],
+      }),
+    );
     // Dismissed by the success it reports, never by a timer.
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull());
+  });
+
+  it('AC-H13: a book naming more documents than the job lists opens the whole list', async () => {
+    granted = new Set(['projects.order_inquiry.action', 'project_sales.order_inquiries.acknowledge']);
+    uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'linked' }];
+    getOrderInquiryUploadJob.mockResolvedValue({
+      job_id: 'job-1',
+      status: 'finished',
+      finished: true,
+      product_ids: [],
+      documents: ['202607-S0039'],
+      document_count: 200,
+    });
+    linkNowOrderInquiryRows.mockResolvedValue({ placed_rows: 0, allocations: 0 });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
+    await screen.findByRole('button', { name: 'Link now' });
+
+    // One of two hundred is not "the book", so the honest link is the unfiltered list.
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'Open purchase orders' })).toHaveAttribute(
+        'href',
+        '/scm/purchase-orders',
+      ),
+    );
+    // And a job that named no product links every acknowledged row, as the endpoint's own
+    // omitted-list rule says.
+    fireEvent.click(screen.getByRole('button', { name: 'Link now' }));
+    await waitFor(() => expect(linkNowOrderInquiryRows).toHaveBeenCalledWith({}));
   });
 
   it('never offers Link now / Open purchase orders to a CS user, upload button included', async () => {

@@ -19,7 +19,7 @@ import logging
 import uuid
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
@@ -452,8 +452,20 @@ class PurchaseOrderService:
              query: Optional[str], status: Optional[str], supplier: Optional[str],
              *, product_code: Optional[str] = None,
              outstanding: Optional[bool] = None,
-             allocated: Optional[bool] = None) -> dict:
+             allocated: Optional[bool] = None,
+             documents: Optional[Sequence[str]] = None) -> dict:
         q = self._base_query()
+        if documents is not None:
+            # NAMED orders, and only those (`PLAN-scm-oi-handshake.md` AC-H13): what the
+            # Order Inquiries page hands over when the buyer asks to see the book they
+            # have just uploaded. An empty list narrows to NOTHING rather than to
+            # everything - the caller asked for a named set and none of it resolved, so
+            # the whole order book dressed up as their request would be the wrong answer.
+            # SQLAlchemy renders an empty IN as a false predicate, which is exactly the
+            # honest answer here.
+            q = q.filter(PurchaseOrder.po_number.in_(
+                [str(number).strip() for number in documents if str(number).strip()]
+            ))
         if status:
             q = q.filter(PurchaseOrder.status == status)
         if outstanding is not None:

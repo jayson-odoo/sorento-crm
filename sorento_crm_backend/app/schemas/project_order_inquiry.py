@@ -125,6 +125,27 @@ class OrderInquiryRowOut(BaseModel):
     previous_delivery_date: Optional[date] = None
 
 
+class UploadJobScope(BaseModel):
+    """What one upload from the Order Inquiries page wrote (AC-H13).
+
+    Read off the finished import job, never recomputed: `product_ids` is what "Link now"
+    is narrowed to, and `documents` is what the purchase-order list is filtered to when
+    the buyer goes to look at them. `document_count` is the whole truth where the list is
+    capped, so a caller can tell "these are all of them" from "these are the first 50".
+    """
+
+    job_id: str
+    status: str
+    #: The worker is done with it, whichever way it ended. The page offers its two next
+    #: steps only then - linking against a book still being read links half of it.
+    finished: bool
+    job_type: Optional[str] = None
+    filename: Optional[str] = None
+    product_ids: List[str] = []
+    documents: List[str] = []
+    document_count: int = 0
+
+
 class OrderInquiryDetail(BaseModel):
     id: str
     #: `OI-000001` - what a person calls this inquiry. Optional only so a record written
