@@ -997,12 +997,21 @@ def convert_to_draft_shipment(
                 "quantity_shipped": 0,
                 "unit_cost": None,
                 "currency": None,
+                # Volume and cartons ADD across the lines a group merges, and stay None
+                # until something states one: 0 cbm would be summed on the packing list as
+                # a container that takes no room (AC-F1).
+                "cbm": None,
+                "cartons": None,
                 "remarks": [],
                 "source_lines": [],
             }
             groups[key] = group
         prev_qty = group["quantity_shipped"]
         group["quantity_shipped"] = prev_qty + qty
+        if ln.cbm_total is not None:
+            group["cbm"] = (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_total))
+        if ln.cartons is not None:
+            group["cartons"] = (group["cartons"] or 0) + int(ln.cartons)
         if ln.unit_price is not None:
             if group["unit_cost"] is None:
                 group["unit_cost"] = ln.unit_price
@@ -1056,6 +1065,11 @@ def convert_to_draft_shipment(
             uom_id=uoms.get(group["product_id"]),
             unit_cost=group["unit_cost"],
             currency=group["currency"],
+            cbm=group["cbm"],
+            # `cartons_count` is NOT NULL with a default of 1, so an unstated carton count
+            # keeps that default rather than being written as 0 - which would read as a
+            # line that shipped in no box at all.
+            **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
             remarks="; ".join(group["remarks"]) if group["remarks"] else None,
         )
         db.add(line)

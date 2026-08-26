@@ -73,6 +73,7 @@ function mixedContainer(over: Record<string, unknown> = {}) {
         product_id: 'p-1',
         quantity_shipped: 490,
         cartons_count: 86,
+        cbm: '12.5',
         supplier_id: 'sup-a',
         product: { id: 'p-1', product_code: 'SRTWT7443', product_name: 'Basin Mixer Tall' },
       },
@@ -82,6 +83,7 @@ function mixedContainer(over: Record<string, unknown> = {}) {
         product_id: 'p-2',
         quantity_shipped: 900,
         cartons_count: 55,
+        cbm: 7.25,
         supplier_id: 'sup-b',
         product: { id: 'p-2', product_code: 'MCHWT1200', product_name: 'Shower Set' },
       },
@@ -172,5 +174,39 @@ describe('PackingListDetail - the line table', () => {
     // quantity further along the row.
     expect(unclaimed.querySelectorAll('td')[1]).toHaveTextContent('-');
     expect(within(unclaimed).queryByText(/FACTORY|SANITARY/)).not.toBeInTheDocument();
+  });
+});
+
+describe('F6 - the container states how much room it takes', () => {
+  beforeEach(() => {
+    searchParams.value = new URLSearchParams('tab=lines');
+  });
+
+  it('shows cartons and CBM per line, decimal on the wire included (AC-F2)', () => {
+    renderDetail();
+
+    expect(screen.getByRole('columnheader', { name: 'CBM' })).toBeInTheDocument();
+    const kailuLine = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailuLine).getByText('12.5')).toBeInTheDocument();
+    expect(within(kailuLine).getByText('86')).toBeInTheDocument();
+  });
+
+  it('reads "-" on a line nobody measured, never 0 (AC-F2)', () => {
+    renderDetail();
+
+    const unmeasured = screen.getByText('SRTBT2200').closest('tr') as HTMLElement;
+    // The CBM cell is the fifth: product, supplier, quantity, cartons, cbm.
+    expect(unmeasured.querySelectorAll('td')[4]).toHaveTextContent('-');
+  });
+
+  it('totals the volume under the column and counts what is unmeasured', () => {
+    renderDetail();
+
+    const total = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(total).getByText('19.75')).toBeInTheDocument();
+    expect(within(total).getByText('(1 unmeasured)')).toBeInTheDocument();
+    // Quantity and cartons total too, so the footer answers the whole row.
+    expect(within(total).getByText('1510')).toBeInTheDocument();
+    expect(within(total).getByText('171')).toBeInTheDocument();
   });
 });

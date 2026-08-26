@@ -13,6 +13,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -36,6 +37,20 @@ import SpoPlannerTable from './SpoPlannerTable';
 
 interface PackingListDetailProps {
   packingListId: string;
+}
+
+/** A Numeric column arrives as a string on the wire; anything unreadable is "not stated". */
+function toNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** Volume as a person writes it: `3.4`, not `3.4000`, and "-" when nobody measured it. */
+function fmtCbm(value: number | string | null | undefined): string {
+  const parsed = toNumber(value);
+  if (parsed === null) return '-';
+  return String(Number(parsed.toFixed(3)));
 }
 
 export default function PackingListDetail({
@@ -201,6 +216,30 @@ export default function PackingListDetail({
 
     return filtered;
   }, [packingList?.shipment_lines, shipmentLinesSearch, sortField, sortDirection]);
+
+  /**
+   * What the rows on screen add up to. The VISIBLE rows, deliberately: a footer under a
+   * searched table that quietly totals the whole container reads as the search having
+   * found more than it did.
+   *
+   * `unmeasured` is counted rather than folded into the volume, because a total of 41 cbm
+   * computed from half the lines is not 41 cbm, and a container planned on it arrives too
+   * full to close.
+   */
+  const lineTotals = useMemo(() => {
+    let qty = 0;
+    let cartons = 0;
+    let cbm = 0;
+    let unmeasured = 0;
+    for (const line of sortedAndFilteredLines) {
+      qty += line.quantity_shipped ?? 0;
+      cartons += line.cartons_count ?? 0;
+      const volume = toNumber(line.cbm);
+      if (volume === null) unmeasured += 1;
+      else cbm += volume;
+    }
+    return { qty, cartons, cbm: cbm === 0 && unmeasured > 0 ? null : cbm, unmeasured };
+  }, [sortedAndFilteredLines]);
 
   const handleSort = (field: 'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status') => {
     if (sortField === field) {
@@ -656,6 +695,12 @@ export default function PackingListDetail({
                           <SortIcon field="quantity_shipped" />
                         </button>
                       </TableHead>
+                      {/* How much room the goods take. Carried from the proforma invoice
+                          on conversion and from the packing-list file on import, and shown
+                          here because "will the next container hold this" is answered from
+                          this tab (AC-F2). Not sortable, same reason as Supplier. */}
+                      <TableHead className="text-end">Cartons</TableHead>
+                      <TableHead className="text-end">CBM</TableHead>
                       <TableHead>
                         <button
                           onClick={() => handleSort('spo_allocated')}
@@ -717,6 +762,14 @@ export default function PackingListDetail({
                             </span>
                           </TableCell>
                           <TableCell>{line.quantity_shipped}</TableCell>
+                          <TableCell className="text-end tabular-nums">
+                            {line.cartons_count ?? '-'}
+                          </TableCell>
+                          <TableCell className="text-end tabular-nums">
+                            {/* Null reads "-", never 0: a line nobody measured and a line
+                                that takes no room are different facts (AC-F2). */}
+                            {fmtCbm(line.cbm)}
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <span>
@@ -857,6 +910,26 @@ export default function PackingListDetail({
                       );
                     })}
                   </TableBody>
+                  {/* The total is what the container is judged against, so it sits under
+                      the column rather than being added up by hand. */}
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell colSpan={2}>Total</TableCell>
+                      <TableCell className="text-end tabular-nums">{lineTotals.qty}</TableCell>
+                      <TableCell className="text-end tabular-nums">
+                        {lineTotals.cartons}
+                      </TableCell>
+                      <TableCell className="text-end tabular-nums">
+                        {fmtCbm(lineTotals.cbm)}
+                        {lineTotals.unmeasured > 0 ? (
+                          <span className="ms-1 text-xs font-normal text-muted-foreground">
+                            ({lineTotals.unmeasured} unmeasured)
+                          </span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell colSpan={3} />
+                    </TableRow>
+                  </TableFooter>
                 </Table>
               </div>
             </CardContent>
