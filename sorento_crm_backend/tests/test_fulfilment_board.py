@@ -488,11 +488,15 @@ def test_free_stock_is_what_the_supply_service_computes_not_a_second_opinion():
 # --------------------------------------------------------------------------- #
 
 
-def test_the_loser_of_a_contest_is_reported_as_contested_and_named_who_took_it():
-    """Ladder v3, section 1b rung 2: the own location is a group source again, so the
-    WINNER reserves the 10 that are there and the loser is left with nothing to reserve and
-    buys. That is what `contested` means at its plainest - somebody got there first - and
-    the loser's Buy still names the order that outranked it."""
+def test_both_lines_of_an_oversold_group_buy_and_are_reported_as_contested():
+    """LADDER V4 (26 August 2026): 10 on hand against 20 owed, so the group cannot cover
+    its own book and promises its stock to NEITHER line.
+
+    Under v3 the winner reserved the 10 and only the loser bought. `contested` still means
+    what it always meant - this line is buying while its location holds free stock - and
+    under v4 that is true of both of them. The ranking is still computed and still reported;
+    what it no longer does is decide how much either line may have.
+    """
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -513,15 +517,14 @@ def test_the_loser_of_a_contest_is_reported_as_contested_and_named_who_took_it()
             "ZZT-SO-WIN", "ZZT-SO-LOSE"
         ], "contributions are served in rank order, highest first"
         won, lost = cell["contributions"]
-        assert won["rank_score"] > lost["rank_score"]
-        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("reserve", "10")]
+        assert won["rank_score"] > lost["rank_score"], "the ranking is still computed"
+        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("buy", "10")]
         assert [(s["kind"], s["qty"]) for s in lost["sources"]] == [("buy", "10")]
         assert lost["contested"] is True
-        assert won["contested"] is False, "the winner took the stock, so nothing beat it"
-        assert cell["contested_count"] == 1
-        # A ranking nobody can inspect is a ranking nobody will trust: the reason names the
-        # order that took the stock, and the row carries the factors behind its score.
-        assert "ZZT-SO-WIN" in lost["sources"][0]["reason"]
+        assert won["contested"] is True, "stock sits there and this line is buying too"
+        assert cell["contested_count"] == 2
+        # A ranking nobody can inspect is a ranking nobody will trust: the row still carries
+        # the factors behind its score.
         assert {f["key"] for f in lost["rank_factors"]} >= {
             "need_by_date", "document_age", "customer_credit",
             "demand_class", "po_document_sequence",
@@ -1045,10 +1048,10 @@ def test_moving_the_day_window_does_not_change_the_board_totals():
 def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
     """The window is a display bound, so it must not change what anybody is proposed.
 
-    Two lines at one location: under ladder v3 the sooner one reserves what is there and the
-    later one is contested out of it. Look at that through a day window containing neither of
-    them, and the contest still has to be reported - the board's totals describe the
-    selection, not the columns that happen to be on screen.
+    Two lines at one location holding 10 against 20 owed: under ladder v4 the group cannot
+    cover its book, so both lines buy and both are contested. Look at that through a day
+    window containing neither of them, and the count still has to be reported - the board's
+    totals describe the selection, not the columns that happen to be on screen.
     """
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
@@ -1070,11 +1073,11 @@ def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
             day_window_start=date(2029, 1, 1),
         )
 
-        assert week["contested_line_count"] == 1
+        assert week["contested_line_count"] == 2
         assert [c for c in far["cells"] if c["bucket_key"] != "no_date"] == [], (
             "the window shows nothing of the timeline"
         )
-        assert far["contested_line_count"] == 1, "and the contest is still reported"
+        assert far["contested_line_count"] == 2, "and the contest is still reported"
 
 
 def test_top_level_contributions_carry_every_line_even_outside_the_day_window():
@@ -2919,14 +2922,17 @@ def test_a_line_behind_more_demand_than_the_pile_holds_reserves_nothing():
         assert contribution["available_to_this_line"] == "0"
 
 
-def test_the_line_ranked_first_at_a_pile_still_gets_its_whole_reserve():
-    """Fair share is a queue, not a ban: the queue still names who is first in line.
+def test_while_the_group_is_short_the_front_of_the_queue_buys_too():
+    """LADDER V4's consequence, at the pile the v3 version of this test was written for.
 
-    Ladder v3 (section 1b rung 2): the own location is a group source again, so the line at
-    the front of the queue reserves its whole 80, and the line behind it - asking for 9000
-    against the 935 the queue leaves - falls to the whole-line rule and buys the lot. The
-    queue arithmetic (`so_qty_ahead` / `lines_ahead` / `available_to_this_line`) is what
-    sizes both answers."""
+    1015 on hand against 9080 owed. Under v3 the line at the front of the queue reserved its
+    whole 80 out of that 1015 and only the 9000 behind it bought. Under v4 the group's own
+    net decides and the rank queue takes no part, so a group that cannot cover its book
+    promises its stock to nobody in particular and both lines buy.
+
+    The queue arithmetic is still computed and still printed - `so_qty_ahead`,
+    `lines_ahead` and `available_to_this_line` say who is in front of whom - it just no
+    longer sizes the answer."""
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -2947,8 +2953,8 @@ def test_the_line_ranked_first_at_a_pile_still_gets_its_whole_reserve():
         assert earliest["so_qty_ahead"] == "0"
         assert earliest["lines_ahead"] == 0
         assert earliest["available_to_this_line"] == "1015"
-        assert earliest["qty_proposed_reserve"] == "80"
-        assert earliest["qty_proposed_buy"] == "0"
+        assert earliest["qty_proposed_reserve"] == "0"
+        assert earliest["qty_proposed_buy"] == "80"
         # And the queue still names what is left of the pile for the line behind it.
         behind = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
         assert behind["so_qty_ahead"] == "80"

@@ -103,17 +103,20 @@ def test_a_sibling_holding_stock_offers_nothing_while_the_group_nets_negative():
     assert components[0]["qty"] == "60"
 
 
-def test_the_front_of_the_group_queue_is_still_served_while_the_group_is_short():
-    """The other half of the rule, and the half a naive `max(group_net, 0)` would break.
+def test_while_the_group_is_short_even_the_front_of_the_queue_buys():
+    """THE CONSEQUENCE of the ruling, pinned so it cannot happen by accident.
 
-    1015 sit at the group and 9,080 are owed against them, so the group is 8,065 short. The
-    line at the FRONT of that queue still reserves its 80 - fair share is a queue, not a
-    ban - and the 9,000 behind it, facing the 935 the queue leaves, falls to the whole-line
-    rule and buys. Refusing both would buy 9,080 with 1,015 sitting in the warehouse.
+    1015 sit at the group and 9,080 are owed against them. Under ladder v3 the line at the
+    FRONT of that queue reserved its 80 out of the 1,015 and only the 9,000 behind it
+    bought. Under v4 the group's own net is what decides, the rank queue takes no part, and
+    a group that cannot cover its book promises its stock to nobody in particular - so both
+    lines buy and whoever ships first uses the 1,015.
 
-    What ladder v4 changed is WHOSE pile and WHOSE queue: one group-wide pile and one
-    group-wide queue, instead of v3's own-location queue beside each sibling's own signed
-    availability.
+    That is the rule as the captain ruled it (`PLAN-scm-cs-planning-uat.md` section 1d,
+    AC-L7: "the group net is -15514 and the suggestion is Buy 60"), and it reaches further
+    than the one line the AC names: on a book whose group is short, every line of that
+    group buys. Written down here because a test that only covered AC-L7's own numbers
+    would have hidden it.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -135,7 +138,7 @@ def test_the_front_of_the_group_queue_is_still_served_while_the_group_is_short()
         front = _components(service.proposal_for(first))
         back = _components(ProjectSupplyService(db).proposal_for(behind))
 
-    assert [(c["kind"], c["qty"]) for c in front] == [("reserve", "80")]
+    assert [(c["kind"], c["qty"]) for c in front] == [("buy", "80")]
     assert [(c["kind"], c["qty"]) for c in back] == [("buy", "9000")]
 
 
