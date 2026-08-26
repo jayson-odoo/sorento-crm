@@ -377,6 +377,28 @@ def test_the_grand_total_label_sits_in_the_column_before_the_first_measure():
     assert sheet.cell(row=sheet.max_row, column=_column(sheet, "AGENT")).font.bold
 
 
+def test_the_grand_total_label_stays_inside_the_table_when_every_column_is_money():
+    """AC-G9. A view of nothing but measures leaves no cell in the row free for the label,
+    and it used to be written one column PAST the table: outside the border, outside the
+    print area, and the first thing a reader loses. It takes a bordered row of its own
+    directly above the totals instead, and the money stays where it was."""
+    sheet = _rendered(["amount", "fee"])
+    money_row = sheet.max_row
+    label_row = money_row - 1
+
+    assert sheet.cell(row=label_row, column=1).value == "GRAND TOTAL"
+    assert sheet.cell(row=label_row, column=1).font.bold
+    # Inside the table: every cell of the label row is bordered, like the rest.
+    for column in range(1, sheet.max_column + 1):
+        assert sheet.cell(row=label_row, column=column).border.left.style == "thin"
+        assert sheet.cell(row=money_row, column=column).border.left.style == "thin"
+    # Nothing was written over, and nothing landed past the last column.
+    assert float(sheet.cell(row=money_row, column=1).value) == 1250.25
+    assert float(sheet.cell(row=money_row, column=2).value) == 10.50
+    assert sheet.cell(row=money_row, column=3).value is None
+    assert sheet.cell(row=label_row, column=3).value is None
+
+
 def test_a_date_column_is_a_real_date_not_a_string():
     """A text date cannot be sorted, filtered or formatted in Excel, which is most of what
     somebody opens the file to do."""

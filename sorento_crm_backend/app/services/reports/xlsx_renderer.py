@@ -268,24 +268,38 @@ def _write_detail_total(
 ) -> None:
     """GRAND TOTAL: the label beside the money, the money as the engine computed it.
 
-    The client types the label a column or two left of the first amount, where the eye
-    lands on its way to the number. It takes the cell immediately before the first measure,
-    and when that cell carries a total of its own (a view whose first column IS a measure)
-    the first cell that does not - writing the label over money would lose it silently.
+    ONE rule, in three steps, because the columns are whatever the user left on screen:
+
+    1. The cell immediately BEFORE the first measure, which is where the client types it -
+       a column or two left of the first amount, where the eye lands on its way to it.
+    2. When that cell carries a total of its own (a view whose first column IS a measure,
+       so there is nothing to its left), the first cell in the row that does not. The label
+       then sits to the RIGHT of the money rather than over it: writing it over a total
+       would lose the number silently.
+    3. When EVERY visible column is a totalled measure, there is no free cell at all, so
+       the label takes column 1 of a bordered row directly ABOVE the totals. It used to be
+       written one column past the table - outside the border and outside the print area.
+
+    The label never leaves the table, and it never replaces an amount.
     """
     totalled = {c.key for c in columns if c.type == "money" and c.key in detail.totals}
     measure_positions = [positions[c.key] for c in columns if c.type == "money"]
     preferred = min(measure_positions) - 1 if measure_positions else 1
     free = [positions[c.key] for c in columns if c.key not in totalled]
-    label_column = preferred if preferred in free else (min(free) if free else len(columns) + 1)
+    label_column = preferred if preferred in free else (min(free) if free else 1)
+    label_row = row
+    if not free:
+        # Step 3: the money moves DOWN a row, so the label can have one of its own.
+        row += 1
 
-    cell = sheet.cell(row=row, column=label_column, value="GRAND TOTAL")
+    cell = sheet.cell(row=label_row, column=label_column, value="GRAND TOTAL")
     cell.font = _TOTAL_FONT
     cell.alignment = _LEFT
     for column in columns:
         if column.key in totalled:
             _write_money(sheet, row, positions[column.key], detail.totals[column.key], bold=True)
     for index in range(1, len(columns) + 1):
+        sheet.cell(row=label_row, column=index).border = _BOX
         sheet.cell(row=row, column=index).border = _BOX
 
 

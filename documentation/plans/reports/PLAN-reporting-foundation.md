@@ -485,6 +485,10 @@ Z..AA, `TOTAL SALES` on row 26 and two labelled year-total rows on 28 and 29.
 10. **The GRAND TOTAL label sits in the column immediately before the first measure.** The
     client types it in D (two columns before the money); "immediately before the first
     measure" is the rule that holds for any column set, including one the user reordered.
+    Two fallbacks keep it inside the table when the columns leave no room (AC-G9): the
+    first column carrying no total when the preferred one does, and column 1 of a bordered
+    row directly above the totals when every visible column is a totalled measure. It used
+    to be written one column PAST the table there, outside the border and the print area.
 
 **Pre-S6 saved column orders.** An order saved before the band was fixed names the old
 derived ids (`expected_delivery_year__2026`), which no current result holds, so the screen

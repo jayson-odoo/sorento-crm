@@ -185,10 +185,17 @@ screen (AC-C5 stands).
   YEAR OF DELIVERY over the four years, OTHERS when shown). A single-level header is
   merged vertically over rows 6-7, a group header horizontally over its members, both
   bold and bordered, and column widths come from the definition.
-- **AC-G9 [BE].** A money cell carries the accounting format `"RM"#,##0.00`, so zero
-  prints RM - ; a missing money cell prints "-" as the client's sheet does. The detail
-  GRAND TOTAL row is labelled in the column immediately before the first measure, bold,
-  and its values are still what the engine computed (AC-D4).
+- **AC-G9 [BE].** A money cell carries the client's own accounting format,
+  `_-"RM"* #,##0.00_-;-"RM"* #,##0.00_-;_-"RM"* "-"??_-;_-@_-`, which pins the RM to the
+  left of the cell, aligns the digits on the decimal and prints a zero as `RM -`; a missing
+  money cell prints "-" as the client's sheet does. The detail GRAND TOTAL row is labelled
+  by ONE rule in three steps: (a) the column immediately before the first measure; (b) when
+  that column carries a total of its own - a view whose FIRST column is a measure, so there
+  is nothing to its left - the first column in the row that carries none, which puts the
+  label to the right of the money rather than over it; (c) when EVERY visible column is a
+  totalled measure, column 1 of a bordered row directly above the totals. The label is bold,
+  always inside the bordered table, never written over an amount, and the totals are still
+  what the engine computed (AC-D4).
 - **AC-G10 [BE].** SUMMARY mirrors the client's: uppercase headers, month headers JAN'25 ..
   merged over their measures, a `TOTAL VALUE (BY SALESMAN)` group last, a `TOTAL SALES`
   row of column totals, then one labelled row per measure -
