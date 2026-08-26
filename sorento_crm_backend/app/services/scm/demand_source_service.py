@@ -1,14 +1,26 @@
-"""What the demand split set aside, counted and named.
+"""Project demand that is AWAITING CS - counted and named, never netted.
 
-> "order inquiry is only for project side" - and the user's decision (2026-08-10) on the
-> order that falls between the rules: a project SO no Order Inquiry names is "set aside and
-> counted", NOT demand and NOT silently dropped.
+> "order inquiry is only for project side" - and, since P3 (captain, 26 Aug 2026), only
+> the Order Inquiry: project demand is the un-linked remainder of raised OI rows and
+> nothing else counts.
 
-`scm.committed_v` excludes those orders (the order-level rule in `demand.py`). This module
-is the other half of that decision: the report that says how much was excluded, so a
-planner looking at a smaller-than-expected plan can see WHY rather than distrusting the
-engine. Same shape as `unplanned_demand_service` - totals plus a few named documents,
-because a bare number is something the reader can do nothing with.
+So a project-class sales-order line becomes plan demand only once CS has decided it on the
+fulfilment board and raised the Buy. Until then it is set aside, and this module is the
+report that says how much - so a planner looking at a smaller-than-expected plan sees WHY
+rather than distrusting the engine, and so the work sitting on CS's desk has a number.
+
+Two kinds of order land here, and P3 is what joined them:
+
+* a project SO no Order Inquiry ever named (the original S13b case, 2026-08-10);
+* a SHEET-ORIGIN project SO - `demand_origin = 'scm_order_inquiry'`, the old Joey feed -
+  that nobody has confirmed on the board. It used to be netted through `committed_v`'s
+  sheet leg, which is how M310-CR-PJ showed 16 units at BRW-BB with every one of its
+  inquiry rows already placed. QP3 ruled there is no backfill: those orders wait for CS.
+
+The test is therefore the DECISION, not the origin stamp: a project line an active supply
+decision covers is CS's, and every other open project line is waiting for them. Same shape
+as `unplanned_demand_service` - totals plus a few named documents, because a bare number is
+something the reader can do nothing with.
 """
 from __future__ import annotations
 
@@ -18,7 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
-from app.services.scm.demand import ORDER_INQUIRY_ORIGIN, PROJECT_CLASS
+from app.services.scm.demand import PLAN_DEMAND_LINE_SQL, PROJECT_CLASS
 
 #: A few documents named so the reader can go and look at one.
 SAMPLE_SIZE = 5
@@ -32,17 +44,17 @@ _OPEN_LINE = (
     "AND sol.purchasing_status <> 'covered' "
     f"AND {_OPEN_QTY} > 0"
 )
-# The orders the split excludes: project class, not originated by the Order Inquiry.
-_SET_ASIDE = (
-    f"so.demand_class = '{PROJECT_CLASS}' "
-    f"AND (so.demand_origin IS NULL OR so.demand_origin <> '{ORDER_INQUIRY_ORIGIN}')"
-)
+# What the split excludes: a project-class line no active supply decision covers.
+# `PLAN_DEMAND_LINE_SQL` is imported rather than restated, so "set aside" means precisely
+# "a line the fulfilment board has not decided" and the two cannot drift - it is the same
+# predicate the board itself reads as NOT covered.
+_SET_ASIDE = f"so.demand_class = '{PROJECT_CLASS}' AND {PLAN_DEMAND_LINE_SQL}"
 
 
 def set_aside_project_demand(
     db: Session, *, product_ids: Optional[Sequence[str]] = None
 ) -> dict[str, Any]:
-    """Project-class open demand the plan did NOT count, because no inquiry named it.
+    """Project-class open demand the plan did NOT count, because CS has not decided it.
 
     `product_ids` narrows the report to the products a caller is looking at (a run's own
     products, a test's marker set); None reports the whole book.

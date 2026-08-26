@@ -66,6 +66,7 @@ def test_migration_bodies_are_frozen_not_imported():
         "374_uom_decimal_places",
         "376_scm_channel_read_model",
         "384_committed_v_line_decision",
+        "424_committed_v_project_oi_only",
     ):
         imported = app_imports(_VERSIONS / f"{name}.py")
         assert imported == [], (
@@ -78,16 +79,16 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `423_committed_v_form_rows` (a leg for the instruction the Order
-    Inquiry Form raised with no sales-order line to read a product or a location off),
-    which replaces the body `422_committed_v_link_netting` installed. Every superseded
-    freeze stays exactly as it shipped, which is the whole point of the guard, so 422's,
-    384's, 376's and 374's are checked below rather than updated here.
+    The newest one is `424_committed_v_project_oi_only` (the SHEET leg retired, so project
+    demand is the Order Inquiry alone), which replaces the body `423_committed_v_form_rows`
+    installed. Every superseded freeze stays exactly as it shipped, which is the whole
+    point of the guard, so 423's, 422's, 384's, 376's and 374's are checked below rather
+    than updated here.
     """
-    m423 = _load("423_committed_v_form_rows")
-    assert _normalize(m423._AS_OF_423) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 423; "
-        "add a new migration that freezes the new body (423's pattern), so a from-zero "
+    m424 = _load("424_committed_v_project_oi_only")
+    assert _normalize(m424._AS_OF_424) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 424; "
+        "add a new migration that freezes the new body (424's pattern), so a from-zero "
         "replay stays true to history."
     )
 
@@ -126,7 +127,7 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     have to be pinned equal to the originals or a downgrade quietly installs a body nobody
     wrote. Five links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
     puts 374 directly beneath it, so 346 would be a step too far back), 384 restores
-    376 for the same reason, 422 restores 384 and 423 restores 422.
+    376 for the same reason, 422 restores 384, 423 restores 422 and 424 restores 423.
     """
     m346 = _load("346_scm_demand_origin_split")
     m374 = _load("374_so_supply_decisions")
@@ -134,12 +135,14 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     m384 = _load("384_committed_v_line_decision")
     m422 = _load("422_committed_v_link_netting")
     m423 = _load("423_committed_v_form_rows")
+    m424 = _load("424_committed_v_project_oi_only")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
     assert _normalize(m384._AS_OF_376) == _normalize(m376._AS_OF_376)
     assert _normalize(m422._AS_OF_384) == _normalize(m384._AS_OF_384)
     assert _normalize(m423._AS_OF_422) == _normalize(m422._AS_OF_422)
+    assert _normalize(m424._AS_OF_423) == _normalize(m423._AS_OF_423)
 
 
 @requires_pg

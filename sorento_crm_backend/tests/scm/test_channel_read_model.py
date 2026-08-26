@@ -1,30 +1,30 @@
-"""S2-BE-3: the channel-aware read model (PLAN-scm-front-planning.md 6.4, 3.5, 4).
+"""The channel-aware read model, as P3 and P4 leave it
+(`PLAN-scm-purchasing-uat-journey.md`; PLAN-scm-front-planning.md 6.4, 3.5, 4).
 
-`scm.committed_v` today emits one aggregate `committed` column per (product_id,
-warehouse_id). This slice adds `project_committed`, `retail_committed` and
-`unclassified_committed` to that SAME row, so `committed` stays their sum and every existing
-consumer (`scm.net_position_v`, the reorder engine) keeps its cardinality and join keys.
+`scm.committed_v` emits one aggregate `committed` column per (product_id, warehouse_id)
+plus its channel split, so `committed` stays the sum and every existing consumer
+(`scm.net_position_v`, the reorder engine) keeps its cardinality and join keys.
 
 Classification is `sales_orders.demand_class`, never location (AC-E01, AC-E02):
 
 * `demand_class = 'retail'` -> `retail_committed` at the line's own fulfilment warehouse.
-* `demand_class = 'project'` with `demand_origin = 'scm_order_inquiry'` (the legacy sheet
-  leg) -> `project_committed`, but ONLY while the SO has no active
-  `projects.so_supply_decisions` row (section 4). Once CS confirms a decision, the sheet
-  leg stops counting and the confirmed Buy residual - read from
-  `projects.order_inquiry_rows` through `core_sales_order_line_id` - counts instead, once
-  (AC-E04).
-* A fifth column, `project_confirmed_committed`, carries the CONFIRMED leg ALONE.
-  `project_committed` stays the sum of both legs because plan 6.4 says the Project column
-  reads both, but only the confirmed leg is FIRM: AC-E04 defines Project need as "confirmed
-  unplaced Buy" and AC-E05 bypasses the reorder trigger for "confirmed unplaced Project
-  Buy". The sheet leg is a project-class demand READING that ordinary netting is supposed
-  to see (S13b: "the book supplies the rest"), so the engine reads its firm figure off this
-  column and leaves the sheet remainder inside the netted basis.
-* `demand_class IS NULL` -> `unclassified_committed`.
-* `demand_class = 'project'` WITHOUT the sheet origin and without an active decision is set
-  aside today (PLAN_DEMAND_ORDER_SQL): it must stay out of all three columns, not just the
-  old `committed` one.
+* `demand_class IS NULL` -> `retail_committed` as well (P4). Nothing is unclassified any
+  more: migration 425 stamped every NULL retail and the SO import refuses a file that
+  would create another, so a stray NULL reads as the book-direct channel. The
+  `unclassified_committed` column survives as a constant 0 because `CREATE OR REPLACE
+  VIEW` may only append columns.
+* `demand_class = 'project'` -> counted NOWHERE from the sales-order book (P3). Project
+  demand is the Order Inquiry alone: the un-linked remainder of a raised ORDER /
+  ORDER BACK row, either pointing at an active `projects.so_supply_decisions` row (the
+  CONFIRMED leg, landed at the reconciled core line's warehouse) or raised by the CS form
+  with no decision at all (the FORM leg, landed at the row's own stated location). The old
+  SHEET leg - an open line of a `demand_origin = 'scm_order_inquiry'` order - is retired:
+  such an order is awaiting CS, and `demand_source_service.set_aside_project_demand`
+  counts and names it instead of the plan netting it.
+* `project_committed` and `project_confirmed_committed` are therefore EQUAL on every row.
+  The engine reads the confirmed column, because that is the figure AC-E05 bypasses the
+  reorder trigger for, and it must name the fact it means rather than inherit a display
+  column.
 
 Every test installs the CURRENT `app.services.scm.demand.COMMITTED_V_SQL` under a private
 schema, exactly like `test_demand_reads_the_decision.py` - never `scm.committed_v` itself,
@@ -221,17 +221,16 @@ def test_committed_v_gains_three_channel_columns_summing_to_committed(db, world)
 
     row = _row(db, world)
 
-    assert row["retail_committed"] == 30
-    assert row["project_committed"] == 20
-    assert row["unclassified_committed"] == 5
-    assert row["committed"] == 55 == (
+    # Retail plus the unclassified line, which reads as retail now (P4). The project line
+    # counts nowhere: the book does not speak for the project channel (P3).
+    assert row["retail_committed"] == 35
+    assert row["project_committed"] == 0
+    assert row["unclassified_committed"] == 0
+    assert row["committed"] == 35 == (
         row["project_committed"] + row["retail_committed"] + row["unclassified_committed"]
     )
-    # `committed` is still the sum of exactly THOSE three. The confirmed column is a
-    # subset of `project_committed`, never a fourth addend - adding it would count the
-    # confirmed Buy twice.
     assert row["project_confirmed_committed"] == 0, (
-        "the sheet leg is not confirmed Buy: nothing here points at an active decision"
+        "nothing here points at an Order Inquiry row, so there is no project demand"
     )
 
 
@@ -246,43 +245,55 @@ def test_retail_class_line_lands_in_retail_committed_at_its_own_warehouse(db, wo
     assert row["unclassified_committed"] == 0
 
 
-def test_project_class_with_sheet_origin_lands_in_project_committed(db, world):
-    """The legacy sheet leg (AC-E04): `demand_origin='scm_order_inquiry'` is what makes an
-    unconfirmed project-class line count at all."""
+def test_a_sheet_origin_project_line_counts_nowhere(db, world):
+    """P3, and the M310-CR-PJ case in miniature: the old sheet leg is retired.
+
+    A `demand_origin = 'scm_order_inquiry'` project order that nobody has confirmed on the
+    fulfilment board used to be netted as project demand, which is why M310-CR-PJ read 16
+    units at BRW-BB with every one of its inquiry rows already placed. It is awaiting CS
+    now - counted and named by `set_aside_project_demand`, and absent from every column
+    here.
+    """
     _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")
 
     row = _row(db, world)
 
-    assert row["project_committed"] == 18
-    # ... and it is NOT firm. The sheet leg is read as project-class demand and netted
-    # like any other commitment (S13b); only the confirmed leg bypasses the trigger.
+    assert row["committed"] == 0
+    assert row["project_committed"] == 0
     assert row["project_confirmed_committed"] == 0
     assert row["retail_committed"] == 0
     assert row["unclassified_committed"] == 0
 
 
-def test_null_demand_class_lands_in_unclassified_committed(db, world):
-    """AC-E02: a missing class is an exception, never folded into retail or dropped."""
+def test_null_demand_class_reads_as_retail(db, world):
+    """P4 / QP1: nothing is unclassified.
+
+    Migration 425 stamped every NULL retail and the SO import now refuses a file that would
+    make another, so a stray NULL here is a book-direct order and reads as one - never a
+    fourth column the plan page has to show and nobody can act on.
+    """
     _line(db, world, qty=9, demand_class=None)
 
     row = _row(db, world)
 
-    assert row["unclassified_committed"] == 9
+    assert row["retail_committed"] == 9
+    assert row["unclassified_committed"] == 0
     assert row["project_committed"] == 0
-    assert row["retail_committed"] == 0
 
 
-def test_project_class_fulfilled_from_brw_stays_project(db, world):
-    """AC-E02: location never classifies demand. Fulfilled from the BRW-coded warehouse,
-    the persisted class still wins - it is not reclassified retail because of where it is
-    filled, and it is not double counted at the OWN warehouse either."""
-    _line(db, world, warehouse=world["brw"], qty=14,
-          demand_class="project", demand_origin="scm_order_inquiry")
+def test_confirmed_project_buy_fulfilled_from_brw_stays_project(db, world):
+    """AC-E02: location never classifies demand. Landed at the BRW-coded warehouse - the
+    reconciled core line's own fulfilment location - the Buy is still project, not
+    reclassified retail because of where it is filled, and not double counted at the OWN
+    warehouse either."""
+    _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["brw"].id,
+                   buy_qty=14)
 
     brw_row = _row(db, world, warehouse=world["brw"])
     own_row = _row(db, world, warehouse=world["own"])
 
     assert brw_row["project_committed"] == 14
+    assert brw_row["project_confirmed_committed"] == 14
     assert brw_row["retail_committed"] == 0
     assert own_row["committed"] == 0
 
@@ -443,10 +454,12 @@ def test_a_placed_or_actioned_inquiry_row_contributes_nothing(db, world):
 
 
 def test_confirmed_decision_and_sheet_origin_counts_the_confirmed_buy_once(db, world):
-    """Section 4: "a sheet-named SO that CS later confirms counts once: the confirmed Buy
-    replaces the sheet quantity." The core SO here carries BOTH the old sheet-origin stamp
-    (qty 20) and a confirmed decision with a DIFFERENT Buy residual (qty 8) - the answer
-    must be 8, never 20 and never 28.
+    """A sheet-named SO that CS has confirmed counts once: the confirmed Buy is the answer.
+
+    The core SO here carries BOTH the old sheet-origin stamp (qty 20) and a confirmed
+    decision with a DIFFERENT Buy residual (qty 8) - the answer must be 8, never 20 and
+    never 28. True under the per-line sheet rule that P3 retired, and true now for the
+    simpler reason that the book contributes nothing project-class at all.
     """
     so, core_line = _line(
         db, world, qty=20, demand_class="project", demand_origin="scm_order_inquiry",
@@ -479,14 +492,13 @@ def test_two_confirmed_legs_in_one_session_register_distinct_projects(db, world)
     assert _row(db, world)["project_confirmed_committed"] == 7
 
 
-def test_project_confirmed_committed_counts_only_the_confirmed_leg(db, world):
-    """The two legs at ONE location, from two different orders, and the split between them.
+def test_project_confirmed_committed_is_the_whole_project_column(db, world):
+    """P3: the two Project columns agree, because there is only one Project leg left.
 
-    `project_committed` is the Project COLUMN and reads both legs (plan 6.4). Only the
-    confirmed leg is firm (AC-E04, AC-E05), so `project_confirmed_committed` must exclude
-    the sheet quantity entirely rather than merely rank behind it - the engine adds the
-    confirmed figure past the reorder trigger, and a sheet quantity riding along there
-    buys stock a shared pool already holds.
+    A sheet-origin project order sits beside a confirmed Buy at the same location. Before
+    P3 the column read 26 and the firm figure 8, and the 18-unit difference was netted
+    alongside Retail - which is the double handling the captain saw. Now the sheet order is
+    awaiting CS and the answer is 8 in both columns.
     """
     _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")
     _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["own"].id,
@@ -494,25 +506,25 @@ def test_project_confirmed_committed_counts_only_the_confirmed_leg(db, world):
 
     row = _row(db, world)
 
-    assert row["project_committed"] == 26
+    assert row["project_committed"] == 8
     assert row["project_confirmed_committed"] == 8
     # Still one row, and `committed` still the sum of the three channel columns.
-    assert row["committed"] == 26 == (
+    assert row["committed"] == 8 == (
         row["project_committed"] + row["retail_committed"] + row["unclassified_committed"]
     )
 
 
-def test_mixed_legs_from_different_sos_plus_retail_and_unclassified_do_not_double_count(
+def test_mixed_orders_at_one_location_do_not_double_count(
     db, world,
 ):
-    """The full breadth in one place: a sheet-origin project SO (order A), a confirmed
-    Buy read through a DIFFERENT order's Order Inquiry (order B), a retail line and an
-    unclassified line, all landing at the SAME (product, warehouse). Every channel must
-    keep its own figure and `committed` must still equal exactly the three channel columns
-  - the confirmed leg is a SUBSET of `project_committed`, never a fourth addend, so
-    summing all four would double count it.
+    """The full breadth in one place: a sheet-origin project SO (order A, awaiting CS), a
+    confirmed Buy read through a DIFFERENT order's Order Inquiry (order B), a retail line
+    and a class-less line, all landing at the SAME (product, warehouse). Every channel
+    keeps its own figure and `committed` still equals exactly the channel columns - the
+    confirmed leg IS `project_committed` now, never a fourth addend, so summing all four
+    would double count it.
     """
-    _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")  # order A, sheet leg
+    _line(db, world, qty=18, demand_class="project", demand_origin="scm_order_inquiry")  # order A, awaiting CS
     _confirmed_leg(db, product_id=world["product"].id, warehouse_id=world["own"].id,
                    buy_qty=8)  # order B, confirmed leg
     _line(db, world, qty=15, demand_class="retail")
@@ -520,11 +532,11 @@ def test_mixed_legs_from_different_sos_plus_retail_and_unclassified_do_not_doubl
 
     row = _row(db, world)
 
-    assert row["project_committed"] == 26, "sheet (18) + confirmed (8), two different SOs"
-    assert row["project_confirmed_committed"] == 8, "the confirmed leg alone"
-    assert row["retail_committed"] == 15
-    assert row["unclassified_committed"] == 5
-    assert row["committed"] == 46 == (
+    assert row["project_committed"] == 8, "the confirmed Buy, and order A counts nowhere"
+    assert row["project_confirmed_committed"] == 8
+    assert row["retail_committed"] == 20, "15 retail plus the class-less 5 (P4)"
+    assert row["unclassified_committed"] == 0
+    assert row["committed"] == 28 == (
         row["project_committed"] + row["retail_committed"] + row["unclassified_committed"]
     )
 
@@ -561,9 +573,8 @@ def _recs(db, run_id, product_id, warehouse_id):
 
 
 def test_recommendation_inputs_carry_the_channel_need_breakdown(scm_app):
-    """AC-F05 / AC-F07: the frozen per-location snapshot must state its Project, Retail and
-    unclassified need SEPARATELY, and the unclassified figure must stay out of the sized
-    order quantity even though it is visible.
+    """AC-F05 / AC-F07: the frozen per-location snapshot states its Project and Retail need
+    SEPARATELY, and there is no third field for it to state (P4).
     """
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "ZZTCHRM-RUN-A")
@@ -582,10 +593,12 @@ def test_recommendation_inputs_carry_the_channel_need_breakdown(scm_app):
     assert rows, "a firm project buy plus outstanding retail demand must trigger a buy"
     inputs = rows[0]["inputs"]
     assert inputs["project_need"] == 12
-    assert inputs["retail_need"] == 30
-    assert inputs["unclassified_need"] == 7
-    # Unclassified is visible but never sized into the order (AC-E06 at the location level).
-    assert float(rows[0]["rounded_qty"] or 0) == 42.0
+    # The class-less 7 is retail demand now (P4), so it is netted and SIZED like any other
+    # retail quantity rather than carried in a column of its own and excluded.
+    assert inputs["retail_need"] == 37
+    assert "unclassified_need" not in inputs
+    assert "project_sheet_need" not in inputs
+    assert float(rows[0]["rounded_qty"] or 0) == 49.0
 
 
 def test_project_need_bypasses_net_position_subtraction(scm_app):
@@ -611,18 +624,13 @@ def test_project_need_bypasses_net_position_subtraction(scm_app):
     assert float(rows[0]["rounded_qty"] or 0) >= 5.0
 
 
-def test_sheet_leg_project_demand_is_netted_and_buys_nothing_when_stock_covers_it(scm_app):
-    """The ruling this column exists for (plan 5.3 / AC-E04 / AC-E05, S13b).
+def test_a_sheet_origin_project_order_reaches_the_plan_as_nothing_at_all(scm_app):
+    """P3 through the real engine: an order awaiting CS is not demand, netted or otherwise.
 
     A sheet-origin project SO - `demand_origin = 'scm_order_inquiry'` with NO confirmed CS
-    decision - is a project-class demand READING, not firm Buy. 20 demanded against 100 on
-    hand is covered, so nothing may be bought: the sheet quantity stays inside the netted
-    basis exactly as it did before the channel split, and `project_need` (the figure that
-    bypasses the trigger) is 0.
-
-    This is the small-scale form of `test_pool_netting_parity.
-    test_a_shared_pool_covers_its_bins_so_nothing_is_bought`, which is the same rule with a
-    shared pool doing the covering.
+    decision - used to be a project-class demand READING that ordinary netting saw. It is
+    now awaiting CS on the fulfilment board: the plan neither buys it nor suggests covering
+    it, and `demand_source_service.set_aside_project_demand` is where it is counted.
     """
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "ZZTCHRM-RUN-C")
@@ -636,37 +644,31 @@ def test_sheet_leg_project_demand_is_netted_and_buys_nothing_when_stock_covers_i
     created = run_svc.create_run(db, ["ZZTCHRM-RUN-C"], "warehouse", enqueue=False)
     run_svc.run_reorder(created["run_id"], db=db)
 
-    rows = _recs(db, created["run_id"], pid, wid)
-    assert [r["rec_type"] for r in rows] == ["covered"], (
-        "stock covers the sheet leg, so the engine may only SUGGEST using it - a buy here "
-        "means unconfirmed project-class demand was treated as firm"
+    types = [r["rec_type"] for r in _recs(db, created["run_id"], pid, wid)]
+    assert "buy" not in types, "an order nobody has decided must not be bought"
+    assert "covered" not in types, (
+        "a `covered` row would say the plan HAS this demand and is suggesting stock for "
+        "it; the demand is not the plan's until CS raises the inquiry row"
     )
-    inputs = rows[0]["inputs"]
-    assert inputs["project_need"] == 0, "nothing is confirmed, so nothing is firm"
-    assert inputs["project_sheet_need"] == 20, (
-        "the sheet quantity is still stated on the frozen row - it is netted, not dropped"
-    )
-    # Netted like any other commitment: 100 on hand less 20 committed, which is what the
-    # engine saw before the channel split existed.
-    assert inputs["retail_net"] == 80
 
 
-def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm_app):
-    """AC-F05/F07 at the wire: `GET .../reorder-runs/{id}/recommendations` must expose
-    `project_sheet_need` beside `project_need` / `retail_need` / `unclassified_need` - the
-    same frozen figures `test_sheet_leg_project_demand_is_netted_and_buys_nothing_when_
-    stock_covers_it` pins directly on `inputs` above, read back here through the route the
-    FE actually calls rather than the ORM.
+def test_recommendations_api_states_two_channels_and_no_sheet_or_unclassified_field(scm_app):
+    """AC-F05/F07 at the wire, as P3 and P4 leave it.
+
+    `GET .../reorder-runs/{id}/recommendations` exposes `project_need` and `retail_need`
+    and nothing else channel-shaped: `project_sheet_need` described a leg that no longer
+    exists, and `unclassified_need` a channel that no longer occurs, so a field left on the
+    wire would only invite the plan page to grow the column back.
     """
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
     app, db = _client(scm_app, "purchasing")
     wid = _mk_warehouse(db, "ZZTCHRM-RUN-D")
     pid = _mk_product(db, "ZZTCHRM-RUN-D")
-    _mk_stock(db, pid, wid, 100)
+    _mk_stock(db, pid, wid, 0)
     _link(db, pid, _mk_supplier(db, "ZZTCHRM Run Supplier D"), moq=None, mult=None)
-    _core_line_for_run(db, pid, wid, qty=20, demand_class="project",
-                       demand_origin="scm_order_inquiry")
+    _core_line_for_run(db, pid, wid, qty=20, demand_class="retail")
+    _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=6)
     db.flush()
 
     created = run_svc.create_run(db, ["ZZTCHRM-RUN-D"], "warehouse", enqueue=False)
@@ -677,19 +679,20 @@ def test_recommendations_api_carries_the_sheet_leg_beside_the_confirmed_need(scm
                     params={"page": 1, "limit": 50})
         assert res.status_code == 200, res.text
         row = next(r for r in res.json()["data"] if r["sku"] == "ZZTCHRM-RUN-D")
-        assert row["project_need"] == 0, "nothing confirmed here, so nothing is firm"
-        assert row["project_sheet_need"] == 20, "the sheet quantity must reach the wire"
-        assert row["unclassified_need"] == 0
+        assert row["project_need"] == 6, "the un-linked remainder of the raised row"
+        assert row["retail_need"] == 20
+        assert "project_sheet_need" not in row
+        assert "unclassified_need" not in row
+        assert "unclassified_committed" not in row
 
 
 def test_recommendations_api_carries_the_committed_split_summing_to_outstanding_sales(
     scm_app,
 ):
-    """front-planning follow-up (19-20 Aug): `project_committed` / `retail_committed` /
-    `unclassified_committed` - the RAW `committed_v` split the grouped Buy view's channel
-    columns sum across a product's locations - must reach the wire alongside
-    `outstanding_sales` (`committed`) and sum to it exactly, the same invariant
-    `committed_v` guarantees per location (AC-F07).
+    """front-planning follow-up (19-20 Aug): `project_committed` / `retail_committed` - the
+    RAW `committed_v` split the grouped Buy view's channel columns sum across a product's
+    locations - must reach the wire alongside `outstanding_sales` (`committed`) and sum to
+    it exactly, the same invariant `committed_v` guarantees per location (AC-F07).
     """
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
@@ -712,13 +715,13 @@ def test_recommendations_api_carries_the_committed_split_summing_to_outstanding_
                     params={"page": 1, "limit": 50})
         assert res.status_code == 200, res.text
         row = next(r for r in res.json()["data"] if r["sku"] == "ZZTCHRM-RUN-E")
-        assert row["project_committed"] == 18
-        assert row["retail_committed"] == 30
-        assert row["unclassified_committed"] == 7
-        assert row["outstanding_sales"] == 55
+        # The sheet-origin project order is awaiting CS and counts nowhere (P3); the
+        # class-less 7 is retail (P4).
+        assert row["project_committed"] == 0
+        assert row["retail_committed"] == 37
+        assert row["outstanding_sales"] == 37
         assert (
             row["project_committed"] + row["retail_committed"]
-            + row["unclassified_committed"]
         ) == row["outstanding_sales"]
 
 
@@ -734,20 +737,23 @@ def test_recommendations_api_carries_the_committed_split_summing_to_outstanding_
 # per-warehouse one.
 #
 # The rule being pinned (AC-E01, AC-E02, AC-F07): one open quantity lands in EXACTLY
-# ONE of `project_need` (confirmed, firm), `project_sheet_need` (stated, netted inside
-# Retail), `retail_need`'s netted basis, or `unclassified_need`. Never two.
+# ONE of `project_need` (the un-linked Order Inquiry remainder, firm) or `retail_need`'s
+# netted basis. Never two, and there is no third place for one to hide.
 
 #: One SO per class at one location. Chosen so every figure below is unambiguous:
 #: no two of them are equal, and no sum of two equals a third.
 _DJ_RETAIL = 30
+#: A sheet-origin project order nobody has decided. It is AWAITING CS since P3, so it
+#: contributes to no figure here at all - which is exactly what the seeding proves.
 _DJ_SHEET = 9
-_DJ_UNCLASSIFIED = 7
+#: An order with no stated class. Retail since P4, and therefore netted and sized like
+#: any other retail quantity.
+_DJ_CLASSLESS = 7
 _DJ_CONFIRMED = 12
 #: Retail replenishment the engine must size: the netted basis is Retail plus the
-#: unconfirmed sheet leg, and nothing else. Firm Project Buy is added past the trigger
-#: and unclassified demand is excluded entirely (AC-E05, AC-E06).
-_DJ_RETAIL_NEED = _DJ_RETAIL + _DJ_SHEET                       # 39
-_DJ_ORDER = _DJ_RETAIL_NEED + _DJ_CONFIRMED                    # 51
+#: class-less order, and nothing else. Firm Project Buy is added past the trigger.
+_DJ_RETAIL_NEED = _DJ_RETAIL + _DJ_CLASSLESS                   # 37
+_DJ_ORDER = _DJ_RETAIL_NEED + _DJ_CONFIRMED                    # 49
 
 
 def _seed_one_of_each_class(db, pid, wid):
@@ -755,7 +761,7 @@ def _seed_one_of_each_class(db, pid, wid):
     _core_line_for_run(db, pid, wid, qty=_DJ_RETAIL, demand_class="retail")
     _core_line_for_run(db, pid, wid, qty=_DJ_SHEET, demand_class="project",
                        demand_origin="scm_order_inquiry")
-    _core_line_for_run(db, pid, wid, qty=_DJ_UNCLASSIFIED, demand_class=None)
+    _core_line_for_run(db, pid, wid, qty=_DJ_CLASSLESS, demand_class=None)
     _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=_DJ_CONFIRMED)
     db.flush()
 
@@ -773,17 +779,18 @@ def _summary(db, run_id, pid):
 
 def _assert_channels_are_disjoint(inputs):
     """Each seeded quantity in exactly one field, and the sized order excluding the rest."""
-    assert inputs["project_need"] == _DJ_CONFIRMED, "confirmed Buy is the firm leg"
-    assert inputs["project_sheet_need"] == _DJ_SHEET, (
-        "the unconfirmed sheet leg is stated on its own, not folded into the firm figure"
+    assert inputs["project_need"] == _DJ_CONFIRMED, (
+        "the un-linked Order Inquiry remainder is the firm leg, and the whole project leg"
     )
-    assert inputs["unclassified_need"] == _DJ_UNCLASSIFIED
+    assert "project_sheet_need" not in inputs, "the sheet leg is retired (P3)"
+    assert "unclassified_need" not in inputs, "nothing is unclassified (P4)"
     assert inputs["retail_need"] == _DJ_RETAIL_NEED, (
-        "the netted basis is Retail plus the sheet leg - the confirmed leg and the "
-        "unclassified demand were taken back out of the net position before netting"
+        "the netted basis is Retail plus the class-less order - the project leg was taken "
+        "back out of the net position before netting, and the awaiting-CS order was never "
+        "in it"
     )
-    # The netted position is short exactly Retail + sheet: neither the confirmed Buy nor
-    # the unclassified demand may appear in it a second time.
+    # The netted position is short exactly Retail + class-less: the project Buy may not
+    # appear in it a second time, and the awaiting-CS order may not appear in it at all.
     assert inputs["retail_net"] == -_DJ_RETAIL_NEED
 
 
@@ -823,19 +830,19 @@ def test_per_warehouse_run_keeps_every_demand_class_in_exactly_one_channel(scm_a
     assert [r["rec_type"] for r in rows] == ["buy"]
     _assert_channels_are_disjoint(rows[0]["inputs"])
     assert float(rows[0]["rounded_qty"]) == _DJ_ORDER, (
-        "firm Buy plus netted Retail; the unclassified quantity is visible, never sized"
+        "firm Buy plus netted Retail, and the awaiting-CS order in neither"
     )
 
     row = _summary(db, created["run_id"], pid)
     assert float(row["project_buy_qty"]) == _DJ_CONFIRMED
     assert float(row["retail_replenishment_qty"]) == _DJ_RETAIL_NEED
-    assert float(row["unclassified_demand_qty"]) == _DJ_UNCLASSIFIED
+    assert float(row["unclassified_demand_qty"]) == 0.0, "nothing is unclassified (P4)"
     assert float(row["suggested_qty"]) == float(rows[0]["rounded_qty"]) == _DJ_ORDER, (
         "the product row must state the run's OWN sized buy, not a second derivation"
     )
     basis = row["channel_calculation_basis"]
-    assert basis["project_sheet_netted"] == _DJ_SHEET
-    assert basis["unclassified_excluded"] == _DJ_UNCLASSIFIED
+    assert "project_sheet_netted" not in basis, "the sheet leg is retired (P3)"
+    assert basis["unclassified_excluded"] == 0.0
     _assert_location_basis_is_named(
         basis, warehouse_code="ZZTCHRM-DJ-W", expect_locations=1)
 
@@ -875,7 +882,7 @@ def test_network_run_keeps_every_demand_class_in_exactly_one_channel(scm_app):
     row = _summary(db, created["run_id"], pid)
     assert float(row["project_buy_qty"]) == _DJ_CONFIRMED
     assert float(row["retail_replenishment_qty"]) == _DJ_RETAIL_NEED
-    assert float(row["unclassified_demand_qty"]) == _DJ_UNCLASSIFIED
+    assert float(row["unclassified_demand_qty"]) == 0.0
     assert float(row["suggested_qty"]) == float(buy["rounded_qty"]) == _DJ_ORDER
     _assert_location_basis_is_named(
         row["channel_calculation_basis"], warehouse_code="ZZTCHRM-DJ-N",
@@ -950,11 +957,11 @@ def test_a_network_sized_buy_states_its_own_replenishment_not_the_sum_of_its_cel
 def test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row(scm_app):
     """AC-F07 for the pool path: a reading is a demand statement, not an allocation one.
 
-    Two bins share a pool. A is short 40 of Retail; B holds enough for itself and carries
-    20 of unclassified demand nobody has classified. Netted over the pool the buy is 10,
-    and the allocator gives every unit of it to A - so B emits no recommendation row at
-    all. Its 20 must still reach the product row, because the product's unclassified
-    reading is a statement about demand and not about where the goods were sent.
+    Two bins share a pool. A is short 40 of Retail and holds nothing; B holds 30 against
+    20 of its own demand. Netted over the pool the position is -30, and the allocator gives
+    every unit of the buy to A - so B emits no recommendation row at all. B must still be
+    NAMED on the product row, because the basis is a statement about where the demand was
+    read and not about where the goods were sent.
     """
     _, db, _, _ = scm_app
     set_plan_grain(db, "product")
@@ -993,19 +1000,18 @@ def test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row(s
     assert str(buys[0]["warehouse_id"]) == wa
 
     row = _summary(db, created["run_id"], pid)
-    assert float(row["unclassified_demand_qty"]) == 20.0, (
-        "B was allocated nothing, so it emitted no row - its demand is still real"
+    assert float(row["retail_replenishment_qty"]) == 30.0, (
+        "the POOL is short 30 - 30 on hand against 60 of demand. B's own 20 is retail "
+        "demand since P4, so the pool now sizes for it instead of carrying it in a column "
+        "it never sized; A measured alone is short 40, which is a different fact again"
     )
-    assert float(row["retail_replenishment_qty"]) == 10.0, (
-        "the POOL was short 10; A measured alone is short 40, which is a different fact"
-    )
-    assert float(row["suggested_qty"]) == float(buys[0]["rounded_qty"]) == 10.0
+    assert float(row["suggested_qty"]) == float(buys[0]["rounded_qty"]) == 30.0
     basis = row["channel_calculation_basis"]
     _assert_location_basis_is_named(
         basis, warehouse_code="ZZTCHRM-DJ-BINB", expect_locations=2)
     by_code = {l["warehouse_code"]: l for l in basis["locations"]}
     assert by_code["ZZTCHRM-DJ-BINB"]["location_suggested_qty"] == 0.0
-    assert by_code["ZZTCHRM-DJ-BINA"]["location_suggested_qty"] == 10.0
+    assert by_code["ZZTCHRM-DJ-BINA"]["location_suggested_qty"] == 30.0
 
 
 # --------------------------------------------------------------------------- #
@@ -1023,11 +1029,11 @@ def test_a_pool_member_the_split_gave_nothing_to_still_reaches_the_product_row(s
 def test_a_covered_location_still_states_its_demand_on_the_product_row(scm_app):
     """AC-E06 / AC-F08: one product, two groups, only one of them buying.
 
-    A is short 40 of Retail and buys. B holds enough for itself and carries 20 of
-    unclassified demand, so the engine suggests using that stock (`covered`) rather than
-    deciding for the planner. The product row must show B's 20 and name B among its
-    locations, while the sized figures stay A's alone: B's netted replenishment is 0
-    because its own stock is the answer, and the suggestion is A's 40.
+    A is short 40 of Retail and buys. B holds enough for itself and carries 20 of demand of
+    its own, so the engine suggests using that stock (`covered`) rather than deciding for
+    the planner. The product row must name B among its locations, while the sized figures
+    stay A's alone: B's netted replenishment is 0 because its own stock is the answer, and
+    the suggestion is A's 40.
     """
     _, db, _, _ = scm_app
     set_plan_grain(db, "product")
@@ -1051,10 +1057,6 @@ def test_a_covered_location_still_states_its_demand_on_the_product_row(scm_app):
     )
 
     row = _summary(db, created["run_id"], pid)
-    assert float(row["unclassified_demand_qty"]) == 20.0, (
-        "B bought nothing, and its unclassified demand is a statement about the order "
-        "book rather than about the purchase"
-    )
     assert float(row["retail_replenishment_qty"]) == 40.0, (
         "sizing comes from the group that bought; a covered group replenishes 0"
     )
@@ -1064,13 +1066,12 @@ def test_a_covered_location_still_states_its_demand_on_the_product_row(scm_app):
     _assert_location_basis_is_named(
         basis, warehouse_code="ZZTCHRM-CV-B", expect_locations=2)
     by_code = {l["warehouse_code"]: l for l in basis["locations"]}
-    assert by_code["ZZTCHRM-CV-B"]["unclassified_need"] == 20.0
-    assert by_code["ZZTCHRM-CV-B"]["location_suggested_qty"] == 0.0
+    assert "unclassified_need" not in by_code["ZZTCHRM-CV-B"], "no third channel (P4)"
+    assert by_code["ZZTCHRM-CV-B"]["location_suggested_qty"] == 0.0, (
+        "B bought nothing, and it is named on the product row all the same"
+    )
     assert by_code["ZZTCHRM-CV-A"]["retail_need"] == 40.0
     assert by_code["ZZTCHRM-CV-A"]["location_suggested_qty"] == 40.0
-    assert basis["unclassified_excluded"] == 20.0, (
-        "visible and named, never inside the actionable total (AC-E06)"
-    )
 
 
 def test_a_product_the_run_only_covered_gets_no_product_row(scm_app):
