@@ -474,6 +474,53 @@ class AttachmentTypeService:
 _SHARED_FORM_ENTITY_TYPES = frozenset({"complaint", "purchase_request", "stock_inquiry"})
 
 
+def _single_active_company(scope) -> Optional[str]:
+    """The one company that may be stamped, or None. Only an unambiguous single
+    active company counts; UNSET / all-companies / multi-company stay NULL rather
+    than guess, because a wrong guess is worse than shared."""
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+    return None
+
+
+def _inherit_company_from_folder(
+    row: Attachment,
+    directory_id: Optional[str],
+    folder: Optional[AttachmentDirectory],
+    scope,
+) -> bool:
+    """Give a company-less attachment the company of the folder it was just filed
+    into. Returns True only when ``company_id`` actually changed.
+
+    For an attachment NULL is not neutral, it means SHARED (the read predicate is
+    ``company_id IS NULL OR company_id IN (scope)``), so every file that predates
+    the upload-side stamp below is still readable from every company even after a
+    user files it under, say, Purchasing. ``AttachmentDirectory`` is strictly
+    owned - its ``company_id`` is always set - so the folder the user picked is an
+    exact source for the missing company, no scope guessing needed.
+
+    ``folder`` may still be None while ``directory_id`` is set: a folder whose own
+    company_id is NULL is invisible under a single-company scope (owned rows read
+    as ``company_id IN (ids)``). In that one case there is nothing exact to copy,
+    so we fall back to the active scope exactly as ``create_attachment`` does -
+    single active company or nothing. The folder always wins when it has a company.
+
+    Three cases deliberately change nothing: an existing company is never
+    overwritten (a move must not re-home a file away from its own company), the
+    shared form entity types stay NULL so they remain readable everywhere (AC-G3),
+    and a move to root (no ``directory_id``) has no folder to inherit from.
+    """
+    if not directory_id or row.company_id is not None:
+        return False
+    if (row.entity_type or "").strip().lower() in _SHARED_FORM_ENTITY_TYPES:
+        return False
+    company_id = (folder.company_id if folder else None) or _single_active_company(scope)
+    if not company_id:
+        return False
+    row.company_id = company_id
+    return True
+
+
 class AttachmentService:
     """Service for attachment operations."""
     
@@ -1827,11 +1874,9 @@ class AttachmentService:
         if attachment_dict.get("company_id") is None:
             entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
             if entity_type not in _SHARED_FORM_ENTITY_TYPES:
-                scope = get_company_scope(self.db)
-                # Only an unambiguous single active company may be stamped; UNSET /
-                # all-companies / multi-company stay NULL rather than guess.
-                if isinstance(scope, frozenset) and len(scope) == 1:
-                    attachment_dict["company_id"] = next(iter(scope))
+                attachment_dict["company_id"] = _single_active_company(
+                    get_company_scope(self.db)
+                )
 
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
@@ -1867,10 +1912,17 @@ class AttachmentService:
             )
 
         # Recalculate full_directory_path when directory_id is updated
+        target_folder = None
         if "directory_id" in update_data:
             new_directory_id = update_data["directory_id"]
             dir_service = AttachmentDirectoryService(self.db)
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
+            if new_directory_id:
+                target_folder = (
+                    self.db.query(AttachmentDirectory)
+                    .filter(AttachmentDirectory.id == new_directory_id)
+                    .first()
+                )
 
         # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
         # is immutable (it is the object-key basename - uuid-segregated key, independent of the
@@ -1878,6 +1930,16 @@ class AttachmentService:
         # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
         for key, value in update_data.items():
             setattr(attachment, key, value)
+
+        # After the caller's own fields land, so an explicit company_id still wins.
+        changed_fields = list(update_data.keys())
+        if _inherit_company_from_folder(
+            attachment,
+            update_data.get("directory_id"),
+            target_folder,
+            get_company_scope(self.db),
+        ):
+            changed_fields.append("company_id")
 
         self.db.commit()
         self.db.refresh(attachment)
@@ -1888,7 +1950,7 @@ class AttachmentService:
             source_key=attachment.original_filename,
             source_updated_at=attachment.created_at,
             event_type="attachment.updated",
-            changed_fields=list(update_data.keys()),
+            changed_fields=changed_fields,
         )
         return attachment
     
@@ -1907,12 +1969,27 @@ class AttachmentService:
             return 0
         dir_service = AttachmentDirectoryService(self.db)
         full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
+        # One load for the whole batch: every row inherits from the same folder.
+        target_folder = (
+            self.db.query(AttachmentDirectory)
+            .filter(AttachmentDirectory.id == directory_id)
+            .first()
+            if directory_id
+            else None
+        )
+        scope = get_company_scope(self.db)
+        stamped_ids = set()
         for row in rows:
             row.directory_id = directory_id
             row.full_directory_path = full_path
+            if _inherit_company_from_folder(row, directory_id, target_folder, scope):
+                stamped_ids.add(row.id)
         self.db.commit()
         for row in rows:
             self.db.refresh(row)
+            changed_fields = ["directory_id", "full_directory_path"]
+            if row.id in stamped_ids:
+                changed_fields.append("company_id")
             publish_embedding_event(
                 self.db,
                 source_type="attachment",
@@ -1920,7 +1997,7 @@ class AttachmentService:
                 source_key=row.original_filename,
                 source_updated_at=row.created_at,
                 event_type="attachment.updated",
-                changed_fields=["directory_id", "full_directory_path"],
+                changed_fields=changed_fields,
             )
         return len(rows)
 
