@@ -351,7 +351,11 @@ describe('ProformaUploadDialog - apply', () => {
 
     fireEvent.click(confirmButton());
 
-    expect(await screen.findByText(/Created 1 invoice, updated 2\./)).toBeInTheDocument();
+    // The counts still carry the sentence when the result names no invoice; the wording
+    // gained "in place", which is the part that stops a re-upload reading as a no-op.
+    expect(
+      await screen.findByText(/Created 1 invoice\. Updated 2 in place\./),
+    ).toBeInTheDocument();
   });
 
   it('reports nothing new when every document in the file already existed', async () => {
@@ -367,7 +371,9 @@ describe('ProformaUploadDialog - apply', () => {
 
     fireEvent.click(confirmButton());
 
-    expect(await screen.findByText(/Nothing new was created, updated 3\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Nothing new was created\. Updated 3 in place\./),
+    ).toBeInTheDocument();
   });
 
   it('shows the server\'s refusal and keeps the dialog open', async () => {
@@ -520,5 +526,109 @@ describe('ProformaUploadDialog - filing a second send as a revision', () => {
 
     await screen.findByText('PI-2026-001');
     expect(screen.queryByText(/Revision of/)).not.toBeInTheDocument();
+  });
+});
+
+describe('ProformaUploadDialog - Test then Confirm', () => {
+  it('sends the real apply after a dry run, never the dry run again', async () => {
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+
+    fireEvent.click(testButton());
+    await waitFor(() => expect(testProformaInvoice).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {});
+    // The dry run is NOT re-sent: it writes nothing, and a Confirm that only re-tested
+    // closed the dialog as if it had saved.
+    expect(testProformaInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the dry-run verdict on screen after the apply', async () => {
+    testProformaInvoice.mockResolvedValue({
+      valid: true,
+      errors: [],
+      warnings: [],
+      summary: {},
+    });
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+    fireEvent.click(testButton());
+    await waitFor(() => expect(testProformaInvoice).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/Created 1 invoice/)).toBeInTheDocument();
+  });
+});
+
+describe('ProformaUploadDialog - a Confirm that writes nothing new says so', () => {
+  it('names the invoice a re-upload landed on, rather than "nothing new"', async () => {
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 0,
+      documents_updated: 1,
+      results: [
+        {
+          index: 0,
+          invoice_id: 'pi-1',
+          pi_number: 'PI-2026-7-31-1',
+          invoice_date: '2026-07-31',
+          currency: 'CNY',
+          currency_source: 'document',
+          lines: 5,
+          revision_no: 1,
+          revision_of_id: null,
+          total_amount: 1000,
+          unmatched_items: [],
+          created: false,
+        },
+      ],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    // "Nothing new was created" on its own reads as a Confirm that did nothing at all -
+    // and that is exactly how the browser pass read it.
+    expect(await screen.findByText(/Updated PI-2026-7-31-1/)).toBeInTheDocument();
+  });
+
+  it('says why Confirm cannot act on a file it has already read as unusable', async () => {
+    previewProformaInvoice.mockResolvedValue({
+      ...PREVIEW,
+      ok: false,
+      missing_columns: ['unit_price'],
+    });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+    fireEvent.click(testButton());
+
+    await waitFor(() => expect(confirmButton()).toBeDisabled());
+    expect(confirmButton()).toHaveAttribute(
+      'title',
+      expect.stringContaining('could not be read'),
+    );
   });
 });

@@ -57,6 +57,13 @@ const CURRENCY_SOURCE: Record<string, string> = {
 
 const TOTAL_TOLERANCE = 0.01;
 
+/** The invoice numbers, when the result carries them - never a bare count on its own where
+ *  a name is available, because "updated 1" is what made a Confirm read as a no-op. */
+function named(rows: { pi_number: string }[]): string | null {
+  const numbers = rows.map((r) => r.pi_number).filter(Boolean);
+  return numbers.length ? numbers.join(', ') : null;
+}
+
 export function ProformaUploadDialog({
   open,
   onOpenChange,
@@ -361,11 +368,14 @@ export function ProformaUploadDialog({
           {result ? (
             <Alert>
               <AlertDescription>
+                {/* Every invoice NAMED. "Nothing new was created" on its own is how a
+                    Confirm that landed on the document already on file reads as a Confirm
+                    that did nothing at all - which is what the browser pass reported. */}
                 {result.documents_created > 0
-                  ? `Created ${result.documents_created} invoice${result.documents_created === 1 ? '' : 's'}`
+                  ? `Created ${named(result.results.filter((r) => r.created)) ?? `${result.documents_created} invoice${result.documents_created === 1 ? '' : 's'}`}`
                   : 'Nothing new was created'}
                 {result.documents_updated > 0
-                  ? `, updated ${result.documents_updated}`
+                  ? `. Updated ${named(result.results.filter((r) => !r.created)) ?? String(result.documents_updated)} in place`
                   : ''}
                 {result.results.some((r) => r.revision_of_id)
                   ? `. ${result.results.filter((r) => r.revision_of_id).length} filed as a revision, superseding what it replaces`
@@ -397,7 +407,15 @@ export function ProformaUploadDialog({
             <Button
               onClick={() => void upload.confirm()}
               disabled={!supplierId || !upload.canConfirm}
-              title={!supplierId ? 'Choose a supplier first' : undefined}
+              // WHY it will not act. A button that is disabled and silent reads as a button
+              // that was pressed and did nothing.
+              title={
+                !supplierId
+                  ? 'Choose a supplier first'
+                  : preview && !preview.ok
+                    ? 'This file could not be read as a proforma invoice.'
+                    : undefined
+              }
             >
               {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
               Confirm
