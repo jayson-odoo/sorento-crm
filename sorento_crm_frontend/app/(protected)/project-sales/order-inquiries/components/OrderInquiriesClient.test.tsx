@@ -192,7 +192,7 @@ describe('OrderInquiriesClient', () => {
       'Agent',
       'Location',
       'Supplier',
-      'PO no',
+      'Linked to',
       'Instruction',
       'State',
       'Raised by',
@@ -420,7 +420,7 @@ describe('OrderInquiriesClient', () => {
     expect(within(unplaced).queryByRole('button', { name: /S00/ })).not.toBeInTheDocument();
   });
 
-  it('says "not placed" rather than inventing a supplier', async () => {
+  it('says "not linked" rather than inventing a supplier', async () => {
     listOrderInquiryWorklist.mockResolvedValue(
       envelope([MOCK_WORKLIST_ROWS[1]]),
     );
@@ -428,7 +428,7 @@ describe('OrderInquiriesClient', () => {
 
     const row = (await screen.findByText('SRTWC8605-SC-RL')).closest('tr');
     expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getAllByText('Not placed')).toHaveLength(2);
+    expect(within(row as HTMLElement).getAllByText('Not linked')).toHaveLength(2);
   });
 
   describe('the schedule view (rework of D1: a matrix, not a day-grid calendar)', () => {
@@ -533,11 +533,11 @@ describe('OrderInquiriesClient', () => {
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
 
       expect(
         screen.getByText(
-          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+          'Link raised order rows to outstanding documents, nearest location and earliest purchase order first?',
         ),
       ).toBeInTheDocument();
       expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
@@ -553,9 +553,9 @@ describe('OrderInquiriesClient', () => {
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
       const dialog = await screen.findByRole('alertdialog');
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-place' }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
 
       await waitFor(() => expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({}));
     });
@@ -565,12 +565,12 @@ describe('OrderInquiriesClient', () => {
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-place' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
       expect(
         screen.queryByText(
-          'Automatically tag raised order rows to outstanding PO lines, earliest first?',
+          'Link raised order rows to outstanding documents, nearest location and earliest purchase order first?',
         ),
       ).not.toBeInTheDocument();
       expect(autoPlaceOrderInquiryRows).not.toHaveBeenCalled();
@@ -664,7 +664,7 @@ describe('OrderInquiriesClient', () => {
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
       openActionsMenu();
-      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink all' }));
 
       const dialog = await screen.findByRole('alertdialog');
       expect(dialog.textContent).toContain('raised by Cindy Lee');
@@ -679,10 +679,10 @@ describe('OrderInquiriesClient', () => {
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink all' }));
 
       const dialog = await screen.findByRole('alertdialog');
-      expect(dialog.textContent).toContain('5 placed rows across the whole company');
+      expect(dialog.textContent).toContain('5 linked rows across the whole company');
       expect(dialog.textContent).toContain(
         'Auto-place will re-deal them by the current priority policy. Placements made by hand are not restored.',
       );
@@ -703,7 +703,7 @@ describe('OrderInquiriesClient', () => {
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
       openActionsMenu();
-      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink all' }));
 
       const dialog = await screen.findByRole('alertdialog');
       // Still "every placed row" - State=raised did not silently zero the described scope,
@@ -726,7 +726,7 @@ describe('OrderInquiriesClient', () => {
       fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
       openActionsMenu();
-      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unplace all' }));
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink all' }));
 
       const dialog = await screen.findByRole('alertdialog');
       // The supplier's own NAME, never its id (no UUIDs in the UI).
@@ -741,21 +741,21 @@ describe('OrderInquiriesClient', () => {
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
+      const item = await screen.findByRole('menuitem', { name: 'Unlink all' });
       expect(item).toHaveAttribute('aria-disabled', 'true');
-      expect(item).toHaveAttribute('title', "You don't have permission to unplace rows");
+      expect(item).toHaveAttribute('title', "You don't have permission to unlink rows");
       // Held off entirely, not fired-and-403'd for someone who could never press it.
       expect(getUnplaceAllPreview).not.toHaveBeenCalled();
     });
 
-    it('still reads "No placed rows to unplace" for a principal who CAN act, on a genuine zero', async () => {
+    it('still reads "No linked rows to unlink" for a principal who CAN act, on a genuine zero', async () => {
       getUnplaceAllPreview.mockResolvedValue({ count: 0, product_code: null, product_name: null });
       renderClient();
       await screen.findByText('SO385126');
 
       openActionsMenu();
-      const item = await screen.findByRole('menuitem', { name: 'Unplace all' });
-      await waitFor(() => expect(item).toHaveAttribute('title', 'No placed rows to unplace'));
+      const item = await screen.findByRole('menuitem', { name: 'Unlink all' });
+      await waitFor(() => expect(item).toHaveAttribute('title', 'No linked rows to unlink'));
     });
   });
 });

@@ -63,6 +63,8 @@ function draft(overrides: Partial<DraftLine> = {}): DraftLine {
     buy_qty: '100',
     buy_reason: '',
     is_discontinued: false,
+    order_back: false,
+    cited_document: '',
     ...overrides,
   };
 }

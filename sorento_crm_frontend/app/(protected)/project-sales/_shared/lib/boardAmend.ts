@@ -122,6 +122,10 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     // for its reason HERE rather than being refused by the confirmation. Absent flags claim
     // nothing; the confirmation rechecks against the product record either way.
     is_discontinued: Boolean(contribution.item_flags?.discontinued),
+    // An engine proposal is never an order back: the ladder proposes a purchase, and only
+    // a person can say the quantity is owed against something already on its way.
+    order_back: false,
+    cited_document: '',
   };
 }
 
@@ -185,6 +189,8 @@ function frozenDraft(
     buy_qty: frozen.buy_qty,
     buy_reason: frozen.buy_reason ?? '',
     is_discontinued: Boolean(contribution.item_flags?.discontinued),
+    order_back: Boolean(frozen?.order_back),
+    cited_document: frozen?.cited_document ?? '',
   };
 }
 
@@ -304,6 +310,13 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
     buy_qty: fromMinor(toMinor(draft.buy_qty)),
     buy_reason: draft.buy_reason.trim() || undefined,
     reason: reason.trim() || undefined,
+    // Only carried when the Buy is one: an order back with nothing bought is not an
+    // instruction, and a cited document with no order back names nothing.
+    order_back: toMinor(draft.buy_qty) > 0 && draft.order_back ? true : undefined,
+    cited_document:
+      toMinor(draft.buy_qty) > 0 && draft.order_back
+        ? draft.cited_document.trim() || undefined
+        : undefined,
   };
 }
 

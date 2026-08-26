@@ -79,6 +79,10 @@ export interface DraftLine {
   buy_qty: string;
   buy_reason: string;
   is_discontinued: boolean;
+  /** This Buy is an order back against a document already on its way (part 2 4b). */
+  order_back: boolean;
+  /** The document CS cited for it, if any. Tried first by the auto-link walk. */
+  cited_document: string;
 }
 
 /** The proposal as CS first sees it: the engine's components, unedited. */
@@ -130,6 +134,10 @@ export function draftFromLine(line: SupplyLine): DraftLine {
     buy_qty: buy?.qty ?? '0',
     buy_reason: buy?.cs_reason ?? '',
     is_discontinued: line.is_discontinued,
+    // A fresh proposal is never an order back: the engine proposes a purchase, and only a
+    // person can say the quantity is owed against something already on its way.
+    order_back: false,
+    cited_document: '',
   };
 }
 

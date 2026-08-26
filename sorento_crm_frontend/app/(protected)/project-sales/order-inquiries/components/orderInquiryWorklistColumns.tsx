@@ -17,6 +17,7 @@ import {
 import {
   flowExclusionLabel,
   formatInquiryQty,
+  linkedSummary,
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
@@ -204,7 +205,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         size: 150,
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
-        // Blank means nobody has placed it yet, exactly as a blank cell does on their
+        // Blank means nobody has linked it yet, exactly as a blank cell does on their
         // sheet. Never filled in with a guess at who would supply it.
         cell: ({ row }) =>
           row.original.supplier ? (
@@ -212,29 +213,69 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
               {row.original.supplier}
             </span>
           ) : (
-            <Muted>Not placed</Muted>
+            <Muted>Not linked</Muted>
           ),
       },
       {
-        accessorKey: 'po_number',
-        header: ({ column }) => <DataGridColumnHeader title="PO no" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'PO no', skeleton: <Skeleton className="h-4 w-20" /> },
-        // A placed row's PO number opens that purchase order's own header and every
-        // line (the captain, 20 Aug) - a row nobody has placed has nothing to open.
-        cell: ({ row }) =>
-          row.original.po_number && row.original.po_id ? (
-            <OrderInquiryPoDetailPopover
-              poId={row.original.po_id}
-              poNumber={row.original.po_number}
-            />
-          ) : row.original.po_number ? (
-            <span className="block truncate tabular-nums" title={row.original.po_number}>
-              {row.original.po_number}
-            </span>
-          ) : (
-            <Muted>Not placed</Muted>
-          ),
+        // AC-I5: WHERE the quantity sits, not just which purchase order the row happened
+        // to be tagged to. One row now holds many links (`projects.order_inquiry_links`),
+        // so the cell states the coverage first - `8 of 8` - and then names each document
+        // with the lines it holds, which is the shape the buyer keys into AutoCount. A PO
+        // link opens that purchase order's own header and lines; an SPO link has no
+        // purchase order to open, so it carries its badge and no popover.
+        id: 'po_number',
+        accessorFn: (row) => row.po_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
+        size: 260,
+        meta: { headerTitle: 'Linked to', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => {
+          const summary = linkedSummary(
+            row.original.qty,
+            row.original.linked_qty,
+            row.original.links,
+          );
+          if (!summary) {
+            // Not a dash: on their own sheet a blank PO column is what "still to link"
+            // looks like, and the word says which of the two it is.
+            return <Muted>Not linked</Muted>;
+          }
+          return (
+            <div className="min-w-0">
+              <span className="block truncate text-xs font-medium tabular-nums">
+                {summary.headline}
+              </span>
+              {summary.documents.map((entry) => {
+                const link = (row.original.links ?? []).find(
+                  (candidate) =>
+                    candidate.document === entry.document && candidate.kind === entry.kind,
+                );
+                const label = `${entry.document}: ${entry.parts}`;
+                return (
+                  <span
+                    key={`${entry.kind}-${entry.document}`}
+                    className="flex min-w-0 items-center gap-1"
+                    title={label}
+                  >
+                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                      {entry.kind}
+                    </span>
+                    {entry.kind === 'po' && link?.po_id ? (
+                      <OrderInquiryPoDetailPopover
+                        poId={link.po_id}
+                        poNumber={entry.document}
+                      />
+                    ) : (
+                      <span className="truncate tabular-nums">{entry.document}</span>
+                    )}
+                    <span className="truncate text-xs text-muted-foreground">
+                      {entry.parts}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'taken_from_po',
@@ -242,9 +283,9 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
         size: 130,
         enableSorting: false,
         meta: { headerTitle: 'Taken from PO', skeleton: <Skeleton className="h-4 w-14" /> },
-        // What has actually been taken off a purchase order for this row's own SO line -
-        // the sum of every PLACED `ORDER`-verb sibling row, never this row's own qty
-        // alone. A row whose OWN verb is not `ORDER` (an ADVANCE/DELAY/CANCEL BALANCE/...)
+        // What has actually been taken off a document for this row's own SO line - the
+        // sum of every link on every ORDER / ORDER BACK row of that line, never this
+        // row's own qty alone. A row whose OWN verb is neither (an ADVANCE/DELAY/...)
         // is not what this figure is about, and printing it anyway reads as "this
         // instruction is fully handled" next to one that is not placeable at all - so it
         // names what actually happened to ITS OWN row instead.
@@ -253,7 +294,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           if (excluded) {
             return (
               <Muted>
-                <span title="Only ORDER-verb rows on this SO line count toward Taken from PO">
+                <span title="Only ORDER and ORDER BACK rows on this SO line count toward Taken from PO">
                   {excluded}
                 </span>
               </Muted>
@@ -277,7 +318,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           if (excluded) {
             return (
               <Muted>
-                <span title="Only ORDER-verb rows on this SO line still flow to reorder planning">
+                <span title="Only ORDER and ORDER BACK rows on this SO line still flow to reorder planning">
                   {excluded}
                 </span>
               </Muted>
@@ -286,7 +327,7 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
           return (
             <span
               className="tabular-nums"
-              title="What still flows to reorder planning, counting ORDER-verb rows on this SO line only"
+              title="What still flows to reorder planning: the unlinked remainder of this SO line\u2019s ORDER and ORDER BACK rows"
             >
               {formatInquiryQty(row.original.remaining_open ?? '0')}
             </span>

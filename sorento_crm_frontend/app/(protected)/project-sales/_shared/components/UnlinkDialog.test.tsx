@@ -21,7 +21,7 @@ vi.mock('../services/orderInquiryService', async (importOriginal) => {
   };
 });
 
-import { UnplaceFromPoDialog } from './UnplaceFromPoDialog';
+import { UnlinkDialog } from './UnlinkDialog';
 
 function renderDialog(node: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -35,74 +35,74 @@ beforeEach(() => {
   unplaceOrderInquiryRow.mockReset();
 });
 
-describe('UnplaceFromPoDialog', () => {
+describe('UnlinkDialog', () => {
   it('names the purchase order it would untag', () => {
     renderDialog(
-      <UnplaceFromPoDialog
+      <UnlinkDialog
         open
         onOpenChange={onOpenChange}
         rowId="row-1"
-        poNumber="ZZT-PO-0001"
+        documentNumber="ZZT-PO-0001"
       />,
     );
 
     expect(
       screen.getByText(
-        'Remove the tag to ZZT-PO-0001? This row goes back to raised, and the next reorder suggestion counts it again.',
+        'Remove the link to ZZT-PO-0001? That quantity goes back to demand, and the next reorder suggestion counts it again.',
       ),
     ).toBeInTheDocument();
   });
 
   it('falls back to a generic confirm when no PO number is known', () => {
     renderDialog(
-      <UnplaceFromPoDialog open onOpenChange={onOpenChange} rowId="row-1" poNumber={null} />,
+      <UnlinkDialog open onOpenChange={onOpenChange} rowId="row-1" documentNumber={null} />,
     );
 
     expect(
       screen.getByText(
-        'Remove this tag? This row goes back to raised, and the next reorder suggestion counts it again.',
+        'Remove this row\u2019s links? The quantity goes back to demand, and the next reorder suggestion counts it again.',
       ),
     ).toBeInTheDocument();
   });
 
   it('renders nothing when closed', () => {
     renderDialog(
-      <UnplaceFromPoDialog
+      <UnlinkDialog
         open={false}
         onOpenChange={onOpenChange}
         rowId="row-1"
-        poNumber="ZZT-PO-0001"
+        documentNumber="ZZT-PO-0001"
       />,
     );
 
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
-  it('unplaces the row and closes on confirm', async () => {
+  it('unlinks the row and closes on confirm', async () => {
     unplaceOrderInquiryRow.mockResolvedValue({ id: 'row-1', state: 'raised' });
 
     renderDialog(
-      <UnplaceFromPoDialog
+      <UnlinkDialog
         open
         onOpenChange={onOpenChange}
         rowId="row-1"
-        poNumber="ZZT-PO-0001"
+        documentNumber="ZZT-PO-0001"
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Unplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
 
-    await waitFor(() => expect(unplaceOrderInquiryRow).toHaveBeenCalledWith('row-1'));
+    await waitFor(() => expect(unplaceOrderInquiryRow).toHaveBeenCalledWith('row-1', undefined));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
   it('does nothing on cancel', () => {
     renderDialog(
-      <UnplaceFromPoDialog
+      <UnlinkDialog
         open
         onOpenChange={onOpenChange}
         rowId="row-1"
-        poNumber="ZZT-PO-0001"
+        documentNumber="ZZT-PO-0001"
       />,
     );
 

@@ -306,6 +306,54 @@ export function BoardAmendDialog({
                   {buying ? `Buy the whole ${draft.open_qty}` : 'Buy the whole line'}
                 </label>
               </div>
+              {/* An order back is a Buy whose supply is ALREADY on order or already
+                  shipped (part 2 section 4b, captain 25 Aug), so the row purchasing gets
+                  carries verb ORDER BACK and may be linked to an SPO allocation as well as
+                  to a purchase order line. Offered only while the line is being bought:
+                  there is no row to mark otherwise. The document is optional - when CS
+                  names one, the auto-link walk tries it before any tier or date. */}
+              {buying && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Switch
+                      id="board-order-back-switch"
+                      aria-label="Order back"
+                      checked={draft.order_back}
+                      onCheckedChange={(next) =>
+                        setDraft({
+                          ...draft,
+                          order_back: next,
+                          cited_document: next ? draft.cited_document : '',
+                        })
+                      }
+                    />
+                    <label
+                      htmlFor="board-order-back-switch"
+                      className="text-sm text-muted-foreground"
+                    >
+                      Order back
+                    </label>
+                  </div>
+                  {draft.order_back && (
+                    <div className="space-y-1">
+                      <label
+                        className="block text-2xs uppercase tracking-wide text-muted-foreground"
+                        htmlFor="board-cited-document"
+                      >
+                        Document cited
+                      </label>
+                      <Input
+                        id="board-cited-document"
+                        value={draft.cited_document}
+                        placeholder="202604-S0083 or SPO-2026/08-0061"
+                        onChange={(event) =>
+                          setDraft({ ...draft, cited_document: event.target.value })
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               {/* The same field the per-line card carries (AC-B11): a Buy of a discontinued
                   product needs a reason, and `lineBlockers` shuts Save without one. */}
               {draft.is_discontinued && (

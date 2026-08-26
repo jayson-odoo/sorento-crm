@@ -31,7 +31,8 @@ import { formatInquiryQty } from '../lib/orderInquiryWorklist';
 import type { OrderInquiryPoAllocation, OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
 const CHEVRON_COL = 'w-[28px] min-w-[28px] max-w-[28px]';
-const PO_COL = 'w-[150px] min-w-[150px] max-w-[150px]';
+const PO_COL = 'w-[170px] min-w-[170px] max-w-[170px]';
+const WHERE_COL = 'w-[130px] min-w-[130px] max-w-[130px]';
 const SUPPLIER_COL = 'w-[160px] min-w-[160px] max-w-[160px]';
 const DATE_COL = 'w-[110px] min-w-[110px] max-w-[110px]';
 const NUMBER_COL = 'w-[100px] min-w-[100px] max-w-[100px]';
@@ -40,6 +41,29 @@ const TAKE_COL = 'w-[110px] min-w-[110px] max-w-[110px]';
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
+
+/**
+ * How a candidate is addressed. Exactly one of the two ids is set - the same rule the
+ * link row's own CHECK constraint holds - so this is total, never a coalesce that could
+ * silently key two different documents the same way.
+ */
+function candidateKey(candidate: OrderInquiryPoCandidate): string {
+  return candidate.kind === 'spo'
+    ? `spo:${candidate.spo_allocation_id ?? ''}`
+    : `po:${candidate.po_line_id ?? ''}`;
+}
+
+/**
+ * How well this document line's location fits the row's own (Q5). Named, not numbered:
+ * "tier 3" says nothing to a buyer, "Site pool" says which split to key into AutoCount.
+ */
+const TIER_LABEL: Record<number, string> = {
+  1: 'Same location',
+  2: 'Same group',
+  3: 'Site pool',
+  4: 'Sibling location',
+  5: 'Elsewhere',
+};
 
 function toNumber(value: string): number {
   const parsed = Number.parseFloat(value);
@@ -59,23 +83,24 @@ function formatCandidateUnitPrice(
 }
 
 /**
- * "Identify which outstanding PO has quantity to fulfil this order inquiry, tag it, and
- * the quantity to be ordered is deducted" (the captain, 20 Aug - PLAN-demo-followups-19aug
- * -ladder-v2.md section G).
+ * Link PO / Link SPO (PLAN-scm-cs-planning-uat.md section 3.I, AC-I1/AC-I2/AC-I10).
  *
- * G2 (the captain, live-testing G, same day afternoon): placement now happens
- * AUTOMATICALLY - this dialog is no longer the workflow, it is OVERRIDE + AUDIT. It opens
- * already showing what the cascade would take off each candidate line (`default_take`,
- * earliest expected date first, ties by document sequence), lets that quantity be
- * adjusted per line - clearing a line to `0` drops it - and posts the whole allocation
- * in one call. The total taken may cover the row WHOLE or PART of it; the uncovered
- * remainder simply stays a raised Buy, exactly as an unfinished auto-place cascade leaves
- * it. No SPO- document is ever a candidate here - the backend never offers one.
+ * Linking happens AUTOMATICALLY on confirm, on PO import and on PO confirm, so this
+ * dialog is OVERRIDE + AUDIT rather than the workflow. It opens showing what the cascade
+ * would take off each candidate (`default_take`), lets that be adjusted per line -
+ * clearing a line to `0` drops it - and posts the whole set in one call. The row keeps
+ * its FULL quantity whatever is taken: what is not linked stays demand, and the row reads
+ * partly linked.
+ *
+ * Candidates arrive in the walk's own order and are NEVER filtered by location, only
+ * ranked by it (Q5): tier 1 is the row's own location, 2 the same group at another site,
+ * 3 a site pool, 4 a sibling at the site. An SPO allocation is a candidate for an ORDER
+ * BACK row and for nothing else (captain, 25 Aug), and the document CS cited comes first.
  *
  * NOT a DataGrid, the same carve-out `BorrowAddDialog` and `CellStockTable` document: a
  * small fixed table inside a dialog, no column config, sort, resize or pagination.
  */
-export function PlaceOnPoDialog({
+export function LinkDocumentDialog({
   rowId,
   itemCode,
   qty,
@@ -103,33 +128,33 @@ export function PlaceOnPoDialog({
       Object.fromEntries(
         candidates
           .filter((candidate) => toNumber(candidate.default_take) > 0)
-          .map((candidate) => [candidate.po_line_id, candidate.default_take]),
+          .map((candidate) => [candidateKey(candidate), candidate.default_take]),
       ),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidates.length]);
 
-  function toggleExpanded(poLineId: string) {
+  function toggleExpanded(key: string) {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(poLineId)) next.delete(poLineId);
-      else next.add(poLineId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
-  function setTake(poLineId: string, value: string) {
-    setTakes((prev) => ({ ...prev, [poLineId]: value }));
+  function setTake(key: string, value: string) {
+    setTakes((prev) => ({ ...prev, [key]: value }));
   }
 
   const need = toNumber(qty);
   const totalTaken = candidates.reduce(
-    (sum, candidate) => sum + toNumber(takes[candidate.po_line_id] ?? '0'),
+    (sum, candidate) => sum + toNumber(takes[candidateKey(candidate)] ?? '0'),
     0,
   );
   const overTaken = totalTaken > need;
   const lineErrors = candidates.some((candidate) => {
-    const take = toNumber(takes[candidate.po_line_id] ?? '0');
+    const take = toNumber(takes[candidateKey(candidate)] ?? '0');
     return take > toNumber(candidate.remaining);
   });
   const remainder = Math.max(need - totalTaken, 0);
@@ -138,10 +163,17 @@ export function PlaceOnPoDialog({
   function handleConfirm() {
     if (!valid) return;
     const allocations: OrderInquiryPoAllocation[] = candidates
-      .map((candidate) => ({
-        po_line_id: candidate.po_line_id,
-        qty: takes[candidate.po_line_id] ?? '0',
-      }))
+      .map((candidate) =>
+        candidate.kind === 'spo'
+          ? {
+              spo_allocation_id: candidate.spo_allocation_id ?? undefined,
+              qty: takes[candidateKey(candidate)] ?? '0',
+            }
+          : {
+              po_line_id: candidate.po_line_id ?? undefined,
+              qty: takes[candidateKey(candidate)] ?? '0',
+            },
+      )
       .filter((allocation) => toNumber(allocation.qty) > 0);
     if (allocations.length === 0) return;
     placeAllocations.mutate({ rowId, allocations }, { onSuccess: onDone });
@@ -151,10 +183,10 @@ export function PlaceOnPoDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-3xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Place on a purchase order</DialogTitle>
+          <DialogTitle>Link to a document</DialogTitle>
           <DialogDescription>
             {itemCode ?? 'This item'} - {formatInquiryQty(qty)} needed. Adjust the take on
-            any line - a leftover quantity stays a raised Buy.
+            any line; whatever is left unlinked stays demand.
           </DialogDescription>
         </DialogHeader>
 
@@ -171,7 +203,7 @@ export function PlaceOnPoDialog({
                 <PackageSearch />
               </AlertIcon>
               <AlertContent>
-                <AlertTitle>Could not load purchase order lines</AlertTitle>
+                <AlertTitle>Could not load candidate lines</AlertTitle>
                 <AlertDescription>
                   {candidatesQuery.error instanceof Error
                     ? candidatesQuery.error.message
@@ -184,7 +216,7 @@ export function PlaceOnPoDialog({
               data-testid="po-candidates-empty"
               className="rounded-lg border border-border px-3 py-6 text-center text-sm text-muted-foreground"
             >
-              No outstanding purchase order line holds this item.
+              No outstanding purchase order line or SPO allocation holds this item.
             </div>
           ) : (
             <>
@@ -199,10 +231,16 @@ export function PlaceOnPoDialog({
                         <span className="sr-only">Expand</span>
                       </th>
                       <th scope="col" className={cn(PO_COL, HEAD_CELL)}>
-                        PO no
+                        Document
+                      </th>
+                      <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
+                        Where
                       </th>
                       <th scope="col" className={cn(SUPPLIER_COL, HEAD_CELL)}>
                         Supplier
+                      </th>
+                      <th scope="col" className={cn(DATE_COL, HEAD_CELL)}>
+                        Issued
                       </th>
                       <th scope="col" className={cn(DATE_COL, HEAD_CELL)}>
                         Expected
@@ -218,12 +256,12 @@ export function PlaceOnPoDialog({
                   <tbody>
                     {candidates.map((candidate) => (
                       <CandidateRow
-                        key={candidate.po_line_id}
+                        key={candidateKey(candidate)}
                         candidate={candidate}
-                        take={takes[candidate.po_line_id] ?? ''}
-                        onTakeChange={(value) => setTake(candidate.po_line_id, value)}
-                        expanded={expandedIds.has(candidate.po_line_id)}
-                        onToggleExpand={() => toggleExpanded(candidate.po_line_id)}
+                        take={takes[candidateKey(candidate)] ?? ''}
+                        onTakeChange={(value) => setTake(candidateKey(candidate), value)}
+                        expanded={expandedIds.has(candidateKey(candidate))}
+                        onToggleExpand={() => toggleExpanded(candidateKey(candidate))}
                       />
                     ))}
                   </tbody>
@@ -235,9 +273,9 @@ export function PlaceOnPoDialog({
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs"
               >
                 <span>
-                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(qty)} taken
+                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(qty)} linked
                   {remainder > 0 && !overTaken
-                    ? ` - ${formatInquiryQty(String(remainder))} stays raised`
+                    ? ` - ${formatInquiryQty(String(remainder))} stays demand`
                     : ''}
                 </span>
                 {overTaken && (
@@ -269,7 +307,7 @@ export function PlaceOnPoDialog({
             onClick={handleConfirm}
             disabled={!valid || placeAllocations.isPending}
           >
-            {placeAllocations.isPending ? 'Placing…' : 'Place on PO'}
+            {placeAllocations.isPending ? 'Linking…' : 'Link'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -296,7 +334,7 @@ function CandidateRow({
 
   return (
     <>
-      <tr data-testid={`po-candidate-${candidate.po_line_id}`}>
+      <tr data-testid={`po-candidate-${candidateKey(candidate)}`}>
         <td className={cn(CHEVRON_COL, BODY_CELL)}>
           <button
             type="button"
@@ -314,14 +352,40 @@ function CandidateRow({
         </td>
         <td className={cn(PO_COL, BODY_CELL)}>
           <span className="min-w-0">
-            <span className="block truncate font-medium tabular-nums" title={candidate.po_number}>
-              {candidate.po_number}
+            <span className="flex min-w-0 items-center gap-1">
+              <span
+                className="block truncate font-medium tabular-nums"
+                title={candidate.po_number}
+              >
+                {candidate.po_number}
+                {candidate.line_label ? ` ${candidate.line_label}` : ''}
+              </span>
+              <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                {candidate.kind}
+              </span>
             </span>
+            {candidate.cited && (
+              <span className="mt-0.5 me-1 inline-block rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                Cited
+              </span>
+            )}
             {toNumber(candidate.default_take) > 0 && (
               <span className="mt-0.5 inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                 Cascade take {formatInquiryQty(candidate.default_take)}
               </span>
             )}
+          </span>
+        </td>
+        <td className={cn(WHERE_COL, BODY_CELL)}>
+          <span className="min-w-0">
+            <span className="block truncate" title={candidate.location ?? 'Not stated'}>
+              {candidate.location ?? (
+                <span className="text-muted-foreground">Not stated</span>
+              )}
+            </span>
+            <span className="block truncate text-[10px] text-muted-foreground">
+              {TIER_LABEL[candidate.tier] ?? 'Elsewhere'}
+            </span>
           </span>
         </td>
         <td className={cn(SUPPLIER_COL, BODY_CELL)}>
@@ -330,6 +394,15 @@ function CandidateRow({
             title={candidate.supplier_name ?? 'Not stated'}
           >
             {candidate.supplier_name ?? <span className="text-muted-foreground">Not stated</span>}
+          </span>
+        </td>
+        <td className={cn(DATE_COL, BODY_CELL)}>
+          <span className="block truncate">
+            {candidate.issue_date ? (
+              formatDateInMalaysia(candidate.issue_date)
+            ) : (
+              <span className="text-muted-foreground">No date</span>
+            )}
           </span>
         </td>
         <td className={cn(DATE_COL, BODY_CELL)}>
@@ -359,8 +432,8 @@ function CandidateRow({
         </td>
       </tr>
       {expanded && (
-        <tr data-testid={`po-candidate-expand-${candidate.po_line_id}`}>
-          <td colSpan={6} className="border-b border-e border-border bg-muted/30 p-0">
+        <tr data-testid={`po-candidate-expand-${candidateKey(candidate)}`}>
+          <td colSpan={8} className="border-b border-e border-border bg-muted/30 p-0">
             <CandidateExpandPanel candidate={candidate} />
           </td>
         </tr>
@@ -390,16 +463,21 @@ function CandidateExpandPanel({ candidate }: { candidate: OrderInquiryPoCandidat
             candidate.expected_date ? formatDateInMalaysia(candidate.expected_date) : 'No date'
           }
         />
+        <ExpandField label="Where" value={candidate.location ?? 'Not stated'} />
+        <ExpandField
+          label="Location fit"
+          value={TIER_LABEL[candidate.tier] ?? 'Elsewhere'}
+        />
         <ExpandField label="Unit price" value={unitPrice ?? 'No price on file'} />
       </dl>
 
       <div className="mt-3">
         <p className="mb-1 text-2xs font-medium text-muted-foreground">
-          Already tagged on this line
+          Already linked on this line
         </p>
         {candidate.claims.length === 0 ? (
           <p className="text-2xs text-muted-foreground">
-            No other row is tagged to this line yet.
+            No other row is linked to this line yet.
           </p>
         ) : (
           <div className="overflow-x-auto overscroll-x-contain">
@@ -409,7 +487,7 @@ function CandidateExpandPanel({ candidate }: { candidate: OrderInquiryPoCandidat
                   <th className="px-2 py-1 text-start font-medium">SO number</th>
                   <th className="px-2 py-1 text-start font-medium">Item code</th>
                   <th className="px-2 py-1 text-end font-medium">Qty</th>
-                  <th className="px-2 py-1 text-start font-medium">Placed date</th>
+                  <th className="px-2 py-1 text-start font-medium">Linked on</th>
                 </tr>
               </thead>
               <tbody>

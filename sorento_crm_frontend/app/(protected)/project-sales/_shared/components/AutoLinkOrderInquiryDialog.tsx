@@ -14,15 +14,14 @@ import {
 import { useAutoPlaceOrderInquiryRows } from '../hooks/useOrderInquiry';
 
 /**
- * "Auto-place" (G2 rule 4, the captain, 20 Aug: "we need to link already at first
- * already instead of suggesting and needing the users to click 1 by 1"). Runs the
- * cascade over the whole worklist now, rather than waiting for the three moments it
- * already runs automatically (an outstanding PO import, a decision confirm, or the next
- * scheduled pass). Confirmed like any bulk write: it tags real purchase-order lines and
- * writes the audit claim behind each one, even though nothing is deleted and Unplace
- * always reverses it.
+ * "Auto-link" (AC-I1; the captain, 20 Aug: "we need to link already at first already
+ * instead of suggesting and needing the users to click 1 by 1"). Runs the cascade over
+ * the whole worklist now, rather than waiting for the moments it already runs
+ * automatically (a decision confirm, an outstanding PO import, a PO confirm). Confirmed
+ * like any bulk write: it links real document lines and writes the audit claim behind
+ * each one, even though nothing is deleted and Unlink always reverses it.
  */
-export function AutoPlaceOrderInquiryDialog({
+export function AutoLinkOrderInquiryDialog({
   open,
   onOpenChange,
 }: {
@@ -35,9 +34,10 @@ export function AutoPlaceOrderInquiryDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Auto-place</AlertDialogTitle>
+          <AlertDialogTitle>Auto-link</AlertDialogTitle>
           <AlertDialogDescription>
-            Automatically tag raised order rows to outstanding PO lines, earliest first?
+            Link raised order rows to outstanding documents, nearest location and earliest
+            purchase order first?
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -50,7 +50,7 @@ export function AutoPlaceOrderInquiryDialog({
             disabled={autoPlace.isPending}
           >
             {autoPlace.isPending && <LoaderCircleIcon className="mr-2 size-4 animate-spin" />}
-            Auto-place
+            Auto-link
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
