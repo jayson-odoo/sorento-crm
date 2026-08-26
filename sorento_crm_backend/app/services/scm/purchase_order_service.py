@@ -129,7 +129,9 @@ class PurchaseOrderService:
             for ln in po.lines
         )
 
-    def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None) -> dict:
+    def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
+                  allocated_qty: float = 0.0,
+                  allocations: Optional[list[dict]] = None) -> dict:
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
         wh_code = None
@@ -230,6 +232,12 @@ class PurchaseOrderService:
                 (ln.currency for ln in po.lines if ln.currency), None
             ),
             "lines": lines,
+            # What order inquiries have OCCUPIED on this order (section 3.G). The SUM is on
+            # every row, list included, because "is this order already spoken for" is a
+            # list question; WHO is on it is the detail page's own panel and is left None
+            # there, so a page of 50 orders does not pay for 50 placement queries.
+            "allocated_qty": allocated_qty,
+            "allocations": allocations if allocations is not None else [],
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
             "source": _source_label(po.source_system),
@@ -250,6 +258,179 @@ class PurchaseOrderService:
         """), {"ids": po_ids}).mappings().all()
         return {r["po_id"]: r["picking_number"] for r in rows}
 
+    # -- occupancy (section 3.G) ---------------------------------------------
+
+    def _allocated_by_po(self, po_ids: list[str]) -> dict[str, float]:
+        """What order inquiries have linked to each of these orders, summed. One query.
+
+        The captain, 25 August 2026: a purchase order has to say how much of its outstanding
+        is already occupied. This is that figure per DOCUMENT, for the list column and the
+        detail header; `_allocations_for` breaks it down per line and names who is on it.
+
+        Read off `projects.order_inquiry_links` - the truth since section 3.I - and never off
+        `order_inquiry_rows.po_line_id`, which is now only the DERIVED display of the first
+        link and would under-count every row sitting on two lines.
+
+        A CANCELLED row's links are history, not an answer to "where does this quantity sit":
+        the quantity is not owed any more. The same predicate `links_for_rows` applies for the
+        worklist and the sales-order detail, so the three readers cannot disagree.
+        """
+        if not po_ids:
+            return {}
+        from app.models.project_so import (
+            INQUIRY_CANCELLED,
+            OrderInquiryLink,
+            OrderInquiryRow,
+        )
+
+        rows = (
+            self.db.query(
+                PurchaseOrderLine.purchase_order_id,
+                func.coalesce(func.sum(OrderInquiryLink.qty), 0),
+            )
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .filter(
+                PurchaseOrderLine.purchase_order_id.in_(po_ids),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .group_by(PurchaseOrderLine.purchase_order_id)
+            .all()
+        )
+        return {str(po_id): float(total or 0) for po_id, total in rows}
+
+    def _allocations_for(self, po: PurchaseOrder) -> list[dict]:
+        """One block per LINE that carries a placement, each naming who is waiting on it.
+
+        Everything a person reads is a NAME - the inquiry by its number, the sales order by
+        its document number, the customer and the agent by the labels the order-inquiry
+        worklist already prints. `project_customer_label` is imported rather than restated so
+        the same order does not read one way here and another way there.
+
+        `location_differs` is the whole reason the panel exists: the PO line says DC1 and the
+        demand is at BRW-BB, and that difference IS the split instruction the buyer re-keys in
+        AutoCount. Marked on the row, never filtered - hiding it would remove the finding.
+
+        Nothing here writes (AC-G5). The buyer's re-upload is the writer of
+        `purchase_order_lines`, and a read that stamped a figure onto a line would be
+        overwritten by that upload having moved supply in the meantime.
+        """
+        from app.models.order import Customer, SalesOrder
+        from app.models.project_so import (
+            INQUIRY_CANCELLED,
+            OrderInquiry,
+            OrderInquiryLink,
+            OrderInquiryRow,
+            ProjectSalesOrder,
+        )
+        from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
+        from app.models.sales_agent import SalesAgent
+        from app.services.project_order_inquiry_service import project_customer_label
+
+        lines = {str(ln.id): ln for ln in po.lines}
+        if not lines:
+            return []
+
+        rows = (
+            self.db.query(
+                OrderInquiryLink.po_line_id,
+                OrderInquiryLink.qty,
+                OrderInquiryLink.linked_at,
+                OrderInquiryLink.id,
+                OrderInquiryRow.stock_location,
+                OrderInquiry.inquiry_no,
+                ProjectSalesOrder.autocount_doc_no,
+                ProjectSalesOrder.provisional_ref,
+                ProjectSalesOrder.is_pre_order,
+                Project.title,
+                Customer.customer_name,
+                SalesAgent.person_label,
+                SalesAgent.sales_agent,
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
+            .outerjoin(
+                ProjectPurchaseOrder,
+                ProjectPurchaseOrder.id == ProjectSalesOrder.purchase_order_id,
+            )
+            .outerjoin(ProjectParty, ProjectParty.id == ProjectPurchaseOrder.issuing_party_id)
+            .outerjoin(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            # ONE join through a coalesce rather than two aliases of `customers`: the
+            # company-scope listener emits an UNALIASED `customers.company_id` into an
+            # aliased ON clause, which Postgres refuses outright.
+            .outerjoin(
+                Customer,
+                Customer.id
+                == func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id),
+            )
+            .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(list(lines)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+
+        placements: dict[str, list[dict]] = {}
+        allocated: dict[str, float] = {}
+        for row in rows:
+            line = lines[str(row.po_line_id)]
+            line_location = line.warehouse.warehouse_code if line.warehouse else None
+            needed_at = (row.stock_location or "").strip() or None
+            qty = float(row.qty or 0)
+            allocated[str(row.po_line_id)] = allocated.get(str(row.po_line_id), 0.0) + qty
+            placements.setdefault(str(row.po_line_id), []).append({
+                "inquiry_no": row.inquiry_no,
+                # The AutoCount number where the order has one; the reference this system
+                # minted where it does not. Never the id.
+                "so_number": row.autocount_doc_no or row.provisional_ref,
+                "customer": project_customer_label(
+                    row.customer_name, row.title, row.is_pre_order
+                ),
+                # The person label a human would say, falling back to the agent code.
+                "agent": row.person_label or row.sales_agent,
+                "qty": qty,
+                "needed_at": needed_at,
+                # Both sides have to STATE a location for them to differ. A row that names
+                # none is not a mismatch, it is a fact nobody recorded, and marking it would
+                # send the buyer to split a line against an instruction that is not there.
+                "location_differs": bool(
+                    needed_at and line_location
+                    and needed_at.upper() != line_location.strip().upper()
+                ),
+            })
+
+        blocks = []
+        for line in po.lines:
+            found = placements.get(str(line.id))
+            if not found:
+                continue
+            outstanding = (
+                0.0 if not _is_open_line(line)
+                else max(float(line.qty_ordered or 0) - float(line.qty_received or 0), 0.0)
+            )
+            claimed = allocated.get(str(line.id), 0.0)
+            blocks.append({
+                "line_id": str(line.id),
+                "sku": line.product.product_code if line.product else "",
+                "warehouse_code": (
+                    line.warehouse.warehouse_code if line.warehouse else None
+                ),
+                "outstanding": outstanding,
+                "allocated": claimed,
+                # Floored at 0: a line promised more than it has left is over-committed,
+                # which is a finding for the buyer, not a credit they may spend again.
+                "free": max(outstanding - claimed, 0.0),
+                "placements": found,
+            })
+        return blocks
+
     # -- reads ---------------------------------------------------------------
 
     def _base_query(self):
@@ -262,7 +443,8 @@ class PurchaseOrderService:
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
              query: Optional[str], status: Optional[str], supplier: Optional[str],
              *, product_code: Optional[str] = None,
-             outstanding: Optional[bool] = None) -> dict:
+             outstanding: Optional[bool] = None,
+             allocated: Optional[bool] = None) -> dict:
         q = self._base_query()
         if status:
             q = q.filter(PurchaseOrder.status == status)
@@ -281,6 +463,34 @@ class PurchaseOrderService:
             )
             is_outstanding = PurchaseOrder.status.in_(_ON_ORDER_STATUSES) & still_open
             q = q.filter(is_outstanding if outstanding else ~is_outstanding)
+        if allocated is not None:
+            # "Is this purchase order already spoken for" (AC-G4). EXISTS rather than a
+            # join for the same reason `product_code` uses one: an order carrying two
+            # placements is one order, and a join would list it twice.
+            #
+            # The EXACT predicate the Allocated column sums, so the filter and the figure
+            # beside it can never disagree - a cancelled row's links are history and count
+            # for neither.
+            from app.models.project_so import (
+                INQUIRY_CANCELLED,
+                OrderInquiryLink,
+                OrderInquiryRow,
+            )
+
+            is_allocated = (
+                self.db.query(OrderInquiryLink.id)
+                .join(
+                    PurchaseOrderLine,
+                    PurchaseOrderLine.id == OrderInquiryLink.po_line_id,
+                )
+                .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                .filter(
+                    PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
+                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                )
+                .exists()
+            )
+            q = q.filter(is_allocated if allocated else ~is_allocated)
         if product_code:
             # EXISTS, not a join: an order that carries the item on two lines is one order,
             # and a join would list it twice and count it twice.
@@ -324,8 +534,18 @@ class PurchaseOrderService:
         total = q.count()
         rows = q.offset((page - 1) * limit).limit(limit).all()
         gr_refs = self._gr_refs_for([po.id for po in rows])
+        # One query for the page, not one per row: the column is a sum over a child table
+        # and an N+1 here is 50 statements per keystroke of the search box.
+        occupied = self._allocated_by_po([str(po.id) for po in rows])
         return {
-            "data": [self.serialize(po, gr_refs.get(po.id)) for po in rows],
+            "data": [
+                self.serialize(
+                    po,
+                    gr_refs.get(po.id),
+                    allocated_qty=occupied.get(str(po.id), 0.0),
+                )
+                for po in rows
+            ],
             "empty": total == 0,
             "pagination": {"total": total, "page": page},
             # "which orders" and "what did we pay" are one question. Answered beside the
@@ -377,7 +597,12 @@ class PurchaseOrderService:
         if po is None:
             return None
         gr_refs = self._gr_refs_for([po.id])
-        return self.serialize(po, gr_refs.get(po.id))
+        return self.serialize(
+            po,
+            gr_refs.get(po.id),
+            allocated_qty=self._allocated_by_po([str(po.id)]).get(str(po.id), 0.0),
+            allocations=self._allocations_for(po),
+        )
 
     def list_supplier_options(
         self, query: Optional[str], limit: int, offset: int

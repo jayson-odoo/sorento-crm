@@ -2779,6 +2779,148 @@ class ProjectOrderInquiryService:
         )
         return {pso_id: customer_id for pso_id, customer_id in rows}
 
+    def relink_to_matching_lines(
+        self,
+        po_ids: Sequence[str],
+        *,
+        actor_user_id: Optional[str],
+        trigger: str,
+    ) -> int:
+        """Move each placement onto the line of ITS OWN purchase order whose warehouse fits.
+
+        Section 3.G, AC-G3. The occupancy panel exists to show the buyer that a PO line says
+        DC1 while the demand is at BRW-BB; acting on that finding means re-keying the split
+        in AutoCount and uploading the book again. The book then states BRW-BB 487 + BRW 13,
+        and the placements are still sitting on the line that used to be DC1 - so the finding
+        the buyer just acted on is still on the screen, and the split reads as if it never
+        happened. This is the step that finishes the loop: "keeps every placement attached to
+        the line whose warehouse matches; none is orphaned or unplaced".
+
+        Deliberately narrow, in four ways, because a book upload runs over thousands of
+        documents and a relocation nobody asked for is worse than no relocation at all:
+
+        * **within ONE purchase order.** A link already names this document; moving it
+          between two of the document's own lines re-reads what the buyer restated. Moving it
+          to a DIFFERENT document would be buying decision, and that is Link PO's job.
+        * **exact location only.** The target line's warehouse must be the row's own
+          `stock_location`, not a tier-2 group sibling or a pool. Anything looser would move a
+          placement to a line that reads "location differs" just the same, for no gain.
+        * **never off a line that already fits.** A row sitting at tier 1 is left exactly
+          where it is, or every upload would churn the link audit for nothing.
+        * **whole links, never split ones.** A target with less room than the placement needs
+          is passed over: half a placement on a line the book has closed is the very state
+          this is fixing.
+
+        Capacity is `qty_ordered` less what OTHER links already claim, not `outstanding`. The
+        history channel writes its lines closed and fully received, and this is a relocation
+        rather than a promise of fresh supply - the quantity was always against this document.
+        Open lines are preferred over closed ones, then the earliest expected date.
+
+        Answers how many links moved. Idempotent: a second run finds every placement already
+        at tier 1 and moves nothing.
+        """
+        wanted = [str(po_id) for po_id in (po_ids or []) if po_id]
+        if not wanted:
+            return 0
+
+        lines = (
+            self.db.query(PurchaseOrderLine, Warehouse.warehouse_code)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
+            .filter(PurchaseOrderLine.purchase_order_id.in_(wanted))
+            .all()
+        )
+        if not lines:
+            return 0
+        location_of = {
+            str(line.id): (code or "").strip().upper() for line, code in lines
+        }
+        by_order: Dict[str, List[Any]] = {}
+        for line, code in lines:
+            by_order.setdefault(str(line.purchase_order_id), []).append((line, code))
+
+        links = (
+            self.db.query(OrderInquiryLink, OrderInquiryRow, PurchaseOrderLine)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(list(location_of)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+        if not links:
+            return 0
+
+        # What every link claims per line, as this pass sees it - kept in step as links move,
+        # so two placements cannot both be given the same 13 units.
+        claimed: Dict[str, Decimal] = {}
+        for link, _row, _line in self.db.query(
+            OrderInquiryLink, OrderInquiryRow, PurchaseOrderLine
+        ).join(
+            OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id
+        ).join(
+            PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+        ).filter(
+            OrderInquiryLink.po_line_id.in_(list(location_of)),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        ):
+            key = str(link.po_line_id)
+            claimed[key] = claimed.get(key, _ZERO) + _dec(link.qty)
+
+        moved = 0
+        touched: List[OrderInquiryRow] = []
+        for link, row, current in links:
+            wants = (row.stock_location or "").strip().upper()
+            if not wants or location_of.get(str(current.id)) == wants:
+                continue
+            qty = _dec(link.qty)
+            candidates = [
+                line
+                for line, code in by_order.get(str(current.purchase_order_id), [])
+                if (code or "").strip().upper() == wants
+                and str(line.id) != str(current.id)
+                and str(line.product_id) == str(current.product_id)
+                and _dec(line.qty_ordered) - claimed.get(str(line.id), _ZERO) >= qty
+            ]
+            if not candidates:
+                continue
+            candidates.sort(
+                key=lambda line: (
+                    0 if line.line_status == "open" else 1,
+                    line.expected_date is None,
+                    line.expected_date or date.min,
+                    str(line.id),
+                )
+            )
+            target = candidates[0]
+            claimed[str(current.id)] = claimed.get(str(current.id), _ZERO) - qty
+            claimed[str(target.id)] = claimed.get(str(target.id), _ZERO) + qty
+            link.po_line_id = str(target.id)
+            # The document has not changed - only which of its lines this sits on - so the
+            # link's denormalised `document` stays as it is and the claim it put up is still
+            # true. What DOES need saying is why the row moved, on the row's own note, which
+            # is already this feature's evidence field.
+            stamp = (
+                f"Moved to the {wants} line of {link.document or 'the same document'} "
+                f"after the book was re-uploaded; auto: {trigger}"
+            )
+            row.note = f"{row.note}; {stamp}" if row.note else stamp
+            if actor_user_id:
+                row.actioned_by = actor_user_id
+                row.actioned_at = datetime.utcnow()
+            touched.append(row)
+            moved += 1
+
+        if moved:
+            self.db.flush()
+            self._invalidate_link_cache()
+            # The derived display (`po_ref` / `po_line_id`) is read off the links, so it has
+            # to be restated or the row keeps naming the line it has just left.
+            self._refresh_link_state(touched)
+            self.db.flush()
+        return moved
+
     def unplace(
         self, row_id: str, *, actor_user_id: str, link_id: Optional[str] = None
     ) -> Dict[str, Any]:

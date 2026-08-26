@@ -2019,6 +2019,28 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         except Exception:  # pragma: no cover - defensive, see above
             logger.exception("plan exception batch failed for a confirmed SO upload")
 
+    # Section 3.G, AC-G3: the buyer acted on the occupancy panel's "location differs", split
+    # the line in AutoCount and uploaded the book again. The book now states BRW-BB 487 + BRW
+    # 13 and the placements are still on the line that used to be DC1 - so each one is moved
+    # onto the line of this same document whose warehouse matches the demand's own location.
+    # PO book only: a sales-order upload changes no supply line.
+    #
+    # Best-effort for the same reason the two batches below are: the write has already
+    # succeeded, and a defect in the reaction must cost the operator a relocation the next
+    # upload makes again, never the upload itself.
+    relinked = 0
+    if doc_type == PO and order_ids:
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            relinked = ProjectOrderInquiryService(db).relink_to_matching_lines(
+                list(order_ids.values()), actor_user_id=actor, trigger="po_book_upload",
+            )
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("re-linking placements failed for a confirmed PO upload")
+
     # PLAN-so-book-diff-replanning.md section 2: the SO book's own reaction. Best-effort
     # for the same reason the exception batch above is - the upload has already succeeded,
     # and a defect in the reaction must cost the operator a batch the next upload produces
@@ -2065,6 +2087,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # CRM-raised purchase orders this same upload retired because AutoCount now
         # states the identical (product, supplier) - see `_supersede_crm_raised_pos`.
         "superseded_documents": superseded_documents,
+        # How many order-inquiry placements this upload moved onto the line whose warehouse
+        # matches the demand (AC-G3). 0 on the SO channel and on a PO book that changed no
+        # location - which is most of them.
+        "relinked_placements": relinked,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

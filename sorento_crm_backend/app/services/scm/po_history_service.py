@@ -345,6 +345,80 @@ def _write_shipping_order(
     return lines_created
 
 
+def _match_existing_lines(
+    parsed_lines, existing, product_by_code: dict[str, str],
+    warehouse_by_code: dict[str, str],
+) -> list:
+    """Which held line each parsed line IS, keyed by `(product, warehouse)` before ordinal.
+
+    Section 3.G, AC-G3. Line identity used to be the document's line NUMBER alone, and the
+    structured extract carries no line number of its own - `purchase_history_reader` numbers
+    the rows POSITIONALLY, "the n-th line of the document, in file order". So the moment
+    AutoCount splits one line into two, every ordinal below it shifts by one and a re-upload
+    rewrites the wrong rows: on the captain's own case a DC1 500 line becomes BRW-BB 487 +
+    BRW 13, and under the ordinal alone the two locations swap their quantities silently.
+
+    So the pass order is:
+
+      1. `(product_id, warehouse_id)` - what the line IS. Each held line is consumed at most
+         once, so a document that states the same item at the same location on two rows (two
+         containers on one purchase order, 2,253 times over on the captain's book) pairs the
+         first with the first and the second with the second rather than collapsing them.
+      2. the ordinal, and only for a parsed line of the SAME PRODUCT. That is the split case:
+         the DC1 line and the BRW-BB line that replaced it are the same item, so the held row
+         is rewritten in place and everything pointing at it - a goods receipt, an order
+         inquiry link - stays attached. An ordinal match across two different products is a
+         coincidence rather than an identity, and following it is the shift bug itself.
+      3. nothing, and the caller creates.
+
+    Answers a list aligned to `parsed_lines`; a non-stock or unresolvable row is `None`,
+    because the caller skips it before it ever reaches a write.
+    """
+    by_key: dict[tuple, list] = {}
+    by_ordinal: dict[object, list] = {}
+    for line in existing:
+        by_key.setdefault(
+            (str(line.product_id), str(line.warehouse_id or "")), []
+        ).append(line)
+        ordinal = int(line.source_ref) if (line.source_ref or "").isdigit() else None
+        by_ordinal.setdefault(ordinal, []).append(line)
+
+    taken: set[str] = set()
+
+    def _take(bucket: list, product_id: Optional[str] = None):
+        for line in bucket:
+            if str(line.id) in taken:
+                continue
+            if product_id is not None and str(line.product_id) != str(product_id):
+                continue
+            taken.add(str(line.id))
+            return line
+        return None
+
+    matched: list = [None] * len(parsed_lines)
+    resolved: list = []
+    for parsed in parsed_lines:
+        product_id = (product_by_code.get(parsed.item_code)
+                      if parsed.is_stock_item else None)
+        warehouse_id = (warehouse_by_code.get(parsed.location.upper())
+                        if parsed.location else None)
+        resolved.append((product_id, warehouse_id))
+
+    for index, (product_id, warehouse_id) in enumerate(resolved):
+        if product_id is None:
+            continue
+        matched[index] = _take(
+            by_key.get((str(product_id), str(warehouse_id or "")), [])
+        )
+    for index, (product_id, _warehouse_id) in enumerate(resolved):
+        if product_id is None or matched[index] is not None:
+            continue
+        matched[index] = _take(
+            by_ordinal.get(parsed_lines[index].line_no, []), product_id=product_id
+        )
+    return matched
+
+
 def _parse(db: Session, file_data: bytes) -> PoListingResult:
     """Read the book, whichever of the two exports it is.
 
@@ -653,14 +727,16 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             if supplier is not None:
                 order.supplier_id = str(supplier.id)
 
-        existing_lines = {
-            (int(l.source_ref) if (l.source_ref or "").isdigit() else None): l
-            for l in db.query(PurchaseOrderLine)
+        matched_lines = _match_existing_lines(
+            parsed_order.lines,
+            db.query(PurchaseOrderLine)
             .filter(PurchaseOrderLine.purchase_order_id == str(order.id))
-            .all()
-        }
+            .all(),
+            product_by_code,
+            warehouse_by_code,
+        )
 
-        for parsed_line in parsed_order.lines:
+        for line_index, parsed_line in enumerate(parsed_order.lines):
             identity = {"doc_no": parsed_order.po_number,
                         "item_code": parsed_line.item_code,
                         "line_no": parsed_line.line_no}
@@ -687,7 +763,7 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             warehouse_id = (warehouse_by_code.get(parsed_line.location.upper())
                             if parsed_line.location else None)
 
-            line = existing_lines.get(parsed_line.line_no)
+            line = matched_lines[line_index]
             if line is None:
                 line = PurchaseOrderLine(
                     purchase_order_id=str(order.id),
@@ -739,6 +815,30 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                         seen=claimed, company_id=claim_company_id)
 
     db.flush()
+    # Section 3.G, AC-G3. A re-uploaded document may state the same item at a DIFFERENT
+    # location than the line an order inquiry was linked to - that is precisely the split the
+    # occupancy panel asks the buyer to make - so each placement is moved onto the line of its
+    # own document whose warehouse matches the demand. Best-effort: the book is already
+    # written, and a defect here must cost a relocation the next upload makes again rather
+    # than the whole 27,000-row job.
+    summary["relinked_placements"] = 0
+    if existing_orders:
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            summary["relinked_placements"] = ProjectOrderInquiryService(
+                db
+            ).relink_to_matching_lines(
+                [str(order.id) for order in existing_orders.values()],
+                actor_user_id=actor,
+                trigger="po_history_upload",
+            )
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception(
+                "re-linking placements failed for a purchase-history upload"
+            )
     summary["orders_created"] = orders_created
     summary["lines_created"] = lines_created
     summary["date_from"] = summary["date_from"].isoformat() if summary["date_from"] else None
