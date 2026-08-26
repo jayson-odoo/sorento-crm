@@ -358,6 +358,21 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
               {row.original.so_number}
             </Link>
             <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
+            {/* The book moved a planned line on this order and nobody has applied the change
+                yet (AC-P3-1). The badge IS the way in: it opens the board on this order and
+                that batch, which is where the change is decided. */}
+            {row.original.planning_change_batch_id ? (
+              <Link
+                data-testid={`so-changed-${row.original.so_number}`}
+                href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+                  row.original.so_number,
+                )}&batch=${encodeURIComponent(row.original.planning_change_batch_id)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="mt-0.5 w-fit rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800 hover:underline"
+              >
+                Changed
+              </Link>
+            ) : null}
           </div>
         ),
         size: 160,

@@ -982,7 +982,7 @@ function confirmedSummary(
 }
 
 /**
- * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
+ * Exported so another surface reading the same sources (`PLAN-so-book-diff-replanning.md`) can print a
  * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
  * second sentence-builder that drifts from this one.
  *

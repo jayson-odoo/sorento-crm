@@ -890,6 +890,7 @@ export const MOCK_PLANNING_CHANGE_BATCHES: PlanningChangeBatchSummary[] = [
     failed_count: 0,
     applied_at: null,
     applied_by_name: null,
+    so_numbers: MOCK_PLANNING_CHANGE_BATCH_PENDING.orders.map((order) => order.so_number),
   },
   {
     id: MOCK_PLANNING_CHANGE_BATCH_APPLIED.id,
@@ -909,5 +910,139 @@ export const MOCK_PLANNING_CHANGE_BATCHES: PlanningChangeBatchSummary[] = [
     ),
     applied_at: MOCK_PLANNING_CHANGE_BATCH_APPLIED.applied_at,
     applied_by_name: MOCK_PLANNING_CHANGE_BATCH_APPLIED.applied_by_name,
+    so_numbers: MOCK_PLANNING_CHANGE_BATCH_APPLIED.orders.map((order) => order.so_number),
   },
 ];
+
+/**
+ * Part 3's own case (`PLAN-scm-cs-planning-uat.md`, AC-P3-2): SO381895 re-uploaded with form
+ * (3). SRTWCX7405-RL-S-PJ's three instalments - 10 on 25 Aug, 10 on 5 Sep, 5 on 10 Sep -
+ * become one line of 25 on 19 Aug, so one row is advanced and two are closed. The closed line
+ * of 10 already had its stock physically moved, which is the transfer flag.
+ *
+ * Every row here is the shape the board annotates a cell with, so the Was / Now table, the
+ * `Closed` reading and the moved-transfer phrase are all on one fixture.
+ */
+export const MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE: PlanningChangeBatch = {
+  id: 'pcb-so381895',
+  created_at: '2026-08-19T09:23:00Z',
+  created_by_name: 'Cyndi Tee',
+  source: {
+    upload_id: 'imp-so381895',
+    file_name: 'Outstanding SO 19 Aug.xlsx',
+    kind: 'so_book_upload',
+    import_job_id: 'imp-so381895',
+  },
+  applied_at: null,
+  applied_by_name: null,
+  orders: [
+    {
+      project_sales_order_id: 'pso-381895',
+      so_number: 'SO381895',
+      customer_name: 'YOTU BUILDER',
+      project_label: 'LOT 2752',
+      revision_no: 2,
+      is_adopted: true,
+      core_sales_order_id: 'so-381895',
+      project_id: null,
+      rows: [
+        {
+          id: 'pcr-381895-1',
+          project_line_id: 'pl-381895-1',
+          line_no: 1,
+          item_code: 'SRTWCX7405-RL-S-PJ',
+          product_name: 'Floor trap 7405 RL S',
+          kind: 'advanced',
+          from: { required_date: '2026-08-25', qty: '10', status: 'open' },
+          to: { required_date: '2026-08-19', qty: '25', status: 'open' },
+          days_moved: -6,
+          held: { reserve: [], borrow: [], buy_qty: '10', timely_spo_qty: '0', revision_no: 2 },
+          facts: {
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
+            discontinued: false,
+            days_moved: -6,
+            within_reserve_window: windowFact('2026-08-25', '2026-08-19', -6),
+            buy_actioned: buyActionedFact(false),
+          },
+          suggested: 'replan',
+          why: 'Advanced 6 days; the line runs the ladder again at the new date now.',
+          proposal: boardProposal({
+            key: 'SO381895|1|SRTWCX7405-RL-S-PJ',
+            sales_order_id: 'so-381895',
+            so_number: 'SO381895',
+            line_no: 1,
+            item_code: 'SRTWCX7405-RL-S-PJ',
+            qty: '25',
+            required_date: '2026-08-19',
+            reserveQty: '0',
+            reserveLocation: 'BRW-IB',
+            buyQty: '25',
+          }),
+          inquiry_rows: [{ id: 'oir-1', verb: 'ORDER', qty: '10', state: 'placed' }],
+          decision: null,
+          applied_state: 'pending',
+          board_link:
+            '/project-sales/fulfilment-planning?orders=SO381895&cell=SRTWCX7405-RL-S-PJ|2026-08-19',
+        },
+        {
+          id: 'pcr-381895-2',
+          project_line_id: 'pl-381895-2',
+          line_no: 2,
+          item_code: 'SRTWCX7405-RL-S-PJ',
+          product_name: 'Floor trap 7405 RL S',
+          kind: 'closed',
+          from: { required_date: '2026-09-05', qty: '10', status: 'open' },
+          to: { required_date: null, qty: null, status: 'closed' },
+          days_moved: null,
+          held: { reserve: [], borrow: [], buy_qty: '10', timely_spo_qty: '0', revision_no: 2 },
+          facts: {
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
+            discontinued: false,
+            days_moved: 0,
+            within_reserve_window: windowFact('2026-09-05', '2026-09-05', 0),
+            buy_actioned: buyActionedFact(false),
+          },
+          suggested: 'retire',
+          why: 'The line is closed in the book.',
+          proposal: null,
+          inquiry_rows: [{ id: 'oir-2', verb: 'ORDER', qty: '10', state: 'placed' }],
+          decision: 'accept',
+          applied_state: 'pending',
+          moved_transfer: '10 moved BRW -> BRW-IB, line cancelled',
+          board_link:
+            '/project-sales/fulfilment-planning?orders=SO381895&cell=SRTWCX7405-RL-S-PJ|2026-09-05',
+        },
+        {
+          id: 'pcr-381895-3',
+          project_line_id: 'pl-381895-3',
+          line_no: 3,
+          item_code: 'SRTWCX7405-RL-S-PJ',
+          product_name: 'Floor trap 7405 RL S',
+          kind: 'closed',
+          from: { required_date: '2026-09-10', qty: '5', status: 'open' },
+          to: { required_date: null, qty: null, status: 'closed' },
+          days_moved: null,
+          held: { reserve: [], borrow: [], buy_qty: '5', timely_spo_qty: '0', revision_no: 2 },
+          facts: {
+            dealer_hot_selling: evidencedFact(false),
+            project_hot_selling: evidencedFact(false),
+            discontinued: false,
+            days_moved: 0,
+            within_reserve_window: windowFact('2026-09-10', '2026-09-10', 0),
+            buy_actioned: buyActionedFact(false),
+          },
+          suggested: 'retire',
+          why: 'The line is closed in the book.',
+          proposal: null,
+          inquiry_rows: [{ id: 'oir-3', verb: 'ORDER', qty: '5', state: 'raised' }],
+          decision: 'accept',
+          applied_state: 'pending',
+          board_link:
+            '/project-sales/fulfilment-planning?orders=SO381895&cell=SRTWCX7405-RL-S-PJ|2026-09-10',
+        },
+      ],
+    },
+  ],
+};

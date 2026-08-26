@@ -1155,9 +1155,15 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   planningChangeBatch.line_count === 1 ? '' : 's'
                 }`}
               </p>
+              {/* Straight to the board, on THIS order and THIS batch (AC-P3-1): the change
+                  is decided where the plan is, in one vocabulary. */}
               <Button asChild variant="outline" size="sm">
-                <Link href={`/project-sales/planning-changes/${planningChangeBatch.id}`}>
-                  Review
+                <Link
+                  href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(
+                    so.so_number,
+                  )}&batch=${encodeURIComponent(planningChangeBatch.id)}`}
+                >
+                  Plan
                 </Link>
               </Button>
             </div>

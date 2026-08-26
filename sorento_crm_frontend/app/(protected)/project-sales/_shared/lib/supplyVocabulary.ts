@@ -366,11 +366,31 @@ function breakdown(
   cell: Pick<BoardCell, 'contributions'>,
   partsOf: (contribution: BoardContribution) => SupplyPart[] | null,
 ): SuggestionRow[] {
+  return partsBreakdown(
+    cell.contributions.map((contribution) => ({
+      parts: partsOf(contribution) ?? [],
+      ownLocation: contribution.fulfilment_location,
+    })),
+  );
+}
+
+/**
+ * The same aggregation, given the parts directly rather than a cell.
+ *
+ * A planning change's Was / Now table reads a line's HELD composition and its fresh proposal
+ * (`boardChangeAnnotations.ts`, AC-P3-3), neither of which is a board cell - and saying "Use
+ * own location 40 from BRW-BB" in a second place would be a second vocabulary the day either
+ * changed. One entry per line, because the rung a part resolves at depends on THAT line's own
+ * location.
+ */
+export function partsBreakdown(
+  entries: { parts: SupplyPart[]; ownLocation?: string | null }[],
+): SuggestionRow[] {
   const parts: SupplyPart[] = [];
   const why = new Map<SupplyKind, Set<string>>();
-  for (const contribution of cell.contributions) {
-    for (const source of partsOf(contribution) ?? []) {
-      const kind = rowOf(source, contribution.fulfilment_location);
+  for (const entry of entries) {
+    for (const source of entry.parts) {
+      const kind = rowOf(source, entry.ownLocation);
       if (!kind) continue;
       parts.push({
         kind: source.kind,

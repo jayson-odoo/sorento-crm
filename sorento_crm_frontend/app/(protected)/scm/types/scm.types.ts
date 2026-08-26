@@ -423,6 +423,13 @@ export interface SalesOrder {
    *  inquiries and nothing between them, so this is where an order says what has been
    *  done about it. */
   order_inquiries?: SalesOrderInquiry[];
+  /**
+   * The PENDING planning-change batch this order is in, when a re-uploaded book moved one of
+   * its planned lines and nobody has applied the change yet (AC-P3-1). Present on the LIST,
+   * which is where the Changed badge is; `null` on every order with nothing outstanding, which
+   * is nearly all of them.
+   */
+  planning_change_batch_id?: string | null;
   created_at: string;
 }
 

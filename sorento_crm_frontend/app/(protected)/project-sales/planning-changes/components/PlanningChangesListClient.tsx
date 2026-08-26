@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -9,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { FileClock, Search, X } from 'lucide-react';
+import { FileClock, LayoutGrid, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -26,6 +27,25 @@ import {
   PLANNING_CHANGE_SOURCE_KIND_LABEL,
   type PlanningChangeBatchSummary,
 } from '../../_shared/types/planningChange.types';
+
+/**
+ * Where a batch is decided: the fulfilment board, opened on the orders it moved (AC-P3-1).
+ *
+ * There is no batch page any more. A planning change is a change to a PLAN, and the plan has
+ * one screen; reviewing it somewhere else meant two vocabularies for one decision (the rule
+ * table's `keep` / `release` / `retire` on one screen, `Buy` / `Use own location` on the
+ * other) and two places to press Confirm.
+ */
+export function planningChangeBoardHref(batch: {
+  id: string;
+  so_numbers?: string[] | null;
+}): string {
+  const orders = (batch.so_numbers ?? []).join(',');
+  const search = new URLSearchParams();
+  if (orders) search.set('orders', orders);
+  search.set('batch', batch.id);
+  return `/project-sales/fulfilment-planning?${search.toString()}`;
+}
 
 const STATE_TABS: { value: 'all' | 'pending' | 'applied'; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -163,6 +183,23 @@ export function PlanningChangesListClient() {
         meta: { headerTitle: 'State' },
         cell: ({ row }) => <BatchStatePill batch={row.original} />,
       },
+      {
+        id: 'actions',
+        header: '',
+        size: 90,
+        enableSorting: false,
+        enableHiding: false,
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <Button asChild variant="outline" size="sm" onClick={(e) => e.stopPropagation()}>
+              <Link href={planningChangeBoardHref(row.original)}>
+                <LayoutGrid className="size-4" aria-hidden />
+                Plan
+              </Link>
+            </Button>
+          </div>
+        ),
+      },
     ],
     [],
   );
@@ -214,7 +251,7 @@ export function PlanningChangesListClient() {
         isLoading={list.isLoading}
         listingKey="projects.projects.view::project-planning-changes"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        onRowClick={(row) => router.push(`/project-sales/planning-changes/${row.id}`)}
+        onRowClick={(row) => router.push(planningChangeBoardHref(row))}
         emptyMessage={
           <div className="px-6 py-10 text-center">
             <FileClock className="mx-auto size-6 text-muted-foreground" aria-hidden />
