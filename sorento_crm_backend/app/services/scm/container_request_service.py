@@ -74,6 +74,17 @@ from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOUR
 from app.services.scm.supplier_scope import supplier_row
 
 
+def _pool_predicate(alias: str = "w") -> str:
+    """The site-pool test, character for character the reorder engine's own
+    (`reorder_run_service._positions_for_run`): a location with no segment stated IS a site
+    pool, because a warehouse nobody has classified is not assumed to be a project bin.
+
+    Takes its alias so the one rule can be written into any of this module's queries without
+    a second spelling of it existing anywhere.
+    """
+    return f"(COALESCE({alias}.segment, 'dealer') <> 'project')"
+
+
 def _f(v) -> Optional[float]:
     return None if v is None else float(v)
 
@@ -300,24 +311,108 @@ def _open_lines(
     ]
 
 
-def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """What we already hold or have coming, per product, company-wide (CHANGE 4).
+def _empty_context() -> dict:
+    """The shape every row carries, whether or not the product appears anywhere.
 
-    Same figures the reorder engine reads, on purpose: `on_hand` is
-    `scm.net_position_v.quantity_on_hand`, `incoming_spo` is
-    `scm.net_position_v.on_order` (SPO allocations on the water, since migration 337),
-    `outstanding_po` is `scm.po_ordered_v.ordered` (placed with a supplier but not yet
-    allocated to a shipment) - summed ACROSS every warehouse, because this screen asks one
-    supplier for one company-wide quantity, not a per-location one. Missing a product
-    entirely (no stock, on-order or committed row anywhere) is a real zero, not absent data.
+    Missing a product entirely (no stock, no allocation, no packing list) is a real zero, not
+    absent data, and the breakdown dialog reads the same keys on every row - a no-demand row
+    that carried half of them would break the dialog on half the grid.
+    """
+    return {
+        "on_hand": 0.0,
+        "on_hand_group": 0.0,
+        "incoming_spo": 0.0,
+        "incoming_spo_group": 0.0,
+        "incoming_pl": 0.0,
+        "outstanding_po": 0.0,
+        "sites": [],
+        "group_locations": {
+            "count": 0,
+            "on_hand": 0.0,
+            "incoming_spo": 0.0,
+            "warehouse_codes": [],
+        },
+        "incoming_pl_shipments": [],
+        "outstanding_po_lines": [],
+    }
+
+
+def _context_payload(ctx: dict) -> dict:
+    """The stock half of a row, spelled the same way for a demand row and a no-demand row.
+
+    ONE builder, because the two used to be two literal dicts and any field added to one was
+    a field missing from the other - which the breakdown dialog reads as a broken row rather
+    than as an empty one.
+    """
+    return {
+        "on_hand": ctx["on_hand"],
+        "on_hand_group": ctx["on_hand_group"],
+        "incoming_spo": ctx["incoming_spo"],
+        "incoming_spo_group": ctx["incoming_spo_group"],
+        "incoming_pl": ctx["incoming_pl"],
+        "incoming_pl_shipments": ctx["incoming_pl_shipments"],
+        "outstanding_po": ctx["outstanding_po"],
+        "outstanding_po_lines": ctx["outstanding_po_lines"],
+        "sites": ctx["sites"],
+        "group_locations": ctx["group_locations"],
+    }
+
+
+#: How many group locations to name on the muted line before it becomes "... (N)". The count
+#: is always exact; the codes are there to say what KIND of location holds the rest.
+_GROUP_CODES_SHOWN = 6
+
+
+def _pool_warehouses(db: Session) -> list[str]:
+    """Every ACTIVE site pool, in code order - the rows the location table always shows.
+
+    Zero-filled on purpose (AC-B3): "BRW 0" says we looked and there is none there, which is
+    what the reader is actually asking; a missing row says nothing and reads as data that
+    failed to load. Inactive locations are left out - a closed warehouse is not a site she can
+    ask stock from, and there are eleven of them.
+    """
+    scope, params = company_sql_predicate(db, "company_id", param_prefix="cpw")
+    rows = db.execute(
+        text(
+            "SELECT warehouse_code FROM warehouses "
+            f"WHERE is_active AND {_pool_predicate('warehouses')} "
+            f"AND {scope or 'true'} ORDER BY warehouse_code"
+        ),
+        params,
+    ).all()
+    return [r[0] for r in rows]
+
+
+def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """What we already hold or have coming, per product - SITE POOLS ONLY for the netting.
+
+    THE NETTING RULE THIS FUNCTION IS THE RECORD OF (F2, captain 26 Aug):
+
+        suggested_qty = open_so_need - on_hand(site pools) - incoming_spo(site pools)
+
+    and nothing else is ever subtracted.
+
+    * `on_hand` / `incoming_spo` count only locations where `COALESCE(w.segment,'dealer') <>
+      'project'` - the reorder engine's own pool predicate (`reorder_run_service`), and the
+      reason this function changed at all: it used to sum all 82 warehouses, so stock sitting
+      in a `-BB` project bin (spoken for by an order already promised) silently cancelled an
+      ask this container needed. That stock is not hidden - it travels as `on_hand_group` /
+      `incoming_spo_group` and is shown, muted, in the row breakdown.
+    * `incoming_pl` (unreceived packing-list quantity on shipments that have not arrived) is
+      REFERENCE ONLY and is never subtracted (Q1): a packing list names no destination, so
+      there is no way to tell whether it lands in a pool or in a group bin, and netting it
+      would be a guess. It is shown beside the ask, with the shipments behind it.
+    * `outstanding_po` is likewise shown and never subtracted (captain, 20 Aug, CWCY604): a PO
+      placed but not yet allocated to a shipment is often the very demand this request is
+      asking the supplier to pack.
 
     Raw SQL for the same reason `reorder_run_service` reads these views in raw SQL: they are
-    plain views with no ORM mapping. Company-scoped by hand on the JOINED `products` /
-    `warehouses` (the views themselves carry no `company_id`), mirroring
-    `reorder_run_service._positions_for_run`'s own note on why both sides need it.
+    plain views with no ORM mapping, so there is nothing to scope automatically. Both joined
+    sides are company-scoped by hand (the views carry no `company_id`).
     """
     if not product_ids:
         return {}
+
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
     where = ["np.product_id::text = ANY(:pids)"]
@@ -325,30 +420,172 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
         where.append(prod_scope)
     if wh_scope:
         where.append(wh_scope)
+    # Per location, not per product: the split and the breakdown are the same reading of one
+    # set of rows, so they cannot disagree about what is in a pool.
     sql = f"""
         SELECT np.product_id::text AS product_id,
-               SUM(COALESCE(np.quantity_on_hand, 0)) AS on_hand,
-               SUM(COALESCE(np.on_order, 0)) AS incoming_spo,
-               SUM(COALESCE(po.ordered, 0)) AS outstanding_po
+               w.warehouse_code,
+               {_pool_predicate()} AS is_pool,
+               COALESCE(np.quantity_on_hand, 0) AS on_hand,
+               COALESCE(np.on_order, 0) AS incoming_spo
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
         JOIN warehouses w ON w.id = np.warehouse_id
-        LEFT JOIN scm.po_ordered_v po
-          ON po.product_id = np.product_id AND po.warehouse_id = np.warehouse_id
         WHERE {' AND '.join(where)}
-        GROUP BY np.product_id
     """
     rows = db.execute(
         text(sql), {"pids": product_ids, **prod_params, **wh_params}
     ).mappings().all()
-    return {
-        r["product_id"]: {
-            "on_hand": float(r["on_hand"] or 0),
-            "incoming_spo": float(r["incoming_spo"] or 0),
-            "outstanding_po": float(r["outstanding_po"] or 0),
-        }
-        for r in rows
-    }
+
+    pool_codes = _pool_warehouses(db)
+    out: dict[str, dict] = {}
+    per_site: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        pid = r["product_id"]
+        ctx = out.setdefault(pid, _empty_context())
+        on_hand = float(r["on_hand"] or 0)
+        spo = float(r["incoming_spo"] or 0)
+        if r["is_pool"]:
+            ctx["on_hand"] += on_hand
+            ctx["incoming_spo"] += spo
+            site = per_site.setdefault(pid, {}).setdefault(
+                r["warehouse_code"],
+                {"warehouse_code": r["warehouse_code"], "on_hand": 0.0, "incoming_spo": 0.0},
+            )
+            site["on_hand"] += on_hand
+            site["incoming_spo"] += spo
+        else:
+            ctx["on_hand_group"] += on_hand
+            ctx["incoming_spo_group"] += spo
+            group = ctx["group_locations"]
+            if on_hand or spo:
+                group["count"] += 1
+                group["on_hand"] += on_hand
+                group["incoming_spo"] += spo
+                group["warehouse_codes"].append(r["warehouse_code"])
+
+    for pid, ctx in out.items():
+        sites = per_site.get(pid, {})
+        for code in pool_codes:
+            sites.setdefault(
+                code, {"warehouse_code": code, "on_hand": 0.0, "incoming_spo": 0.0}
+            )
+        ctx["sites"] = sorted(sites.values(), key=lambda s: s["warehouse_code"])
+        ctx["group_locations"]["warehouse_codes"] = sorted(
+            ctx["group_locations"]["warehouse_codes"]
+        )[:_GROUP_CODES_SHOWN]
+
+    for pid, incoming in _incoming_packing_lists(db, product_ids).items():
+        ctx = out.setdefault(pid, _empty_context())
+        ctx["incoming_pl_shipments"] = incoming
+        ctx["incoming_pl"] = sum(s["qty"] for s in incoming)
+
+    for pid, lines in _outstanding_po_lines(db, product_ids).items():
+        ctx = out.setdefault(pid, _empty_context())
+        ctx["outstanding_po_lines"] = lines
+        ctx["outstanding_po"] = sum(line["qty"] for line in lines)
+
+    # A product that appears in no view at all still needs its site rows, or its breakdown
+    # opens on an empty location table and reads as a failed load.
+    for pid in product_ids:
+        ctx = out.setdefault(pid, _empty_context())
+        if not ctx["sites"]:
+            ctx["sites"] = [
+                {"warehouse_code": code, "on_hand": 0.0, "incoming_spo": 0.0}
+                for code in pool_codes
+            ]
+    return out
+
+
+def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, list[dict]]:
+    """Unreceived packing-list quantity per product, by shipment - the Incoming PL reference.
+
+    "Not arrived" is BOTH `actual_arrival_date IS NULL` and a status that is not a finished
+    one: a shipment that has landed is already counted in `on_hand`, and counting it here too
+    would show the same units twice on one row.
+
+    A draft carries no number yet; it is emitted as a null so the screen can say "draft"
+    rather than invent one.
+    """
+    if not product_ids:
+        return {}
+    scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
+    remaining = (
+        "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
+    )
+    sql = f"""
+        SELECT l.product_id::text AS product_id,
+               s.id::text AS shipment_id,
+               s.shipment_number,
+               s.estimated_arrival_date,
+               SUM({remaining}) AS qty
+        FROM inbound_shipment_lines l
+        JOIN inbound_shipments s ON s.id = l.shipment_id
+        WHERE l.product_id::text = ANY(:pids)
+          AND s.actual_arrival_date IS NULL
+          AND s.shipment_status NOT IN ('fully_received', 'closed')
+          AND {remaining} > 0
+          {("AND " + scope) if scope else ""}
+        GROUP BY l.product_id, s.id, s.shipment_number, s.estimated_arrival_date
+        ORDER BY s.estimated_arrival_date NULLS LAST, s.shipment_number NULLS FIRST
+    """
+    rows = db.execute(text(sql), {"pids": product_ids, **params}).mappings().all()
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["product_id"], []).append(
+            {
+                "shipment_id": r["shipment_id"],
+                "shipment_number": r["shipment_number"],
+                "estimated_arrival_date": (
+                    r["estimated_arrival_date"].isoformat()
+                    if r["estimated_arrival_date"]
+                    else None
+                ),
+                "qty": float(r["qty"] or 0),
+            }
+        )
+    return out
+
+
+def _outstanding_po_lines(db: Session, product_ids: list[str]) -> dict[str, list[dict]]:
+    """Open PO quantity per product, by PO - the same predicate `scm.po_ordered_v` uses.
+
+    The total on the row is the SUM of these lines rather than a separate read of the view.
+    They cannot then disagree, and it fixes a quirk of the old join: the view was LEFT JOINed
+    to `net_position_v` on (product, warehouse), so a PO for a location the product has no
+    stock/on-order row at was dropped from the figure entirely.
+    """
+    if not product_ids:
+        return {}
+    scope, params = company_sql_predicate(db, "po.company_id", param_prefix="opo")
+    sql = f"""
+        SELECT pol.product_id::text AS product_id,
+               po.po_number,
+               pol.expected_date,
+               SUM(pol.qty_ordered - pol.qty_received) AS qty
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id
+        WHERE pol.product_id::text = ANY(:pids)
+          AND po.status IN ('active', 'received', 'partial', 'closed')
+          AND pol.line_status = 'open'
+          AND pol.qty_ordered > pol.qty_received
+          {("AND " + scope) if scope else ""}
+        GROUP BY pol.product_id, po.po_number, pol.expected_date
+        ORDER BY pol.expected_date NULLS LAST, po.po_number
+    """
+    rows = db.execute(text(sql), {"pids": product_ids, **params}).mappings().all()
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["product_id"], []).append(
+            {
+                "po_number": r["po_number"],
+                "expected_date": (
+                    r["expected_date"].isoformat() if r["expected_date"] else None
+                ),
+                "qty": float(r["qty"] or 0),
+            }
+        )
+    return out
 
 
 #: Job types that touch each document family, oldest write path last - CHANGE 5. Kept as
@@ -488,7 +725,6 @@ def build(
     ]
     catalogue = _product_catalogue(db, demand_ids + no_demand_ids)
     stock_context = _stock_context(db, demand_ids + no_demand_ids)
-    empty_context = {"on_hand": 0.0, "incoming_spo": 0.0, "outstanding_po": 0.0}
 
     prepared: list[dict] = []
     if demand_ids:
@@ -518,10 +754,10 @@ def build(
             n = need[pid]
             info = catalogue.get(pid, {})
             s = stock[pid]
-            ctx = stock_context.get(pid, empty_context)
+            ctx = stock_context.get(pid) or _empty_context()
             open_so_need = _f(n.total_qty) or 0.0
-            # outstanding_po is deliberately NOT subtracted here - see the module docstring
-            # (captain, 20 Aug follow-up). It still travels on the row below, unchanged.
+            # Site pools only, and neither the packing list nor the outstanding PO is
+            # subtracted - `_stock_context`'s docstring is the record of that rule.
             suggested_qty = max(open_so_need - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
             prepared.append(
                 {
@@ -530,9 +766,7 @@ def build(
                     "product_name": info.get("product_name"),
                     "open_so_need": open_so_need,
                     "suggested_qty": suggested_qty,
-                    "on_hand": ctx["on_hand"],
-                    "incoming_spo": ctx["incoming_spo"],
-                    "outstanding_po": ctx["outstanding_po"],
+                    **_context_payload(ctx),
                     # Gross split - it explains the NEED, not the netted suggestion above.
                     "project_qty": _f(n.project_qty) or 0.0,
                     "retail_qty": _f(n.retail_qty) or 0.0,
@@ -561,7 +795,7 @@ def build(
     for pid in no_demand_ids:
         info = catalogue.get(pid, {})
         s = stock[pid]
-        ctx = stock_context.get(pid, empty_context)
+        ctx = stock_context.get(pid) or _empty_context()
         no_demand_rows.append(
             {
                 "product_id": pid,
@@ -569,9 +803,7 @@ def build(
                 "product_name": info.get("product_name"),
                 "open_so_need": 0.0,
                 "suggested_qty": 0.0,
-                "on_hand": ctx["on_hand"],
-                "incoming_spo": ctx["incoming_spo"],
-                "outstanding_po": ctx["outstanding_po"],
+                **_context_payload(ctx),
                 "project_qty": 0.0,
                 "retail_qty": 0.0,
                 "unclassified_qty": 0.0,
@@ -600,6 +832,125 @@ def build(
     }
     if include_lines:
         result["lines"] = _open_lines(db, demand_ids, catalogue, horizon=plan_horizon_date)
+    return result
+
+
+#: How many whole months of order history the loading plan reads (AC-B6/B7).
+_HISTORY_MONTHS = 12
+
+
+def _month_floor(d: date) -> date:
+    return d.replace(day=1)
+
+
+def _month_shift(d: date, months: int) -> date:
+    total = d.year * 12 + (d.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
+
+
+def _month_label(d: date) -> str:
+    return f"{d.year:04d}-{d.month:02d}"
+
+
+def _series(buckets: list[str], qty_by_month: dict[str, float]) -> dict:
+    """One zero-filled series: twelve buckets, its peak, its mean and its total.
+
+    Zero-filled because a month with no order is a fact about the product; a chart that skips
+    it turns four scattered orders into a solid year. The mean is over the twelve buckets,
+    zeros included - a mean over "months that had an order" flatters a seasonal product.
+    """
+    months = [{"month": b, "qty": qty_by_month.get(b, 0.0)} for b in buckets]
+    total = sum(m["qty"] for m in months)
+    peak = max(months, key=lambda m: m["qty"]) if months else None
+    return {
+        "months": months,
+        "total": total,
+        "avg": total / len(buckets) if buckets else 0.0,
+        # There is no peak of nothing: an empty series says so rather than naming the first
+        # bucket, which would read as "it peaked in August at zero".
+        "peak_month": peak["month"] if peak and peak["qty"] > 0 else None,
+        "peak_qty": peak["qty"] if peak and peak["qty"] > 0 else 0.0,
+    }
+
+
+def history(
+    db: Session,
+    *,
+    supplier_id: str,
+    product_ids: list[str],
+    as_of: Optional[date] = None,
+) -> dict:
+    """What these products were ORDERED, per month, for the last twelve full months.
+
+    A SIDECAR to `build`, not a column on it (AC-B8): it is asked for the products on screen,
+    so a 120-product stock list does not pay for 240 monthly series to read one page of 25.
+
+    THE WINDOW is the twelve FULL months before this one, the same rule
+    `trajectory_service` reads its own trailing windows by (`until` = the first of this
+    month). The current, part-finished month is deliberately out: a half month drawn beside
+    twelve whole ones reads as a collapse in demand every time the page is opened before the
+    28th.
+
+    THE SPLIT is `sales_orders.demand_class` - project against everything else - which is both
+    the field `trajectory_service` splits its own channels on and the field the row's own
+    Project / Retail columns are counted from, so the history can never contradict the columns
+    it sits beside. (The UAC first said "by warehouse segment"; measured on the dev copy, 100%
+    of the last twelve months' SO lines carry a demand_class while 6,004 lines carry no
+    warehouse at all and would have been silently counted as project. The UAC was corrected.)
+
+    "ORDERED", never "sold": the source is the order book by `order_date`, whatever became of
+    the order since, matching `trajectory_service.demand_context_for_product`. Every requested
+    product comes back, zero-filled if it has no orders at all, so the screen can say "No
+    orders in 12 months" rather than sit on a spinner waiting for a row that is never coming.
+    """
+    _supplier(db, supplier_id)
+    until = _month_floor(as_of or date.today())
+    since = _month_shift(until, -_HISTORY_MONTHS)
+    buckets = [
+        _month_label(_month_shift(since, i)) for i in range(_HISTORY_MONTHS)
+    ]
+    result = {
+        "from_month": buckets[0],
+        "to_month": buckets[-1],
+        "products": [],
+    }
+    if not product_ids:
+        return result
+
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crh")
+    sql = f"""
+        SELECT sol.product_id::text AS product_id,
+               CASE WHEN so.demand_class = 'project' THEN 'project' ELSE 'retail' END
+                   AS series,
+               to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
+               SUM(COALESCE(sol.qty_ordered, 0)) AS qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.product_id::text = ANY(:pids)
+          AND so.order_date >= :since AND so.order_date < :until
+          {("AND " + co) if co else ""}
+        GROUP BY 1, 2, 3
+    """
+    rows = db.execute(
+        text(sql),
+        {"pids": product_ids, "since": since, "until": until, **co_params},
+    ).mappings().all()
+
+    by_product: dict[str, dict[str, dict[str, float]]] = {}
+    for r in rows:
+        series = by_product.setdefault(r["product_id"], {"project": {}, "retail": {}})
+        series[r["series"]][r["month"]] = float(r["qty"] or 0)
+
+    # Answer in the order asked, so the caller can zip the answer onto its own rows.
+    for pid in product_ids:
+        found = by_product.get(pid, {"project": {}, "retail": {}})
+        result["products"].append(
+            {
+                "product_id": pid,
+                "project": _series(buckets, found["project"]),
+                "retail": _series(buckets, found["retail"]),
+            }
+        )
     return result
 
 
