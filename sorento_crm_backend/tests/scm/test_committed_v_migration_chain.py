@@ -77,16 +77,16 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `422_committed_v_link_netting` (the confirmed leg nets a row's
-    UNLINKED remainder instead of testing its state), which replaces the body
-    `384_committed_v_line_decision` installed. Every superseded freeze stays exactly as it
-    shipped, which is the whole point of the guard, so 384's, 376's and 374's are checked
-    below rather than updated here.
+    The newest one is `423_committed_v_form_rows` (a leg for the instruction the Order
+    Inquiry Form raised with no sales-order line to read a product or a location off),
+    which replaces the body `422_committed_v_link_netting` installed. Every superseded
+    freeze stays exactly as it shipped, which is the whole point of the guard, so 422's,
+    384's, 376's and 374's are checked below rather than updated here.
     """
-    m422 = _load("422_committed_v_link_netting")
-    assert _normalize(m422._AS_OF_422) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 422; "
-        "add a new migration that freezes the new body (422's pattern), so a from-zero "
+    m423 = _load("423_committed_v_form_rows")
+    assert _normalize(m423._AS_OF_423) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 423; "
+        "add a new migration that freezes the new body (423's pattern), so a from-zero "
         "replay stays true to history."
     )
 
@@ -123,20 +123,22 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
 
     Each view migration keeps its own frozen copy of the body it replaced, so the copies
     have to be pinned equal to the originals or a downgrade quietly installs a body nobody
-    wrote. Three links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
-    puts 374 directly beneath it, so 346 would be a step too far back), and 384 restores
-    376 for the same reason.
+    wrote. Five links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
+    puts 374 directly beneath it, so 346 would be a step too far back), 384 restores
+    376 for the same reason, 422 restores 384 and 423 restores 422.
     """
     m346 = _load("346_scm_demand_origin_split")
     m374 = _load("374_so_supply_decisions")
     m376 = _load("376_scm_channel_read_model")
     m384 = _load("384_committed_v_line_decision")
     m422 = _load("422_committed_v_link_netting")
+    m423 = _load("423_committed_v_form_rows")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
     assert _normalize(m384._AS_OF_376) == _normalize(m376._AS_OF_376)
     assert _normalize(m422._AS_OF_384) == _normalize(m384._AS_OF_384)
+    assert _normalize(m423._AS_OF_422) == _normalize(m422._AS_OF_422)
 
 
 @requires_pg
@@ -173,6 +175,48 @@ def test_384_installs_the_line_rule_and_its_downgrade_puts_376_back():
         )).scalar()
         assert restored and "core_line_id" not in restored
         assert "dd.sales_order_id = so.id" in restored
+
+
+@requires_pg
+def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
+    """The leg that counts an instruction with no sales-order line, both directions.
+
+    An Order Inquiry Form row for a quantity AutoCount has closed has no `so_line_id` and no
+    supply decision, which is what both existing confirmed legs join on - so before this the
+    row was raised, shown to purchasing, and invisible to the plan. The tell is the join to
+    `products` on the row's own item code, which no earlier body makes.
+    """
+    with blank_session() as db:
+        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
+        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
+
+        m422 = _load("422_committed_v_link_netting")
+        m423 = _load("423_committed_v_form_rows")
+        db.execute(text(m422._AS_OF_422))
+
+        conn = db.connection()
+        ops = Operations(MigrationContext.configure(conn))
+        import alembic.op as op_module
+
+        op_module._proxy = ops
+        m423.upgrade()
+        definition = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        # Postgres reprints a view body with its own casts and parentheses, so the tell
+        # is the ALIAS this leg introduces rather than the predicate as it was written.
+        assert definition and "JOIN products fp" in definition
+
+        m423.downgrade()
+        restored = db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
+        )).scalar()
+        assert restored and "JOIN products fp" not in restored
+        # 422's own distinguishing feature, so a downgrade that installed some THIRD body
+        # would not pass on the absence above alone.
+        assert "lk.linked" in restored
 
 
 @requires_pg

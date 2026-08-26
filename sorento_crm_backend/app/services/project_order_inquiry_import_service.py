@@ -240,6 +240,12 @@ class _Instalment:
     location: str = ""
     po_numbers: tuple[str, ...] = ()
     not_ordered: bool = False
+    #: True when the DELIVERY DATE cell read `ORDER BACK` rather than a date. CS is saying
+    #: the quantity is owed against something already ordered, and the REMARK names it
+    #: (`PLAN-scm-purchasing-uat-journey.md` section 4b). It decides the raised row's VERB,
+    #: and therefore which documents that row may be linked to at all - only an order back
+    #: may name an SPO allocation.
+    order_back: bool = False
     #: The first sheet row that stated this delivery. Carried so a queued import can point an
     #: outcome at a row somebody can open the workbook to; the other rows that restate it are
     #: reported separately (see `_instalments`).
@@ -304,6 +310,10 @@ def _instalments(parsed) -> tuple[list[_Instalment], list[int]]:
         seen.project = seen.project or row.project
         seen.location = seen.location or row.location
         seen.not_ordered = seen.not_ordered or row.not_ordered
+        # Unioned, never replaced: one tab of the workbook stating ORDER BACK is CS saying
+        # this quantity is owed against a document, and a later tab that merely repeats the
+        # row without the words has not taken that back.
+        seen.order_back = seen.order_back or getattr(row, "order_back", False)
         # Unioned rather than replaced: one line split across two purchase orders is written
         # `202606-S0024 & 202607-S0043`, and a later tab naming only one of them has not
         # cancelled the other.
@@ -582,6 +592,192 @@ def _create_orders(db: Session, parsed, now: datetime,
     }
 
 
+def _raise_rows(db: Session, instalments, known_lines: dict, actor: Optional[str],
+                now: datetime) -> dict:
+    """Raise the order-inquiry rows the BOARD cannot, straight off the form.
+
+    `scm-cs-planning-uat-fixture.md` marks fourteen rows of SO381895's first two forms
+    `[NL]`: CS writes `ORDER BACK` where a delivery DATE belongs and names the document the
+    quantity is owed against, and the sales-order lines those quantities came from were
+    CLOSED in AutoCount. So the fulfilment board has nothing to decide about them - the
+    demand exists only on the form - and until this step the upload wrote a stock location
+    and a purchase-order claim and nothing else, so those instructions reached purchasing on
+    no screen at all.
+
+    Two cases, and only two:
+
+    * **the book states no line for this instalment** - the row is raised with `so_line_id`
+      empty, which is the honest record: there IS no line. Pointing it at the nearest line
+      of the same item instead would attach the quantity to somebody else's instalment.
+    * **the book states the line AND the form says ORDER BACK** - raised against that line,
+      because an order back is a fact about the line that no decision produces.
+
+    A dated ORDER row whose instalment the book already carries raises NOTHING: the demand is
+    in the book, the board reads it, and a second instruction for it is a second purchase.
+
+    The VERB comes off the delivery-date cell, never off the remark: `ORDER BACK` is the
+    words, a date is `ORDER` due then. Only an `ORDER_BACK` row may be linked to an SPO
+    allocation, so reading that cell wrong decides which documents the row may name.
+
+    `cited_document` is the FIRST document the remark names - what the auto-link walk tries
+    before any location tier or date - and the rest is kept as words on the note, because CS
+    wrote them and the second document is the answer when the first cannot cover it.
+
+    IDEMPOTENT on `(inquiry, so_line, item, delivery date, verb)`. CS resends the same form,
+    and a second copy of every instruction would have purchasing buy twice. A row purchasing
+    has already LINKED, actioned or cancelled is left exactly as it is - the form stopped
+    being the only word about it the moment a document was named.
+
+    Records NO per-row outcome, and that is deliberate rather than an omission. Every sheet
+    row already carries exactly one outcome from `_create_orders` (a `created`, a `refreshed`,
+    or the `document_owned_elsewhere` skip that the `[NL]` rows all take, because the book
+    belongs to the SO upload), and the job's progress bar is "one outcome per source row" -
+    a second one here would report 83 rows processed out of 69. What this step did is said
+    in the SUMMARY instead, exactly as the stock-location and purchase-order-claim steps
+    below already say theirs.
+    """
+    from app.models.project_so import (
+        INQUIRY_RAISED,
+        IV_ORDER,
+        IV_ORDER_BACK,
+        OrderInquiry,
+        OrderInquiryRow,
+        ProjectSalesOrderLine,
+    )
+    from app.services.error_handler import AppException
+    from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+    def _key(row) -> tuple[str, str, Optional[date]]:
+        return (row.so_number, row.item_code, row.delivery_date)
+
+    by_number: dict[str, list] = {}
+    for inst in instalments:
+        if not inst.item_code:
+            continue
+        line = known_lines.get(_key(inst))
+        if line is None or inst.order_back:
+            by_number.setdefault(inst.so_number, []).append((inst, line))
+    if not by_number:
+        return {"rows_raised": 0, "rows_restated": 0, "orders_not_plannable": []}
+
+    orders = _orders_by_number(db, set(by_number))
+    adoption = ProjectSOAdoptionService(db)
+    raised = restated = 0
+    not_plannable: list[str] = []
+    touched_codes: set[str] = set()
+
+    for number, wanted in by_number.items():
+        order = orders.get(number)
+        if order is None:
+            # Nothing to hang an inquiry off. Already counted and named by
+            # `sales_orders_not_found`; a second complaint here would say it twice.
+            continue
+        try:
+            adopted = adoption.adopt(str(order.id), actor)
+        except AppException:
+            # Not planning work - retail demand, a closed order, an order with nothing
+            # outstanding. Named rather than swallowed: an instruction that could not be
+            # raised is exactly what somebody re-reading the job needs to be told.
+            not_plannable.append(number)
+            continue
+
+        pso_id = str(adopted["project_sales_order_id"])
+        inquiry = (
+            db.query(OrderInquiry)
+            .filter(
+                OrderInquiry.project_sales_order_id == pso_id,
+                OrderInquiry.amendment_id.is_(None),
+            )
+            .first()
+        )
+        if inquiry is None:
+            inquiry = OrderInquiry(
+                company_id=order.company_id,
+                project_sales_order_id=pso_id,
+                state=INQUIRY_RAISED,
+                raised_by=actor,
+            )
+            db.add(inquiry)
+            db.flush()
+        else:
+            # Section 3.H: every push re-stamps who raised it and when. The form IS a push,
+            # and the person who uploaded it is who purchasing has to ask.
+            inquiry.raised_by = actor or inquiry.raised_by
+            inquiry.raised_at = now
+
+        # The MIRROR line, not the core one: `order_inquiry_rows.so_line_id` addresses
+        # `projects.sales_order_lines`, which is the shim every other reader reaches the
+        # core line through.
+        mirror_by_core = {
+            str(core_id): str(mirror_id)
+            for mirror_id, core_id in db.query(
+                ProjectSalesOrderLine.id, ProjectSalesOrderLine.core_sales_order_line_id
+            ).filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
+            if core_id
+        }
+        held = {
+            (str(row.so_line_id or ""), row.item_code, row.delivery_date, row.verb): row
+            for row in db.query(OrderInquiryRow).filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id
+            )
+        }
+
+        for inst, line in wanted:
+            verb = IV_ORDER_BACK if inst.order_back else IV_ORDER
+            so_line_id = (
+                mirror_by_core.get(str(line.id)) if line is not None else None
+            )
+            cited = inst.po_numbers[0] if inst.po_numbers else None
+            others = [po for po in inst.po_numbers[1:]]
+            note = (
+                f"Also cited on the form: {', '.join(others)}" if others else None
+            )
+            location = (inst.location or "").upper() or None
+            existing = held.get((str(so_line_id or ""), inst.item_code,
+                                 inst.delivery_date, verb))
+            if existing is not None:
+                if existing.state != INQUIRY_RAISED:
+                    # Purchasing has already named a document for it. Rewriting the
+                    # quantity under a link would leave that link claiming more than the
+                    # row asks for.
+                    continue
+                existing.qty = inst.qty
+                existing.stock_location = location
+                existing.cited_document = cited
+                existing.note = note
+                restated += 1
+                touched_codes.add(inst.item_code)
+                continue
+            row = OrderInquiryRow(
+                company_id=order.company_id,
+                order_inquiry_id=inquiry.id,
+                so_line_id=so_line_id,
+                item_code=inst.item_code,
+                qty=inst.qty,
+                # `ORDER BACK` is not a date and must not become one. Inventing today, or
+                # the sales order's own date, would put the row on a horizon nobody asked
+                # for.
+                delivery_date=inst.delivery_date,
+                stock_location=location,
+                verb=verb,
+                cited_document=cited,
+                note=note,
+                state=INQUIRY_RAISED,
+            )
+            db.add(row)
+            held[(str(so_line_id or ""), inst.item_code, inst.delivery_date, verb)] = row
+            raised += 1
+            touched_codes.add(inst.item_code)
+
+    db.flush()
+    return {
+        "rows_raised": raised,
+        "rows_restated": restated,
+        "orders_not_plannable": sorted(set(not_plannable))[:200],
+        "item_codes": sorted(touched_codes),
+    }
+
+
 def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
           outcome: Optional[ImportOutcome] = None,
           on_total_rows: Optional[Callable[[int], None]] = None) -> dict:
@@ -610,6 +806,10 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     summary["lines_refreshed"] = 0
     summary["lines_withdrawn"] = 0
     summary["orders_owned_elsewhere"] = 0
+    summary["rows_raised"] = 0
+    summary["rows_restated"] = 0
+    summary["orders_not_plannable"] = []
+    summary["rows_linked"] = 0
     if not parsed.ok:
         return summary
 
@@ -697,4 +897,37 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     db.flush()
     summary["locations_written"] = locations_written
     summary["claims_written"] = claims_written
+
+    # The instructions the BOARD cannot raise, straight off the form (AC-I3). Last, because
+    # it reads the sales-order lines the steps above created and the locations they wrote:
+    # a row's `stock_location` is what ranks its link candidates.
+    raised = _raise_rows(db, instalments, known_lines, actor, now)
+    summary["rows_raised"] = raised["rows_raised"]
+    summary["rows_restated"] = raised["rows_restated"]
+    summary["orders_not_plannable"] = raised["orders_not_plannable"]
+
+    # And then the cascade, with the CITED document first (section 3.I, AC-I3): CS naming
+    # `202604-S0083` on the form is what the walk tries before any location tier or date, so
+    # the answer purchasing opens is already the one the form asked for.
+    #
+    # Scoped to the products this upload actually raised something for - passing nothing
+    # would walk every raised row in the company off the back of one spreadsheet.
+    #
+    # Best-effort: the sheet is already written, and a defect in the cascade must cost a
+    # pass the worklist's own Auto-link button makes again, never the upload itself.
+    if raised["item_codes"]:
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            product_ids = list(_products_by_code(db, set(raised["item_codes"])).values())
+            if product_ids:
+                summary["rows_linked"] = ProjectOrderInquiryService(
+                    db
+                ).auto_place_for_products(
+                    product_ids, actor_user_id=actor, trigger="order_inquiry_form",
+                )["placed_rows"]
+        except Exception:  # noqa: BLE001 - see above
+            logger.exception("auto-link failed after an order inquiry form upload")
     return summary

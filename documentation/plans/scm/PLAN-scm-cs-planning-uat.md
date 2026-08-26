@@ -1,6 +1,13 @@
 # PLAN - CS fulfilment planning: UAT fixes (board vocabulary, colour, transfers, set heads, PO occupancy)
 
-Status: IN PROGRESS. Section 4 item 1 is BUILT on `feat/scm-uat-cs-board`: A + C + item 7
+Status: IN PROGRESS. Section 4 item 5, **G (PO occupancy) plus the AC-I3 form-upload
+raise**, is BUILT on `feat/scm-uat-po-occupancy` (stacked on the section I lane): the
+Allocated to panel below the PO lines grid, the Allocated column and filter on the PO list,
+the `(product, warehouse)`-first line matcher and the placement relink both book channels
+run, and `project_order_inquiry_import_service` raising the fixture's `[NL]` rows with the
+cascade behind it (migration `423_committed_v_form_rows`).
+
+Section 4 item 1 is BUILT on `feat/scm-uat-cs-board`: A + C + item 7
 (FE only: `supplyVocabulary.ts`, `SupplyBar`, `SupplyLegend`, cell colour, per-location suggestion
 wording, stock-documents header removed) and H (subtitle removed; Raised by / Raised at on the
 worklist and the SO detail header; search by CS name or email prefix; Raised by filter off the
@@ -230,6 +237,42 @@ Captain: "SC is a product, not a set". Withdrawn: nothing about sets. The real q
 - PO list gains an "Allocated" column (sum per PO) and an "Allocated" filter.
 - Re-upload safety: after the AutoCount split comes back, line numbers shift, so `po_history_service` MUST match existing lines by `(product_id, warehouse_id)` first and `line_no` second before creating new lines, and the auto-place re-run after import must prefer a PO line whose `warehouse_id` matches the row's `stock_location`. Test: import a book where one DC1 500 line became BRW-BB 487 + BRW 13; placements land on the matching lines, nothing is orphaned.
 
+**BUILT on `feat/scm-uat-po-occupancy`** (stacked on the section I lane), migration
+`423_committed_v_form_rows`. What the build found, and where it differs from the four
+paragraphs above:
+
+- **The panel reads `order_inquiry_links`, not `order_inquiry_rows` (state placed).** The
+  paragraph above predates section 3.I: since migration 421 a row may sit on two lines of
+  one document, `order_inquiry_rows.po_line_id` is the DERIVED display of the first link,
+  and reading it would under-count every multi-link row. A cancelled row's links are
+  excluded, the same predicate `links_for_rows` already applies for the worklist and the
+  SO detail, so the three readers cannot come to disagree.
+- **`allocated_qty` is on every list row; `allocations[]` only on the single read.** "Is
+  this order spoken for" is a list question and "by whom" is a detail-page one, and a page
+  of 50 orders must not pay for 50 placement queries. The list filter is the EXACT
+  predicate the column sums, so the two cannot disagree.
+- **A line nobody is waiting on is absent from the panel.** The lines grid above it already
+  prints every line; the panel answers who is waiting, and a block of three zeroes per line
+  is noise on a 200-line order. The panel itself is always rendered, with its empty state.
+- **`free` is floored at 0.** A line promised more than it has left is over-committed, which
+  is a finding for the buyer, never a credit they may spend again.
+- **The matcher alone cannot satisfy AC-G3, so the placements MOVE.** `po_history_service`
+  now keys existing lines on `(product_id, warehouse_id)` first and the ordinal second, and
+  that is right on its own merits: the structured extract carries no line number, so
+  `purchase_history_reader` numbers rows POSITIONALLY, and a split shifts every ordinal
+  below it - the test that pins it swaps two locations' quantities under the old rule. But
+  matching rewrites a LINE; it cannot move a placement from one line to another, which is
+  what "keeps every placement attached to the line whose warehouse matches" asks for. So
+  `ProjectOrderInquiryService.relink_to_matching_lines` is the step that finishes it, run at
+  the end of BOTH book channels (`po_history_service.apply`, and
+  `outstanding_import_service.apply` for the PO doc type - the latter is the one the buyer's
+  own "Upload purchase orders" action goes through, which the paragraph above did not name).
+  It is deliberately narrow: within one purchase order, exact location only, never off a line
+  that already fits, whole links only, and best-effort so a defect costs a relocation the
+  next upload makes again rather than the book.
+- **AC-G5 holds and is pinned.** Nothing in G writes `purchase_order_lines`; the test
+  snapshots every line before and after a detail read and a filtered list read.
+
 ### H. Order-inquiry page: who pushed it, and when (BE + FE, one day)
 - Remove the subtitle "Every project and every adopted sales order, by delivery month."
 - `order_inquiries.raised_by` / `raised_at` already exist (FK users, set at confirm). Expose them on the worklist row as **Raised by** (user's display name, never the id) and **Raised at** (MY time), on the SO detail Order inquiry column tooltip, and on the per-SO inquiry header. `so_supply_decisions.confirmed_by/at` is the same person; `raised_by` is what the OI shows.
@@ -280,6 +323,57 @@ where it differs from the paragraphs above:
   writer of `order_inquiry_rows` is a new feed, not a rename. The READER now recognises
   `ORDER BACK` in the delivery-date cell and reports the count, so the fact is available;
   the fixture's `[NL]` rows are "recorded as not raisable", which its own section 5 allows.
+  **CLOSED on `feat/scm-uat-po-occupancy`** - `_raise_rows` is that feed, and what it found
+  is below.
+
+**AC-I3 finished on `feat/scm-uat-po-occupancy`: the form upload raises the `[NL]` rows.**
+
+- **Two cases, and only two.** The book states no line for this instalment -> raise with
+  `so_line_id` empty, which is the honest record (pointing it at the nearest line of the same
+  item would attach the quantity to somebody else's instalment). The book states the line AND
+  the form says ORDER BACK -> raise against that line, because an order back is a fact about
+  the line that no board decision produces. A dated ORDER row whose instalment the book
+  already carries raises nothing: the demand is in the book and a second instruction for it
+  is a second purchase.
+- **The unit is the INSTALMENT, not the sheet row.** `_instalments` already collapses
+  `(SO, item, delivery date)` and adds quantities within one tab, and an ORDER BACK row
+  states no date - so form 1's rows 1 and 12 (SRTWCX7405-RL-S-PJ 10 at BRW-IB and 12 at
+  BRW-BB) become ONE raised row of 22 at BRW-IB, and C-FH14's 30 + 30 becomes 60. That is
+  the importer's own rule rather than a new one, and form 2 amends every location to BRW-IB
+  anyway; **if the captain wants the two locations kept apart, the instalment key is what
+  has to change, for every reader of it, not the raise step.**
+- **The verb comes off the delivery-date cell, never the remark.** `ORDER BACK` is the words,
+  a date is `ORDER` due then, and only an `ORDER_BACK` row may name an SPO allocation - so
+  reading that cell wrong decides which documents the row may be linked to at all. An ORDER
+  BACK row keeps a NULL `delivery_date`: inventing today, or the sales order's own date,
+  would put it on a horizon nobody asked for.
+- **`cited_document` is the FIRST document the remark names; the rest goes on the note.**
+  `SPO-2026/08-0061 & 202606-S0082` cites the first and keeps the second as words, because
+  the second document is the answer when the first cannot cover the quantity - and the walk
+  proves it: the allocation holds 2, so the row links 2 there and 8 to `202606-S0082`.
+- **The inquiry hangs off an ADOPTED planning record.** SO381895 has no project mirror, so
+  the raise adopts the core order first (`ProjectSOAdoptionService.adopt`, idempotent) and
+  reuses the amendment-less inquiry the board would use. An order adoption REFUSES (retail
+  class, not open, nothing outstanding) raises nothing and is named on the result as
+  `orders_not_plannable` rather than being swallowed.
+- **It records no per-row import outcome, deliberately.** Every sheet row already carries
+  exactly one outcome from `_create_orders` - the `[NL]` rows all take the
+  `document_owned_elsewhere` skip, because the SO book owns SO381895 - and the job's progress
+  bar is one outcome per source row, so a second here would report 83 processed out of 69.
+  What the step did is on the SUMMARY (`rows_raised`, `rows_restated`, `rows_linked`),
+  exactly as the stock-location and claim steps already report theirs.
+- **`committed_v` needed a THIRD leg** (migration `423_committed_v_form_rows`). Both existing
+  confirmed legs join on `so_line_id` and on an active supply decision, and a form-raised row
+  has neither - so without it the fourteen instructions are raised, shown to purchasing, and
+  invisible to the plan that decides what to buy. The new leg reads the ROW's own `item_code`
+  and `stock_location`, joined on the code AND the company together (what
+  `uq_products_company_product_code` makes unique), INNER on both so an item or location we do
+  not hold is counted nowhere rather than everywhere. Measured before the change: 0 rows carry
+  `so_line_id IS NULL`, so it moves no live number.
+- **The auto-link runs at the end of the upload, scoped to the products it raised.** Passing
+  nothing would walk every raised row in the company off the back of one spreadsheet. Cited
+  document first, which the test pins against a decoy purchase order that wins on the
+  cascade's own date ordering (issued January, arriving May) and must not.
 - **Not done here, and named rather than half-fixed: `planning_change_service` still reads
   `INQUIRY_PLACED` alone** in its "already actioned" predicates, so a `partly_linked` row
   reads there as wholly unactioned. Conservative rather than wrong (its unlinked half IS
