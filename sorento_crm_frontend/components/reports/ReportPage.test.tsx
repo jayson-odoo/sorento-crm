@@ -194,6 +194,34 @@ const RESULT: ReportResult = {
   },
 };
 
+/** The same result with the Expected-year tick group the sponsorship report renders. */
+const WITH_TICK_GROUP: ReportResult = {
+  ...RESULT,
+  layouts: {
+    ...RESULT.layouts,
+    detail: {
+      ...RESULT.layouts.detail,
+      columns: [
+        ...RESULT.layouts.detail.columns,
+        { key: 'expected_delivery_year__2026', label: '2026', type: 'bool' },
+        { key: 'expected_delivery_year__2027', label: '2027', type: 'bool' },
+      ],
+      column_groups: [
+        {
+          label: 'Expected year of delivery',
+          source: 'expected_delivery_year',
+          keys: ['expected_delivery_year__2026', 'expected_delivery_year__2027'],
+        },
+      ],
+      rows: RESULT.layouts.detail.rows.map((row) => ({
+        ...row,
+        expected_delivery_year__2026: true,
+        expected_delivery_year__2027: false,
+      })),
+    },
+  },
+};
+
 const EMPTY: ReportResult = {
   ...RESULT,
   row_count: 0,
@@ -310,6 +338,36 @@ describe('ReportPage', () => {
     const [, , view] = exportReport.mock.calls[0] as [string, unknown, { detail: { columns: string[] } }];
     // The visible columns, in the visible order (AC-C5) - not the whole catalog.
     expect(view.detail.columns).toEqual(['request_number', 'sales_agent', 'project_value']);
+  });
+
+  it('exports the tick group by its source, never by the year columns it became', async () => {
+    // The grid's leaves are `expected_delivery_year__2026`; the backend catalog has no such
+    // column, so sending one 422s the export. A view must name the SOURCE, because next
+    // year the members are different columns.
+    runReport.mockResolvedValue(WITH_TICK_GROUP);
+    fetchReportMeta.mockResolvedValue({
+      ...META,
+      default_view: {
+        ...DEFAULT_VIEW,
+        detail: {
+          columns: [...DEFAULT_VIEW.detail.columns, 'expected_delivery_year'],
+          order: [],
+        },
+      },
+    });
+    render();
+    await screen.findByText('PSSF26-0310');
+
+    fireEvent.click(screen.getByRole('button', { name: /Export to Excel/ }));
+
+    await waitFor(() => expect(exportReport).toHaveBeenCalled());
+    const [, , view] = exportReport.mock.calls[0] as [string, unknown, { detail: { columns: string[] } }];
+    expect(view.detail.columns).toEqual([
+      'request_number',
+      'sales_agent',
+      'project_value',
+      'expected_delivery_year',
+    ]);
   });
 
   it('asks the backend for the whole catalog and hides client-side', async () => {

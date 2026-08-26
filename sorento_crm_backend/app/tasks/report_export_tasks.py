@@ -5,8 +5,10 @@ UserDownload row in 'pending' and enqueues this; the task renders, uploads throu
 storage router and flips the row to 'ready' or 'failed'. Never raises into RQ's failed
 registry - a row stuck in 'processing' tells the user nothing.
 
-The export path runs the engine UNCAPPED (``cap=False``): the caps exist to keep a runaway
-run off the request path, and this is not the request path.
+The export path runs the engine UNCAPPED (``run_workbook`` never caps): the caps exist to
+keep a runaway run off the request path, and this is not the request path. What comes back
+is the SUMMARY plus one detail table per month of the period, which is the shape the client
+keeps by hand.
 
 RQ has no reload: restart the worker after editing this file.
 """
@@ -53,8 +55,8 @@ def generate_report_xlsx(
             raise ValueError(f"Unknown report '{key}'")
 
         config = ReportViewConfig.model_validate(view) if view else engine.view_config(definition)
-        result = engine.run(db, definition, params or {}, config, cap=False)
-        content = render_workbook(definition, result)
+        data = engine.run_workbook(db, definition, params or {}, config)
+        content = render_workbook(definition, data)
 
         # The route already named the file from the period the user asked for; re-deriving
         # it here would be a second place for that name to be decided, and to drift.

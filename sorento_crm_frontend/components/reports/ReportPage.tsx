@@ -70,6 +70,24 @@ function expandDetailColumns(keys: string[], layout: ReportDetailLayout): string
   });
 }
 
+/**
+ * The inverse: the grid's leaf ids back to what a view (and an export) is allowed to name.
+ *
+ * A tick group's leaves are `expected_delivery_year__2026`, one per year the RESULT held,
+ * and neither the export nor a saved view may name one: the backend catalog has no such
+ * column, and a view written in 2026 must still mean "show the delivery years" in 2027.
+ * Hiding one member of a group therefore hides none of them - the group is one choice.
+ */
+function collapseDetailColumns(keys: string[], layout: ReportDetailLayout): string[] {
+  const out: string[] = [];
+  for (const key of keys) {
+    const group = layout.column_groups.find((g) => g.keys.includes(key));
+    const id = group ? group.source : key;
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
 function gridStateFromView(detail: ReportViewConfig['detail'], layout: ReportDetailLayout): GridState {
   const visibleKeys = new Set(expandDetailColumns(detail.columns, layout));
   const visibility: VisibilityState = {};
@@ -264,7 +282,8 @@ export function ReportPage({
 
   /** What Save view and Export record: the columns the user can actually see, in order. */
   const visibleDetail = (): ReportViewConfig['detail'] => {
-    const visible = table.getVisibleLeafColumns().map((c) => c.id);
+    const leaves = table.getVisibleLeafColumns().map((c) => c.id);
+    const visible = detailLayout ? collapseDetailColumns(leaves, detailLayout) : leaves;
     return { columns: visible, order: visible };
   };
 

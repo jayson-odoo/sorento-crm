@@ -1,12 +1,15 @@
 """ReportResult -> an .xlsx workbook, laid out like the register the client keeps by hand.
 
-Two sheets in S2: SUMMARY (the pivot) then the detail table. S4 splits the detail into one
-sheet per month of the period and diffs the result against the client's 2025 workbook; the
-title block, the merged header groups and the totals below are what it builds on.
+SUMMARY first (the pivot), then ONE SHEET PER MONTH of the period, named the way the
+client's own file names them (JAN'25 .. DEC'25). A month with no rows still gets its sheet:
+a register with eleven tabs reads as a lost month rather than a quiet one.
 
 **Totals are VALUES, never formulas** (AC-D4). The workbook the client keeps uses SUM
 formulas; ours writes exactly what the engine computed, so an Excel recalculation cannot
 produce a different answer from the screen the user exported.
+
+The renderer knows nothing about months, dates or filters. It is handed a
+``engine.WorkbookData`` - a summary and a list of named sheets - and draws it.
 """
 from __future__ import annotations
 
@@ -19,7 +22,8 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.schemas.report import ReportDetailLayout, ReportPivotLayout, ReportResult
+from app.schemas.report import ReportDetailLayout, ReportPivotLayout
+from app.services.reports.engine import WorkbookData
 from app.services.reports.registry import ReportDefinition
 
 MONEY_FORMAT = "#,##0.00"
@@ -158,7 +162,7 @@ def _render_detail(
                 sheet.cell(row=row, column=index, value=value)
         row += 1
 
-    sheet.cell(row=row, column=1, value="TOTAL").font = _HEADER_FONT
+    sheet.cell(row=row, column=1, value="GRAND TOTAL").font = _HEADER_FONT
     for column in detail.columns:
         if column.type == "money" and column.key in detail.totals:
             _write_money(sheet, row, positions[column.key], detail.totals[column.key])
@@ -166,16 +170,19 @@ def _render_detail(
     _autosize(sheet, [max(12, min(40, (c.size or 120) // 8)) for c in detail.columns])
 
 
-def render_workbook(definition: ReportDefinition, result: ReportResult) -> bytes:
-    """The whole workbook as bytes: SUMMARY first, then the detail table."""
+def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
+    """The whole workbook as bytes: SUMMARY, then one sheet per month of the period."""
     workbook = Workbook()
     summary_sheet = workbook.active
     summary_sheet.title = "SUMMARY"
-    _render_summary(summary_sheet, definition, result.layouts.summary, result.period_label)
+    _render_summary(summary_sheet, definition, data.summary, data.period_label)
 
-    detail = result.layouts.detail
-    detail_sheet = workbook.create_sheet(title=detail.title[:31])
-    _render_detail(detail_sheet, definition, detail, result.period_label)
+    for sheet in data.sheets:
+        # Excel refuses a tab name over 31 characters; a month never is, but a report whose
+        # period is a custom range still names its sheets through here.
+        _render_detail(
+            workbook.create_sheet(title=sheet.name[:31]), definition, sheet.detail, sheet.label
+        )
 
     stream = BytesIO()
     workbook.save(stream)

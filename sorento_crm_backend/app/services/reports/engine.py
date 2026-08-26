@@ -98,6 +98,17 @@ def _month_label(value: date) -> str:
     return f"{_MONTH_ABBR[value.month - 1]}'{str(value.year)[2:]}"
 
 
+def month_label(key: str) -> str:
+    """"2025-01" -> "Jan'25", the period line a monthly sheet opens with."""
+    year, month = key.split("-")
+    return f"{_MONTH_ABBR[int(month) - 1]}'{year[2:]}"
+
+
+def month_sheet_name(key: str) -> str:
+    """"2025-01" -> "JAN'25", the tab name the client's own workbook uses."""
+    return month_label(key).upper()
+
+
 def _add_month(value: date) -> date:
     return date(value.year + 1, 1, 1) if value.month == 12 else date(value.year, value.month + 1, 1)
 
@@ -294,39 +305,56 @@ def _totals(sums: Dict[str, Optional[Decimal]]) -> Dict[str, str]:
 # -------------------------------------------------------------------------- detail
 
 
-def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetailLayout:
-    definition = ctx.definition
+def _select_columns(ctx: QueryContext, keys: List[str]) -> List[reg.Column]:
+    """The catalog columns behind the requested keys, in the requested order (AC-A5)."""
     dataset = ctx.dataset
-    requested = list(view.detail.columns) or [c.key for c in dataset.columns]
-
     columns: List[reg.Column] = []
-    for key in requested:
+    for key in keys:
         column = dataset.column(key)
         if column is None:
             raise _invalid(f"Unknown detail column '{key}'")
         columns.append(column)
+    return columns
 
-    stmt = dataset.base(ctx).add_columns(*[c.expr(ctx).label(c.key) for c in columns])
+
+def _detail_statement(ctx: QueryContext, columns: List[reg.Column], *extra):
+    stmt = ctx.dataset.base(ctx).add_columns(
+        *[c.expr(ctx).label(c.key) for c in columns], *extra
+    )
     stmt = stmt.where(and_(*_predicates(ctx)))
-    order_by = list(definition.detail.order_by(ctx))
+    order_by = list(ctx.definition.detail.order_by(ctx))
     if order_by:
         stmt = stmt.order_by(*order_by)
-    if cap:
-        stmt = stmt.limit(DETAIL_ROW_CAP + 1)
+    return stmt
 
-    fetched = ctx.db.execute(stmt).mappings().all()
-    if cap and len(fetched) > DETAIL_ROW_CAP:
-        raise ReportCapped(
-            f"This run returns more than {DETAIL_ROW_CAP:,} rows. "
-            "Narrow the period or export to Excel instead."
-        )
 
-    groups_by_source = {g.source: g for g in definition.detail.groups}
-    tick_values: Dict[str, List[str]] = {}
+def _tick_values(
+    ctx: QueryContext, columns: List[reg.Column], fetched: List[Any]
+) -> Dict[str, List[str]]:
+    """One tick column per value PRESENT, derived over the whole result.
+
+    The workbook splits the same result across twelve sheets, so these are computed once
+    and handed to every sheet: derived per sheet, January would come out with one delivery
+    year and March with two, and the twelve tables would stop being the same table.
+    """
+    groups_by_source = {g.source: g for g in ctx.definition.detail.groups}
+    values: Dict[str, List[str]] = {}
     for source in groups_by_source:
         if any(c.key == source for c in columns):
             present = {_dimension_value(row[source]) for row in fetched}
-            tick_values[source] = sorted(v for v in present if v)
+            values[source] = sorted(v for v in present if v)
+    return values
+
+
+def _detail_layout(
+    ctx: QueryContext,
+    columns: List[reg.Column],
+    tick_values: Dict[str, List[str]],
+    fetched: List[Any],
+) -> ReportDetailLayout:
+    """Fetched rows -> the wire shape, with a total for every measure among the columns."""
+    definition = ctx.definition
+    groups_by_source = {g.source: g for g in definition.detail.groups}
 
     out_columns: List[ReportColumn] = []
     out_groups: List[ReportColumnGroup] = []
@@ -376,6 +404,23 @@ def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetai
         rows=rows,
         totals=_totals(sums),
     )
+
+
+def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetailLayout:
+    columns = _select_columns(
+        ctx, list(view.detail.columns) or [c.key for c in ctx.dataset.columns]
+    )
+    stmt = _detail_statement(ctx, columns)
+    if cap:
+        stmt = stmt.limit(DETAIL_ROW_CAP + 1)
+
+    fetched = ctx.db.execute(stmt).mappings().all()
+    if cap and len(fetched) > DETAIL_ROW_CAP:
+        raise ReportCapped(
+            f"This run returns more than {DETAIL_ROW_CAP:,} rows. "
+            "Narrow the period or export to Excel instead."
+        )
+    return _detail_layout(ctx, columns, _tick_values(ctx, columns, fetched), fetched)
 
 
 # --------------------------------------------------------------------------- pivot
@@ -513,4 +558,95 @@ def run(
         row_count=len(detail.rows),
         capped=False,
         layouts=ReportLayouts(detail=detail, summary=summary),
+    )
+
+
+# ------------------------------------------------------------------------ workbook
+
+
+@dataclass(frozen=True)
+class WorkbookSheet:
+    """One tab of the export: a month of the period, and that month's detail table."""
+
+    #: The tab name, as the client's own file writes it: JAN'25.
+    name: str
+    #: The period line of the title block: Jan'25.
+    label: str
+    detail: ReportDetailLayout
+
+
+@dataclass(frozen=True)
+class WorkbookData:
+    """What the renderer turns into bytes. Never serialised, so it is a plain dataclass."""
+
+    key: str
+    period_label: str
+    summary: ReportPivotLayout
+    sheets: List[WorkbookSheet]
+
+
+def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -> List[str]:
+    """The columns a WORKBOOK carries, which is not what the screen asks for.
+
+    An empty ``detail.columns`` means the whole catalog to the SCREEN: it asks for
+    everything and hides client-side, which is what makes ticking a column instant and
+    keeps a hidden column offerable in the Columns panel (AC-B7). A file has no Columns
+    panel and a twenty-column sheet is unreadable, so here an empty list means the
+    DEFINITION'S default columns - the shape the report was designed around. The two
+    differ on purpose (PLAN, contract points settled while building S4).
+    """
+    requested = list(view.detail.columns)
+    if requested:
+        return requested
+    return list((definition.default_view.get("detail") or {}).get("columns") or [])
+
+
+def _month_sheets(ctx: QueryContext, view: ReportViewConfig) -> List[WorkbookSheet]:
+    """One sheet per month OF THE PERIOD, empty months included (AC-D1).
+
+    One query, split in Python. The month bucket is the same expression the ``month``
+    dimension uses - ``date_trunc`` on whichever date basis the user is reading by - so a
+    row lands on the sheet the summary counts it in, whatever the basis.
+    """
+    columns = _select_columns(
+        ctx, workbook_columns(ctx.definition, view) or [c.key for c in ctx.dataset.columns]
+    )
+    bucket = func.to_char(func.date_trunc("month", ctx.date_basis), "YYYY-MM")
+    stmt = _detail_statement(ctx, columns, bucket.label("__month"))
+    fetched = ctx.db.execute(stmt).mappings().all()
+
+    ticks = _tick_values(ctx, columns, fetched)
+    by_month: Dict[str, List[Any]] = {}
+    for row in fetched:
+        by_month.setdefault(str(row["__month"]), []).append(row)
+
+    return [
+        WorkbookSheet(
+            name=month_sheet_name(key),
+            label=month_label(key),
+            detail=_detail_layout(ctx, columns, ticks, by_month.get(key, [])),
+        )
+        for key in ctx.period.months
+    ]
+
+
+def run_workbook(
+    db: Session,
+    definition: reg.ReportDefinition,
+    params: Dict[str, Any],
+    view: Optional[ReportViewConfig] = None,
+) -> WorkbookData:
+    """The export shape: the summary, then the period's months. Never capped.
+
+    The caps exist to keep a runaway run off the REQUEST path, and this runs on the worker
+    (AC-A7). Both layouts still come out of one row set, so the file cannot disagree with
+    the screen the user exported it from.
+    """
+    ctx = resolve(db, definition, params)
+    effective = view or view_config(definition)
+    return WorkbookData(
+        key=definition.key,
+        period_label=ctx.period.label,
+        summary=_pivot(ctx, effective, cap=False),
+        sheets=_month_sheets(ctx, effective),
     )

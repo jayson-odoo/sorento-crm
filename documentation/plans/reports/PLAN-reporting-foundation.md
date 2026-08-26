@@ -9,7 +9,11 @@ definition, and the frontend swapped off the mock) BUILT and browser-verified 20
 :3090/:8091 against the 18 real approved 2026 forms. S5 (local 2025 fixture, test-first)
 BUILT 2026-08-26: `scripts/dev/load_sponsorship_2025_fixture.py`, the workbook committed as
 `tests/fixtures/sponsorship_2025.xlsx`, 28 pytest, and the 214 forms loaded on the local
-copy with all 12 monthly totals equal to the client's GRAND TOTAL cells. S4 not started.
+copy with all 12 monthly totals equal to the client's GRAND TOTAL cells. S4 (Excel export,
+test-first) BUILT and browser-verified 2026-08-26: `engine.run_workbook` + the renderer's
+SUMMARY plus one sheet per month, the export queue knob, and the AC-D5 diff against the
+client's own workbook. **All five slices are built**; 176 pytest across the reporting
+suite, 26 vitest.
 UAC: reporting-foundation-acceptance-criteria.md (governing)
 Source: `Sorento/phase-2/User Requirements/Project/SPONSORSHIP REPORT JAN-Dec'25.xlsx`
 Review artifact: `.lavish/reporting-foundation.html`
@@ -211,6 +215,44 @@ reads.
 - **Undo is one statement:** `DELETE FROM purchase_requests WHERE source = 'fixture_2025'`
   (lines cascade).
 
+### Contract points settled while building S4
+
+- **`engine.run_workbook()` is the export path, `engine.run()` the screen's.** The workbook
+  needs what a `ReportResult` does not carry: the months of the period (so an empty month
+  still gets a sheet) and which month each detail row falls in. Rather than widen the wire
+  shape the screen reads, the export calls `run_workbook`, which returns a plain dataclass
+  (`WorkbookData`: the summary plus a list of named `WorkbookSheet`s). It is never
+  serialised. The renderer therefore knows nothing about months, dates or filters - it is
+  handed a summary and a list of named sheets and draws them.
+- **One query, split in Python.** `run_workbook` selects the detail once with the month
+  bucket (`date_trunc` on the chosen date basis, the same expression the `month` dimension
+  uses) and groups the rows by it, rather than running the engine twelve times. Totals are
+  recomputed per sheet from the RAW values, not by adding up rounded strings.
+- **Tick-group members are derived over the WHOLE period, once.** Derived per sheet,
+  January would come out with one delivery-year column and March with two, and the twelve
+  tables would stop being the same table.
+- **An empty `detail.columns` means the DEFINITION'S default columns for a workbook**, not
+  the whole catalog. The screen and the file differ here on purpose: the screen asks for
+  everything and hides client-side, which is what makes ticking a column instant (AC-B7),
+  but a file has no Columns panel and a twenty-column sheet is unreadable. `run` keeps the
+  whole-catalog meaning; `engine.workbook_columns()` holds the difference.
+- **The detail total row is labelled `GRAND TOTAL`**, matching the client's own monthly
+  sheets (the S2 skeleton said `TOTAL`).
+- **A tick group is exported by its SOURCE, never by the year columns it became.** The
+  grid's leaf ids are `expected_delivery_year__2026`; the backend catalog has no such
+  column, so `POST /export` answered 422 "Unknown detail column" for any result with a
+  ticked year. Found in S4, fixed in `ReportPage.visibleDetail()` with
+  `collapseDetailColumns` and covered by a vitest. Hiding one member of a group now hides
+  none of them: the group is one choice, which is also what makes a view written in 2026
+  still mean "show the delivery years" in 2027 (the S1 contract point).
+- **`REPORT_EXPORT_QUEUE` (`settings.report_export_queue`, default `imports`).** The
+  default IS the production queue the deployed worker drains; the knob exists because RQ
+  workers are SHARED across worktrees on this machine, so a lane verifying an export needs
+  a queue a sibling checkout's worker will not steal from.
+- **AC-D5 loads its own rows.** The diff test runs the S5 loader's parser and `load()`
+  into the test's scratch schema; it never reads the developer copy that
+  `--apply` writes to.
+
 ### Shared components touched (no-ops for every flat listing)
 
 Column groups needed three small corrections in the shared DataGrid, each of which is a no-op on a
@@ -233,7 +275,7 @@ their owner only; shared views to anyone with the report permission.
 | S1 | FE mock (Phase 1) DONE | `ReportPage` + wrapper route against a mocked ReportResult: filter bar (date basis, period, agent, status), Detail with Columns show/hide + drag, Summary pivot, Configure summary dialog, Views menu (Mine / Shared, Save, Publish, Set default), Export button; sidebar entry + listing Report button; 375 / 1280 | The §4 contract is what the screen needs; user sees the shape before backend |
 | S2 | Kernel (Phase 2, test-first) DONE | registry, engine, xlsx renderer, views service, routes, migration (table + slugs), RQ task. pytest on a SYNTHETIC dataset registered by the test, not sponsorship | The kernel is generic; report #2 costs what §Why says |
 | S3 | Sponsorship dataset + definition DONE | dataset select + catalog; definition; the frontend swapped off the S1 mock; seeded-chain pytest asserting Summary cell = sum of Detail rows for the same agent/month, blanks vs zero, date basis switch changes the month; vitest for the page states, Configure summary and the Views menu | Report #1 on the real page with real 2026 rows |
-| S4 | Excel export | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
+| S4 | Excel export DONE | workbook = SUMMARY + one sheet per month (title block, header groups, totals as values); diff test against the committed 2025 fixture layout | Cell-for-cell match on the local copy |
 | S5 | Local 2025 fixture DONE | `scripts/dev/load_sponsorship_2025_fixture.py`: refuses non-local `DATABASE_URL`; source stamped `fixture_2025`; idempotent on `request_number`; agent names matched to `respond_contacts` by name, unresolved rows REPORTED not guessed; `tests/fixtures/sponsorship_2025.xlsx` committed (real sample) | JAN-DEC'25 regenerates locally and matches the client's sheet totals |
 
 Order: S1 -> S2 -> S3 -> S5 -> S4 (S4's diff test needs S5's fixture). Each slice is a PR;

@@ -200,6 +200,7 @@ def export_report(
     db: Session = Depends(get_db),
 ) -> ReportExportResult:
     """Queue the workbook. It surfaces through the existing My Downloads drawer (AC-A8)."""
+    from app.config import settings
     from app.services import queue_service
     from app.services.download_service import DownloadService
     from app.tasks.report_export_tasks import generate_report_xlsx
@@ -224,7 +225,7 @@ def export_report(
             body.params,
             view.model_dump(mode="json"),
             str(current_user["id"]),
-            queue_name="imports",
+            queue_name=settings.report_export_queue,
             job_timeout=600,
         )
     except Exception as e:  # noqa: BLE001 - Redis down must not leave a row spinning

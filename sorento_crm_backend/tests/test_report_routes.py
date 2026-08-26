@@ -294,6 +294,28 @@ def test_export_creates_a_download_row_and_queues_the_render(api, db, monkeypatc
     assert queued["args"][1] == KEY
 
 
+def test_export_goes_on_the_queue_the_settings_name(api, monkeypatch):
+    """A lane can run its own worker on a private queue without touching production.
+
+    The default IS "imports" (asserted above), which is the queue the deployed worker
+    drains. `REPORT_EXPORT_QUEUE` exists so a developer verifying an export in a worktree
+    does not have a sibling checkout's worker steal the job and render it against its own
+    code - RQ workers are shared across worktrees on this machine.
+    """
+    from app.config import settings
+    from app.services import queue_service
+
+    queued = {}
+    monkeypatch.setattr(
+        queue_service, "enqueue_job", lambda func, *a, **kw: queued.update(kw) or object()
+    )
+    monkeypatch.setattr(settings, "report_export_queue", "zzt_reports_lane")
+
+    client, _allow = api
+    assert client.post(f"{BASE}/export", json=_run_body()).status_code == 200
+    assert queued["queue_name"] == "zzt_reports_lane"
+
+
 def test_export_is_403_without_the_report_permission(api):
     client, allow = api
     allow.clear()

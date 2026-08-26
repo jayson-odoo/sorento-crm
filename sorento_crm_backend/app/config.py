@@ -205,6 +205,13 @@ class Settings(BaseSettings):
     # verify page's wa.me escape hatch when the workspace has none configured.
     portal_whatsapp_number: str | None = None
 
+    # Which RQ queue a report export is enqueued on. The default IS the production queue
+    # the deployed worker drains; this exists so a developer verifying an export in a
+    # worktree can point a private worker at a queue of their own, because RQ workers are
+    # SHARED across worktrees on this machine and a sibling would otherwise steal the job
+    # and render it against its own code.
+    report_export_queue: str = "imports"  # REPORT_EXPORT_QUEUE
+
     # Feature flags (progressive rollout)
     notifications_v1_enabled: bool = True  # NOTIFICATIONS_V1_ENABLED
     # When False (default), module guards allow all API routes if tenant has no module rows yet (legacy).
