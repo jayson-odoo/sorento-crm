@@ -35,8 +35,8 @@ from app.services.scm.demand import PLAN_DEMAND_LINE_SQL, PROJECT_CLASS
 #: A few documents named so the reader can go and look at one.
 SAMPLE_SIZE = 5
 
-# The line-level half restated exactly as `scm.committed_v` applies it, so "set aside"
-# means precisely "would have been demand but for the order-level rule" - nothing more.
+# What "open" means, restated exactly as `scm.committed_v` applies it, so a quantity that
+# is set aside is one that WOULD have been demand and not merely one that exists.
 _OPEN_QTY = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
              "       - COALESCE(sol.qty_delivered, 0), 0)")
 _OPEN_LINE = (
@@ -44,11 +44,30 @@ _OPEN_LINE = (
     "AND sol.purchasing_status <> 'covered' "
     f"AND {_OPEN_QTY} > 0"
 )
-# What the split excludes: a project-class line no active supply decision covers.
-# `PLAN_DEMAND_LINE_SQL` is imported rather than restated, so "set aside" means precisely
-# "a line the fulfilment board has not decided" and the two cannot drift - it is the same
-# predicate the board itself reads as NOT covered.
-_SET_ASIDE = f"so.demand_class = '{PROJECT_CLASS}' AND {PLAN_DEMAND_LINE_SQL}"
+
+#: A decision-less inquiry row that names this core line - the CS form's own instruction,
+#: which `scm.committed_v`'s FORM leg counts as demand. Such a line is CS's answer already,
+#: not a question waiting for one, so it must not also be reported as awaiting them: a
+#: quantity that is both demand and awaiting CS is one the reader would act on twice.
+_FORM_ROW_COUNTS_IT = """
+    EXISTS (SELECT 1
+            FROM projects.sales_order_lines fpsl
+            JOIN projects.order_inquiry_rows foir ON foir.so_line_id = fpsl.id
+            WHERE fpsl.core_sales_order_line_id = sol.id
+              AND foir.supply_decision_id IS NULL
+              AND foir.verb IN ('ORDER', 'ORDER_BACK')
+              AND foir.state IN ('raised', 'partly_linked')
+              AND foir.qty > 0)
+"""
+
+# What the split excludes: a project-class line neither an active supply decision nor a
+# raised form row speaks for. `PLAN_DEMAND_LINE_SQL` is imported rather than restated for
+# the first half, so "not decided" cannot drift from what the fulfilment board reads as
+# covered; the second half is the form leg's own condition, inverted.
+_SET_ASIDE = (
+    f"so.demand_class = '{PROJECT_CLASS}' AND {PLAN_DEMAND_LINE_SQL} "
+    f"AND NOT {_FORM_ROW_COUNTS_IT}"
+)
 
 
 def set_aside_project_demand(
