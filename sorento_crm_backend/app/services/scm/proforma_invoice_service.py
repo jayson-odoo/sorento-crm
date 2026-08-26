@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import date as _date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 from sqlalchemy import func, text
@@ -1177,6 +1177,21 @@ def _over_capacity(
     return out
 
 
+def _dec(value: Any) -> Decimal:
+    """A quantity as a Decimal. `proforma_invoice_line.qty` is Numeric, and float arithmetic
+    on it is how 12.5 placed twice stops adding up to 25."""
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _whole(value: Decimal) -> int:
+    """A Decimal quantity as the whole pieces an integer column can hold, half up."""
+    return int(_dec(value).to_integral_value(rounding=ROUND_HALF_UP))
+
+
 def _placing_volume(line: ProformaInvoiceLine, qty: float) -> Optional[float]:
     """How much room `qty` of this line takes. None when the document measured nothing."""
     if line.cbm_per_unit is not None:
@@ -1378,14 +1393,14 @@ def convert_to_draft_shipment(
         for invoice_id in ids
         for line_id, entries in _line_placements(db, invoice_id).items()
     }
-    requested = {str(k): float(v) for k, v in (line_quantities or {}).items()}
+    requested = {str(k): _dec(v) for k, v in (line_quantities or {}).items()}
 
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
         if ln.product_id is None:
             skipped.append((ln, "No catalogue product matches this line's item code."))
             continue
-        remaining = float(ln.qty or 0) - placed_per_line.get(str(ln.id), 0.0)
+        remaining = _dec(ln.qty) - _dec(placed_per_line.get(str(ln.id), 0))
         if remaining <= 0:
             # Already on a container. Not a skip WITH A REASON - there is nothing wrong
             # with it, it is simply finished, and a second skip row would claim otherwise.
@@ -1397,7 +1412,10 @@ def convert_to_draft_shipment(
                 f"{ln.item_code} has {_num(remaining)} left to place, not {_num(asked)}.",
                 detail="line_quantities",
             )
-        qty = int(asked)
+        # DECIMAL, never int(): `proforma_invoice_line.qty` is Numeric, and truncating
+        # 12.5 to 12 left half a piece outstanding on a line nothing would ever place
+        # again - so the invoice read Split for ever and could not be converted.
+        qty = asked
         if qty <= 0:
             skipped.append((ln, "This line has no positive quantity to ship."))
             continue
@@ -1408,7 +1426,7 @@ def convert_to_draft_shipment(
             group = {
                 "product_id": str(ln.product_id),
                 "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
-                "quantity_shipped": 0,
+                "quantity_shipped": Decimal("0"),
                 "unit_cost": None,
                 "currency": None,
                 # Volume and cartons ADD across the lines a group merges, and stay None
@@ -1424,18 +1442,18 @@ def convert_to_draft_shipment(
         group["quantity_shipped"] = prev_qty + qty
         # A part-placed line brings its SHARE of the volume and the cartons, not the whole
         # line's: half a line in this container takes half the room in it.
-        share = (qty / float(ln.qty)) if ln.qty else 1.0
+        share = (qty / _dec(ln.qty)) if ln.qty else Decimal("1")
         if ln.cbm_per_unit is not None:
-            group["cbm"] = (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_per_unit)) * qty
+            group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_per_unit) * qty
         elif ln.cbm_total is not None:
-            group["cbm"] = (
-                (group["cbm"] or Decimal("0")) + Decimal(str(ln.cbm_total)) * Decimal(str(share))
-            )
+            group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_total) * share
         if ln.cartons is not None:
-            group["cartons"] = (group["cartons"] or 0) + int(round(float(ln.cartons) * share))
+            group["cartons"] = (group["cartons"] or 0) + int(
+                (_dec(ln.cartons) * share).to_integral_value(rounding=ROUND_HALF_UP)
+            )
         group["placed"] = group.get("placed", {})
         group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
-        placing_cbm = _placing_volume(ln, qty)
+        placing_cbm = _placing_volume(ln, float(qty))
         if placing_cbm is not None:
             placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
         if ln.unit_price is not None:
@@ -1516,7 +1534,9 @@ def convert_to_draft_shipment(
     for key, group in groups.items():
         line = existing_lines.get(key)
         if line is not None:
-            line.quantity_shipped = (line.quantity_shipped or 0) + group["quantity_shipped"]
+            line.quantity_shipped = (line.quantity_shipped or 0) + _whole(
+                group["quantity_shipped"]
+            )
             if group["cbm"] is not None:
                 line.cbm = (Decimal(str(line.cbm)) if line.cbm is not None else Decimal("0")) + group["cbm"]
             if group["cartons"] is not None:
@@ -1527,7 +1547,10 @@ def convert_to_draft_shipment(
                 shipment_id=shipment.id,
                 product_id=group["product_id"],
                 supplier_id=group["supplier_id"],
-                quantity_shipped=group["quantity_shipped"],
+                # `inbound_shipment_lines.quantity_shipped` is an INTEGER column: a
+                # container ships whole pieces. The fraction is not lost - it is on the
+                # link, which is what the placement arithmetic reads.
+                quantity_shipped=_whole(group["quantity_shipped"]),
                 uom_id=uoms.get(group["product_id"]),
                 unit_cost=group["unit_cost"],
                 currency=group["currency"],

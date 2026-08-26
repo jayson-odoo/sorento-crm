@@ -11,6 +11,7 @@ migrations were run rather than merely written. Nothing is borrowed from an exis
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import pytest
 
@@ -497,3 +498,66 @@ def test_an_invoice_matching_no_product_says_so_rather_than_already_converted():
 
         assert exc.value.status_code == 422
         assert exc.value.detail["detail"] == "unmatched"
+
+
+# --------------------------------------------------------------------------------- #
+# Review finding 6 - a fractional quantity is placed, not truncated
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_fractional_line_is_fully_placed_rather_than_reading_split_for_ever():
+    """`proforma_invoice_line.qty` is Numeric. Truncating the placement to a whole number
+    left 0.5 outstanding on a line nothing else would ever place, so the invoice read Split
+    for ever and could never be converted again."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        matched = [ln for ln in _lines(db, invoice.id) if ln.product_id]
+        for ln in matched:
+            ln.qty = Decimal("12.5")
+            ln.cbm_per_unit = None
+            ln.cbm_total = None
+        for ln in _lines(db, invoice.id):
+            if ln.product_id is None:
+                ln.product_id = None
+        db.flush()
+
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        detail = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+        placed = next(ln for ln in detail["lines"] if ln["id"] == str(matched[0].id))
+        assert placed["placed_qty"] == 12.5
+        assert placed["remaining_qty"] == 0
+        assert detail["placement"] == "converted"
+        # The link carries the fraction; the container's own line is whole pieces, as its
+        # integer column has always been.
+        link = (
+            db.query(ProformaInvoiceShipmentLink)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_line_id == matched[0].id,
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+            )
+            .one()
+        )
+        assert float(link.qty) == 12.5
+        assert out["shipment_id"]
+
+
+def test_a_fractional_split_places_exactly_what_was_asked_for():
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        line.qty = Decimal("10")
+        db.flush()
+
+        svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(line.id): 2.5}
+        )
+
+        detail = svc.serialize(db, svc.get_or_404(db, str(invoice.id)))
+        placed = next(ln for ln in detail["lines"] if ln["id"] == str(line.id))
+        assert placed["placed_qty"] == 2.5
+        assert placed["remaining_qty"] == 7.5
