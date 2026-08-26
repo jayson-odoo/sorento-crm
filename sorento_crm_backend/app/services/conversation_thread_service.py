@@ -620,6 +620,73 @@ def _persist_best_effort(db: Session, contact: ThreadContact, items: list[dict])
         return 0
 
 
+def mirror_outgoing_send(
+    db: Session,
+    *,
+    identifier: str,
+    respond_contact_id: Optional[str],
+    response: Any,
+    message: dict,
+) -> int:
+    """Write the row for a message the CRM itself just sent (PLAN-optimistic-send).
+
+    The thread renders from ``chat_histories``, and until this existed a CRM
+    reply only reached it once Respond's outbound webhook had crossed n8n and
+    been mirrored back - seconds at best, never when that lane is down. The CRM
+    already holds everything the mirror would write (Respond's ``messageId``
+    acknowledgement, the text, the contact), so it writes the row itself and the
+    later mirror lands on it through the same ``(contact_id, message_id)``
+    dedupe, filling only what is still null.
+
+    ``message`` is the Respond-shaped ``message`` block (``{"type": "text",
+    "text": ...}`` or an attachment block) so the stored text is the same
+    placeholder the read lane's backfill would have produced.
+
+    Best-effort by construction: the message has reached the contact, so a
+    failure here is logged and the send's result is untouched. An
+    acknowledgement whose id is not a Respond timestamp writes nothing (the
+    dedupe would have nothing to key on). Returns the number of rows written.
+    """
+    from app.models.access import RespondContact
+    from app.services import conversation_event_bus
+
+    message_id = None
+    if isinstance(response, dict):
+        message_id = response.get("messageId") or response.get("message_id") or response.get("id")
+    if message_id is None or _message_id_to_ms(message_id) is None:
+        return 0
+
+    contact_row = None
+    try:
+        if respond_contact_id:
+            contact_row = (
+                db.query(RespondContact).filter(RespondContact.id == str(respond_contact_id)).first()
+            )
+        if contact_row is None and identifier:
+            contact_row = (
+                db.query(RespondContact)
+                .filter(RespondContact.respond_io_id == str(identifier).strip())
+                .first()
+            )
+    except Exception:  # noqa: BLE001 - the send already succeeded
+        logger.warning("outgoing mirror: contact lookup failed for %s", identifier, exc_info=True)
+        return 0
+    contact = thread_contact_for(contact_row)
+    if contact is None:
+        return 0
+
+    written = _persist_best_effort(
+        db,
+        contact,
+        [{"messageId": message_id, "traffic": "outgoing", "message": message}],
+    )
+    if written:
+        conversation_event_bus.publish(
+            conversation_event_bus.EVENT_MESSAGE, contact_id=contact.respond_io_id
+        )
+    return written
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
