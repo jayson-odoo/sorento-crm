@@ -2579,6 +2579,39 @@ class ProjectOrderInquiryService:
             )
         return out
 
+    def _narrow_to_products(self, query, product_ids: Sequence[str]):
+        """`query`, narrowed to rows that could be FOR one of these products.
+
+        The same two arms `_resolve_product_id` reads a row's product through, in the same
+        order: the reconciled project line's `product_id`, and the row's own `item_code`.
+        `None` when neither arm names anything, which is the caller's cue that there is
+        nothing to do at all - distinct from "no narrowing", which would scan the book.
+        """
+        wanted = [pid for pid in product_ids if pid]
+        if not wanted:
+            return None
+        so_line_ids = [
+            line_id
+            for (line_id,) in self.db.query(ProjectSalesOrderLine.id).filter(
+                ProjectSalesOrderLine.product_id.in_(wanted)
+            )
+        ]
+        codes = [
+            code
+            for (code,) in self.db.query(Product.product_code).filter(
+                Product.id.in_(wanted)
+            )
+            if code
+        ]
+        conditions = []
+        if so_line_ids:
+            conditions.append(OrderInquiryRow.so_line_id.in_(so_line_ids))
+        if codes:
+            conditions.append(OrderInquiryRow.item_code.in_(codes))
+        if not conditions:
+            return None
+        return query.filter(or_(*conditions))
+
     def rows_needed_at(
         self, cells: Sequence[Tuple[str, Optional[str]]]
     ) -> List[str]:
@@ -2608,14 +2641,15 @@ class ProjectOrderInquiryService:
         wanted = {(str(pid), str(wid) if wid else None) for pid, wid in cells if pid}
         if not wanted:
             return []
-        rows = (
-            self.db.query(OrderInquiryRow)
-            .filter(
-                OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
-                OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
-            )
-            .all()
+        # Narrowed to the confirmed lines' PRODUCTS before anything is fetched. Without it
+        # this walks every raised row in the book to answer a question about one purchase
+        # order, which on the live book is thousands of rows and their product lookups.
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+            OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
         )
+        query = self._narrow_to_products(query, [pid for pid, _wid in wanted])
+        rows = query.all() if query is not None else []
         if not rows:
             return []
         product_by_row = self._resolve_product_ids_bulk(rows)
@@ -2635,19 +2669,22 @@ class ProjectOrderInquiryService:
             ):
                 core_warehouse[str(psl_id)] = str(warehouse_id) if warehouse_id else None
 
-        # The warehouse each stated stock location names. By CODE, which is what the row
-        # carries; company scoping is the query's own, exactly as everywhere else here.
+        # The warehouse each stated stock location names, keyed by (COMPANY, code).
+        # `warehouses.warehouse_code` is unique per company and not globally, so a bare
+        # code-to-id map keeps whichever company the query happened to return last - and
+        # this pass would then claim a row for a warehouse of the wrong company, which is
+        # the same mis-attribution the company scope exists to prevent.
         codes = {
             (row.stock_location or "").strip()
             for row in rows
             if (row.stock_location or "").strip()
         }
-        warehouse_by_code: Dict[str, str] = {}
+        warehouse_by_code: Dict[Tuple[Optional[str], str], str] = {}
         if codes:
             warehouse_by_code = {
-                str(code): str(wid)
-                for code, wid in self.db.query(
-                    Warehouse.warehouse_code, Warehouse.id
+                (str(company_id) if company_id else None, str(code)): str(wid)
+                for code, wid, company_id in self.db.query(
+                    Warehouse.warehouse_code, Warehouse.id, Warehouse.company_id
                 ).filter(Warehouse.warehouse_code.in_(list(codes)))
             }
 
@@ -2656,7 +2693,10 @@ class ProjectOrderInquiryService:
             product_id = product_by_row.get(row.id)
             if not product_id:
                 continue
-            stated = warehouse_by_code.get((row.stock_location or "").strip())
+            stated = warehouse_by_code.get((
+                str(row.company_id) if row.company_id else None,
+                (row.stock_location or "").strip(),
+            ))
             if row.supply_decision_id is None:
                 warehouse_id = stated
             elif row.verb == IV_ORDER_BACK:
@@ -2720,28 +2760,10 @@ class ProjectOrderInquiryService:
                 return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
             query = query.filter(OrderInquiryRow.id.in_(wanted_rows))
         elif product_ids:
-            wanted = [pid for pid in product_ids if pid]
-            so_line_ids = [
-                line_id
-                for (line_id,) in self.db.query(ProjectSalesOrderLine.id).filter(
-                    ProjectSalesOrderLine.product_id.in_(wanted)
-                )
-            ]
-            codes = [
-                code
-                for (code,) in self.db.query(Product.product_code).filter(
-                    Product.id.in_(wanted)
-                )
-                if code
-            ]
-            conditions = []
-            if so_line_ids:
-                conditions.append(OrderInquiryRow.so_line_id.in_(so_line_ids))
-            if codes:
-                conditions.append(OrderInquiryRow.item_code.in_(codes))
-            if not conditions:
+            narrowed = self._narrow_to_products(query, product_ids)
+            if narrowed is None:
                 return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
-            query = query.filter(or_(*conditions))
+            query = narrowed
 
         rows = self._rank_raised_rows(query.all())
 

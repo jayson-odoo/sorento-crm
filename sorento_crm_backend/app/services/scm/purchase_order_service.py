@@ -949,7 +949,14 @@ class PurchaseOrderService:
             service = ProjectOrderInquiryService(self.db)
             # Pass one: the rows that sized these plan cells, first claim on the lines
             # this confirm just opened.
-            sized_by = service.rows_needed_at(sorted(cells))
+            # Sorted only so the pass is deterministic, and sorted with a KEY because a
+            # bare `sorted` compares the tuples element by element: one line of a product
+            # with a warehouse and another without gives `str < None`, a TypeError, inside
+            # the best-effort try - which would swallow the WHOLE cascade and leave one log
+            # line behind.
+            sized_by = service.rows_needed_at(
+                sorted(cells, key=lambda cell: (cell[0], cell[1] or ""))
+            )
             if sized_by:
                 service.auto_place_for_products(
                     None, actor_user_id=actor, trigger="po_confirm", row_ids=sized_by,
