@@ -7,6 +7,7 @@ import React from 'react';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
+import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import type {
   OrderInquiryMatrixCell,
   OrderInquiryWorklistRow,
@@ -21,6 +22,21 @@ function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryW
     links: [],
     ...over,
   } as OrderInquiryWorklistRow;
+}
+
+/** The whole way through: rows in, matrix built, matrix rendered - which is what pins
+ *  the headline figure and the bar under it to the SAME arithmetic. */
+function renderBuilt(rows: OrderInquiryWorklistRow[]) {
+  const matrix = buildOrderInquiryMatrix(rows, 'product', 'month');
+  return render(
+    <OrderInquiryScheduleMatrix
+      buckets={matrix.buckets}
+      rows={matrix.rows}
+      rowHeader="Product"
+      cells={matrix.cells}
+      onOpenCell={vi.fn()}
+    />,
+  );
 }
 
 function renderMatrix(rows: OrderInquiryWorklistRow[], qty: string) {
@@ -40,7 +56,7 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
   it('draws one solid rose segment and reads "Buy N" for a cell whose rows are all unlinked', () => {
     renderMatrix([worklistRow({ qty: '85', links: [] })], '85');
 
-    const button = screen.getByRole('button', { name: '85, 1 row, Buy 85' });
+    const button = screen.getByRole('button', { name: '85 owed, 1 row, Buy 85' });
     const bar = within(button).getByTestId('supply-bar');
     // Faded: nothing in this cell is on a document yet.
     expect(bar).toHaveAttribute('data-decided', 'false');
@@ -60,7 +76,7 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
       '8',
     );
 
-    const button = screen.getByRole('button', { name: '8, 1 row, PO 5 · Buy 3' });
+    const button = screen.getByRole('button', { name: '8 owed, 1 row, PO 5 · Buy 3' });
     const bar = within(button).getByTestId('supply-bar');
     expect(bar).toHaveAttribute('data-decided', 'false');
     const kinds = [...bar.querySelectorAll('span[data-kind]')].map((el) =>
@@ -80,7 +96,7 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
       '10',
     );
 
-    const button = screen.getByRole('button', { name: '10, 1 row, SPO 10' });
+    const button = screen.getByRole('button', { name: '10 owed, 1 row, SPO 10' });
     const bar = within(button).getByTestId('supply-bar');
     // Solid: wholly covered by a document.
     expect(bar).toHaveAttribute('data-decided', 'true');
@@ -90,9 +106,29 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
   });
 
   it('a cancelled row contributes no bar and no supply words at all', () => {
-    renderMatrix([worklistRow({ qty: '6', links: [], state: 'cancelled' })], '6');
+    renderBuilt([worklistRow({ qty: '6', links: [], state: 'cancelled' })]);
 
-    const button = screen.getByRole('button', { name: '6, 1 row' });
+    // Nothing is owed here any more, so the cell says nothing is.
+    const button = screen.getByRole('button', { name: '0 owed, 1 row' });
     expect(within(button).queryByTestId('supply-bar')).not.toBeInTheDocument();
+  });
+
+  it('the headline counts only what is still owed, so it cannot outrun its own bar', () => {
+    // The reported defect: 91 over a bar reading "Buy 85", because the cancelled six were
+    // in the headline and in nothing else.
+    renderBuilt([
+      worklistRow({ id: 'live', qty: '85', links: [] }),
+      worklistRow({ id: 'called-off', qty: '6', links: [], state: 'cancelled' }),
+    ]);
+
+    const button = screen.getByRole('button', { name: '85 owed, 2 rows, Buy 85' });
+    const bar = within(button).getByTestId('supply-bar');
+    const segments = [...bar.querySelectorAll('span[data-kind]')].map((el) => ({
+      kind: el.getAttribute('data-kind'),
+      qty: el.getAttribute('data-qty'),
+    }));
+    expect(segments).toEqual([{ kind: 'buy', qty: '85' }]);
+    // The cancelled row is still IN the cell - its name says "2 rows" - because the
+    // drilldown is where a person goes to see what happened to it.
   });
 });

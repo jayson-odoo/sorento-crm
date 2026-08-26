@@ -157,9 +157,12 @@ function MatrixCellButton({
   // row is wholly on a document, faded while any of it is still only an instruction.
   const segments = segmentsOfRows(cell.rows);
   const supply = kindText(segments);
-  const label = `${formatInquiryQty(cell.qty)}, ${rowCount} row${rowCount === 1 ? '' : 's'}${
-    supply ? `, ${supply}` : ''
-  }`;
+  // The figure is what is STILL OWED here (`buildOrderInquiryMatrix` leaves a cancelled
+  // row out of it), so it and the words under it always add up. The row count is the
+  // whole cell all the same, cancelled rows included: it says what a click opens.
+  const label = `${formatInquiryQty(cell.qty)} owed, ${rowCount} row${
+    rowCount === 1 ? '' : 's'
+  }${supply ? `, ${supply}` : ''}`;
 
   return (
     <button

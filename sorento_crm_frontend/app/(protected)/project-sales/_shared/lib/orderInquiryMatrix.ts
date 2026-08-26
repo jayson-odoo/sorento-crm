@@ -9,6 +9,7 @@
  * and no risk of the matrix and the drilldown disagreeing about which rows are in a cell.
  */
 import { format, parseISO, startOfMonth, startOfWeek, startOfYear } from 'date-fns';
+import { CANCELLED_STATE } from './orderInquiryKinds';
 import { fromMinor, toMinor } from './supplyComposition';
 import type {
   OrderInquiryMatrixAxis,
@@ -119,10 +120,20 @@ export function buildOrderInquiryMatrix(
     return (a.start ?? '').localeCompare(b.start ?? '');
   });
 
+  // A CELL'S FIGURE IS WHAT IS STILL OWED IN IT, so a cancelled row adds nothing to it -
+  // the same rule `kindTotals` reads, and the reason the two agree: a headline of 91 over
+  // a bar that reads "Buy 85" is a cell nobody can act on, because the six that make up
+  // the difference were called off. The cell keeps EVERY row in `rows` all the same: the
+  // drilldown is where a person goes to see what happened to them.
   const cells: OrderInquiryMatrixCell[] = [...cellMap.values()].map((entry) => ({
     row_key: entry.row_key,
     bucket_key: entry.bucket_key,
-    qty: fromMinor(entry.rows.reduce((total, row) => total + toMinor(row.qty), 0)),
+    qty: fromMinor(
+      entry.rows.reduce(
+        (total, row) => (row.state === CANCELLED_STATE ? total : total + toMinor(row.qty)),
+        0,
+      ),
+    ),
     rows: entry.rows,
   }));
 

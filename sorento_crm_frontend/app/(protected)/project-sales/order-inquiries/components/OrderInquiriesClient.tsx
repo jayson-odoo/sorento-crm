@@ -429,6 +429,10 @@ export function OrderInquiriesClient() {
     }
   }
 
+  // A pressed CARD counts as a filter here even though it lives on the strip rather than
+  // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
+  // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
+  // sees three rows, and has nothing on the toolbar offering to give the rest back.
   const filtersActiveCount =
     (month ? 1 : 0) +
     (stateFilter ? 1 : 0) +
@@ -436,7 +440,8 @@ export function OrderInquiriesClient() {
     (projectFilter ? 1 : 0) +
     (raisedDate ? 1 : 0) +
     (raisedByFilter ? 1 : 0) +
-    (linkedFilter ? 1 : 0);
+    (linkedFilter ? 1 : 0) +
+    (kindFilter ? 1 : 0);
 
   const openCellRow = openCell
     ? matrix.rows.find((row) => row.key === openCell.row_key)
@@ -754,6 +759,9 @@ export function OrderInquiriesClient() {
                             setRaisedDate('');
                             setRaisedByFilter('');
                             setLinkedFilter('');
+                            // Counted above, so it is cleared here: "Clear filters" that
+                            // left a card pressed would leave the screen still narrowed.
+                            setKindFilter(null);
                           }}
                         >
                           Clear filters

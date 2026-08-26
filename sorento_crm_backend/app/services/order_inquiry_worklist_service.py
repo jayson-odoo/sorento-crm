@@ -259,9 +259,21 @@ def _linked_qty(*where) -> Any:
 #:
 #: NEVER NEGATIVE. A row linked beyond its own quantity is a data question, and a negative
 #: Buy would quietly cancel out a real one somewhere else in the same total.
+#:
+#: `_UNLINKED_QTY` is a per-row remainder and says nothing about whether that remainder is
+#: still OWED - `_NOT_OWED_STATES` below is what answers that, and every reader of this
+#: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
 _UNLINKED_QTY = func.greatest(OrderInquiryRow.qty - _linked_qty(), 0)
+
+#: The two states whose quantity is NOT OWED any more, so neither the three cards nor the
+#: `kind` filter counts them: `cancelled` was called off, and `actioned` has already been
+#: answered somewhere else. `_quantity_flow_by_so_line` below and `scm.committed_v` both
+#: drop `actioned` for exactly this reason, so counting an actioned row's remainder here
+#: would put a quantity on the Buy card that reorder planning itself does not carry - and
+#: purchasing would buy it twice.
+_NOT_OWED_STATES = (INQUIRY_CANCELLED, INQUIRY_ACTIONED)
 
 # `SO DATE` is the date on the DOCUMENT. For an adopted order that is the core sales
 # order's own order date; an authored one that has never been to AutoCount falls back to
@@ -537,17 +549,18 @@ class OrderInquiryWorklistService:
             # WHAT the row still needs, which is what the three cards above both views
             # ask (section 3.I2) and a different question from `linked`: a row linked 5
             # of 8 to a purchase order carries `po` AND `buy`, so it answers to either
-            # card, while `linked=po` only asks where its links point. A CANCELLED row
-            # carries no kind at all - its quantity is not owed any more, and its links
-            # are history (`links_for_rows` already hides them), so counting it would
-            # tell purchasing to buy something somebody has called off.
+            # card, while `linked=po` only asks where its links point. A row in one of
+            # `_NOT_OWED_STATES` carries no kind at all - its quantity is not owed any
+            # more, and its links are history (`links_for_rows` already hides them), so
+            # counting it would tell purchasing to buy something somebody has called off
+            # or already answered.
             if kind not in ("spo", "po", "buy"):
                 raise AppException(
                     422,
                     f"'{kind}' is not a supply kind. Use spo, po or buy.",
                     code="invalid_kind_filter",
                 )
-            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            base = base.filter(OrderInquiryRow.state.notin_(_NOT_OWED_STATES))
             if kind == "spo":
                 base = base.filter(_HAS_SPO_LINK)
             elif kind == "po":
@@ -898,8 +911,9 @@ class OrderInquiryWorklistService:
         purchase order lines, and the unlinked remainder that still has to be bought.
 
         SUMMED SERVER-SIDE OVER THE WHOLE MATCHING SET, never over a page, so a card
-        cannot claim less than pressing it reveals. Cancelled rows are dropped by the
-        same rule the `kind` filter drops them, so the cards and the rows agree.
+        cannot claim less than pressing it reveals. Cancelled and actioned rows are
+        dropped by the same rule the `kind` filter drops them (`_NOT_OWED_STATES`), so
+        the cards and the rows agree.
         """
         spo, po, buy = (
             self._base(**filters)
@@ -908,7 +922,7 @@ class OrderInquiryWorklistService:
                 func.coalesce(func.sum(_PO_LINKED_QTY), 0),
                 func.coalesce(func.sum(_UNLINKED_QTY), 0),
             )
-            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .filter(OrderInquiryRow.state.notin_(_NOT_OWED_STATES))
             .order_by(None)
             .one()
         )

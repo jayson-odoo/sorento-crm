@@ -84,8 +84,12 @@ export interface OrderInquiryKindRow {
   state?: string | null;
 }
 
-/** Stored `cancelled`, and it owes nothing: no bar, no card, no filter (see below). */
-const CANCELLED = 'cancelled';
+/**
+ * Stored `cancelled`, and it owes nothing: no bar, no card, no filter (see below), and
+ * no share of a schedule cell's own headline figure (`buildOrderInquiryMatrix`, which
+ * imports this rather than respelling the word).
+ */
+export const CANCELLED_STATE = 'cancelled';
 
 /**
  * The three totals over these rows, IN ORDER AND ALWAYS ALL THREE - what the cards are
@@ -101,7 +105,7 @@ const CANCELLED = 'cancelled';
 export function kindTotals(rows: OrderInquiryKindRow[]): OrderInquiryKindSegment[] {
   const minor: Record<OrderInquiryKind, number> = { spo: 0, po: 0, buy: 0 };
   for (const row of rows) {
-    if (row.state === CANCELLED) continue;
+    if (row.state === CANCELLED_STATE) continue;
     let linked = 0;
     for (const link of row.links ?? []) {
       const qty = toMinor(link.qty);

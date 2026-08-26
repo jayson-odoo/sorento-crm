@@ -507,9 +507,10 @@ describe('OrderInquiriesClient', () => {
     it('clicking a cell drills down to its own rows, in the list columns', async () => {
       currentSearchParams = new URLSearchParams('view=schedule&granularity=month');
       renderClient();
-      // The cell now names what its quantity still needs as well as how many rows it is
-      // (AC-I12): this one is wholly unlinked, so it reads "Buy 85".
-      const cell = await screen.findByRole('button', { name: '85, 1 row, Buy 85' });
+      // The cell now names what is still OWED in it and what that quantity still needs,
+      // as well as how many rows it is (AC-I12): this one is wholly unlinked, so the two
+      // figures agree at 85.
+      const cell = await screen.findByRole('button', { name: '85 owed, 1 row, Buy 85' });
 
       fireEvent.click(cell);
 
@@ -758,6 +759,36 @@ describe('OrderInquiriesClient', () => {
       openActionsMenu();
       const item = await screen.findByRole('menuitem', { name: 'Unlink all' });
       await waitFor(() => expect(item).toHaveAttribute('title', 'No linked rows to unlink'));
+    });
+  });
+
+  describe('a pressed card is a filter like any other (AC-I11)', () => {
+    it('offers "Clear filters" while only a card is pressed, and clearing releases it', async () => {
+      renderClient();
+      await screen.findByText('SO385126');
+
+      fireEvent.click(screen.getByTestId('order-inquiry-strip-buy'));
+      await waitFor(() =>
+        expect(listOrderInquiryWorklist).toHaveBeenLastCalledWith(
+          expect.objectContaining({ kind: 'buy' }),
+        ),
+      );
+
+      // Nothing in the popover is set, so before the fix there was no way back from here.
+      openFilters();
+      const clear = await screen.findByRole('button', { name: 'Clear filters' });
+      fireEvent.click(clear);
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+      await waitFor(() =>
+        expect(listOrderInquiryWorklist).toHaveBeenLastCalledWith(
+          expect.objectContaining({ kind: undefined }),
+        ),
+      );
+      expect(screen.getByTestId('order-inquiry-strip-buy')).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
     });
   });
 });
