@@ -5750,3 +5750,69 @@ def test_the_suggested_side_reaches_the_wire():
             ("reserve", "10", "pool")
         ]
         assert proposed[0]["location"] == world["pool"].warehouse_code
+
+
+# --------------------------------------------------------------------------- #
+# Ladder v4 (section 1d): the trail says whose number refused the draw
+# --------------------------------------------------------------------------- #
+
+
+def test_the_group_rung_names_the_group_net_when_the_group_has_nothing_for_this_line():
+    """AC-L7, in the words a planner reads. `MWH-IB` holding 7000 is not an answer to "why
+    nothing" while `BRW-IB` owes more than the group holds, so the sentence is about the
+    GROUP's net and never about one warehouse."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        group = f"IB{_uid()[:4]}"
+        own = _warehouse(db, f"ZZTB{_uid()[:4]}-{group}"[:20])
+        sibling = _warehouse(db, f"ZZTM{_uid()[:4]}-{group}"[:20])
+        _stock(db, product, own, on_hand=10)
+        _stock(db, product, sibling, on_hand=70)
+        theirs = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="200", required_date=date(2026, 9, 1), warehouse=own)
+        ours = _order(db, so_number="ZZT-SO-V4WHY", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="20", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build(["ZZT-SO-V4WHY"], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "group_take")
+        assert step["offered"] == "0"
+        # 10 + 70 on hand less 220 owed - this line's own 20 included, which is what the
+        # net IS. What the line may take un-nets its own 20 and is still nothing.
+        assert f"The {group.upper()} group nets -140" in step["why"]
+        assert "nothing left for this line" in step["why"]
+        # And the sibling's 70 is not named as though it were available.
+        assert sibling.warehouse_code not in step["why"]
+
+
+def test_the_pool_rung_names_the_pools_net_only_when_that_net_is_what_refused_it():
+    """AC-L8. One pool oversold and another holding 1: per-pool arithmetic would offer the
+    1, and the five pools net -102 between them, so nothing is offered and the sentence
+    says which number decided.
+
+    A pool that had nothing to give on its own terms keeps its own, more specific reason -
+    that case is covered by the cold/oversold sentences this one deliberately does not
+    replace.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        other_pool = _warehouse(db, f"ZZTQ{_uid()[:6]}"[:20])
+        second = _warehouse(db, f"ZZTR{_uid()[:6]}"[:20])
+        second.pool_warehouse_id = other_pool.id
+        db.flush()
+        # The line's own pool is oversold; the other pool holds 1.
+        _stock(db, product, other_pool, on_hand=1)
+        theirs = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="103", required_date=date(2026, 9, 1), warehouse=pool)
+        ours = _order(db, so_number="ZZT-SO-V4POOL", order_date=date(2026, 1, 1))
+        _line(db, ours, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build(["ZZT-SO-V4POOL"], granularity="week", as_of=TODAY)
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+
+        step = _step(contribution, "pool")
+        assert step["offered"] == "0"
+        assert "The site pools net -102 between them" in step["why"]
+        assert contribution["qty_proposed_buy"] == "10"
