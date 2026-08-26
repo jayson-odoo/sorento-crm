@@ -54,9 +54,13 @@ export function OrderInquiryUploadMenu({ onQueued }: { onQueued?: () => void }) 
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setChannel('purchase-history')}>
             <div className="flex flex-col gap-0.5">
-              <span>Upload the PO and SPO book</span>
+              {/* The dialog this opens is titled "Upload purchase history" and the reorder
+                  page's own menu calls it that, so this says the same words: one action
+                  is not called two things on two screens. The hint is where the captain's
+                  own name for the file lives. */}
+              <span>Upload purchase history</span>
               <span className="text-2xs text-muted-foreground">
-                Shipping orders and past purchases
+                The PO and SPO book - shipping orders and past purchases
               </span>
             </div>
           </DropdownMenuItem>

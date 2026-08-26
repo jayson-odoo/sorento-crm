@@ -53,6 +53,7 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
+    ACK_REJECTED,
     DECISION_ACTIVE,
     INQUIRY_PLACED,
     OrderInquiry,
@@ -1180,17 +1181,33 @@ class FulfilmentBoardService:
             .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
             .all()
         )
-        return {
+        # The CURRENT instruction per line, last writer winning, exactly as before.
+        out: Dict[str, Dict[str, Any]] = {
             str(core_id): {
                 "inquiry_no": inquiry_no,
                 "state": state,
                 "ack_state": ack_state,
-                "rejected_reason": rejected_reason,
-                "rejected_by_name": rejected_by_name,
+                "rejected_reason": None,
+                "rejected_by_name": None,
             }
-            for core_id, inquiry_no, state, ack_state, rejected_reason, rejected_by_name
-            in rows
+            for core_id, inquiry_no, state, ack_state, _reason, _name in rows
         }
+        # The REFUSAL is read off the line rather than off its current row, and that is
+        # the difference between the cell saying why it came back and saying nothing. A
+        # line routinely carries several rows - an order back beside the order, an
+        # amendment's own - so the newest one is frequently not the one purchasing
+        # refused, and last-wins would then drop the only explanation CS has. Latest
+        # refusal wins where there are two.
+        for core_id, _inquiry_no, _state, ack_state, reason, name in rows:
+            if ack_state != ACK_REJECTED:
+                continue
+            entry = out.get(str(core_id))
+            if entry is None:
+                continue
+            entry["ack_state"] = ACK_REJECTED
+            entry["rejected_reason"] = reason
+            entry["rejected_by_name"] = name
+        return out
 
     def _frozen_decisions(
         self,
