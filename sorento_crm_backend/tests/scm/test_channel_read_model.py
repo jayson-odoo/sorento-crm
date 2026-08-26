@@ -1194,11 +1194,15 @@ def test_net_position_v_keeps_its_columns_and_cardinality_after_the_channel_spli
         ),
         {"p": pid, "w": wid},
     ).mappings().one()
-    assert float(committed_row["project_committed"]) == 14  # 8 sheet + 6 confirmed
+    # The Order Inquiry's 6, and nothing off the book: the sheet-origin 8 is awaiting CS
+    # (P3). The class-less 4 is retail (P4), so retail reads 14 rather than 10.
+    assert float(committed_row["project_committed"]) == 6
     assert float(committed_row["project_confirmed_committed"]) == 6
-    assert float(committed_row["retail_committed"]) == 10
-    assert float(committed_row["unclassified_committed"]) == 4
+    assert float(committed_row["retail_committed"]) == 14
+    assert float(committed_row["unclassified_committed"]) == 0
 
-    assert float(row["committed"]) == float(committed_row["committed"]) == 28
+    # The invariant this case exists for, and it is untouched by any of that: whatever the
+    # channels come to, `net_position_v` reads ONE row and the same `committed`.
+    assert float(row["committed"]) == float(committed_row["committed"]) == 20
     assert float(row["quantity_on_hand"]) == 50
-    assert float(row["net_position"]) == 50 + float(row["on_order"] or 0) - 28
+    assert float(row["net_position"]) == 50 + float(row["on_order"] or 0) - 20

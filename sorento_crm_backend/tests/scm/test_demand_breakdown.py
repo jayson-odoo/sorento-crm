@@ -1155,7 +1155,7 @@ def test_history_lines_include_delivered_orders_within_the_window(scm_app):
     assert out["history_total"] == out["history_shown"], "uncapped == capped, well under limit"
 
 
-def test_history_lines_are_empty_off_the_window_and_off_unclassified(scm_app):
+def test_history_lines_are_empty_off_both_windows(scm_app):
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "ZZTW-HIST2")
     pid = _mk_product(db, f"ZZTP-HIST2-{uuid.uuid4().hex[:6]}")
@@ -1177,19 +1177,21 @@ def test_history_lines_are_empty_off_the_window_and_off_unclassified(scm_app):
         "VALUES (:i, :so, :p, :w, 20, 20, 'closed', 'covered', now(), now())"
     ), {"i": str(uuid.uuid4()), "so": so_id, "p": pid, "w": wid})
     # A separate, still-OPEN line so the run actually writes a recommendation for this
-    # product - the 3-year-old order above carries zero open demand on its own.
-    _so(db, pid, wid, 1, order_type="project", number="ZZTSO-HIST2-OPEN")
+    # product - the 3-year-old order above carries zero open demand on its own. RETAIL,
+    # because a project-class book line is not demand since P3 and the run would write no
+    # recommendation to hang this drill on.
+    _so(db, pid, wid, 1, order_type="retail", number="ZZTSO-HIST2-OPEN")
     _link(db, pid, _mk_supplier(db, "ZZT Hist2 Supplier"), moq=None, mult=None)
     db.flush()
     rec_id = _rec(db, ["ZZTW-HIST2"], pid)
 
-    old_line = dbs.demand_for_recommendation(db, rec_id, channel="project")
+    project = dbs.demand_for_recommendation(db, rec_id, channel="project")
+    retail = dbs.demand_for_recommendation(db, rec_id, channel="retail")
     unfiltered = dbs.demand_for_recommendation(db, rec_id)
-    unclassified = dbs.demand_for_recommendation(db, rec_id, channel="unclassified")
 
-    assert old_line["history_lines"] == [], "outside the 12-month project window"
+    assert project["history_lines"] == [], "outside the 12-month project window"
+    assert retail["history_lines"] == [], "outside the 3-month retail window as well"
     assert unfiltered["history_lines"] == [], "no channel picked - no window to speak of"
-    assert unclassified["history_lines"] == [], "unclassified has no configured window"
 
 
 def test_a_confirmed_leg_line_always_has_an_inquiry_row(scm_app):
