@@ -514,18 +514,29 @@ def test_the_relevance_floor_still_refuses_nonsense(client, water_closet_catalog
 
 
 def test_the_answer_is_company_scoped(db, client, water_closet_catalogue):
-    """Product codes are unique PER COMPANY: the same code with the same spec in
-    another company must not be offered to a Sorento contact."""
+    """Another company's water closet with the same spec must not be offered to
+    a Sorento contact.
+
+    A DIFFERENT code on purpose: `search_specs` collapses rows sharing a code
+    into one family, so a leaked same-code row would hide behind Sorento's and
+    the assertion could never fail. Seeded under the all-companies scope, which
+    is also how the assertion is proved falsifiable: with scope off the row IS
+    offered.
+    """
     with company_scope(db, None):
         db.add(Company(id=MOCHA_ID, name="Mocha", code=unique_code("MCH")[:20]))
         db.flush()
         mocha = _water_closet(
             db,
-            "ZZTWC250S",
+            "ZZTWC251S",
             "SORENTO WATER CLOSET S-TRAP 250MM (680X370X760MM)",
             category=water_closet_catalogue["category"],
             company_id=MOCHA_ID,
         )
+        leaked = client.post(ENDPOINT, json=TURN_14061515).json()
+    assert mocha.id in [c["product_id"] for c in leaked["spec_candidates"]], (
+        "with no scope the row must show, or the scoped assertion below proves nothing"
+    )
 
     body = client.post(ENDPOINT, json=TURN_14061515).json()
 
