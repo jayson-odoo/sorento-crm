@@ -243,7 +243,7 @@ def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
     """
     from app.models.inventory import Stock, Warehouse
     from app.models.order import SalesOrder, SalesOrderLine
-    from app.models.procurement import SPOAllocation
+    from app.models.procurement import InboundShipment, SPOAllocation
     from app.services.scm import spo_supply
     from app.services.scm.demand import demand_qty, is_open_demand
     from sqlalchemy import func
@@ -298,6 +298,16 @@ def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
             SPOAllocation.warehouse_id,
             SPOAllocation.allocated_quantity,
             SPOAllocation.quantity_received,
+        )
+        # OUTER JOIN, and it is not optional: `open_incoming_clauses` names
+        # `InboundShipment.id`, so without the join SQLAlchemy adds `inbound_shipments` to
+        # the FROM list as a CROSS JOIN - every allocation is then returned once per
+        # un-arrived shipment in the whole table (15 of them on the dev copy, so the SPO
+        # leg read fifteen times over) and NOT AT ALL on a database with none, which is
+        # every fresh CI schema. An SPO with no container booked is the ordinary case since
+        # migration 420, so the join has to be outer.
+        .outerjoin(
+            InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
         )
         .filter(
             SPOAllocation.product_id.in_(ids),
