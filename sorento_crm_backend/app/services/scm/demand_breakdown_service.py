@@ -86,7 +86,10 @@ DEFAULT_LIMIT = 200
 # lines crowd the other off the 200-line cap, so a Project trigger next to
 # `project_committed` popped open a page that was mostly Retail (BRW: 279 lines, 200 shown,
 # retail happened to sort first).
-_CHANNELS = {"project", "retail", "unclassified"}
+#: The channels there ARE. `unclassified` was a third until P4; a caller still asking for
+#: it is an unrecognised channel now, which this endpoint has always answered unfiltered
+#: rather than with a 422 - a stale bookmark shows the whole row, not an error page.
+_CHANNELS = {"project", "retail"}
 
 # Quantities are floats out of NUMERIC, and "does this set reproduce the frozen figure"
 # must not turn on the last bit of a sum.
@@ -186,8 +189,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
                               scope: Optional[str] = None) -> dict[str, Any]:
     """Open demand behind one recommendation, newest-needed first.
 
-    `channel` narrows the list to ONE of `project`/`retail`/`unclassified` - anything else
-    (None, an unrecognised string) is unfiltered, so a caller that never asks for a channel
+    `channel` narrows the list to ONE of `project`/`retail` - anything else
+    (None, an unrecognised string, the retired `unclassified`) is unfiltered, so a caller that never asks for a channel
     (the ungrouped row's own popover) sees exactly what it always has. Filtering happens
     before the display cap and before the sort, never after, and the SCOPE test below still
     runs against the UNFILTERED total - a channel is a display slice of an already-resolved
@@ -325,14 +328,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # RETAIL takes a NULL class, exactly as `scm.committed_v`'s book leg does since P4:
     # nothing is unclassified any more (migration 425 stamped the NULLs and the SO import
     # refuses a file that would make another), so a stray NULL reads as the book-direct
-    # channel rather than as a bucket no screen shows. `unclassified` stays answerable so
-    # an old bookmark does not 422; it selects nothing, which is the truth.
+    # channel rather than as a bucket no screen shows. There is no third branch for the
+    # same reason - the word is simply not a channel, and falls through to unfiltered.
     if channel == "project":
         channel_pred = "so.demand_class = :channel_project_class"
     elif channel == "retail":
         channel_pred = "so.demand_class IS DISTINCT FROM :channel_project_class"
-    elif channel == "unclassified":
-        channel_pred = "so.demand_class IS NULL"
     else:
         channel_pred = "TRUE"
 
@@ -385,10 +386,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
         f"       COALESCE(sum(qty) FILTER (WHERE demand_class "
         f"                                  IS DISTINCT FROM :project_class), 0) "
         f"           AS retail_qty, "
-        # Always 0 since P4, and stated rather than deleted so the payload keeps its
-        # shape for a client that still reads the key. A NULL class is counted in
-        # `retail_qty` above, exactly as `scm.committed_v` counts it; summing it here as
-        # well would report the same quantity twice on the totals line.
+        # Always 0 since P4, and stated rather than deleted so the payload keeps its shape
+        # for a client that still reads the key (the popover renders it only when nonzero).
+        # A NULL class is counted in `retail_qty` above, exactly as `scm.committed_v`
+        # counts it; summing it here as well would report the same quantity twice.
         f"       0 AS unclassified_qty "
         f"FROM ({display_sql}) t"
     ), {**params, "project_class": PROJECT_CLASS}).mappings().first()

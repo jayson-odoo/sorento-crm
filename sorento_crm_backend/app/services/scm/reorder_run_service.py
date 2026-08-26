@@ -593,7 +593,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- Read off `committed_v` (or, under a horizon, its run-scoped override)
                -- rather than `net_position_v` so the netting view keeps exactly the
                -- columns and cardinality every other consumer already reads (AC-F07). The
-               -- three sum to the `committed` column above.
+               -- TWO sum to the `committed` column above - there is no third channel since
+               -- P4, and `committed_v`'s `unclassified_committed` is a constant 0 kept
+               -- only so the view could be replaced in place.
                COALESCE(cv.project_committed, 0) AS project_committed,
                COALESCE(cv.retail_committed, 0) AS retail_committed,
                -- Project demand is the Order Inquiry alone since P3 (migration 424), so

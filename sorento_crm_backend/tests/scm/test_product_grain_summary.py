@@ -432,6 +432,28 @@ def test_an_ea_products_fractional_need_rounds_to_a_whole_unit_once(db):
     assert float(row.suggested_qty) == 3
 
 
+def test_an_OLD_runs_unclassified_figure_still_reaches_its_own_report(db):
+    """The one path that still reads `unclassified_need`, and the reason it was kept.
+
+    The current engine states no such figure and `order_summary_row` reports 0 for every
+    run it writes. But a run frozen BEFORE `plan_basis` existed is re-frozen through the
+    row-wise branch, and it did measure one - dropping the read would rewrite that run's
+    own report to say 0 for something it counted, which is the opposite of what a frozen
+    report is for.
+    """
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    _rec(db, run, product, wh, rounded_qty=5, canonical=False,
+         inputs={"project_need": 2, "retail_need": 3, "unclassified_need": 100})
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+
+    assert float(row.unclassified_demand_qty) == 100
+    assert float(row.suggested_qty) == 5, "and it still never enters the actionable total"
+
+
 def test_the_suggested_quantity_is_project_plus_retail_and_nothing_else(db):
     """AC-E06 as P4 leaves it: there is no third channel to exclude, so the actionable
     total is the two the row states. A stale `unclassified_need` on an OLD run's snapshot
