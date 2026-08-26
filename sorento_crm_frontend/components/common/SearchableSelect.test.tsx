@@ -121,3 +121,38 @@ describe('SearchableSelect renderTrigger', () => {
     await waitFor(() => expect(optionLabels()).toHaveLength(3));
   });
 });
+
+// A supplier picker that reads "CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLO..." does not say
+// which supplier the loading plan was built for, and the column it sits in cannot be widened to
+// suit the longest name. The label wraps; the trigger grows. AC-A0.1, AC-A0.2, AC-A0.3.
+describe('SearchableSelect shows the whole option', () => {
+  const LONG = 'CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD';
+  const longOptions: SearchableSelectOption[] = [
+    { value: 'jbc', label: LONG, description: 'Guangdong, China - ceramic sanitary ware' },
+  ];
+
+  it('never truncates or line-clamps the selected label', () => {
+    render(<SearchableSelect value="jbc" onChange={vi.fn()} options={longOptions} />);
+
+    const trigger = document.querySelector('[data-slot="searchable-select-trigger"]')!;
+    const label = trigger.querySelector('span')!;
+    expect(label.textContent).toBe(LONG);
+    expect(label.className).not.toMatch(/\btruncate\b/);
+    expect(label.className).toMatch(/\bbreak-words\b/);
+    // The clamp used to live on the trigger itself, targeting every direct span child.
+    expect(trigger.className).not.toMatch(/line-clamp-1/);
+    // A fixed height would clip the second line the wrap creates.
+    expect(trigger.className).not.toMatch(/(^|\s)h-\d/);
+    expect(trigger.className).toMatch(/min-h-/);
+  });
+
+  it('wraps option labels and descriptions without opting in', async () => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={longOptions} />);
+    openMenu();
+
+    await waitFor(() => expect(optionLabels()).toHaveLength(1));
+    const spans = [...document.querySelectorAll('[role="option"] span')];
+    expect(spans.length).toBeGreaterThan(0);
+    for (const span of spans) expect(span.className).not.toMatch(/\btruncate\b/);
+  });
+});

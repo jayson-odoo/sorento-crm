@@ -170,3 +170,36 @@ describe('SearchableMultiSelect - what the menu says is chosen', () => {
     expect(screen.getByRole('listbox')).toHaveAttribute('aria-multiselectable', 'true');
   });
 });
+
+// Same standard as SearchableSelect: a chosen option must be readable in full.
+// AC-A0.1, AC-A0.2, AC-A0.3.
+describe('SearchableMultiSelect shows the whole option', () => {
+  const LONG = 'CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD';
+  const longOptions: SearchableMultiSelectOption[] = [
+    { value: 'jbc', label: LONG, description: 'Guangdong, China' },
+  ];
+
+  it('never truncates the chip label', () => {
+    render(
+      <SearchableMultiSelect value={['jbc']} onChange={vi.fn()} options={longOptions} />,
+    );
+
+    const trigger = document.querySelector('[data-slot="searchable-multi-select-trigger"]')!;
+    const chipLabel = [...trigger.querySelectorAll('span')].find(
+      (s) => s.textContent === LONG,
+    )!;
+    expect(chipLabel).toBeTruthy();
+    expect(chipLabel.className).not.toMatch(/\btruncate\b/);
+    expect(trigger.className).not.toMatch(/line-clamp-1/);
+  });
+
+  it('wraps option labels and descriptions without opting in', async () => {
+    render(<SearchableMultiSelect value={[]} onChange={vi.fn()} options={longOptions} />);
+    openMenu();
+
+    await waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(1));
+    const spans = [...document.querySelectorAll('[role="option"] span')];
+    expect(spans.length).toBeGreaterThan(0);
+    for (const span of spans) expect(span.className).not.toMatch(/\btruncate\b/);
+  });
+});

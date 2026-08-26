@@ -76,12 +76,12 @@ export type SearchableSelectProps = {
   /** When true, show an explicit × to clear to empty. Default false (required fields). */
   clearable?: boolean;
   /**
-   * Size the menu to its options and WRAP a long label instead of truncating it.
+   * Size the MENU to its widest option instead of to the trigger.
    *
-   * The default menu is exactly as wide as the trigger, and a label longer than
-   * that is cut with an ellipsis - which in a narrow cell or filter popover can
-   * make two options read identically. Opt in where the option text, not the
-   * trigger, is what has to be readable.
+   * Option labels wrap in both modes - nothing in either menu is ever cut with an
+   * ellipsis - so this prop is only about width: the default menu is as wide as the
+   * trigger (floored at 16rem), and a picker hanging off a narrow cell reads better
+   * when the menu is allowed to grow to its content instead of wrapping every row.
    */
   wrapOptions?: boolean;
   /** Trigger size - shared with Radix SelectTrigger. Default `md`. */
@@ -297,7 +297,14 @@ export function SearchableSelect({
           aria-expanded={open}
           className={cn(selectTriggerVariants({ size }), triggerClassName)}
         >
-          <span className={cn('flex-1 truncate text-left', !selected && 'text-muted-foreground')}>
+          {/* No truncation: the chosen option is the one thing the closed control has
+              to say, so it wraps and the trigger grows with it (min-height, not height). */}
+          <span
+            className={cn(
+              'min-w-0 flex-1 text-left break-words',
+              !selected && 'text-muted-foreground',
+            )}
+          >
             {selected
               ? renderTriggerLabel
                 ? renderTriggerLabel(selected)
@@ -309,7 +316,7 @@ export function SearchableSelect({
               role="button"
               tabIndex={-1}
               aria-label="Clear selection"
-              className="shrink-0 rounded-sm opacity-60 hover:opacity-100"
+              className="mt-0.5 shrink-0 self-start rounded-sm opacity-60 hover:opacity-100"
               onPointerDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -320,7 +327,7 @@ export function SearchableSelect({
               <X className="size-4" />
             </span>
           ) : (
-            <ChevronDown className="size-4 shrink-0 opacity-60 -me-0.5" />
+            <ChevronDown className="mt-0.5 size-4 shrink-0 self-start opacity-60 -me-0.5" />
           )}
         </button>
         )}
@@ -377,15 +384,10 @@ export function SearchableSelect({
                       renderOption(opt)
                     ) : (
                       <div className="flex flex-1 flex-col min-w-0">
-                        <span className={wrapOptions ? 'break-words' : 'truncate'}>
-                          {opt.label}
-                        </span>
+                        <span className="break-words">{opt.label}</span>
                         {opt.description ? (
                           <span
-                            className={cn(
-                              'text-xs text-muted-foreground',
-                              wrapOptions ? 'break-words' : 'truncate',
-                            )}
+                            className="text-xs text-muted-foreground break-words"
                             title={opt.description}
                           >
                             {opt.description}
