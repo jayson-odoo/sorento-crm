@@ -22,7 +22,9 @@ A LADDER, first unique hit wins, and an ambiguous rung binds NOTHING:
 
 Ambiguity is not a bind. Two products answering one code cannot both be what the supplier
 meant, and picking one puts a container's stock against the wrong item where nothing on
-screen disagrees.
+screen disagrees. Two products means two CODES, though: our companies hold the same
+catalogue under the same codes, so one spelling seen once per company is one product
+wearing one name and is not an ambiguity at all (`_one_per_code`).
 
 Every worked-out bind (rungs 2-4) is WRITTEN DOWN as an `auto` alias with the rung that
 found it, so the next upload reads a decision instead of re-deriving a guess, the screen can
@@ -88,7 +90,42 @@ def _size_of(token: str) -> Optional[int]:
     return size if _SIZE_MIN <= size <= _SIZE_MAX else None
 
 
-def _candidates(db: Session, codes: Iterable[str]) -> list[Product]:
+def _supplier_company(db: Session, supplier_id: str) -> Optional[str]:
+    """Which company this supplier belongs to, or nothing.
+
+    Read for one reason: when a caller may see several companies, it says which of the
+    identical catalogue rows is the one to bind (see `_one_per_code`).
+    """
+    from app.models.procurement import Supplier
+
+    row = (
+        db.query(Supplier.company_id).filter(Supplier.id == str(supplier_id)).first()
+    )
+    return str(row[0]) if row and row[0] else None
+
+
+def _one_per_code(rows: list[Product], home: Optional[str]) -> list[Product]:
+    """One row per code SPELLING, because a code spelled once per company is one product.
+
+    Companies hold the same catalogue: on the dev copy 11,390 of our codes exist once for
+    Sorento and once for Mocha, so a caller granted both - a superadmin, which is who
+    uploads a stock list - reads every code twice. Counting that as two products makes every
+    rung ambiguous and the ladder answers nothing at all, the exact rung included.
+
+    The supplier's own company decides which row is bound: the stock rows, the invoice
+    lines and the alias about to be written all belong to it, so a product from anywhere
+    else would file the memory where the people reading it cannot see it. Anything still
+    tied is settled on the id, so two runs never disagree.
+    """
+    best: dict[str, Product] = {}
+    for row in sorted(rows, key=lambda r: (str(r.company_id) != home, str(r.id))):
+        best.setdefault((row.product_code or "").strip().upper(), row)
+    return list(best.values())
+
+
+def _candidates(
+    db: Session, codes: Iterable[str], *, home: Optional[str] = None
+) -> list[Product]:
     """Every product sharing a real token with one of these codes - one query per upload.
 
     Scoped through the ORM, so the company filter applies without restating it: product
@@ -118,7 +155,7 @@ def _candidates(db: Session, codes: Iterable[str]) -> list[Product]:
     normalised = _ws_insensitive_lower(Product.product_code)
     clauses = [func.upper(Product.product_code).like(p) for p in patterns]
     clauses += [normalised.like(p) for p in norm_patterns]
-    return db.query(Product).filter(or_(*clauses)).all()
+    return _one_per_code(db.query(Product).filter(or_(*clauses)).all(), home)
 
 
 def _only(ids: set[str]) -> Optional[str]:
@@ -168,7 +205,7 @@ def resolve(
     if not unresolved:
         return out
 
-    candidates = _candidates(db, unresolved)
+    candidates = _candidates(db, unresolved, home=_supplier_company(db, supplier_id))
     by_exact: dict[str, set[str]] = {}
     by_norm: dict[str, set[str]] = {}
     by_tokens: dict[tuple[str, ...], set[str]] = {}

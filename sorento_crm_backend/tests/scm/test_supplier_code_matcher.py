@@ -19,9 +19,11 @@ import uuid
 
 import pytest
 
+from app.models.company import Company
 from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import SupplierProductCodeAlias
+from app.services.company_scope import company_scope
 from tests._pg_fixture import pg_session
 
 MARKER = "ZZSCM"
@@ -323,3 +325,64 @@ def test_a_code_nothing_answers_is_simply_absent():
 
         assert out == {}
         assert _aliases(db, w) == []
+
+
+def test_one_code_carried_by_two_companies_is_one_answer_not_an_ambiguity():
+    """Real data. `products.product_code` is NOT unique across companies - the dev copy holds
+    11,390 codes once for Sorento and once for Mocha - so a caller who may see both reads
+    every code twice. Treating that as two products refused every rung on the whole
+    JINBAICHUAN list: 79 codes unbound, 0 answered, and the exact rung would have dropped the
+    36 that bind today.
+
+    Two products means two CODES. One code spelled once per company is one product wearing
+    one name, and the supplier's own company says which row is the one to bind.
+
+    The scope is set to both companies on purpose: a single-company caller never sees the
+    twin, so under the suite's Sorento default this test would pass without the ladder doing
+    anything, and a superadmin (granted every company) is exactly who uploads a stock list.
+    """
+    with pg_session() as db:
+        w = World(db)
+        ours = w.product("SRTWC8357-300-RL")
+        # A company of its own, seeded here rather than read off the dev copy: CI's database
+        # holds no companies, so a hard-coded Mocha id would make this pass locally only.
+        # `uq_products_company_product_code` is what makes the twin a twin - the same code is
+        # only allowed to appear twice if the second one belongs somewhere else.
+        elsewhere = Company(
+            id=_u(), name=f"{MARKER} other company {w.tag}", code=f"{MARKER}{w.tag}"[:50],
+            is_active=True,
+        )
+        db.add(elsewhere)
+        db.flush()
+        twin = Product(
+            id=_u(),
+            product_code=ours.product_code,
+            product_name="the same model, another company's row",
+            category_id=w.cat.id, base_uom_id=w.uom.id, list_price=0,
+            is_active=True, is_discontinued=False,
+            company_id=str(elsewhere.id),
+        )
+        db.add(twin)
+        db.flush()
+        code = w.supplier_code("SRTWC8357-RL-300")
+
+        with company_scope(db, frozenset({str(ours.company_id), str(elsewhere.id)})):
+            out = _resolve(db, w, code)
+
+        assert code in out, "one code in two companies read as two products and bound nothing"
+        assert out[code].product_id == str(ours.id), "bound another company's row"
+        assert out[code].rung == "token_set"
+
+
+def test_two_genuinely_different_products_are_still_an_ambiguity():
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-300-RL")
+        other = w.product("SRTWC8357-RL-300-OTHER")
+        other.product_code = f"{MARKER}{w.tag}-RL-300-SRTWC8357"
+        db.flush()
+        code = w.supplier_code("SRTWC8357-RL-300")
+
+        out = _resolve(db, w, code)
+
+        assert code not in out
