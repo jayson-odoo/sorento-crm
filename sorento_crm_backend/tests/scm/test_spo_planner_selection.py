@@ -533,3 +533,46 @@ def test_an_spo_take_does_not_come_off_the_line_twice():
         assert block["free"] == 40
         # And the take is still ON the panel - it is how the buyer learns where the 60 went.
         assert [p["spo_number"] for p in block["placements"] if p["kind"] == "spo"]
+
+
+# --------------------------------------------------------------------------- #
+# Review finding 9 - unticking a take re-runs the cascade, it does not subtract
+# --------------------------------------------------------------------------- #
+
+
+def test_unticking_a_take_lets_the_remaining_po_cover_what_it_can():
+    """80 packed, PO A open 50, PO B open 100. The default cascade takes 50 from A and 30
+    from B. Unticking A should ask B for all 80 - it has it. Filtering the takes that were
+    already cascaded gave 30 instead, and the buyer lost 50 pieces of cover that exist."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("A", supplier, [("A", 50, 0)], issue_date=date(2026, 1, 5))
+        w.po("B", supplier, [("A", 100, 0)], issue_date=date(2026, 3, 9))
+        shipment, lines = w.shipment([("A", 80, supplier)])
+        out = svc.suggest(db, str(shipment.id))
+        takes = _line(out, str(lines[0].id))["po_takes"]
+        assert [t["qty"] for t in takes] == [50, 30]
+        keep_b = takes[1]["po_line_id"]
+
+        created = svc.create(
+            db, str(shipment.id), [_confirm(lines[0], 80, po_take_ids=[keep_b])]
+        )
+
+        assert created["created_spos"][0]["qty"] == 80
+
+
+def test_the_take_carries_its_lines_whole_open_balance_so_the_screen_can_do_the_same():
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("A", supplier, [("A", 50, 0)], issue_date=date(2026, 1, 5))
+        w.po("B", supplier, [("A", 100, 0)], issue_date=date(2026, 3, 9))
+        shipment, lines = w.shipment([("A", 80, supplier)])
+
+        takes = _line(svc.suggest(db, str(shipment.id)), str(lines[0].id))["po_takes"]
+
+        assert [t["qty"] for t in takes] == [50, 30]
+        # What each line has open, not what this cascade happened to take from it - the
+        # figure the planner needs to re-cascade when a tick changes.
+        assert [t["open_qty"] for t in takes] == [50, 100]

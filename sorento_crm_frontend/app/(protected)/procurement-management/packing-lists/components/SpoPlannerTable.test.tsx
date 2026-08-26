@@ -208,6 +208,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
         expected_date: '2026-09-01',
         po_date: '2026-05-02',
         supplier_name: 'Kailu',
+        open_qty: 60,
       },
       {
         po_line_id: 'pol-2',
@@ -216,6 +217,9 @@ function plannerLine(over: Record<string, unknown> = {}) {
         expected_date: '2026-08-01',
         po_date: '2026-06-11',
         supplier_name: 'Kailu',
+        // 150 open, of which the cascade took 40 - so unticking the FIRST take does not
+        // lose 60, it asks this line for the whole 100 (review finding 9).
+        open_qty: 150,
       },
     ],
     on_hand: 0,
@@ -315,15 +319,29 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' })).toBeChecked();
   });
 
-  it('unticking a take lowers PO covers and clamps the SPO qty (AC-G2)', async () => {
+  it('unticking a take re-cascades over the POs still ticked (AC-G2)', async () => {
     renderTable();
     await openPoDrill();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
 
     expect(await screen.findByText('1 of 2 POs')).toBeInTheDocument();
-    // 100 was pulled by both; only the 40 of the remaining one is left to pull.
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(40);
+    // The remaining PO has 150 open, so it covers the whole 100 packed - not the 40 the
+    // cascade happened to take from it while the other one was ticked.
+    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(100);
+  });
+
+  it('a take can only cover what its own line has open', async () => {
+    state.suggestion = suggestion({
+      lines: [plannerLine({ packed_qty: 200, po_covered_qty: 100, suggested_qty: 100 })],
+    });
+    renderTable();
+    await openPoDrill();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
+
+    // Only the 60-open line is ticked now, whatever the packed quantity is.
+    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
   });
 
   it('sends only the ticked takes to the create (AC-G6)', async () => {
@@ -335,7 +353,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
     expect(lines[0].po_take_ids).toEqual(['pol-2']);
-    expect(lines[0].qty).toBe(40);
+    expect(lines[0].qty).toBe(100);
   });
 
   it("pre-ticks the server's demand walk, and leaves the rest untouched (AC-G3)", async () => {

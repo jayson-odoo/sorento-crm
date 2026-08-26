@@ -504,7 +504,10 @@ def _pinned_po_candidates(
 
 
 def _match_takes_for_line(
-    db: Session, ln: InboundShipmentLine, need: float
+    db: Session,
+    ln: InboundShipmentLine,
+    need: float,
+    only_po_lines: Optional[set[str]] = None,
 ) -> tuple[Optional[str], list[tuple[PurchaseOrderLine, PurchaseOrder, float]]]:
     """The one PO-matching decision this module makes, shared by `suggest` (a read against
     `need = packed`) and `create` (a FRESH read, at write time, against `need = the confirmed
@@ -516,16 +519,30 @@ def _match_takes_for_line(
     if supplier_id is None or need <= 0:
         return None, []
 
+    def _keep(candidates):
+        """The candidate lines the buyer left ticked, BEFORE the cascade walks them.
+
+        Filtering the cascade's OUTPUT instead was the bug: with 80 packed against PO A
+        (50 open) and PO B (100 open), the walk takes 50 and 30, and dropping A's take left
+        30 - when B alone can cover all 80. The tick changes which lines are available, so
+        the walk has to run again over what is left, not have a slice cut out of it.
+        """
+        if only_po_lines is None:
+            return candidates
+        return [c for c in candidates if str(c[0].id) in only_po_lines]
+
     po_refs = _po_refs_for_line(db, str(ln.id))
     matched_by: Optional[str] = None
     takes: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
     if len(po_refs) == 1:
-        pinned_lines = _pinned_po_candidates(db, next(iter(po_refs)), supplier_id, str(ln.product_id))
+        pinned_lines = _keep(
+            _pinned_po_candidates(db, next(iter(po_refs)), supplier_id, str(ln.product_id))
+        )
         if pinned_lines:
             takes = _cascade_take(pinned_lines, need)
             matched_by = "po_ref"
     if matched_by is None:
-        product_lines = _po_cascade_lines(db, supplier_id, str(ln.product_id))
+        product_lines = _keep(_po_cascade_lines(db, supplier_id, str(ln.product_id)))
         takes = _cascade_take(product_lines, need)
         if takes:
             matched_by = "product"
@@ -1059,6 +1076,12 @@ def suggest(db: Session, shipment_id: str) -> dict:
                 # is the PO's supplier, not necessarily the shipment line's.
                 "po_date": po.issue_date.isoformat() if po.issue_date else None,
                 "supplier_name": po.supplier.supplier_name if po.supplier else None,
+                # What the LINE has open, not what this cascade took from it. Unticking a
+                # take re-runs the walk over the lines still ticked, and the screen cannot
+                # mirror that from the slice alone (review finding 9).
+                "open_qty": max(
+                    float(line.qty_ordered or 0) - float(line.qty_received or 0), 0.0
+                ),
             }
             for line, po, qty in takes
         ]
@@ -1235,15 +1258,13 @@ def create(
         # never `suggest`'s earlier read: a PO another confirm consumed in between must not be
         # double-spent. Capped at what shipped, and at what the buyer asked for.
         need = min(requested, float(ln.quantity_shipped or 0))
-        matched_by, takes = _match_takes_for_line(db, ln, need)
-        # Only the takes the buyer left ticked (AC-G1). ABSENT means "every take you
-        # re-derive", which is what every caller before this ask sent; an empty LIST means
-        # "draw from none of them", and a line drawing from nothing cannot become an SPO
-        # line - the same outcome as having no open PO at all.
+        # Only the takes the buyer left ticked (AC-G1), applied to the CANDIDATES so the
+        # cascade runs again over what is left. ABSENT means "every take you re-derive",
+        # which is what every caller before this ask sent; an empty LIST means "draw from
+        # none of them", and a line drawing from nothing cannot become an SPO line.
         take_ids = item.get("po_take_ids")
-        if take_ids is not None:
-            wanted = {str(t) for t in take_ids}
-            takes = [t for t in takes if str(t[0].id) in wanted]
+        only = None if take_ids is None else {str(t) for t in take_ids}
+        matched_by, takes = _match_takes_for_line(db, ln, need, only)
         covered_now = sum(t[2] for t in takes)
         if covered_now <= 0:
             skipped.append((line_id, _REASON_NO_PO))

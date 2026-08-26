@@ -920,6 +920,10 @@ export interface SpoPoTake {
   /** The PO's OWN supplier - can differ from the shipment line's own supplier on a pinned
    *  match resolved to a differently-spelled book entry (fourth amendment). */
   supplier_name: string | null;
+  /** What this PO LINE has open, not what the cascade took from it. Unticking another take
+   *  re-runs the walk over the lines still ticked, and `qty` alone cannot answer that: a
+   *  line that gave 40 while its neighbour was ticked may have 150 to give without it. */
+  open_qty: number;
 }
 
 /** One open SO line behind a location's `outstanding_so` - "what SO am I covering"

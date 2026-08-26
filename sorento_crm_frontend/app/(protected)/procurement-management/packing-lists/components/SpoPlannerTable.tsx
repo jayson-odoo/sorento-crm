@@ -106,11 +106,20 @@ type LineState = {
 };
 type ScheduleView = 'po' | 'so';
 
-/** What the ticked takes cover - the ceiling on this line's SPO quantity (AC-G2). */
+/**
+ * What the ticked takes cover - the ceiling on this line's SPO quantity (AC-G2).
+ *
+ * The cascade RE-RUN over the ticked lines, not the sum of the slices it took while every
+ * line was ticked: with 100 packed against a 60-open PO and a 150-open one, the walk takes
+ * 60 and 40, and unticking the first must ask the second for the whole 100 - it has it.
+ * Summing the remaining slice answered 40 and quietly lost 60 pieces of cover that exist.
+ * `open_qty` is what makes that computable here; the server does the same walk on Create.
+ */
 function poCoveredFor(ln: SpoSuggestionLine, takeIds: string[]): number {
-  return ln.po_takes
+  const available = ln.po_takes
     .filter((t) => takeIds.includes(t.po_line_id))
-    .reduce((sum, t) => sum + t.qty, 0);
+    .reduce((sum, t) => sum + (t.open_qty ?? t.qty), 0);
+  return Math.min(available, ln.packed_qty);
 }
 
 /** The ticks the server proposed: project by required date, then retail, until packed is
