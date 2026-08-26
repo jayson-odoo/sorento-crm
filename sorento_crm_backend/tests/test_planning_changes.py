@@ -2345,11 +2345,14 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
 def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_pool(api):
     """The SO397450 / SRT382-6-DIY shape, end-to-end, under the captain's 21 Aug ruling:
     an ADVANCE whose fresh proposal draws 432 from the pool at BRW while the line already
-    has 432 placed across TWO real purchase orders (300 + 132, the G2 cascade shape).
-    Confirming as proposed keeps the pool's Reserve 432 whole - no relabel onto Buy - and
-    Apply redirects BOTH placed rows to replenish the pool: neither is cancelled, neither
-    is duplicated, and no CANCEL_BALANCE is raised for the placed 432 the fresh Buy no
-    longer needs."""
+    has 432 on TWO real purchase orders (300 + 132). Confirming as proposed keeps the
+    pool's Reserve 432 whole - no relabel onto Buy - and Apply redirects the placed row to
+    replenish the pool: it is not cancelled, not duplicated, and no CANCEL_BALANCE is
+    raised for the placed 432 the fresh Buy no longer needs.
+
+    Since section 3.I the two purchase orders are two LINKS on ONE row rather than two
+    split rows (AC-I6), so the redirect marks one row and the documents are read off its
+    links. The arithmetic is unchanged: 432 placed, 432 redirected, nothing re-raised."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=500)
@@ -2414,8 +2417,9 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state == INQUIRY_PLACED)
         .all()
     )
-    assert len(placed_rows) == 2
-    assert sum((r.qty for r in placed_rows), Decimal("0")) == Decimal("432")
+    assert len(placed_rows) == 1, "one instruction per sales-order line (AC-I6)"
+    assert placed_rows[0].qty == Decimal("432")
+    assert len(ProjectOrderInquiryService(db)._links_of(placed_rows[0].id)) == 2
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ADV",
@@ -2468,24 +2472,28 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
         .all()
     )
-    # Three live rows: the two redirected placed ORDER rows, plus the informational
-    # ADVANCE row every advance/delay always raises (`_oi_demand_rows`) - a date-change
-    # instruction, never a purchase (Fix 3's own subject). No CANCEL_BALANCE, and no
-    # fresh ORDER row: `refresh_for_decision` sees a composed need of 0 and a placed
-    # total of 0 (both redirected), so it raises nothing further.
-    assert len(live_rows) == 3
+    # Two live rows: the redirected placed ORDER row carrying both links, plus the
+    # informational ADVANCE row every advance/delay always raises (`_oi_demand_rows`) - a
+    # date-change instruction, never a purchase (Fix 3's own subject). No CANCEL_BALANCE,
+    # and no fresh ORDER row: `refresh_for_decision` sees a composed need of 0 and a
+    # placed total of 0 (redirected), so it raises nothing further.
+    assert len(live_rows) == 2
     assert [r for r in live_rows if r.verb == "CANCEL_BALANCE"] == []
     assert [r for r in live_rows if r.verb == IV_ORDER and r.state == INQUIRY_RAISED] == []
 
     order_rows = [r for r in live_rows if r.verb == IV_ORDER]
-    assert len(order_rows) == 2
-    for r in order_rows:
-        assert r.state == INQUIRY_PLACED
-        assert r.redirected_to_pool is True
-        assert r.stock_location == world.pool_wh.warehouse_code
-        assert "Redirected" in (r.note or "")
-    assert {r.qty for r in order_rows} == {Decimal("300"), Decimal("132")}
-    assert {r.po_ref for r in order_rows} == {po_a.po_number, po_b.po_number}
+    assert len(order_rows) == 1
+    redirected = order_rows[0]
+    assert redirected.state == INQUIRY_PLACED
+    assert redirected.redirected_to_pool is True
+    assert redirected.stock_location == world.pool_wh.warehouse_code
+    assert "Redirected" in (redirected.note or "")
+    assert redirected.qty == Decimal("432")
+    # BOTH purchase orders are still named, off the links rather than off a scalar that
+    # could only ever hold one of them.
+    links = ProjectOrderInquiryService(db)._links_of(redirected.id)
+    assert {link.qty for link in links} == {Decimal("300.0000"), Decimal("132.0000")}
+    assert {link.document for link in links} == {po_a.po_number, po_b.po_number}
 
     advance_row = next(r for r in live_rows if r.verb == "ADVANCE")
     assert advance_row.state == INQUIRY_RAISED

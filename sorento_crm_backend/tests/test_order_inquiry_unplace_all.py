@@ -531,7 +531,7 @@ def test_no_filters_reverts_every_placed_row_in_the_company_and_is_idempotent(ap
         assert row.state == INQUIRY_RAISED
         assert row.po_ref is None
         assert row.po_line_id is None
-        assert "Unplaced from" in (row.note or "")
+        assert "Unlinked from" in (row.note or "")
 
     # The row that was never placed is untouched either way.
     db.refresh(world["row4_raised"])

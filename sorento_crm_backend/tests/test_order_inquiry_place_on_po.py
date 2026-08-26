@@ -677,10 +677,10 @@ def test_the_worklist_state_filter_placed_returns_only_placed_rows(api):
     assert raised_row.id not in ids
 
 
-# ---------------------------------------------------------- has_open_po_line
+# ---------------------------------------------------------- has_link_candidate
 
 
-def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_once_placed(api):
+def test_has_link_candidate_is_true_on_the_per_project_listing_and_flips_false_once_placed(api):
     """The per-project OI rows listing (`GET .../order-inquiry-rows`): true while the
     row's own product still has an open PO line with remaining balance, false once a
     placement consumes it - the same predicate `po-candidates` answers, computed once for
@@ -695,7 +695,7 @@ def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_onc
     before = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert before.status_code == 200, before.text
     row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
-    assert row_a_out["has_open_po_line"] is True
+    assert row_a_out["has_link_candidate"] is True
 
     placed = client.post(
         f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
@@ -706,12 +706,12 @@ def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_onc
     after = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert after.status_code == 200, after.text
     row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
-    assert row_b_out["has_open_po_line"] is False, (
+    assert row_b_out["has_link_candidate"] is False, (
         "the line's whole remaining balance is already claimed by row_a"
     )
 
 
-def test_has_open_po_line_is_false_for_a_product_with_no_open_po_line_at_all(api):
+def test_has_link_candidate_is_false_for_a_product_with_no_open_po_line_at_all(api):
     client, db, world, _user_id = api
     row = _row(
         db, world["company_id"], world["inquiry"], qty="5",
@@ -722,10 +722,10 @@ def test_has_open_po_line_is_false_for_a_product_with_no_open_po_line_at_all(api
 
     assert response.status_code == 200, response.text
     row_out = next(r for r in response.json()["data"] if r["id"] == row.id)
-    assert row_out["has_open_po_line"] is False
+    assert row_out["has_link_candidate"] is False
 
 
-def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(api):
+def test_has_link_candidate_on_the_cross_project_worklist_flips_false_once_placed(api):
     """The same flag, on the cross-project worklist (`GET /order-inquiries`) purchasing
     actually works from - it must never disagree with the per-project listing."""
     client, db, world, _user_id = api
@@ -741,7 +741,7 @@ def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(
     before = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
     assert before.status_code == 200, before.text
     row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
-    assert row_a_out["has_open_po_line"] is True
+    assert row_a_out["has_link_candidate"] is True
 
     placed = client.post(
         f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
@@ -752,7 +752,7 @@ def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(
     after = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
     assert after.status_code == 200, after.text
     row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
-    assert row_b_out["has_open_po_line"] is False
+    assert row_b_out["has_link_candidate"] is False
 
 
 # -------------------------------------------------------------- netting proof
@@ -899,7 +899,7 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
     listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert listing.status_code == 200, listing.text
     row_out = next(r for r in listing.json()["data"] if r["id"] == row.id)
-    assert row_out["has_open_po_line"] is False
+    assert row_out["has_link_candidate"] is False
 
     from app.models.base import company_scope
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService

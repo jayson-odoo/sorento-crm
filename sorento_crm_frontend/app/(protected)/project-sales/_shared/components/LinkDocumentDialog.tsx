@@ -104,11 +104,18 @@ export function LinkDocumentDialog({
   rowId,
   itemCode,
   qty,
+  linkedQty,
   onDone,
 }: {
   rowId: string;
   itemCode?: string | null;
   qty: string;
+  /**
+   * What the row already has on documents. The dialog is looking for the REMAINDER: a row
+   * linked 5 of 8 opens needing 3, and offering it 8 would let a person compose an
+   * allocation the backend refuses as over-allocated.
+   */
+  linkedQty?: string | null;
   onDone: () => void;
 }) {
   const candidatesQuery = useOrderInquiryPoCandidates(rowId);
@@ -147,7 +154,7 @@ export function LinkDocumentDialog({
     setTakes((prev) => ({ ...prev, [key]: value }));
   }
 
-  const need = toNumber(qty);
+  const need = Math.max(toNumber(qty) - toNumber(linkedQty ?? '0'), 0);
   const totalTaken = candidates.reduce(
     (sum, candidate) => sum + toNumber(takes[candidateKey(candidate)] ?? '0'),
     0,
@@ -185,8 +192,9 @@ export function LinkDocumentDialog({
         <DialogHeader>
           <DialogTitle>Link to a document</DialogTitle>
           <DialogDescription>
-            {itemCode ?? 'This item'} - {formatInquiryQty(qty)} needed. Adjust the take on
-            any line; whatever is left unlinked stays demand.
+            {itemCode ?? 'This item'} - {formatInquiryQty(String(need))} still to link of{' '}
+            {formatInquiryQty(qty)}. Adjust the take on any line; whatever is left unlinked
+            stays demand.
           </DialogDescription>
         </DialogHeader>
 
@@ -273,7 +281,8 @@ export function LinkDocumentDialog({
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs"
               >
                 <span>
-                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(qty)} linked
+                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(String(need))}
+                  {' '}linked
                   {remainder > 0 && !overTaken
                     ? ` - ${formatInquiryQty(String(remainder))} stays demand`
                     : ''}

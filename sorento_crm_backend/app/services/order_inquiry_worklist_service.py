@@ -71,10 +71,10 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
-#: The states pre-seeded at zero on the summary strip. `placed` (section G) is
-#: deliberately NOT one of them: `summary()` adds it to the dict dynamically the moment a
-#: placed row actually exists (same as any state would), so a company with none yet keeps
-#: reporting the exact four keys this screen has always reported.
+#: The states pre-seeded at zero on the summary strip: every state a row can be in,
+#: `partly_linked` and `placed` included (section 3.I). Declared on the schema too
+#: (`OrderInquiryStateCounts`), because `response_model` silently drops a key it has not
+#: been told about - the strip reported four states while the rows carried six.
 INQUIRY_STATES = (
     INQUIRY_RAISED,
     INQUIRY_PARTLY_LINKED,
@@ -583,25 +583,27 @@ class OrderInquiryWorklistService:
             .limit(limit)
             .all()
         )
-        product_by_row, open_products = self._open_po_line_context(rows)
+        product_by_row, link_candidates = self._link_candidate_context(rows)
         flow = self._quantity_flow_by_so_line(rows)
         links = ProjectOrderInquiryService(self.db).links_for_rows(
             [row.id for row in rows]
         )
         return {
             "data": [
-                self._serialize(row, product_by_row, open_products, flow, links)
+                self._serialize(row, product_by_row, link_candidates, flow, links)
                 for row in rows
             ],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
 
-    def _open_po_line_context(self, rows) -> Tuple[Dict[str, Optional[str]], set]:
-        """`has_open_po_line` for a whole PAGE, bulk-answered once. Row id -> product id
+    def _link_candidate_context(
+        self, rows
+    ) -> Tuple[Dict[str, Optional[str]], Dict[str, set]]:
+        """`has_link_candidate` for a whole PAGE, bulk-answered once. Row id -> product id
         (the line's own reconciled product first, the item code second - the same
         precedence `ProjectOrderInquiryService._resolve_product_id` uses per row), and the
-        SET of those products that still have an outstanding PO line."""
+        and the products that still have something to link to, by kind."""
         by_code = {row.item_code for row in rows if not row.product_id and row.item_code}
         code_products = (
             dict(
@@ -615,10 +617,10 @@ class OrderInquiryWorklistService:
         product_by_row: Dict[str, Optional[str]] = {
             row.id: row.product_id or code_products.get(row.item_code) for row in rows
         }
-        open_products = ProjectOrderInquiryService(self.db).open_po_line_product_ids(
+        candidates = ProjectOrderInquiryService(self.db).link_candidate_products(
             set(product_by_row.values())
         )
-        return product_by_row, open_products
+        return product_by_row, candidates
 
     def _quantity_flow_by_so_line(self, rows) -> Dict[str, Dict[str, Decimal]]:
         """"Taken from PO" and "Remaining" for a whole PAGE, bulk-answered once (the
@@ -687,7 +689,7 @@ class OrderInquiryWorklistService:
         self,
         row,
         product_by_row: Optional[Dict[str, Optional[str]]] = None,
-        open_products: Optional[set] = None,
+        link_candidates: Optional[Dict[str, set]] = None,
         flow: Optional[Dict[str, Dict[str, Decimal]]] = None,
         links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
@@ -718,8 +720,12 @@ class OrderInquiryWorklistService:
             "links": row_links,
             "linked_qty": _qty_str(linked_qty),
             "cited_document": row.cited_document,
-            "has_open_po_line": bool(
-                product_by_row and open_products and product_by_row.get(row.id) in open_products
+            "has_link_candidate": (
+                ProjectOrderInquiryService.has_link_candidate(
+                    row.verb, product_by_row.get(row.id), link_candidates
+                )
+                if product_by_row and link_candidates
+                else False
             ),
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,

@@ -28,6 +28,7 @@ export function UnlinkDialog({
   rowId,
   linkId,
   documentNumber,
+  linkCount = 0,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -36,6 +37,11 @@ export function UnlinkDialog({
   linkId?: string | null;
   /** What to name in the confirm - the document this link sits on. */
   documentNumber?: string | null;
+  /**
+   * How many links the row holds. A whole-row Unlink takes them ALL, so naming the first
+   * document would understate what is about to happen on a row sitting on two.
+   */
+  linkCount?: number;
 }) {
   const { unplace } = useOrderInquiryPlacementMutations();
 
@@ -45,9 +51,13 @@ export function UnlinkDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Unlink</AlertDialogTitle>
           <AlertDialogDescription>
-            {documentNumber
+            {linkId && documentNumber
               ? `Remove the link to ${documentNumber}? That quantity goes back to demand, and the next reorder suggestion counts it again.`
-              : 'Remove this row’s links? The quantity goes back to demand, and the next reorder suggestion counts it again.'}
+              : linkCount > 1
+                ? `Remove all ${linkCount} links on this row? Those quantities go back to demand, and the next reorder suggestion counts them again.`
+                : documentNumber
+                  ? `Remove the link to ${documentNumber}? That quantity goes back to demand, and the next reorder suggestion counts it again.`
+                  : "Remove this row's links? The quantity goes back to demand, and the next reorder suggestion counts it again."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

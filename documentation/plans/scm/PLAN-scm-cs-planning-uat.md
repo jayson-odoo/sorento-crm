@@ -86,12 +86,11 @@ child table and merges the split rows back, `422_committed_v_link_netting` makes
 confirmed leg carry `qty - linked` instead of testing a state, and every screen reads Link
 PO / Auto-link / Unlink with Linked / Partly linked. The walk is Q5 then Q7, location only
 RANKS a candidate, a cited document comes first, and an SPO allocation is a candidate for
-an ORDER BACK row alone. See the BUILT block under section I for the eight ways the build
-differs from the paragraphs there. **Migrations 421 and 422 are NOT yet applied to the
-shared dev database**, so until they are the order-inquiry worklist, the SCM sales-order
-detail and two `pg_session` tests read `UndefinedColumn` / `UndefinedTable`. Dry run on the
-dev copy: 4 groups (12 rows) merge to 4, 19 links are written, 0 rows carry
-`BORROW_SHORTFALL`, 34 rows become 26, and SO414285 goes from 11 to 9 (AC-I6).
+an ORDER BACK row alone. See the BUILT block under section I for the ways the build differs
+from the paragraphs there. **Migrations 421 and 422 are APPLIED on the shared dev database
+(26 August 2026)**: the 4 split groups (12 rows) merged to 4, 19 links were written, 0 rows
+carried `BORROW_SHORTFALL`, 34 rows became 26, `committed_v` carries the link netting, and
+SO414285 reads nine rows (AC-I6).
 
 Lane: `.claude/worktrees/scm-uat` (FE :3080, BE :8080). One coder per worktree; queue behind that lane or cut a sibling from its head.
 UAC: `scm-cs-planning-uat-acceptance-criteria.md` (alongside).

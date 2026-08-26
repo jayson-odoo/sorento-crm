@@ -63,7 +63,8 @@ export function UnlinkAllOrderInquiryDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Unlink all</AlertDialogTitle>
           <AlertDialogDescription>
-            {count} linked row{count === 1 ? '' : 's'} {scope} will return to demand.
+            {count} linked row{count === 1 ? '' : 's'} {scope} will lose every link, ready
+            for Auto-link to re-deal them.
             Auto-place will re-deal them by the current priority policy. Placements made
             by hand are not restored.
           </AlertDialogDescription>

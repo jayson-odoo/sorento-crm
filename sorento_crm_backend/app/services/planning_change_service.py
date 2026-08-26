@@ -76,6 +76,7 @@ from app.models.project_so import (
     ALLOC_SOURCE_OTHER_LOCATION,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     IV_ORDER,
     IV_RESERVE_AND_ORDER,
@@ -1603,7 +1604,12 @@ def _release_inquiry_rows(
     count = 0
     for row in rows:
         row.note = f"{row.note}\n{note}" if row.note else note
-        if row.state not in (INQUIRY_ACTIONED, INQUIRY_PLACED) and pool_code:
+        # A PARTLY LINKED row counts as placed here: part of its quantity already sits on
+        # a document bought FOR THIS LINE's location, and rewriting the row's location to
+        # the pool would leave that link pointing somewhere the row no longer claims to
+        # need. The unlinked half is still this line's, and the release note above says
+        # so; moving the location is the one thing that cannot be half done.
+        if row.state not in (INQUIRY_ACTIONED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED) and pool_code:
             row.stock_location = pool_code
         count += 1
     return count

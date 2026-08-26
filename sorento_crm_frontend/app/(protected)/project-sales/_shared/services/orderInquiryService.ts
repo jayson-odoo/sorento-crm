@@ -340,6 +340,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       project_id: params.project_id,
       supplier_id: params.supplier_id,
       raised_by: params.raised_by,
+      linked: params.linked,
     },
   );
 }

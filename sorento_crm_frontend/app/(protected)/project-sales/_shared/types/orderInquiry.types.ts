@@ -75,6 +75,7 @@ export interface OrderInquiryLink {
   /** Written by the cascade rather than by a person. */
   auto?: boolean;
   linked_at?: string | null;
+  /** WHO linked it, by name. Null on a cascade link, which nobody did by hand. */
   linked_by_name?: string | null;
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
@@ -126,11 +127,13 @@ export interface OrderInquiryRow {
   po_ref?: string | null;
   po_line_id?: string | null;
   /**
-   * Whether this row's own product still has an outstanding purchase-order line to link
-   * (section G). The row action only offers "Link PO" when this is true - no dead end
-   * where the dialog opens just to say there is nothing to link.
+   * Whether this row has anywhere to link to at all. Verb AND product, not product alone:
+   * an ORDER BACK row may link to an SPO allocation as well as to a purchase order line
+   * (part 2 section 4b), so a flag that only counted purchase orders hid the Link action
+   * on the one row the feature was built for. The row action offers Link only when this
+   * is true - no dead end where the dialog opens to say there is nothing to link.
    */
-  has_open_po_line?: boolean;
+  has_link_candidate?: boolean;
 
   state: OrderInquiryState | string;
   actioned_at?: string | null;
@@ -236,8 +239,8 @@ export interface OrderInquiryWorklistRow {
   linked_qty?: string;
   /** The document CS cited on an order back. Named on the row so the walk can honour it. */
   cited_document?: string | null;
-  /** Same as `OrderInquiryRow.has_open_po_line`, for this cross-project worklist. */
-  has_open_po_line?: boolean;
+  /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
+  has_link_candidate?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */

@@ -2801,6 +2801,14 @@ class ProjectSupplyService:
                     "buy_qty": entry.buy_qty,
                     "required_date": entry.fact.required_date or entry.line.delivery_date,
                     "stock_location": entry.line.stock_location,
+                    # A carried line was decided once and nobody has asked to change it,
+                    # so its ORDER BACK marking and the document CS cited travel with it.
+                    # Dropping them would have turned the row back into a plain ORDER on
+                    # the next confirmation of a DIFFERENT line - and an ORDER may not
+                    # name an SPO allocation, so the row would have lost the only cover it
+                    # had.
+                    "order_back": bool(entry.snapshot.get("order_back")),
+                    "cited_document": entry.snapshot.get("cited_document"),
                     # Re-raised under this revision, but not NEW to purchasing: the
                     # confirm result counts only what this confirmation decided.
                     "carried": True,

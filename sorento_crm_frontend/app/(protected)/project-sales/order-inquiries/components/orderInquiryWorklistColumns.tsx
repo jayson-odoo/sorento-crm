@@ -425,8 +425,10 @@ export function useOrderInquiryWorklistColumns(): ColumnDef<OrderInquiryWorklist
             state={row.original.state}
             itemCode={row.original.item_code}
             qty={row.original.qty}
+            linkedQty={row.original.linked_qty}
+            linkCount={(row.original.links ?? []).length}
             poLabel={row.original.po_number}
-            hasOpenPoLine={row.original.has_open_po_line}
+            hasLinkCandidate={row.original.has_link_candidate}
           />
         ),
       },

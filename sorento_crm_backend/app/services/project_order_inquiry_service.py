@@ -58,6 +58,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product
+from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
@@ -310,6 +311,12 @@ class ProjectOrderInquiryService:
         # tier asks it for every candidate of every row, and it does not change inside one
         # request.
         self._pool_codes_cache: Optional[set] = None
+        # What every link already claims, per target. `auto_place_for_products` asks for
+        # it once per ROW through `_candidates_for_row`, which on a full pass is two
+        # aggregate queries per row over the whole link table. Cached here and dropped by
+        # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
+        # has already changed.
+        self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
 
     # ------------------------------------------------------------- derivation
 
@@ -465,7 +472,11 @@ class ProjectOrderInquiryService:
                     covered = linked.get(row.id, _ZERO)
                     placed += covered
                     row.qty = covered
-                    row.state = INQUIRY_PLACED
+                    # Through the one writer, not by hand: the row's derived display
+                    # (`po_ref` / `po_line_id` / `spo_ref`) is restated with the state, and
+                    # setting `placed` here alone would have left them saying whatever the
+                    # last link change happened to leave.
+                    self._refresh_link_state([row])
                     row.note = (
                         f"{row.note}; Remainder superseded by revision "
                         f"{decision.revision_no}"
@@ -605,19 +616,35 @@ class ProjectOrderInquiryService:
             .all()
             if not (buy_line_ids and str(row.so_line_id) in buy_line_ids)
         ]
+        # A PARTLY LINKED row is netted HALF, exactly as an ORDER row is one method up:
+        # the quantity sitting on a document is real supply and counts against the hole,
+        # and the remainder is a hole this revision is about to restate, so the row is
+        # SHRUNK to what is linked rather than cancelled. Cancelling it would have taken
+        # its links down with it; leaving it whole would have counted the unlinked half
+        # twice, once here and once on the row raised below; and re-raising the FULL hole
+        # on top of it - which is what a plain `raised` test does to it - would have told
+        # purchasing to buy the covered part a second time.
+        linked = self._linked_qty_by_row([row.id for row in rows])
         placed: Dict[Tuple[Optional[str], Optional[str]], Decimal] = {}
         for row in rows:
+            key = (row.item_code or None, row.stock_location or None)
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = f"Superseded by revision {decision.revision_no}"
-            # Same widening as the ORDER-row netting above, for the same reason: `placed`
-            # (section G) is a real, distinct state from `actioned` and a shortfall row
-            # purchasing already dealt with must net off just as an actioned one does. A
-            # borrow shortfall row is not one of `_PLACEABLE_VERBS` today, so this state
-            # is not reachable through the current UI - kept in step with the vocabulary
-            # rather than left to silently disagree with it.
+            elif row.state == INQUIRY_PARTLY_LINKED:
+                covered = linked.get(row.id, _ZERO)
+                placed[key] = placed.get(key, _ZERO) + covered
+                row.qty = covered
+                row.state = INQUIRY_PLACED
+                row.note = (
+                    f"{row.note}; Remainder superseded by revision {decision.revision_no}"
+                    if row.note
+                    else f"Remainder superseded by revision {decision.revision_no}"
+                )
+            # `placed` (section G) is a real, distinct state from `actioned` and a
+            # shortfall row purchasing already dealt with must net off just as an actioned
+            # one does.
             elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
-                key = (row.item_code or None, row.stock_location or None)
                 placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
 
         created = 0
@@ -1305,7 +1332,7 @@ class ProjectOrderInquiryService:
         context, names = self._context_for(rows)
         traces = self._decision_traces(rows)
         product_by_row = self._resolve_product_ids_bulk(rows)
-        open_products = self.open_po_line_product_ids(set(product_by_row.values()))
+        candidates = self.link_candidate_products(set(product_by_row.values()))
         links_by_row = self.links_for_rows([row.id for row in rows])
         linked_by_row = self._linked_qty_by_row([row.id for row in rows])
         out: List[Dict[str, Any]] = []
@@ -1342,7 +1369,9 @@ class ProjectOrderInquiryService:
                     # first of these, kept for the older readers that print one number.
                     "links": links_by_row.get(row.id, []),
                     "linked_qty": _qty_str(linked_by_row.get(row.id, _ZERO)),
-                    "has_open_po_line": product_by_row.get(row.id) in open_products,
+                    "has_link_candidate": self.has_link_candidate(
+                        row.verb, product_by_row.get(row.id), candidates
+                    ),
                     "covered_by": row.covered_by,
                     "note": row.note,
                     "state": row.state,
@@ -1401,11 +1430,23 @@ class ProjectOrderInquiryService:
                     PurchaseOrderLine.warehouse_id, SPOAllocation.warehouse_id
                 ),
             )
-            .filter(OrderInquiryLink.row_id.in_(wanted))
+            .filter(
+                OrderInquiryLink.row_id.in_(wanted),
+                # A cancelled row's links are history, not an answer to "where does this
+                # quantity sit": the quantity is not owed any more. A superseded revision
+                # would otherwise keep printing its documents on the SO detail beside the
+                # revision that replaced it.
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
             .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
             .all()
         )
         pools = self._pool_codes()
+        from app.services.project_service import resolve_user_names
+
+        names = resolve_user_names(
+            self.db, [link.linked_by for link, *_rest in rows if link.linked_by]
+        )
         out: Dict[str, List[Dict[str, Any]]] = {}
         for (
             link,
@@ -1442,6 +1483,8 @@ class ProjectOrderInquiryService:
                     "tier": tier,
                     "auto": bool(link.auto),
                     "linked_at": link.linked_at,
+                    # WHO linked it, by name. Null on a cascade link, which nobody did.
+                    "linked_by_name": names.get(link.linked_by),
                     "po_id": None if is_spo else po_id,
                 }
             )
@@ -1670,7 +1713,10 @@ class ProjectOrderInquiryService:
                 .distinct()
                 .all()
             }
-            if not states or INQUIRY_RAISED in states:
+            # A PARTLY LINKED row is still waiting on somebody, so its inquiry is open -
+            # exactly as a raised one is. Reading it as "actioned" would have closed a
+            # header whose own rows still carry unlinked demand.
+            if not states or states & {INQUIRY_RAISED, INQUIRY_PARTLY_LINKED}:
                 inquiry.state = INQUIRY_RAISED
             elif states == {INQUIRY_CANCELLED}:
                 inquiry.state = INQUIRY_CANCELLED
@@ -1732,6 +1778,13 @@ class ProjectOrderInquiryService:
         """
         for row in rows:
             if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
+                # The STATE is a person's word and is left alone, but the derived display
+                # is not a word - it is a reading of the links, and a row whose links have
+                # gone must stop naming a document it no longer sits on.
+                if not self._links_of(row.id):
+                    row.po_ref = None
+                    row.po_line_id = None
+                    row.spo_ref = None
                 continue
             links = self._links_of(row.id)
             linked = sum((_dec(link.qty) for link in links), _ZERO)
@@ -1784,6 +1837,8 @@ class ProjectOrderInquiryService:
         the LINKS rather than off the rows' own `po_line_id`, which is derived display now:
         a row linked to two lines claims quantity on both, and the scalar names one.
         """
+        if self._linked_by_target_cache is not None:
+            return self._linked_by_target_cache
         by_po = {
             str(po_line_id): _dec(qty)
             for po_line_id, qty in self.db.query(
@@ -1802,7 +1857,12 @@ class ProjectOrderInquiryService:
             .group_by(OrderInquiryLink.spo_allocation_id)
             .all()
         }
+        self._linked_by_target_cache = (by_po, by_spo)
         return by_po, by_spo
+
+    def _invalidate_link_cache(self) -> None:
+        """Every writer of a link calls this. A stale total is a double-claim."""
+        self._linked_by_target_cache = None
 
     def _pool_codes(self) -> set:
         """Every warehouse that is SOME location's pool, by code.
@@ -1841,8 +1901,18 @@ class ProjectOrderInquiryService:
         cited = {row.cited_document, row.spo_ref}
         return {str(value).strip().upper() for value in cited if value}
 
-    def _candidates_for_row(self, row: OrderInquiryRow) -> List[Dict[str, Any]]:
+    def _candidates_for_row(
+        self, row: OrderInquiryRow, *, manual: bool = False
+    ) -> List[Dict[str, Any]]:
         """Every open document line this row could be linked to, in the walk's own order.
+
+        `manual` widens it to a purchase order that is not yet ACTIVE. The automatic walk
+        refuses one deliberately - a `draft_recommendation` order is not an outstanding
+        order (it is outside `scm.on_order_v` for exactly that reason), and its lines are
+        the ones a re-decision may delete out from under a link. A PERSON naming a line by
+        hand has always been allowed to, because the dialog is override and audit rather
+        than the workflow, and taking that away would have been a narrowing nobody asked
+        for.
 
         ONE query pair feeding both the dialog's candidate list and the auto-link cascade,
         so the preview and the pass can never disagree. `remaining` is already net of every
@@ -1875,11 +1945,12 @@ class ProjectOrderInquiryService:
             .filter(
                 PurchaseOrderLine.product_id == product_id,
                 PurchaseOrderLine.line_status == "open",
-                # A `draft_recommendation` purchase order is not an outstanding order - it
-                # is outside `scm.on_order_v` for exactly that reason - and its lines are
-                # the ones a re-decision may delete out from under a link.
-                PurchaseOrder.status.in_(("active", "partial")),
                 PurchaseOrder.po_number.notlike("SPO-%"),
+                *(
+                    ()
+                    if manual
+                    else (PurchaseOrder.status.in_(("active", "partial")),)
+                ),
             )
             .all()
         )
@@ -2197,6 +2268,7 @@ class ProjectOrderInquiryService:
         )
         self.db.add(link)
         self.db.flush()
+        self._invalidate_link_cache()
         return link
 
     def place_on_po(
@@ -2207,11 +2279,17 @@ class ProjectOrderInquiryService:
         The single-target shape the feature shipped with, kept: a person who names one line
         that covers the row is not asked to compose an allocation.
         """
-        return self.place_on_po_allocations(
+        row = self._row_or_404(row_id)
+        # THE ROW, not a list. `place_on_po_allocations` answers with a list because it
+        # once split the row into several; this one has always answered with the single
+        # row a caller named, and changing that quietly would have handed every existing
+        # caller a list where it indexes a dict.
+        written = self.place_on_po_allocations(
             row_id,
-            [{"po_line_id": po_line_id, "qty": self._unlinked_need(self._row_or_404(row_id))}],
+            [{"po_line_id": po_line_id, "qty": self._unlinked_need(row)}],
             actor_user_id=actor_user_id,
         )
+        return written[0]
 
     def place_on_po_allocations(
         self,
@@ -2251,7 +2329,8 @@ class ProjectOrderInquiryService:
 
         need = self._unlinked_need(row)
         by_target = {
-            candidate["target_id"]: candidate for candidate in self._candidates_for_row(row)
+            candidate["target_id"]: candidate
+            for candidate in self._candidates_for_row(row, manual=auto_trigger is None)
         }
 
         resolved: List[Tuple[Dict[str, Any], Decimal]] = []
@@ -2395,7 +2474,7 @@ class ProjectOrderInquiryService:
             status_code=409,
             message=(
                 "That purchase order line has nothing left on it - every unit of it is "
-                "already linked to another row, or its purchase order is not active."
+                "already linked to another row."
             ),
             code="order_inquiry_po_line_short",
         )
@@ -2778,22 +2857,46 @@ class ProjectOrderInquiryService:
         the PO history import is the source of was never this row's to make, and unlinking
         must not take somebody else's evidence down with it.
         """
-        so_number, item_code, _core_line_id = self._claim_identity(row)
+        going = {str(link.id) for link in links}
         for link in links:
             document = link.document
             stamp = f"Unlinked from {document}" if document else "Unlinked"
             row.note = f"{row.note}; {stamp}" if row.note else stamp
-            if document:
-                order_link_service.delete_own_claim(
-                    self.db,
-                    company_id=row.company_id,
-                    so_number=so_number,
-                    po_number=document,
-                    item_code=item_code,
+            # By ID, not by identity. `delete_own_claim` matches on (SO number, PO number,
+            # item) and would have taken down the claim behind a SIBLING link on the same
+            # document - a row linked to two lines of one purchase order lost both claims
+            # when one line was given back. The link records which claim it wrote, so this
+            # removes exactly that one and nothing else.
+            if link.claim_id:
+                claim = (
+                    self.db.query(OrderLinkClaim)
+                    .filter(
+                        OrderLinkClaim.id == link.claim_id,
+                        OrderLinkClaim.source == "order_inquiry",
+                    )
+                    .first()
                 )
+                # Only when no OTHER surviving link leans on the same claim: two links on
+                # one document share the one claim, because the claim's identity is the
+                # document and not the line.
+                if claim is not None and not (
+                    self.db.query(OrderInquiryLink)
+                    .filter(
+                        OrderInquiryLink.claim_id == claim.id,
+                        OrderInquiryLink.id.notin_(list(going)),
+                    )
+                    .first()
+                ):
+                    self.db.delete(claim)
             self.db.delete(link)
-        row.actioned_by = None
-        row.actioned_at = None
+        self.db.flush()
+        self._invalidate_link_cache()
+        # WHO acted on this row, and when: still true while ANY link stands. Blanking it
+        # on a partial unlink would have said nobody had ever touched a row that is still
+        # half covered.
+        if not self._links_of(row.id):
+            row.actioned_by = None
+            row.actioned_at = None
         self.db.flush()
 
     def _row_or_404(self, row_id: str) -> OrderInquiryRow:
@@ -2889,26 +2992,34 @@ class ProjectOrderInquiryService:
             out[row.id] = product_id
         return out
 
-    def open_po_line_product_ids(self, product_ids: Sequence[Optional[str]]) -> set:
-        """Which of these products still has an outstanding PO line left, once every LINK
-        on it is netted off.
+    def link_candidate_products(
+        self, product_ids: Sequence[Optional[str]]
+    ) -> Dict[str, set]:
+        """Which of these products still has something to link to, by KIND.
 
         The exact predicate `po_candidates_for_row` answers per row, computed ONCE for a
-        whole listing (`has_open_po_line`), so the flag and the dialog can never disagree.
-        SPO- prefixed purchase orders are excluded here as they are there: since migration
-        420 a shipping order is an `spo_allocations` row, and one left in `purchase_orders`
-        is a document that has not been migrated rather than a candidate.
+        whole listing, so the row action's offer and the dialog can never disagree.
 
-        Answers for PO lines only, which is deliberately conservative: an ORDER BACK row
-        whose only open cover is an SPO allocation reads `has_open_po_line = false` and the
-        FE's Link action stays offered anyway (an omitted flag never hides the offer, only
-        an explicit false does - and the flag is what the LISTING sends, so it is set).
+        Two sets, because the answer depends on the ROW's verb and not only on its
+        product: an ORDER row may link to a purchase order line, and an ORDER BACK row may
+        link to either that or an `spo_allocations` row (part 2 section 4b). Answering with
+        one set left an order back whose ONLY open cover was a shipping order reading "no
+        candidate", and the screen then offered no Link at all on the one row the feature
+        was built for.
+
+        SPO- prefixed PURCHASE orders are excluded from the `po` set as they are in the
+        walk: since migration 420 a shipping order is an `spo_allocations` row, and one
+        still sitting in `purchase_orders` is a document nobody migrated rather than a
+        candidate. The `spo` set applies `spo_supply.open_incoming_clauses`, the one copy
+        of "what counts as incoming", so this flag and rung 1 cannot come to disagree.
         """
         wanted = {pid for pid in product_ids if pid}
         if not wanted:
-            return set()
-        by_po, _by_spo = self._linked_by_target()
-        lines = (
+            return {"po": set(), "spo": set()}
+        by_po, by_spo = self._linked_by_target()
+
+        po_products: set = set()
+        for line_id, product_id, qty_ordered, qty_received in (
             self.db.query(
                 PurchaseOrderLine.id,
                 PurchaseOrderLine.product_id,
@@ -2923,15 +3034,53 @@ class ProjectOrderInquiryService:
                 PurchaseOrder.po_number.notlike("SPO-%"),
             )
             .all()
-        )
-        open_products: set = set()
-        for line_id, product_id, qty_ordered, qty_received in lines:
+        ):
             remaining = (
                 _dec(qty_ordered) - _dec(qty_received) - by_po.get(str(line_id), _ZERO)
             )
             if remaining > _ZERO:
-                open_products.add(str(product_id))
-        return open_products
+                po_products.add(str(product_id))
+
+        spo_products: set = set()
+        for allocation_id, product_id, allocated, received in (
+            self.db.query(
+                SPOAllocation.id,
+                SPOAllocation.product_id,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
+            )
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
+            .filter(
+                SPOAllocation.product_id.in_(list(wanted)),
+                SPOAllocation.spo_number.isnot(None),
+                *spo_supply.open_incoming_clauses(),
+            )
+            .all()
+        ):
+            remaining = (
+                _dec(allocated) - _dec(received) - by_spo.get(str(allocation_id), _ZERO)
+            )
+            if remaining > _ZERO:
+                spo_products.add(str(product_id))
+
+        return {"po": po_products, "spo": spo_products}
+
+    @staticmethod
+    def has_link_candidate(
+        verb: Optional[str], product_id: Optional[str], candidates: Dict[str, set]
+    ) -> bool:
+        """Does THIS row have anywhere to link to? Verb and product together.
+
+        Stated once, so the per-project list, the cross-project worklist and anything else
+        that prints the flag cannot each decide it differently.
+        """
+        if not product_id:
+            return False
+        if product_id in candidates.get("po", ()):
+            return True
+        return verb in _SPO_LINKABLE_VERBS and product_id in candidates.get("spo", ())
 
     def _claim_identity(
         self, row: OrderInquiryRow
