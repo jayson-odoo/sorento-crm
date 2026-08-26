@@ -779,3 +779,393 @@ def test_the_batch_row_carries_its_planning_line_and_change_flags_on_the_wire(ap
     assert rows[2]["moved_transfer"], out.text
     assert "line cancelled" in rows[2]["moved_transfer"]
     assert rows[1]["moved_transfer"] is None
+
+
+# ---------------------------------------------------------------------------
+# Gap 1: a line with TWO still-owed rows declines the settle-in-place seam and
+# the old supersede path stands (`ProjectOrderInquiryService._settle_row_in_place`).
+# ---------------------------------------------------------------------------
+
+
+def test_a_line_with_two_still_owed_rows_declines_settle_in_place_and_the_old_path_stands(api):
+    """`_settle_row_in_place` returns False when a line carries more than one still-owed
+    row - it has no way to say which one the book moved (module docstring,
+    `project_order_inquiry_service.py`). The old supersede path stands instead: both rows
+    are left exactly as they were (still placed, links intact, no note written) and the
+    outstanding remainder is raised as a THIRD row."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20",
+                      required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    db.commit()
+
+    assert _confirm(client, order.id, [_line_payload(line.id, buy_qty="20")]).status_code == 200
+    supplier = _supplier(world)
+    row_a = _order_row(world, line)
+    # The confirmation above raised ONE row of 20 - shrunk to 10 here, so this fixture can
+    # stand for the duplication defect it is testing: two 10-unit rows on one line rather
+    # than the one row the service itself would ever create.
+    row_a.qty = Decimal("10")
+    db.commit()
+    _, po_a = _po_line(world, supplier, qty=10, expected_date=date(2026, 8, 1))
+    _link(world, row_a, po_a, qty=10, document="ROW-A")
+    db.commit()
+
+    # A second still-owed row on the SAME line - the shape a duplication defect leaves,
+    # and the one `_settle_row_in_place` refuses to guess between.
+    row_b = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=row_a.order_inquiry_id,
+        so_line_id=line.id, item_code=row_a.item_code, qty=Decimal("10"),
+        delivery_date=row_a.delivery_date, stock_location=row_a.stock_location,
+        verb=IV_ORDER, state=INQUIRY_RAISED, supply_decision_id=row_a.supply_decision_id,
+    )
+    db.add(row_b)
+    db.commit()
+    _, po_b = _po_line(world, supplier, qty=10, expected_date=date(2026, 8, 1))
+    _link(world, row_b, po_b, qty=10, document="ROW-B")
+    db.commit()
+
+    # A pure quantity change (no date move), so the only row this apply could raise
+    # besides the Buy netting itself is the kind this test is about.
+    core.qty_ordered = Decimal("25")
+    line.qty = Decimal("25")
+    db.commit()
+
+    changes = [_change(QTY_CHANGED, core, so_number=core_so.so_number,
+                       old_date=WAS_1, new_date=WAS_1, old_qty="20", new_qty="25")]
+    batch = _build(world, changes, core_so, [str(core.id)])
+    assert batch is not None
+
+    response = _confirm(client, order.id, [_line_payload(line.id, buy_qty="25")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    rows = _rows_of(world, line)
+    live = [r for r in rows if r.state != INQUIRY_CANCELLED]
+    assert len(live) == 3, "the two owed rows stand untouched, and the remainder is raised fresh"
+    live_ids = {str(r.id) for r in live}
+    assert str(row_a.id) in live_ids and str(row_b.id) in live_ids
+
+    service = ProjectOrderInquiryService(db)
+    assert [link.document for link in service._links_of(row_a.id)] == ["ROW-A"], (
+        "the old supersede path never touches a placed row's links"
+    )
+    assert [link.document for link in service._links_of(row_b.id)] == ["ROW-B"]
+    db.refresh(row_a)
+    db.refresh(row_b)
+    assert not row_a.note and not row_b.note, (
+        "settle-in-place never ran on either row - no 'Was ...' note was written"
+    )
+
+    third = [r for r in live if str(r.id) not in (str(row_a.id), str(row_b.id))]
+    assert len(third) == 1
+    assert Decimal(str(third[0].qty)) == Decimal("5"), "20 already placed, 5 still outstanding"
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: a borrow with no reason reaches `set_row_decision` via the board's own
+# amend-through-confirm path, and the server refuses it.
+# ---------------------------------------------------------------------------
+
+
+def test_amend_with_a_borrow_that_carries_no_reason_is_refused(api):
+    """Section 1c / `_check_borrow` (`project_supply_service.py`): a borrow with no
+    stated reason refuses the whole confirmation. Reached from the board's own
+    Confirm-with-`batch_id` route (`_confirm_a_planning_change`), which composes the
+    line via `set_row_decision(..., "amend", composition)` before Apply re-checks it
+    against live facts.
+
+    NOTE for the review: `_check_borrow` raises `SupplyLinesRefused` naming the SPECIFIC
+    reason ("Borrowing takes a reason. Say why this line is taking somebody else's
+    stock.") in its `failing_lines`, but `_confirm_a_planning_change`
+    (`app/api/v1/projects/fulfilment_planning.py:540-548`) re-raises only the generic
+    per-order summary and drops `failing_lines` entirely - so on the board's
+    batch-confirm path (unlike an ordinary Confirm) the planner never sees WHICH line or
+    WHY, only "N line(s) cannot be confirmed." This test pins the status and the generic
+    text actually returned; it does not assert the specific reason, because the route
+    does not carry it through."""
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40",
+                      required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core)
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(line.id, buy_qty="40")]).status_code == 200
+
+    core.qty_ordered = Decimal("60")
+    line.qty = Decimal("60")
+    db.commit()
+    changes = [_change(QTY_CHANGED, core, so_number=core_so.so_number, old_date=WAS_1,
+                       new_date=WAS_1, old_qty="40", new_qty="60")]
+    batch = _build(world, changes, core_so, [str(core.id)])
+    assert batch is not None
+
+    response = _confirm(
+        client, order.id,
+        [_line_payload(
+            line.id,
+            borrow=[{
+                "source": "other_location", "warehouse_id": world.pool_wh.id, "qty": "60",
+            }],
+            buy_qty="0",
+        )],
+        batch_id=str(batch.id),
+    )
+    assert response.status_code == 422, response.text
+    assert "cannot be confirmed" in response.text.lower(), response.text
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: the board's Confirm on an order the batch never touched takes the
+# `extra_confirm_lines` path and writes no batch row.
+# ---------------------------------------------------------------------------
+
+
+def test_a_batch_confirm_on_an_order_with_no_batch_rows_takes_the_extra_lines_path(api):
+    """AC-P3-4's `extra_confirm_lines`: a board opened on `?batch=<id>` for an order the
+    batch has no row for still lets that order confirm in the same call - it goes through
+    as an ordinary confirmation (`extra_confirm_lines`) and writes no `PlanningChangeRow`
+    for it."""
+    client, world = api
+    db = world.db
+
+    # The batch's own order, built but never decided here.
+    core_so_a = _core_so(db, world.company_id)
+    core_a = _core_line(db, core_so_a, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_1)
+    order_a = _project_so(db, world.project, so_id=core_so_a.id,
+                          autocount_doc_no=core_so_a.so_number)
+    line_a = _project_line(db, order_a, line_no=1, product=world.product, core_line=core_a)
+    db.commit()
+    assert _confirm(client, order_a.id, [_line_payload(line_a.id, buy_qty="10")]).status_code == 200
+    core_a.qty_ordered = Decimal("15")
+    core_a.required_date = NOW
+    line_a.qty = Decimal("15")
+    line_a.delivery_date = NOW
+    db.commit()
+    changes = [_change(DATE_AND_QTY_CHANGED, core_a, so_number=core_so_a.so_number,
+                       old_date=WAS_1, new_date=NOW, old_qty="10", new_qty="15")]
+    batch = _build(world, changes, core_so_a, [str(core_a.id)])
+    assert batch is not None
+
+    # An unrelated order this batch never named at all.
+    core_so_b = _core_so(db, world.company_id)
+    core_b = _core_line(db, core_so_b, world.product, world.own_wh, qty_ordered="8",
+                        required_date=WAS_1)
+    order_b = _project_so(db, world.project, so_id=core_so_b.id,
+                          autocount_doc_no=core_so_b.so_number)
+    line_b = _project_line(db, order_b, line_no=1, product=world.product, core_line=core_b)
+    db.commit()
+
+    from app.models.planning_change import PlanningChangeRow as PlanningChangeRowModel
+
+    before = (
+        db.query(PlanningChangeRowModel)
+        .filter(PlanningChangeRowModel.project_sales_order_id == order_b.id)
+        .count()
+    )
+    assert before == 0, "order B has no row in this batch to begin with"
+
+    response = _confirm(client, order_b.id, [_line_payload(line_b.id, buy_qty="8")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    after = (
+        db.query(PlanningChangeRowModel)
+        .filter(PlanningChangeRowModel.project_sales_order_id == order_b.id)
+        .count()
+    )
+    assert after == 0, "the extra_confirm_lines path writes no batch row for this order"
+
+    from app.models.project_so import SOSupplyDecision
+
+    active_b = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order_b.id,
+                SOSupplyDecision.state == "active")
+        .one()
+    )
+    assert active_b.revision_no == 1, "confirmed normally, exactly as an ordinary Confirm would"
+
+
+# ---------------------------------------------------------------------------
+# Gap 4: `_shift_links_off_retired_lines` and a survivor with PARTIAL headroom.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    reason=(
+        "`_shift_links_off_retired_lines` (app/services/planning_change_service.py:2008-2013) "
+        "only ever offers a link to a candidate whose full headroom covers the WHOLE link "
+        "(`_unlinked_need(row) >= _dec(link.qty)`); a survivor with PARTIAL headroom is never "
+        "taken from at all and the entire link goes back to the cascade unlinked. AC-P3-6's "
+        "'whatever that row cannot take goes back through the cascade' describes a split, "
+        "which is not implemented."
+    ),
+    strict=False,
+)
+def test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_survivor_and_cascade(api):
+    """What AC-P3-6 asks for when the survivor cannot take the whole link: "whatever that
+    row cannot take goes back through the cascade" (PLAN part 3) describes a SPLIT - the
+    survivor takes as much as its own headroom allows and the remainder goes back to the
+    cascade - not an all-or-nothing choice.
+
+    `_shift_links_off_retired_lines` (`planning_change_service.py`) only ever tries a
+    candidate whose FULL headroom covers the WHOLE link
+    (`service._unlinked_need(row) >= _dec(link.qty)`); a survivor with partial headroom is
+    never offered any of it, and the entire link goes back to the cascade instead.
+    Confirmed here against a survivor short by 4 of a 10-unit link: XFAIL, not a fix -
+    see PR note for file:line.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="25",
+                        required_date=WAS_1)
+    core_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_2)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_2)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(line_1.id, buy_qty="25"),
+        _line_payload(line_2.id, buy_qty="10"),
+    ])
+    assert response.status_code == 200, response.text
+
+    supplier = _supplier(world)
+    row_1 = _order_row(world, line_1)
+    row_2 = _order_row(world, line_2)
+    # The survivor already carries 19 of its own 25 on a document, leaving only 6 of
+    # headroom - PARTIAL against the 10 the retiring line's link is about to offer it.
+    _, po_1 = _po_line(world, supplier, qty=19, expected_date=date(2026, 8, 1))
+    _link(world, row_1, po_1, qty=19, document="SURVIVOR-OWN")
+    _, po_2 = _po_line(world, supplier, qty=10, expected_date=date(2026, 8, 1))
+    _link(world, row_2, po_2, qty=10, document="RETIRING")
+    db.commit()
+
+    core_2.line_status = "closed"
+    line_2.qty = Decimal("0")
+    db.commit()
+
+    changes = [_change(CLOSED, core_2, so_number=core_so.so_number, old_date=WAS_2,
+                       new_date=None, old_qty="10", new_qty="0")]
+    batch = _build(world, changes, core_so, [str(core_2.id)])
+    assert batch is not None
+
+    apply_response = _confirm(client, order.id, [_line_payload(line_1.id, buy_qty="25")],
+                              batch_id=str(batch.id))
+    assert apply_response.status_code == 200, apply_response.text
+    db.commit()
+
+    service = ProjectOrderInquiryService(db)
+    survivor = _order_row(world, line_1)
+    survivor_docs = {
+        link.document: Decimal(str(link.qty)) for link in service._links_of(survivor.id)
+    }
+    retiring_rows = [r for r in _rows_of(world, line_2) if r.state == INQUIRY_CANCELLED]
+    assert retiring_rows, "the closed line's row is cancelled, never deleted"
+    retiring_links = service._links_of(retiring_rows[-1].id)
+
+    took = survivor_docs.get("RETIRING")
+    if took is None:
+        pytest.fail(
+            "the survivor took none of the retiring link at all - the current "
+            "all-or-nothing behaviour this test is marked xfail against"
+        )
+    assert took == Decimal("6"), "the survivor takes exactly its own headroom, 6 of the 10"
+    assert not retiring_links, "the retired row keeps no link of its own"
+    # The other 4 goes back through the cascade (unlinked, free for the next row) rather
+    # than vanishing - the total the link ever carried is preserved across the split.
+    freed = Decimal("10") - took
+    assert freed == Decimal("4")
+
+
+# ---------------------------------------------------------------------------
+# Gap 5: a second CONFIRM on the same batch, refused 409 with a message - reinforced
+# with the structured error code and a GET afterwards, both on the wire.
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_confirm_refusal_carries_a_stable_code_and_the_batch_still_reads_applied(api):
+    """`test_a_second_confirm_on_the_same_batch_is_refused_with_a_message` already pins the
+    409 + "already" text (AC-P3-4). This adds the two things that test does not: the
+    refusal's structured `code`, so the FE need not string-match, and that a GET on the
+    batch straight after still reads correctly through the wire - the failed second press
+    left nothing behind for `get_batch`'s `response_model` to drop or corrupt."""
+    fixture = _form_three(api)
+    client = fixture["client"]
+    world = fixture["world"]
+
+    assert _apply_from_board(fixture).status_code == 200
+    world.db.commit()
+
+    again = _apply_from_board(fixture)
+    assert again.status_code == 409, again.text
+    body = again.json()
+    assert body.get("code") == "planning_change_batch_applied", body
+
+    detail = client.get(f"{BASE}/planning-changes/{fixture['batch'].id}")
+    assert detail.status_code == 200, detail.text
+    # The list envelope carries the summary shape (`applied_at` / `applied_by_name`); read
+    # it here too, so the failed second press is confirmed not to have corrupted it.
+    listed = client.get(f"{BASE}/planning-changes")
+    assert listed.status_code == 200, listed.text
+    row = next(r for r in listed.json()["data"] if r["id"] == str(fixture["batch"].id))
+    assert row["applied_at"] is not None
+    assert row["applied_by_name"], row
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: `late` survives `response_model` on the SO detail's Linked to column too,
+# not only on the order-inquiry list.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    reason=(
+        "app/services/scm/sales_order_service.py:589-604 (`_line_links`) builds the SO "
+        "detail's `linked_to` entries by hand and never copies `late` off the "
+        "`links_for_rows` dict it reads from - only kind/document/line_label/qty/"
+        "location/expected_date are carried over. `SalesOrderLineLink.late` therefore "
+        "keeps its schema default (False) on every row, whatever the real lateness is. "
+        "Confirmed live: expected_date 2026-09-30 against a required_date of 2026-08-19 "
+        "reads late=false on this endpoint while the SAME data reads late=true through "
+        "/order-inquiries (`links_for_rows`' own late computation is correct; only this "
+        "one caller drops it on the floor)."
+    ),
+    strict=False,
+)
+def test_the_late_flag_reaches_the_sales_order_detail_linked_to_column_on_the_wire(api):
+    """`test_a_link_arriving_after_the_new_date_stays_linked_and_reads_late` already pins
+    `late` through `/order-inquiries`. AC-P3-7 says "wherever the link is shown", and the
+    SO detail's Lines tab is the other reader (`SalesOrderLineLink.late`,
+    `app/schemas/scm_orders.py`) - a separate `response_model`, so the field surviving one
+    does not prove it survives the other."""
+    fixture = _form_three(api, link_expected=date(2026, 9, 30))
+    client = fixture["client"]
+    world = fixture["world"]
+    core_so = fixture["core_so"]
+    core_1 = fixture["core_lines"][0]
+
+    assert _apply_from_board(fixture).status_code == 200
+    world.db.commit()
+
+    detail = client.get(f"/api/v1/scm/sales-orders/{core_so.id}")
+    assert detail.status_code == 200, detail.text
+    lines = {ln["id"]: ln for ln in detail.json()["lines"]}
+    line_out = lines[str(core_1.id)]
+    assert line_out["linked_to"], detail.text
+    assert all(link["late"] for link in line_out["linked_to"]), detail.text
