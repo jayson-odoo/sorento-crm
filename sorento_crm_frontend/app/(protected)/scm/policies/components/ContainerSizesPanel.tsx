@@ -38,8 +38,9 @@ import { fmtTrimmedDecimal } from '../../lib/format';
  * a row instead of waiting for a release.
  *
  * The figure asked for is the LOADABLE volume, not the nominal size printed on the box: a
- * 40HQ is sold as 76 cbm and packs about 68, and planning to the brochure figure is how a
- * container arrives a pallet short of its manifest.
+ * 40HQ is sold as 76 cbm and is seeded here at 65, the figure Ms Tee actually loads to (Q3,
+ * migration 428 - it was 68 until then). Planning to the brochure figure is how a container
+ * arrives a pallet short of its manifest.
  */
 
 const KEY = ['scm', 'fulfilment', 'container-sizes'] as const;

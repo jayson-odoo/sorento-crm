@@ -417,7 +417,8 @@ export default function OrdersList() {
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}
                 id="orders-quick-status"
-                triggerClassName="h-8 w-48"
+                size="sm"
+                triggerClassName="w-48"
                 options={[
                   { value: 'all', label: 'All statuses' },
                   ...orderStatuses.map((status) => ({
@@ -439,7 +440,8 @@ export default function OrdersList() {
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}
                 id="orders-quick-lines"
-                triggerClassName="h-8 w-56"
+                size="sm"
+                triggerClassName="w-56"
                 options={[
                   { value: 'all', label: 'All delivery orders' },
                   { value: 'yes', label: 'With delivery order lines' },

@@ -600,7 +600,8 @@ export default function TicketDetailPage({ params }: PageProps) {
                         value: s,
                         label: s.charAt(0).toUpperCase() + s.slice(1),
                       }))}
-                      triggerClassName="w-[140px] h-8"
+                      size="sm"
+                      triggerClassName="w-[140px]"
                     />
                   </div>
                   <div className="flex items-center justify-between">
