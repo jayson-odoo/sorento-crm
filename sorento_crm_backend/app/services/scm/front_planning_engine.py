@@ -26,8 +26,10 @@ quantity".
    locations in draw order, already capped so that they total no more than
    what the WHOLE GROUP's net leaves for this line, never one warehouse's own reading
    (ladder v4, section 1d). The rank queue no longer decides availability;
-3. the shared pool, own site first then the other site pools, all five netted as ONE pile
-   (``pools_net``), with the dealer/project hot-selling gate of 3.3a retained;
+3. the shared pool: all five netted as ONE pile (``pools_net``), drawn own site first then
+   the others by on hand, with no per-pool cap. 3.3a's dealer hot-selling gate is retained
+   (the pool is kept for retail, so the rung is not offered at all); its project
+   hot-selling cap is subsumed by the pile's own net;
 4. cross-group borrow: what a DONOR GROUP nets as a whole, offered by the caller only
    within the small-quantity cap;
 5. the whole-line rule: if 1-4 together reach the whole of Q, that composition is proposed,
@@ -255,62 +257,58 @@ def _coverage_date_reason(coverage_until: date) -> str:
 def pool_reserve_capacity(
     *,
     is_dealer_hot_selling: bool,
-    is_project_hot_selling: bool,
     pools: Sequence[Mapping[str, Any]],
-    pools_net: Optional[Decimal] = None,
-) -> List[Tuple[str, Decimal, str]]:
-    """Rung 3: the shared pool, own site first then the other site pools.
+    pools_net: Any,
+) -> List[Tuple[str, Decimal]]:
+    """Rung 3, LADDER V4 (section 1d): the five site pools are ONE pile.
 
-    `pools` is already in draw order - the caller's own site pool first, then the other
-    site pools - each stating `location`, `free` and `available` (the pool's own SIGNED
-    position, `on hand - SO qty + SPO qty`). Every pool is capped the same way,
-    `max(min(free, available), 0)`: a pool cannot lend more than physically sits free at
-    it. Dealer hot-selling still excludes the pool rung entirely, exactly as 3.3a states.
+    The rung offers `max(pools_net, 0)` and not a unit more - `BRW -103` beside `DC1 +1`
+    nets -102 and offers NOTHING, where per-pool arithmetic would have offered the 1, which
+    is stock the shared book already owes at BRW. `pools` is already in draw order (the
+    caller's own site pool first, then the others by on hand) and each entry states its
+    `free` balance: that is WHERE the quantity can physically come from, and `pools_net` is
+    HOW MUCH. Exactly the shape rung 2 has for the ownership group.
 
-    LADDER V4 (section 1d): the five site pools are ONE pile, so the whole rung is capped
-    at `pools_net`, the pools' summed signed availability. `BRW -103` beside `DC1 +1` nets
-    -102 and offers NOTHING, where per-pool arithmetic alone would have offered the 1 -
-    which is stock the shared book already owes elsewhere. Stated by the caller, which is
-    the only party that knows which warehouses are pools; `None` means "no net stated" and
-    leaves the per-pool caps to stand on their own (the golden cases that predate v4).
+    THERE IS NO PER-POOL CAP any more, and 3.3a's project hot-selling gate goes with it:
+    that rule capped such a line's draw at the pool's own signed availability, and the
+    pile's net now bounds EVERY draw the same way, for every item. Dealer hot-selling still
+    excludes the rung entirely, which is a different rule - the pool is kept for retail, so
+    it is not offered at all.
+
+    Nothing is un-netted here, unlike rung 2: this line's demand is booked at
+    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
     """
     if is_dealer_hot_selling:
         return []
-    left = None if pools_net is None else max(_dec(pools_net), ZERO)
-    if left is not None and left <= ZERO:
-        return []
-    out: List[Tuple[str, Decimal, str]] = []
+    left = max(_dec(pools_net), ZERO)
+    out: List[Tuple[str, Decimal]] = []
     for pool in pools:
+        if left <= ZERO:
+            break
         location = pool.get("location")
         if not location:
             continue
-        free = max(_dec(pool.get("free")), ZERO)
-        available = _dec(pool.get("available"))
-        capacity = max(min(free, available), ZERO)
-        if left is not None:
-            capacity = min(capacity, left)
+        capacity = min(max(_dec(pool.get("free")), ZERO), left)
         if capacity <= ZERO:
             continue
-        out.append((str(location), capacity, _pool_reason(str(location), capacity, left)))
-        if left is not None:
-            left -= capacity
-            if left <= ZERO:
-                break
+        out.append((str(location), capacity))
+        left -= capacity
     return out
 
 
-def _pool_reason(location: str, qty: Decimal, pools_net: Optional[Decimal]) -> str:
+def pool_reason(location: str, qty: Decimal, pools_net: Any) -> str:
     """Why this pool may lend this much.
 
-    Under v4 the number is a share of the pools' own net, so the sentence names the net -
-    "Pool BRW has 30 available" beside a shared pile that nets 30 across five warehouses
-    reads as though BRW alone held it.
+    Built from what is actually TAKEN, beside the pile's own net - the same shape
+    `group_take_reason` has, and for the same reason: under v4 the number is a share of a
+    SET's position, so "Pool BRW has 30 available" reads as though BRW alone held it.
+
+    Public because the supply service builds this sentence when it reads a CONFIRMED
+    component back off a snapshot, exactly as it does for the group rung.
     """
-    if pools_net is None:
-        return f"Pool {location} has {qty_text(qty)} available"
     return (
-        f"Pool {location} lends {qty_text(qty)} of the {qty_text(pools_net)} the site "
-        "pools net between them"
+        f"Pool {location} lends {qty_text(qty)} of the {qty_text(_dec(pools_net))} the "
+        "site pools net between them"
     )
 
 
@@ -371,6 +369,11 @@ def propose_line(
     fulfilment_location: Optional[str] = None,
     group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
+    #: Accepted and NOT read since ladder v4 (section 1d). 3.3a capped a project
+    #: hot-selling line's pool draw at the pool's own signed availability; the pile's net
+    #: now bounds every draw the same way, for every item. Kept on the signature because
+    #: three callers state it and the board's trail still names the classification in
+    #: words; the day nothing reads it at all, it goes.
     is_project_hot_selling: bool = False,
     pools: Optional[Sequence[Mapping[str, Any]]] = None,
     timely_spo_qty: Any = ZERO,
@@ -397,7 +400,7 @@ def propose_line(
        GROUP's own position (`group_offer`) and already in draw order - this line's own
        location first, then its siblings by site;
     3. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
-       capped at `pools_net`;
+       bounded by `pools_net` and by each pool's own free stock;
     4. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
        donors within the small-quantity cap, each donor group capped at its own net;
     5. the whole-line rule: if 1-4 reach the whole of `open_qty`, that composition is
@@ -489,11 +492,10 @@ def propose_line(
         )
         remaining -= take
 
-    # 3. the shared pool(s), own site first, the whole rung capped at what the five pools
+    # 3. the shared pool(s), own site first, the whole rung bounded by what the five pools
     #    net BETWEEN them (v4, section 1d).
-    for location, capacity, reason in pool_reserve_capacity(
+    for location, capacity in pool_reserve_capacity(
         is_dealer_hot_selling=is_dealer_hot_selling,
-        is_project_hot_selling=is_project_hot_selling,
         pools=pools or [],
         pools_net=pools_net,
     ):
@@ -504,7 +506,13 @@ def propose_line(
             continue
         components.append(
             Component(
-                kind=RESERVE, qty=take, reason=reason, source_location=location,
+                kind=RESERVE,
+                qty=take,
+                # Built from what is TAKEN, never from the rung's own running balance: the
+                # reason travels with the quantity beside it, and a sentence naming the
+                # capacity while the component names the draw is two numbers for one fact.
+                reason=pool_reason(location, take, pools_net),
+                source_location=location,
                 rung=RUNG_POOL,
             )
         )

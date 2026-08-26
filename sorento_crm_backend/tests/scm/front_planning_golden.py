@@ -186,6 +186,7 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("120"), "available": Decimal("120")}
         ],
+        "pools_net": Decimal("120"),
         # No SPO arrives by the required date, so timely coverage is zero and is not
         # proposed at all.
         "timely_spo_qty": Decimal("0"),
@@ -204,8 +205,9 @@ HOT_SELLING_WORKED_CASE = ProposalCase(
 PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
     title=(
-        "project hot-selling product: the shared pool is drawn only while its own signed "
-        "availability stays positive (PLAN 3.3a), and covers the whole line here"
+        "project hot-selling product: the pile's own net bounds the draw exactly as it "
+        "bounds a cold item's (ladder v4 replaces 3.3a's per-pool cap), and covers the "
+        "whole line here"
     ),
     inputs={
         "open_qty": Decimal("40"),
@@ -214,10 +216,13 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
         "fulfilment_location": OWN_LOCATION,
         "is_project_hot_selling": True,
         "pools": [
-            # The pool's own signed availability (on hand - SO qty + SPO qty) is thinner
-            # than its free balance, and the draw stops there - which is the whole line.
+            # 120 sit free at the pool and the five pools net 40 between them, so 40 is
+            # what may be drawn - which is the whole line. Under 3.3a the same answer came
+            # from this pool's OWN signed availability; under v4 it comes from the pile's,
+            # and the reason says whose number it is.
             {"location": POOL_LOCATION, "free": Decimal("120"), "available": Decimal("40")}
         ],
+        "pools_net": Decimal("40"),
         "timely_spo_qty": Decimal("0"),
         "is_discontinued": False,
     },
@@ -225,7 +230,7 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("40"),
-            reason="Pool BRW has 40 available",
+            reason="Pool BRW lends 40 of the 40 the site pools net between them",
             source_location=POOL_LOCATION,
         ),
     ),
@@ -251,6 +256,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("60"), "available": Decimal("60")}
         ],
+        "pools_net": Decimal("60"),
         "is_discontinued": False,
     },
     components=(
@@ -264,7 +270,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("60"),
-            reason="Pool BRW has 60 available",
+            reason="Pool BRW lends 60 of the 60 the site pools net between them",
             source_location=POOL_LOCATION,
         ),
     ),
@@ -274,7 +280,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
 #: that owns the criterion rather than four unrelated ones.
 BALANCE_INVARIANT_STATED = (
     "Timely SPO 10: incoming supply arrives by the required date",
-    "Reserve 60: Pool BRW has 60 available",
+    "Reserve 60: Pool BRW lends 60 of the 60 the site pools net between them",
 )
 
 
@@ -481,6 +487,7 @@ BEYOND_THE_WINDOW_CASE = ProposalCase(
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
         ],
+        "pools_net": Decimal("400"),
         # Already bought and on the water: buying it a second time is a double purchase.
         "timely_spo_qty": Decimal("40"),
         "is_discontinued": False,
@@ -512,6 +519,7 @@ BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
         ],
+        "pools_net": Decimal("400"),
         # 40 of the 71 arrives in time. "Incoming 40, Buy 31" is the mix AC-L5 refuses at
         # confirm, so the whole-line rule takes the lot.
         "timely_spo_qty": Decimal("40"),

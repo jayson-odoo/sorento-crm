@@ -51,6 +51,7 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
                     "available": Decimal("100"),
                 }
             ],
+            pools_net=Decimal("100"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -60,7 +61,9 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
     reserves = {c.source_location: c for c in proposed if c.kind == "reserve"}
     assert set(reserves) == {POOL_LOCATION}
     assert reserves[POOL_LOCATION].qty == Decimal("90")
-    assert reserves[POOL_LOCATION].reason == "Pool BRW has 100 available"
+    assert reserves[POOL_LOCATION].reason == (
+        "Pool BRW lends 90 of the 100 the site pools net between them"
+    )
     assert reserves[POOL_LOCATION].rung == "pool"
 
     # The whole line balances: nothing left over to Buy.
@@ -83,6 +86,7 @@ def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
                 {"location": "BRW", "free": Decimal("30"), "available": Decimal("30")},
                 {"location": "MWH", "free": Decimal("100"), "available": Decimal("100")},
             ],
+            pools_net=Decimal("130"),
             timely_spo_qty=Decimal("0"),
         )
     )
@@ -108,6 +112,7 @@ def test_every_pool_is_capped_by_its_own_signed_availability_not_only_a_hot_sell
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("100"), "available": Decimal("40")},
             ],
+            pools_net=Decimal("40"),
             timely_spo_qty=Decimal("0"),
         )
     )
@@ -147,6 +152,7 @@ def test_dealer_hot_selling_offers_no_pool_at_all():
                     "available": Decimal("150"),
                 }
             ],
+            pools_net=Decimal("150"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -158,7 +164,7 @@ def test_dealer_hot_selling_offers_no_pool_at_all():
     assert proposed[0].qty == Decimal("200")
 
 
-def test_project_hot_selling_caps_the_pool_at_its_own_signed_availability():
+def test_the_pools_own_net_bounds_a_project_hot_selling_draw_like_any_other():
     """PLAN 3.3a, still true for a single pool under ladder v2: `max(min(pool free,
     pool_available), 0)`. The pool's free balance (150) is more than its signed
     availability (40), so the draw stops at 40 - which is not the whole line, so the
@@ -180,6 +186,7 @@ def test_project_hot_selling_caps_the_pool_at_its_own_signed_availability():
                     "available": Decimal("40"),
                 }
             ],
+            pools_net=Decimal("40"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -189,7 +196,12 @@ def test_project_hot_selling_caps_the_pool_at_its_own_signed_availability():
     assert proposed[0].kind == "reserve"
     assert proposed[0].qty == Decimal("40")
     assert proposed[0].source_location == POOL_LOCATION
-    assert proposed[0].reason == "Pool BRW has 40 available"
+    # Ladder v4: the sentence names the PILE's number, because that is what the quantity is
+    # a share of. 3.3a's per-pool cap for a project hot-selling item is gone - the pile's
+    # net bounds this draw exactly as it bounds a cold item's.
+    assert proposed[0].reason == (
+        "Pool BRW lends 40 of the 40 the site pools net between them"
+    )
 
 
 def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_positive():
@@ -211,6 +223,7 @@ def test_project_hot_selling_offers_nothing_when_the_pools_availability_is_not_p
                     "available": Decimal("-12"),
                 }
             ],
+            pools_net=Decimal("-12"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -243,6 +256,7 @@ def test_dealer_hot_selling_wins_when_a_product_is_hot_on_both_demand_classes():
                     "available": Decimal("50"),
                 }
             ],
+            pools_net=Decimal("50"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -352,6 +366,7 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
                     "available": Decimal("100"),
                 }
             ],
+            pools_net=Decimal("100"),
             timely_spo_qty=Decimal("0"),
             is_discontinued=False,
         )
@@ -471,6 +486,7 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
+            pools_net=Decimal("999"),
             timely_spo_qty=Decimal("0"),
         )
     )
@@ -495,6 +511,7 @@ def test_a_line_required_on_or_before_the_coverage_date_runs_the_ladder_normally
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("50"), "available": Decimal("50")}
             ],
+            pools_net=Decimal("50"),
         )
     )
 
@@ -516,6 +533,7 @@ def test_no_coverage_date_set_never_gates_a_line():
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("10"), "available": Decimal("10")}
             ],
+            pools_net=Decimal("10"),
         )
     )
 
@@ -546,6 +564,7 @@ def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incom
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
             ],
+            pools_net=Decimal("400"),
             group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("400")}],
             cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("400")}],
         )
@@ -578,6 +597,7 @@ def test_a_line_beyond_the_window_is_bought_whole_when_the_incoming_falls_short(
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
             ],
+            pools_net=Decimal("400"),
         )
     )
 
@@ -632,6 +652,7 @@ def test_a_line_beyond_purchasings_coverage_date_takes_its_incoming_too():
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
+            pools_net=Decimal("999"),
         )
     )
 
@@ -778,6 +799,7 @@ def test_the_group_is_drawn_before_the_pool():
             pools=[
                 {"location": "BRW", "free": Decimal("1000"), "available": Decimal("1000")}
             ],
+            pools_net=Decimal("1000"),
         )
     )
 
@@ -804,6 +826,7 @@ def test_the_pool_rung_still_runs_when_the_group_holds_nothing():
             pools=[
                 {"location": "BRW", "free": Decimal("71"), "available": Decimal("71")}
             ],
+            pools_net=Decimal("71"),
         )
     )
 
@@ -883,6 +906,7 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
             pools=[
                 {"location": "BRW", "free": Decimal("20"), "available": Decimal("20")}
             ],
+            pools_net=Decimal("20"),
             cross_group_borrow_candidates=[
                 {"location": "BRW-HP", "qty": Decimal("40")},
             ],
@@ -910,6 +934,7 @@ def test_whole_line_rule_drops_every_partial_component_when_the_line_falls_short
             pools=[
                 {"location": "BRW", "free": Decimal("213"), "available": Decimal("213")}
             ],
+            pools_net=Decimal("213"),
         )
     )
 
@@ -932,6 +957,7 @@ def test_open_qty_of_zero_proposes_nothing_at_all():
             pools=[
                 {"location": "BRW", "free": Decimal("100"), "available": Decimal("100")}
             ],
+            pools_net=Decimal("100"),
         )
     )
 

@@ -2136,27 +2136,20 @@ class FulfilmentBoardService:
             # the primary one is - not merely added in at its raw, uncapped balance.
             capacity = pool_reserve_capacity(
                 is_dealer_hot_selling=fact.is_dealer_hot_selling,
-                is_project_hot_selling=fact.is_project_hot_selling,
                 pools=pool_chain,
                 # Ladder v4 (section 1d): the five pools are one pile, so the trail's
                 # "offered" has to be what the LADDER offered. Left off, the rung reported
                 # an offer the engine had already refused.
                 pools_net=fact.pools_net,
             )
-            capacity_by_location = {
-                location: amount for location, amount, _reason in capacity
-            }
-            # What the pools would have offered read one at a time. The difference between
-            # this and the above is exactly what ladder v4 changed, and the sentence below
-            # names the net ONLY where the net is what refused the draw - everywhere else
-            # the per-pool reason is the true and more useful one.
-            pools_net_refused = bool(
-                pool_reserve_capacity(
-                    is_dealer_hot_selling=fact.is_dealer_hot_selling,
-                    is_project_hot_selling=fact.is_project_hot_selling,
-                    pools=pool_chain,
-                )
-            ) and not capacity
+            capacity_by_location = {location: amount for location, amount in capacity}
+            # What the pools hold FREE between them, read one at a time. The difference
+            # between this and the above is exactly what the pile's net changed, and the
+            # sentence below names the net ONLY where the net is what refused the draw -
+            # everywhere else the per-pool reason is the true and more useful one.
+            pools_net_refused = not capacity and any(
+                _dec(entry.get("free")) > _ZERO for entry in pool_chain
+            )
             pool_offered_total = sum(capacity_by_location.values(), _ZERO)
             pool_taken = sum(
                 (
@@ -2176,8 +2169,9 @@ class FulfilmentBoardService:
                 note = (
                     "dealer hot-selling: pool not offered"
                     if fact.is_dealer_hot_selling
-                    else "project hot-selling: capped by pool availability"
-                    if fact.is_project_hot_selling
+                    # No project hot-selling note any more: 3.3a capped such a line at the
+                    # pool's own signed availability, and the pile's net now bounds every
+                    # draw the same way, so the note named a rule that no longer runs.
                     else None
                 )
                 other_note = ", ".join(
@@ -2440,6 +2434,24 @@ class FulfilmentBoardService:
             "it reached this line."
         )
 
+    def _pool_class_prefix(self, fact: Any) -> str:
+        """How this item's demand class reads in front of a pool sentence.
+
+        One copy, because three branches of `_pool_why` need the same phrase and the
+        captain's instruction about it is exact: "don't give me jargon like abc
+        classification, just tell me hot selling or cold selling, at project or retail".
+        """
+        if fact.is_dealer_hot_selling:
+            return self._hot_prefix(fact, dealer=True)
+        if fact.is_project_hot_selling:
+            return self._hot_prefix(fact, dealer=False)
+        if fact.classification_unavailable:
+            return (
+                "Not classified (no retail or project deliveries of this item in the last "
+                "12 months)"
+            )
+        return self._cold_prefix(fact)
+
     def _pool_why(
         self,
         fact: Any,
@@ -2479,29 +2491,28 @@ class FulfilmentBoardService:
                 f"{self._hot_prefix(fact, dealer=True)}: {code} is kept for retail, so the "
                 "pool is not offered."
             )
-        # LADDER V4 (section 1d): the five site pools are ONE pile. `BRW -103` beside
-        # `DC1 +1` nets -102, and the 1 at DC1 is stock the shared book already owes at
-        # BRW. Said ONLY where the net is what refused the draw: a pool that had nothing
-        # to give on its own terms already has a truer and more specific reason below, and
-        # replacing it with the pile's total would answer a question nobody asked.
+        # LADDER V4 (section 1d): the five site pools are ONE pile, and that pile's net is
+        # now the ONLY thing that bounds the rung - `BRW -103` beside `DC1 +1` nets -102,
+        # and the 1 at DC1 is stock the shared book already owes at BRW. Said wherever the
+        # net is what refused the draw, WITH the classification in front of it, because
+        # "hot or cold" is what the captain asked to be told and the net is a different
+        # fact from it.
         if pools_net_refused:
             return (
-                f"The site pools net {qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} "
-                "between them, so no pool is offered."
+                f"{self._pool_class_prefix(fact)}: the site pools net "
+                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} between them, so no "
+                "pool is offered."
             )
         available = _dec(pile.get("available"))
         if fact.is_project_hot_selling:
-            prefix = self._hot_prefix(fact, dealer=False)
-            if available > _ZERO:
-                base = (
-                    f"{prefix}: {code} may be drawn while its availability stays positive - "
-                    f"{qty_text(available)} available, {qty_text(offered)} offered."
-                )
-            else:
-                base = (
-                    f"{prefix}: {code}'s availability is {qty_text(available)}, so nothing "
-                    "is offered."
-                )
+            # Ladder v4: the classification is still NAMED, because the captain reads it,
+            # but it no longer changes the arithmetic - the five pools' own net bounds this
+            # draw exactly as it bounds a cold item's.
+            base = (
+                f"{self._pool_class_prefix(fact)}: the site pools net "
+                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} between them, and "
+                f"{qty_text(offered)} is offered here."
+            )
             return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
         if fact.classification_unavailable:
             base = (
@@ -2562,11 +2573,15 @@ class FulfilmentBoardService:
     def _group_take_why(
         self, outcome: str, candidates: List[Dict[str, Any]], fact: Any
     ) -> str:
-        """Why rung 2 (the ownership group) ended where it did (section 1b).
+        """Why rung 2 (the ownership group) ended where it did (section 1d).
 
-        THIS LINE'S OWN LOCATION IS IN THIS RUNG under v3, so the sentences say "group
-        location", not "sibling": telling a planner "no sibling has stock" while their own
-        location is the one that came up empty names the wrong place to go and look.
+        THIS LINE'S OWN LOCATION IS IN THIS RUNG, so the sentences say "group location",
+        not "sibling": telling a planner "no sibling has stock" while their own location is
+        the one that came up empty names the wrong place to go and look.
+
+        Every sentence carries the group's NET and, where they differ, what that net leaves
+        for THIS line - the two are different numbers (`max(net + this line's own quantity,
+        0)`, AC-L14) and a reader shown only the first cannot check the second.
         """
         if outcome == "none_needed":
             return _COVERED_BEFORE
@@ -2577,6 +2592,7 @@ class FulfilmentBoardService:
             )
         net = _dec(getattr(fact, "group_net", _ZERO))
         offer = _dec(getattr(fact, "group_offer", _ZERO))
+        timely = _dec(getattr(fact, "timely_qty", _ZERO))
         if not candidates:
             # LADDER V4 (section 1d): the group is ONE pile, so the sentence is about the
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
@@ -2587,15 +2603,26 @@ class FulfilmentBoardService:
                     "nothing left for this line - whatever sits at any one of its "
                     "locations is already owed at another."
                 )
+            if timely >= offer:
+                # The group's SPO is inside its net, so rung 1 spent this rung's offer
+                # before it was reached. Saying "nothing sits free" here would send a
+                # planner looking for stock that was never the point - the quantity is
+                # already covered, on the rung above, by a document they can chase.
+                return (
+                    f"The {fact.group_code} group nets {qty_text(net)}, leaving "
+                    f"{qty_text(offer)} for this line, and incoming supply already covers "
+                    f"{qty_text(timely)} of it - there is nothing left for this rung."
+                )
             return (
-                f"The {fact.group_code} group nets {qty_text(net)}, and none of what it "
-                "could cover this line with sits free at a location it can draw from."
+                f"The {fact.group_code} group nets {qty_text(net)}, leaving "
+                f"{qty_text(offer)} for this line, and none of it sits free at a location "
+                "this line can draw from."
             )
         if outcome == "took":
             taken_at = ", ".join(c["location"] for c in candidates)
             return (
-                f"The {fact.group_code} group nets {qty_text(net)}; it was drawn at "
-                f"{taken_at}."
+                f"The {fact.group_code} group nets {qty_text(net)}, leaving "
+                f"{qty_text(offer)} for this line; it was drawn at {taken_at}."
             )
         return "Not reached - the line was already covered by an earlier rung."
 
