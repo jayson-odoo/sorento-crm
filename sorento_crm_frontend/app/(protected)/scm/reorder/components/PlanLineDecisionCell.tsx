@@ -352,16 +352,22 @@ function AdjustMixture({
               aria-label="Units from stock"
             />
           </label>
-          <label className="flex items-center justify-between gap-2">
-            <span>From PO book (max {fmtInt(poMax)})</span>
-            <Input
-              type="number" min={0} max={poMax} inputMode="numeric"
-              className="h-7 w-20 text-right tabular-nums"
-              value={po} onChange={(e) => setPo(e.target.value)}
-              disabled={poMax <= 0}
-              aria-label="Units from the PO book"
-            />
-          </label>
+          {/* Only where there IS a PO to use. A project row never has one (P8: its purchase
+              order is consumed by the Order Inquiry's links, so offering it here would net
+              the same quantity twice), and a retail row with an empty book has nothing to
+              offer either - both used to render an input that could only ever read 0 and
+              could not be typed into. */}
+          {poMax > 0 ? (
+            <label className="flex items-center justify-between gap-2">
+              <span>From PO book (max {fmtInt(poMax)})</span>
+              <Input
+                type="number" min={0} max={poMax} inputMode="numeric"
+                className="h-7 w-20 text-right tabular-nums"
+                value={po} onChange={(e) => setPo(e.target.value)}
+                aria-label="Units from the PO book"
+              />
+            </label>
+          ) : null}
           <label className="flex items-center justify-between gap-2">
             <span>Buy</span>
             <Input
