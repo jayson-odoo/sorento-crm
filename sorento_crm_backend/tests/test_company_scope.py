@@ -466,7 +466,9 @@ def test_every_company_id_table_is_registered():
     # approve and cancel, and `(company_id, transfer_no)` is what makes the number unique -
     # a transfer table scoped through a warehouse would filter on a place instead of on the
     # company whose goods moved.
-    expected_owned = 122
+    # 123 since scm.supplier_product_code_alias (R16, the supplier's own spelling of a
+    # product code, remembered per company).
+    expected_owned = 123
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
