@@ -1068,6 +1068,11 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_inquiry_links"
+    #: Born after migration 354, so no pre-move name constrains it; it takes the `project_`
+    #: prefix its siblings carry (`tests/test_projects_audit_entity_types.py`), because
+    #: `audit_log.entity_type` is one flat namespace with no schema in it and a bare
+    #: `order_inquiry_links` is a name another module could later claim.
+    __audit_entity_type__ = "project_order_inquiry_links"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     row_id = Column(

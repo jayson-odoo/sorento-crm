@@ -46,6 +46,11 @@ BORN_AFTER_THE_MOVE = frozenset({
     # (29d85dc3ccc3), same as `so_supply_decisions` above.
     "planning_change_batches",
     "planning_change_rows",
+    # PLAN-scm-cs-planning-uat.md, migration 421_order_inquiry_links: one inquiry row's
+    # quantity placed across several documents.
+    "order_inquiry_links",
+    # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
+    "stock_transfers",
 })
 
 MIGRATION = (
