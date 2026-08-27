@@ -547,6 +547,25 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
     return list(merged.values())
 
 
+def _line_company_kwargs(shipment: "InboundShipment") -> dict:
+    """The company a new line of this container belongs to: its HEADER's.
+
+    The insert auto-stamp (`company_scope._stamp_company_id`) reads the SESSION
+    scope, not the row's parent. The n8n re-upload path arrives with no company
+    identity at all - scope `None`, the deliberate all-companies principal - so it
+    finds a Mocha container and stamps the replacement lines with the incumbent
+    company (Sorento). The lines then belong to a different company from the
+    container they hang off, and every scoped read of `inbound_shipment_lines`
+    stops seeing them: the container reads `in_transit` with nothing received
+    although its GRN received the lot (packing list TGHU6295708).
+
+    Returns `{}` when the header itself names no company, so the auto-stamp stays
+    the fallback rather than being replaced by a NULL.
+    """
+    company_id = getattr(shipment, "company_id", None)
+    return {"company_id": company_id} if company_id else {}
+
+
 class SupplierService:
     """Service for supplier operations."""
     
@@ -863,33 +882,30 @@ class InboundShipmentService:
         non_received_counts: dict[str, int] = {}
         spo_counts: dict[str, int] = {}
         if shipment_ids:
-            line_counts = {
-                str(shipment_id): int(count or 0)
-                for shipment_id, count in (
-                    self.db.query(
-                        InboundShipmentLine.shipment_id,
-                        func.count(InboundShipmentLine.id),
-                    )
-                    .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
-                    .group_by(InboundShipmentLine.shipment_id)
-                    .all()
+            # Counted per CONTAINER, over the line TABLE rather than the ORM entity:
+            # `shipment_ids` came out of the scoped header query above, so the
+            # containers are already the ones this caller may see, and the count must
+            # then cover every line ON them. Counting through the entity re-applies the
+            # company predicate to the LINE, so a line mis-stamped with another company
+            # (an n8n re-upload under a company-less scope) dropped out of its own
+            # container's count: a fully received container reported 0 lines and stayed
+            # `in_transit`. An ORM join does not help - `func.count(Line.id)` puts the
+            # line mapper back into the statement's top-level entities.
+            lines_table = InboundShipmentLine.__table__
+
+            def _line_counts(*extra_filters) -> dict[str, int]:
+                stmt = (
+                    select(lines_table.c.shipment_id, func.count(lines_table.c.id))
+                    .where(lines_table.c.shipment_id.in_(shipment_ids), *extra_filters)
+                    .group_by(lines_table.c.shipment_id)
                 )
-            }
-            non_received_counts = {
-                str(shipment_id): int(count or 0)
-                for shipment_id, count in (
-                    self.db.query(
-                        InboundShipmentLine.shipment_id,
-                        func.count(InboundShipmentLine.id),
-                    )
-                    .filter(
-                        InboundShipmentLine.shipment_id.in_(shipment_ids),
-                        InboundShipmentLine.line_status != "received",
-                    )
-                    .group_by(InboundShipmentLine.shipment_id)
-                    .all()
-                )
-            }
+                return {
+                    str(row_id): int(count or 0)
+                    for row_id, count in self.db.execute(stmt).all()
+                }
+
+            line_counts = _line_counts()
+            non_received_counts = _line_counts(lines_table.c.line_status != "received")
             spo_counts = {
                 str(shipment_id): int(count or 0)
                 for shipment_id, count in (
@@ -1027,12 +1043,24 @@ class InboundShipmentService:
         return received_totals
 
     def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
-        """Recompute and persist line_status for all lines of this shipment (for n8n/API)."""
-        lines = (
-            self.db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == shipment_id)
-            .all()
+        """Recompute and persist line_status for all lines of this shipment (for n8n/API).
+
+        The lines are read off the RELATIONSHIP, never with a direct query on
+        `InboundShipmentLine`. The company-scope filter is applied to a statement's
+        top-level entities only and deliberately skips relationship loads, so a line
+        mis-stamped with another company answered a direct query with nothing: this
+        method returned at `if not lines` and left a fully received container reading
+        `in_transit` forever, while the detail page (a joined relationship load) showed
+        the very lines it could not find.
+        """
+        shipment = (
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_id)
+            .first()
         )
+        if shipment is None:
+            return
+        lines = list(shipment.shipment_lines)
         if not lines:
             return
         totals_alloc = (
@@ -1044,6 +1072,11 @@ class InboundShipmentService:
         spo_by_product = {str(p): int(t) for p, t in totals_alloc}
         received_by_product = self.get_received_quantities_by_product(shipment_id)
         for line in lines:
+            # Self-heal: a line belongs to the company of the container it hangs off,
+            # and an earlier company-less write may have stamped it with the incumbent
+            # company instead. Put it back, or the next scoped read loses it again.
+            if shipment.company_id and line.company_id != shipment.company_id:
+                line.company_id = shipment.company_id
             alloc = spo_by_product.get(str(line.product_id), 0)
             recv = received_by_product.get(str(line.product_id), 0)
             line.spo_allocated_quantity = alloc
@@ -1051,17 +1084,11 @@ class InboundShipmentService:
             line.line_status = compute_inbound_shipment_line_status(
                 line.quantity_shipped or 0, alloc, recv
             )
-        shipment = (
-            self.db.query(InboundShipment)
-            .filter(InboundShipment.id == shipment_id)
-            .first()
-        )
-        if shipment:
-            all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
-            if all_lines_received:
-                shipment.shipment_status = "fully_received"
-            elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
-                shipment.shipment_status = "in_transit"
+        all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
+        if all_lines_received:
+            shipment.shipment_status = "fully_received"
+        elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
+            shipment.shipment_status = "in_transit"
         self.db.commit()
 
     def _derive_header_supplier(
@@ -1206,7 +1233,11 @@ class InboundShipmentService:
                 if value is not None:
                     setattr(line, field, value)
         for d in inserts:
-            self.db.add(InboundShipmentLine(**d, shipment_id=shipment.id))
+            self.db.add(
+                InboundShipmentLine(
+                    **d, shipment_id=shipment.id, **_line_company_kwargs(shipment)
+                )
+            )
         self.db.flush()
 
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
@@ -1306,7 +1337,9 @@ class InboundShipmentService:
                 self.db.delete(line)
             self.db.flush()
             for d in merged_lines:
-                line = InboundShipmentLine(**d, shipment_id=existing.id)
+                line = InboundShipmentLine(
+                    **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                )
                 self.db.add(line)
             self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
@@ -1324,15 +1357,19 @@ class InboundShipmentService:
         shipment_dict["created_by"] = created_by
         shipment = InboundShipment(**shipment_dict)
         self.db.add(shipment)
+        # Flushed before the lines are built, so the header's own auto-stamp has
+        # already run and `_line_company_kwargs` has a company to copy.
         self.db.flush()  # Get the ID
-        
+
         # Create lines if provided (one row per product PER SUPPLIER on this shipment;
         # duplicates within the payload are merged on that same pair)
         if shipment_data.shipment_lines:
             for d in _merge_shipment_lines(
                 shipment_data.shipment_lines, shipment_data.supplier_id
             ):
-                line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                line = InboundShipmentLine(
+                    **d, shipment_id=shipment.id, **_line_company_kwargs(shipment)
+                )
                 self.db.add(line)
             self.db.flush()
             self._derive_header_supplier(shipment, shipment_data.supplier_id)

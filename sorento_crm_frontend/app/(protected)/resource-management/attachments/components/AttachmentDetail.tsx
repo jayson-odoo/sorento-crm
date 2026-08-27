@@ -28,7 +28,7 @@ import {
 } from '../hooks/useAttachments';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
-import type { Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
@@ -370,6 +370,12 @@ export default function AttachmentDetail({
               <p className="text-sm text-muted-foreground">Uploaded By</p>
               <p className="font-medium">
                 {attachment.uploaded_by_user?.name ?? attachment.uploaded_by_user?.email ?? attachment.uploaded_by ?? '-'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Company</p>
+              <p className="font-medium">
+                {attachmentCompanyLabel(attachment)}
               </p>
             </div>
             <div>
