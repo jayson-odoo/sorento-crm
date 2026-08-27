@@ -660,6 +660,15 @@ export interface ContainerRequestSoLine {
   item_code: string | null;
   so_number: string | null;
   customer_label: string | null;
+  /** The project this order was published for. Null on a retail order, and on an adopted
+   *  project order, which carries no registration at all. */
+  project_title: string | null;
+  /** Who sold it: the person when the agent row names one, the AutoCount agent code when it
+   *  does not. Null when the order names no agent. */
+  agent_label: string | null;
+  /** What the customer pays for this line, in ringgit. Null when the sales book said nothing:
+   *  a price of 0 would claim the line was free. */
+  unit_price: number | null;
   demand_class: string | null;
   order_date: string | null;
   required_date: string | null;

@@ -1,91 +1,22 @@
 'use client';
 
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { monthLabel } from '../../components/PlanRowDialog';
+import { fmtInt } from '../../lib/format';
 import type {
   ContainerRequestHistoryProduct,
   ContainerRequestHistorySeries,
 } from '../../services/fulfilmentService';
 
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-/** `2026-04` reads `Apr 26`. The bucket is a month, so it is never rendered as a date. */
-export function monthLabel(month: string | null): string {
-  if (!month) return EM_DASH;
-  const [year, m] = month.split('-');
-  const name = MONTHS[Number(m) - 1];
-  if (!name || !year) return month;
-  return `${name} ${year.slice(2)}`;
-}
+/** `2026-04` reads `Apr 26`. One definition, shared with the lightbox that prints the same
+ *  twelve buckets - re-exported because this file's own bars and its test both name it here. */
+export { monthLabel };
 
 /** Project is the channel this business plans around; retail is read beside it, never instead. */
 const SERIES_PAINT = {
   project: { bar: 'bg-sky-500', text: 'text-sky-700' },
   retail: { bar: 'bg-slate-400', text: 'text-slate-600' },
 } as const;
-
-/**
- * The grid cell, one per series (captain, 27 Aug): the peak month and its quantity, and a
- * click opens that series' twelve bars. Peak, not total, because the question is "how big
- * does this product get in a month" (AC-B6); the trend is one click away rather than crammed
- * beside the figure.
- */
-export function ContainerRequestHistoryPeakCell({
-  history,
-  loading,
-  kind,
-}: {
-  history: ContainerRequestHistoryProduct | undefined;
-  loading: boolean;
-  kind: 'project' | 'retail';
-}) {
-  if (loading && !history) {
-    return <span className="text-2xs text-muted-foreground">Loading</span>;
-  }
-  if (!history) return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
-  const series = history[kind];
-  if (series.total === 0 || !series.peak_month) {
-    return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
-  }
-  const label = kind === 'project' ? 'Project' : 'Retail';
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          title={`${label} ordered, last 12 months`}
-          className={cn(
-            'inline-flex items-baseline gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-            SERIES_PAINT[kind].text,
-          )}
-        >
-          <span>{fmtInt(series.peak_qty)}</span>
-          <span className="text-2xs text-muted-foreground">{monthLabel(series.peak_month)}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent className="w-[26rem]" align="end">
-          <p className="mb-2 text-xs font-medium">{label} ordered qty (SO booked), last 12 months</p>
-          <SeriesBars series={series} kind={kind} />
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-}
 
 function SeriesBars({
   series,

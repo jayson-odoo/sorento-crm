@@ -1,12 +1,8 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
-import {
-  ContainerRequestHistoryBars,
-  ContainerRequestHistoryPeakCell,
-  monthLabel,
-} from './ContainerRequestHistory';
+import { ContainerRequestHistoryBars, monthLabel } from './ContainerRequestHistory';
 import type {
   ContainerRequestHistoryProduct,
   ContainerRequestHistorySeries,
@@ -53,47 +49,6 @@ describe('monthLabel', () => {
   it('reads a month as a month, never as a date', () => {
     expect(monthLabel('2026-04')).toBe('Apr 26');
     expect(monthLabel(null)).toBe('-');
-  });
-});
-
-describe('ContainerRequestHistoryPeakCell', () => {
-  it('names the peak month and quantity per series, and opens that series on click (AC-B6)', async () => {
-    render(
-      <>
-        <ContainerRequestHistoryPeakCell history={history()} loading={false} kind="project" />
-        <ContainerRequestHistoryPeakCell history={history()} loading={false} kind="retail" />
-      </>,
-    );
-
-    const project = screen.getByTitle('Project ordered, last 12 months');
-    expect(project).toHaveTextContent('1,240');
-    expect(project).toHaveTextContent('Apr 26');
-    const retail = screen.getByTitle('Retail ordered, last 12 months');
-    expect(retail).toHaveTextContent('320');
-    expect(retail).toHaveTextContent('Jun 26');
-
-    fireEvent.click(project);
-    expect(await screen.findByTestId('history-series-project')).toBeInTheDocument();
-    expect(screen.queryByTestId('history-series-retail')).not.toBeInTheDocument();
-  });
-
-  it('reads a dash when the series has no orders in twelve months', () => {
-    render(
-      <ContainerRequestHistoryPeakCell
-        history={history({ project: series(null, 0) })}
-        loading={false}
-        kind="project"
-      />,
-    );
-
-    expect(screen.getByText('-')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
-  });
-
-  it('shows the sidecar is still coming rather than an empty answer', () => {
-    render(<ContainerRequestHistoryPeakCell history={undefined} loading kind="project" />);
-
-    expect(screen.getByText('Loading')).toBeInTheDocument();
   });
 });
 

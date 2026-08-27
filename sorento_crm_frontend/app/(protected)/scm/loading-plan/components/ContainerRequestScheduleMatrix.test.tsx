@@ -1,8 +1,8 @@
 /**
  * `ContainerRequestScheduleMatrix` (6b.2): the product/SO axis by day/week/month bucket, over
- * the container request's own SO lines. Each cell is its own drill trigger
- * (`SoLinesDrillPopover`) - the same component the Open SOs column drill uses - so the matrix
- * and the popover can never disagree about what a cell is made of.
+ * the container request's own SO lines. A cell opens the lines behind it in a dialog (S2 R7),
+ * built from the cell's OWN `lines`, so the matrix and the lightbox can never disagree about
+ * what a cell is made of.
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
@@ -33,6 +33,9 @@ function soLine(over: Partial<ContainerRequestSoLine> = {}): ContainerRequestSoL
     item_code: 'ITEM-1',
     so_number: 'SO-1',
     customer_label: 'Acme Sdn Bhd',
+    project_title: null,
+    agent_label: null,
+    unit_price: null,
     demand_class: 'project',
     order_date: '2026-08-01',
     required_date: '2026-08-19',
@@ -100,27 +103,28 @@ describe('ContainerRequestScheduleMatrix - render', () => {
   });
 });
 
-describe('ContainerRequestScheduleMatrix - cell click opens the SO-lines drill popover', () => {
-  it('clicking a cell opens a popover listing exactly the lines behind it', () => {
+describe('ContainerRequestScheduleMatrix - cell click opens the SO-lines lightbox', () => {
+  it('clicking a cell opens a dialog listing exactly the lines behind it', () => {
     const a = soLine({ so_number: 'SO-A', required_date: '2026-08-17', qty: 6 });
     const b = soLine({ so_number: 'SO-B', required_date: '2026-08-19', qty: 4 });
     renderMatrix([a, b]);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(screen.getByText('2 SO lines')).toBeInTheDocument();
-    expect(screen.getByText('SO-A')).toBeInTheDocument();
-    expect(screen.getByText('SO-B')).toBeInTheDocument();
-    expect(screen.getAllByText('Acme Sdn Bhd')).toHaveLength(2);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('2 SO lines')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-A')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-B')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('Acme Sdn Bhd')).toHaveLength(2);
   });
 
-  it('the popover title names the row and bucket the cell belongs to', () => {
+  it('the dialog title names the row and bucket the cell belongs to', () => {
     const a = soLine({ item_code: 'ITEM-1', required_date: '2026-08-19' });
     renderMatrix([a]);
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(screen.getByText(/ITEM-1 - 17 Aug 2026/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent(/ITEM-1 · 17 Aug 2026/);
   });
 
   it('an empty request (no lines at all) renders no rows and no clickable cells', () => {

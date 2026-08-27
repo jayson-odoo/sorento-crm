@@ -13,7 +13,12 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ContainerRequestRow, ContainerRequestSources } from '../../services/fulfilmentService';
+import type {
+  ContainerRequestHistoryProduct,
+  ContainerRequestRow,
+  ContainerRequestSoLine,
+  ContainerRequestSources,
+} from '../../services/fulfilmentService';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -69,6 +74,32 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// The lightbox's own data hooks (S2 R7): every drill is one query per open dialog, so a test
+// about WHICH dialog a figure opens states what came back rather than waiting on react-query.
+const useContainerRequestDrill = vi.fn();
+vi.mock('../../hooks/useContainerRequestDrill', () => ({
+  useContainerRequestDrill: (...a: unknown[]) => useContainerRequestDrill(...a),
+}));
+
+const useLocationStock = vi.fn();
+vi.mock('../../reorder/hooks/useReorderRun', () => ({
+  useLocationStock: (...a: unknown[]) => useLocationStock(...a),
+}));
+
+vi.mock('../../../project-sales/fulfilment-planning/components/StockDocumentsPanel', () => ({
+  StockDocumentsPanel: ({ locationCode }: { locationCode: string }) => (
+    <div data-testid="stock-documents">{`documents for ${locationCode}`}</div>
+  ),
+}));
+
+// Partial: `DataGrid` itself reads `usePathname` for its listing key, so replacing the whole
+// module would blank the grid this suite is about.
+const routerPush = vi.fn();
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  useRouter: () => ({ push: routerPush }),
+}));
+
 // Amended contract (PLAN-scm-loading-plan-demand-first.md section 4, 20 Aug): `not_on_stock_list`
 // is gone (the row scope now covers the whole stock list, `has_demand` per row instead), and a
 // `sources` block carries the per-document freshness stamp the section's own strip reads.
@@ -94,7 +125,7 @@ const state = {
           stock_list_as_of: string | null;
           rows: ContainerRequestRow[];
           sources: typeof EMPTY_SOURCES;
-          lines?: never[];
+          lines?: ContainerRequestSoLine[];
         }
       | undefined,
     isFetching: false,
@@ -106,6 +137,10 @@ const state = {
     isError: false,
     error: null as Error | null,
   },
+  history: { data: undefined, isFetching: false } as {
+    data: { products: ContainerRequestHistoryProduct[] } | undefined;
+    isFetching: boolean;
+  },
   notices: [] as unknown[],
   download: vi.fn(),
 };
@@ -113,8 +148,9 @@ const state = {
 vi.mock('../../hooks/useFulfilment', () => ({
   useContainerRequestBuild: () => state.build,
   // The sales-history sidecar (F3) is its own query, off by default here: this suite is about
-  // the request table, and `ContainerRequestHistory.test.tsx` owns the series itself.
-  useContainerRequestHistory: () => ({ data: undefined, isFetching: false }),
+  // the request table, and `ContainerRequestHistory.test.tsx` owns the series itself. The two
+  // peak columns need it, so a test that opens one states its own series.
+  useContainerRequestHistory: () => state.history,
   useSendContainerRequest: () => state.send,
   useSupplierNotices: () => ({ data: state.notices }),
   useDownloadContainerRequestDocument: () => ({
@@ -225,7 +261,16 @@ beforeEach(() => {
     refetch: vi.fn(),
   };
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
+  state.history = { data: undefined, isFetching: false };
   state.notices = [];
+  useContainerRequestDrill.mockReset();
+  useContainerRequestDrill.mockReturnValue({
+    data: { rows: [], total: 0, history: [] },
+    isLoading: false,
+  });
+  useLocationStock.mockReset();
+  useLocationStock.mockReturnValue({ data: undefined, isLoading: false });
+  routerPush.mockReset();
   state.download = vi.fn();
   onQtyChange.mockReset();
   getNoticeDocumentUrlMock.mockReset();
@@ -510,6 +555,295 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.queryByRole('button', { name: /send to supplier/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Plan actions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('ContainerRequestSection - the eight figures open the shared lightbox (AC-B1-B7)', () => {
+  function soLine(over: Partial<ContainerRequestSoLine> = {}): ContainerRequestSoLine {
+    return {
+      product_id: 'p1',
+      item_code: 'ITEM-1',
+      so_number: 'SO-1',
+      customer_label: 'Acme Sdn Bhd',
+      project_title: null,
+      agent_label: null,
+      unit_price: null,
+      demand_class: 'project',
+      order_date: '2026-05-01',
+      required_date: '2026-08-19',
+      qty: 6,
+      ...over,
+    };
+  }
+
+  function series(peakMonth: string | null, peakQty: number) {
+    const months = ['2026-06', '2026-07'].map((month) => ({
+      month,
+      qty: month === peakMonth ? peakQty : 0,
+    }));
+    return { months, total: peakQty, avg: peakQty / 2, peak_month: peakMonth, peak_qty: peakQty };
+  }
+
+  function withHistory() {
+    state.history = {
+      data: {
+        products: [
+          {
+            product_id: 'p1',
+            project: series('2026-06', 1240),
+            retail: series('2026-07', 320),
+          } as ContainerRequestHistoryProduct,
+        ],
+      },
+      isFetching: false,
+    };
+  }
+
+  function openFigure(name: RegExp | string) {
+    fireEvent.click(screen.getByRole('button', { name }));
+    return screen.getByRole('dialog');
+  }
+
+  beforeEach(() => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ on_hand: 40, incoming_spo: 117, incoming_pl: 25, outstanding_po: 60 })],
+      sources: EMPTY_SOURCES,
+      lines: [
+        soLine({
+          so_number: 'SO-PROJ',
+          demand_class: 'project',
+          qty: 6,
+          project_title: 'Tuju Residence',
+          agent_label: 'Wong Mei Ling',
+          unit_price: 12.5,
+        }),
+        soLine({ so_number: 'SO-RET', demand_class: 'retail', qty: 4 }),
+      ],
+    };
+  });
+
+  it('the Project figure opens the project lines, with the seven columns and a footing total', () => {
+    renderSection();
+
+    const dialog = openFigure('Open project sales orders');
+
+    expect(dialog).toHaveTextContent('Project · ITEM-1');
+    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Qty', 'Required']) {
+      expect(within(dialog).getByText(header)).toBeInTheDocument();
+    }
+    expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();
+    expect(within(dialog).getByText('Tuju Residence')).toBeInTheDocument();
+    expect(within(dialog).getByText('Wong Mei Ling')).toBeInTheDocument();
+    // AC-B2: the total foots to the cell, which is the row's own project_qty.
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('6');
+    // The retail line is on the other channel's dialog, never on this one.
+    expect(within(dialog).queryByText('SO-RET')).not.toBeInTheDocument();
+  });
+
+  it('the Retail figure opens the retail lines, and its total is the retail cell', () => {
+    renderSection();
+
+    const dialog = openFigure('Open retail sales orders');
+
+    expect(dialog).toHaveTextContent('Retail · ITEM-1');
+    expect(within(dialog).getByText('SO-RET')).toBeInTheDocument();
+    expect(within(dialog).queryByText('SO-PROJ')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('4');
+  });
+
+  it('the On hand figure opens the location table, pools only, footing to the cell (AC-B3)', () => {
+    useLocationStock.mockReturnValue({
+      data: {
+        as_of: '2026-08-27T10:00:00',
+        locations: [
+          {
+            warehouse_id: 'w1',
+            warehouse_code: 'BRW',
+            is_pool: true,
+            on_hand: 40,
+            reserved: 5,
+            free: 35,
+            so_qty: 10,
+            spo_qty: 2,
+            available: 25,
+          },
+          {
+            warehouse_id: 'w2',
+            warehouse_code: 'PROJ-BIN',
+            is_pool: false,
+            on_hand: 999,
+            reserved: 0,
+            free: 999,
+            so_qty: 0,
+            spo_qty: 0,
+            available: 999,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Stock by location');
+
+    expect(dialog).toHaveTextContent('On hand · ITEM-1');
+    expect(within(dialog).getByText('BRW')).toBeInTheDocument();
+    expect(within(dialog).queryByText('PROJ-BIN')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Site pools').closest('tr')).toHaveTextContent('40');
+  });
+
+  it('the SPO figure opens the shipping orders on their way to a pool (AC-B4)', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            spo_number: 'SPO-9',
+            shipment_id: 's1',
+            shipment_number: 'PL-2608-001',
+            warehouse_code: 'BRW',
+            qty: 117,
+            received: 0,
+            eta: '2026-09-10',
+            status: 'In transit',
+          },
+        ],
+        total: 117,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Shipping orders on their way to a site pool');
+
+    expect(dialog).toHaveTextContent('SPO · ITEM-1');
+    expect(within(dialog).getByText('SPO-9')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('117');
+  });
+
+  it('the Incoming PL figure opens the packing lists, and one opens the packing list itself', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            shipment_id: 'ship-7',
+            shipment_number: 'PL-2608-004',
+            container_number: 'FSCU8103365',
+            supplier_name: 'Foshan Ceramics',
+            qty: 25,
+            eta: '2026-09-02',
+            status: 'In transit',
+          },
+        ],
+        total: 25,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Packing lists on their way, reference only');
+
+    expect(dialog).toHaveTextContent('Incoming PL · ITEM-1');
+    expect(within(dialog).getByText('FSCU8103365')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('25');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'PL-2608-004' }));
+    expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/ship-7');
+  });
+
+  it('the PO figure opens the purchase orders still to come', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            purchase_order_id: 'po1',
+            po_number: 'PO-77',
+            supplier_name: 'Foshan Ceramics',
+            qty_ordered: 100,
+            still_to_come: 60,
+            unit_price: null,
+            currency: null,
+            issued: '2026-06-01',
+            eta: '2026-09-20',
+            status: 'Open',
+          },
+        ],
+        total: 60,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Purchase orders still to come, reference only');
+
+    expect(dialog).toHaveTextContent('PO · ITEM-1');
+    expect(within(dialog).getByText('PO-77')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total still to come').closest('tr')).toHaveTextContent('60');
+  });
+
+  it('a peak figure opens its channel dialog on the 12-month tab, focused on that series (AC-B6)', () => {
+    withHistory();
+    renderSection();
+
+    // The cell states the peak and the month it fell in.
+    const peak = screen.getByRole('button', { name: 'Project ordered, last 12 months' });
+    expect(peak).toHaveTextContent('1,240');
+    expect(peak).toHaveTextContent('Jun 26');
+
+    fireEvent.click(peak);
+    const dialog = screen.getByRole('dialog');
+
+    expect(dialog).toHaveTextContent('Project · ITEM-1');
+    // Landed ON the history tab, not the open one.
+    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+    expect(within(dialog).getByText('Project peak 1,240 Jun 26')).toBeInTheDocument();
+    expect(within(dialog).getByText('Retail peak 320 Jul 26')).toBeInTheDocument();
+  });
+
+  it('the Retail peak opens the retail dialog on the same tab', () => {
+    withHistory();
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retail ordered, last 12 months' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Retail · ITEM-1');
+    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('Escape closes the lightbox (AC-B1)', async () => {
+    renderSection();
+    openFigure('Open project sales orders');
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('a channel figure with nothing behind it is plain text, not a dead trigger', () => {
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [row({ project_qty: 0, retail_qty: 0 })],
+      sources: EMPTY_SOURCES,
+      lines: [],
+    };
+    renderSection();
+
+    expect(
+      screen.queryByRole('button', { name: 'Open project sales orders' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Open retail sales orders' }),
+    ).not.toBeInTheDocument();
   });
 });
 
