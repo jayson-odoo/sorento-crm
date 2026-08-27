@@ -93,9 +93,10 @@ vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentSe
   getAttachmentPreviewUrl: vi.fn(),
 }));
 
-const downloadWorkbook = vi.fn(async () => undefined);
+const downloadWorkbook = vi.fn(async (_id: string, _fallback?: string | null) => undefined);
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
-  downloadPackingListExport: (...a: unknown[]) => downloadWorkbook(...a),
+  downloadPackingListExport: (id: string, fallback?: string | null) =>
+    downloadWorkbook(id, fallback),
 }));
 
 vi.mock('../components/PackingListNavigation', () => ({ default: () => null }));
