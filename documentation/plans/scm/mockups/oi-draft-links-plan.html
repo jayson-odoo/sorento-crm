@@ -1,0 +1,133 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Order Inquiries: draft links up front, one Confirm</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+*,*::before,*::after{box-sizing:border-box}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}.warn{background:#fffbeb;border-color:#fcd34d}.bad{background:#fff1f2;border-color:#fecdd3}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}.badge.v{background:#f5f3ff;border-color:#ddd6fe;color:var(--vio)}
+.mock{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;margin:8px 0;font-size:12px;overflow-x:auto;min-width:0}
+.mock table{font-size:12px}.mock th{font-weight:500;color:var(--mut);white-space:nowrap;background:#fafaf9}.mock td{white-space:nowrap}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}.three{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px}
+.two>*,.three>*{min-width:0}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.btn{display:inline-block;font-size:12px;padding:5px 11px;border:1px solid #d6d3d1;border-radius:7px;background:#fff;margin-right:6px;white-space:nowrap}.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 0}
+.menu{border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;display:inline-block;font-size:12px;vertical-align:top;margin-left:8px}
+.menu div{padding:4px 10px;border-radius:5px}.menu div.dim{color:var(--mut)}
+.note{font-size:12px;color:var(--mut)}
+ol,ul{margin:6px 0 6px 20px}li{margin:3px 0}
+code{font-size:12px;background:#f5f5f4;padding:1px 4px;border-radius:4px}
+.bar{height:4px;border-radius:2px;width:120px;display:inline-block}
+.bar.spo{background:var(--vio)}.bar.po{background:var(--sky)}.bar.none{background:#fda4af;opacity:.7}
+.kind{font-size:9px;border:1px solid var(--line);background:#f5f5f4;border-radius:3px;padding:0 3px;color:var(--mut);margin-right:4px}
+.doc{color:var(--pri);text-decoration:underline}
+.draft{display:inline-block;width:11px;height:11px;border:1.5px dashed #a8a29e;border-radius:50%;vertical-align:-1px;margin-right:4px}
+.conf{color:var(--em);font-weight:700;margin-right:4px}
+img.shot{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px}
+form.q{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0}
+form.q label{display:block;margin:3px 0;font-size:13px}
+form.q button{font-size:12px;padding:4px 10px;border:1px solid #d6d3d1;border-radius:6px;background:#f5f5f4;margin-top:6px;cursor:pointer}
+.lightbox{border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);background:#fff;padding:16px;max-width:620px;font-size:12px}
+.lightbox h4{margin:0 0 8px;font-size:14px}
+</style></head><body>
+<h1>Order Inquiries: PO / SPO found up front, one Confirm, Outstanding PO/SPO</h1>
+<div class="sub">Plan <code>documentation/plans/scm/PLAN-scm-oi-draft-links.md</code> · UAC alongside · 27 Aug 2026 · Status: PLANNED r3, R1 to R11 ruled, ready for a lane + go · Page <code>/project-sales/order-inquiries</code></div>
+
+<div class="three">
+<div class="card"><b>Journey</b>CS confirms on the board → rows land here with the PO / SPO already found and shown as a <span class="draft"></span>draft → purchasing opens the page as a to-do list (To confirm only), ticks, presses <b style="display:inline">Confirm</b> → link and allocation become real.</div>
+<div class="card warn"><b>What today does instead</b>Handshake (27 Aug) ruled NO cascade at board confirm. Rows arrive Not linked; links appear only when Acknowledge is pressed. So the buyer confirms blind, then sees what was taken.</div>
+<div class="card ruled"><b>Simplest model</b>No new column. A link is a <b style="display:inline">draft</b> while its row is <code>awaiting</code> / <code>changed</code>, <b style="display:inline">confirmed</b> once the row is <code>acknowledged</code>. Confirm = today's acknowledge; Reject also drops the row's links.</div>
+</div>
+
+<h2>1. Findings from the code and the dev DB</h2>
+<table>
+<tr><th style="width:26%">Ask</th><th>Verified cause</th><th style="width:22%">Fix</th></tr>
+<tr><td>SPO shows <code>L14 1</code>, <code>L1 5, L13 10</code>, not BRW</td><td><code>orderInquiryWorklist.ts:138</code> prints <code>line_label || location</code>; BE <code>_line_label</code> = <code>L{spo_line_number}</code>, and every SPO allocation has a line number since migration 420, so location never wins. Dev DB: SPO-2026/08-0015's 62 allocations ALL carry warehouses (BRW 16, BRW-BB 23, BRW-NTC 9 ...). <b style="display:inline">Display defect, data fine.</b> Second gap: the banded history book has no location column (5,237 lines with <code>warehouse_id</code> NULL).</td><td>location first, line label into the title; fall back to raw <code>location_code</code>, else "no location"</td></tr>
+<tr><td>Is SPO read from <code>spo_allocations</code>? Purchase upload blocks SPO</td><td>Cascade reads <code>spo_allocations</code> open lines: correct. But the <b style="display:inline">outstanding PO book SKIPS</b> <code>SPO-</code> rows ("N rows are shipping orders (SPO), which this book does not carry"), and the <b style="display:inline">history book writes them CLOSED</b> (<code>fully_received</code>). Nothing on this page can create an OPEN SPO line; the only open ones came from the external API and the 52 <code>scm_upload</code> docs migration 420 moved.</td><td>R4: outstanding book intakes SPO rows as open allocations; absent from the next book = closed</td></tr>
+<tr><td>"arrives late" → late by N days</td><td><code>link.late</code> is a boolean (<code>expected_date &gt; row.delivery_date</code>)</td><td><code>late_days</code> on the wire, badge "late 12 d"</td></tr>
+<tr><td>Ugly popup on the PO number</td><td><code>OrderInquiryPoDetailPopover</code>: Radix Popover, 520px, clipped by the grid; PO only, SPO has no link at all</td><td>one Dialog lightbox for PO and SPO; popover deleted</td></tr>
+<tr><td>Toolbar wraps to two rows</td><td>Right cluster = Actions + Link up to + Upload + Acknowledge; the shared toolbar has no second-row slot, Columns + refresh wrap under</td><td>Right cluster = Actions ▾ + Start ▾ only</td></tr>
+<tr><td>No default filter</td><td><code>?ack=</code> honoured only when present; list opens on everything (dev DB: 24 acknowledged+placed, 22 acknowledged+raised, 7 awaiting)</td><td>default <code>?ack=to_confirm</code> with the chip visible</td></tr>
+<tr><td>Bulk reject</td><td>reject is per row only; refuses a fully linked row</td><td>batch endpoint, one reason; accepts placed rows, unlinks first</td></tr>
+</table>
+
+<h2>2. Toolbar <span class="badge">FE</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p><img class="shot" src="oi-today-toolbar.png" alt="today's toolbar"></div>
+<div><p class="lbl">Proposed, one row</p>
+<div class="mock"><div class="toolbar"><span>🔍 Search · ⚑ Filters · ▤ Columns · ↻</span><span><span class="btn">⋯ Actions ▾</span><span class="btn p">▶ Start ▾</span></span></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><div class="menu"><div>🔗 Auto link all… <span class="note">(Purchase order cut off date)</span></div><div class="dim">Link selected (1 row only)</div><div>⛓ Unlink selected (2)</div><div>⊘ Reject selected (2)</div><div>Unlink all…</div><div>Export Excel</div></div><div class="menu"><div>⬆ Upload purchase orders</div><div style="color:var(--pri);font-weight:600">✓ Confirm selected (2)</div></div></div>
+<div class="note" style="margin-top:6px">Selection strip keeps "N selected · Clear" only. The date lives inside the Auto link all dialog as "Purchase order cut off" (same defaults: URL, browser, plan horizon). Row Actions column removed (R8): Link selected with one row ticked is the manual override.</div>
+</div></div>
+
+<h2>3. Columns <span class="badge">FE + BE</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p><img class="shot" src="oi-today-columns.png" alt="today's columns"></div>
+<div><p class="lbl">Proposed</p>
+<div class="mock"><table>
+<tr><th>Item code</th><th>Qty</th><th>Location</th><th>Outstanding PO/SPO</th><th>Taken by PO/SPO</th><th>Instruction</th><th>Confirmed</th></tr>
+<tr><td>SRTWT7445-LV-NEW</td><td>1</td><td>BRW-BB</td><td><span class="note">Not found (new order)</span><br><span class="bar none"></span></td><td>0</td><td><span class="badge a">ORDER</span></td><td><span class="badge a">To confirm</span></td></tr>
+<tr><td>SRT359C</td><td>2</td><td>BRW-AM</td><td><span class="draft"></span>2 of 2<br><span class="bar po"></span><br><span class="kind">PO</span><span class="doc">202607-S0044</span> BRW 2 <span class="badge a">late 61 d</span></td><td>2</td><td><span class="badge a">ORDER</span></td><td><span class="badge a">To confirm</span></td></tr>
+<tr><td>SRTSC07</td><td>1</td><td>BRW-NTC</td><td><span class="draft"></span>1 of 1<br><span class="bar spo"></span><br><span class="kind">SPO</span><span class="doc">SPO-2026/08-0015</span> BRW 1 <span class="badge a">late 12 d</span></td><td>1</td><td><span class="badge a">ORDER BACK</span></td><td><span class="badge a">To confirm</span></td></tr>
+<tr><td>SRTWCX8608-RL</td><td>15</td><td>DC1-NTC</td><td><span class="conf">✓</span>15 of 15<br><span class="bar spo"></span><br><span class="kind">SPO</span><span class="doc">SPO-2026/08-0074</span> BRW 5, BRW-IB 10</td><td>15</td><td><span class="badge a">ORDER BACK</span></td><td><span class="badge g">Confirmed</span><br><span class="note">Jayson Personal 27/08, 4:46 pm</span></td></tr>
+</table></div>
+<div class="note">Draft <span class="draft"></span> title "Draft, confirm to allocate"; confirmed <span class="conf">✓</span> title "Confirmed by name, date". State column and its filter removed. Linked filter reads Found / Not found. Row Actions column removed (R8).</div>
+</div></div>
+
+<h2>4. Lightbox <span class="badge">FE + BE</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p><img class="shot" src="oi-today-popover.png" alt="today's popover"></div>
+<div><p class="lbl">Proposed: one Dialog for PO and SPO</p>
+<div class="lightbox"><h4><span class="kind">SPO</span>SPO-2026/08-0015 <span class="note">· ETA 15/09/2026 · container MSKU 482 (when a shipment exists)</span> <span style="float:right" class="doc">Open document ↗</span></h4>
+<table><tr><th>SKU</th><th>Allocated</th><th>Received</th><th>Remaining</th><th>Location</th></tr>
+<tr><td>SRTSC07</td><td>4</td><td>0</td><td>4</td><td>BRW</td></tr><tr><td>CB313</td><td>2647</td><td>0</td><td>2647</td><td>BRW</td></tr><tr><td>CB313</td><td>104</td><td>0</td><td>104</td><td>MWH</td></tr></table>
+<p class="lbl" style="margin-top:10px">Allocated to</p>
+<table><tr><th>Inquiry</th><th>SO</th><th>Item</th><th>Qty</th><th></th></tr><tr><td>OI-000014</td><td>SO404352</td><td>SRTSC07</td><td>1</td><td><span class="badge">Proposed</span></td></tr><tr><td>OI-000011</td><td>SO407735</td><td>CB313</td><td>12</td><td><span class="badge g">Confirmed</span></td></tr></table>
+</div>
+<div class="note">PO: today's <code>GET /order-inquiries/po/{id}</code> + allocations. SPO: new <code>GET /order-inquiries/spo/{spo_number}</code>. Scrolls inside itself, Escape closes, 375-safe. SPO lines are always at a pool (BRW, MWH).</div>
+</div></div>
+
+<h2>5. Behaviour</h2>
+<table>
+<tr><th style="width:28%">Event</th><th>Effect</th></tr>
+<tr><td>Board Confirm / OI form import / planning-change apply</td><td>rows raised <code>awaiting</code> AND the cascade runs for them at once (<code>trigger="raise"</code>), from the seam <code>project_supply_service.py:3188</code> the handshake left dormant. Plan horizon by default, no prompt on the board.</td></tr>
+<tr><td>Confirm (N)</td><td>= today's <code>acknowledge_rows</code>: stamp, then cascade fills any unlinked remainder. Draft links need no write.</td></tr>
+<tr><td>Reject / Reject selected (N)</td><td>one reason for the batch; per row: unplace every link (PO qty freed), <code>rejected</code>, board line uncovered as today. Accepts fully linked rows.</td></tr>
+<tr><td>Auto link all / Link now / PO-confirm cascade / fresh raise</td><td>may UNPLACE and re-deal DRAFT links (rows not acknowledged) so a nearer document from a new book takes over; a confirmed row's links are never touched by anything automatic.</td></tr>
+<tr><td>CS amends a confirmed row</td><td>unchanged: settle-in-place, links kept, <code>changed</code>; reads as draft again, so the buyer looks again.</td></tr>
+<tr><td>Do drafts occupy PO quantity?</td><td>YES in <code>_candidates_for_row</code> (unchanged: remaining = ordered - received - other links). Two drafts never point at the same unit; Confirm can never fail for quantity. PO page Allocated to shows Proposed / Confirmed.</td></tr>
+<tr><td>Plan demand / committed_v</td><td>unchanged: acknowledged + changed unlinked remainder; awaiting = chip "N to confirm".</td></tr>
+</table>
+
+<h2>6. SPO intake from the outstanding PO book <span class="badge">BE</span></h2>
+<div class="card">Reader stops skipping <code>FAMILY_SPO</code> rows. Writer upserts <code>spo_allocations</code> on <code>(company, spo_number, spo_line_number)</code>: <code>line_status open</code>, received from the book, warehouse by code, raw <code>location_code</code> kept, <code>source_system scm_upload</code>. SPO lines of <code>scm_upload</code> docs absent from the re-uploaded book are closed (trust the book, 26 Aug stale-SPO ruling). Test result and summary report SPO documents / lines / unknown locations. History book untouched (stays closed history). No migration: 420 already made shipment and warehouse nullable and added <code>location_code</code>.</div>
+
+<h2>7. Rulings (27 Aug, Lavish)</h2>
+<table>
+<tr><th>#</th><th>Ruling</th></tr>
+<tr><td>R1</td><td>Draft derived from the row's <code>ack_state</code>, no link column</td></tr>
+<tr><td>R2</td><td>Re-deal drafts only; confirmed links never touched automatically</td></tr>
+<tr><td>R3</td><td>To confirm = awaiting + changed</td></tr>
+<tr><td>R4</td><td>Outstanding PO book intakes SPO rows as open allocations; absent next book = closed</td></tr>
+<tr><td>R5</td><td>SPO candidates for EVERY linkable row, SPO first then PO ("SPO link is always one")</td></tr>
+<tr><td>R6</td><td>Plan horizon at raise, no prompt</td></tr>
+<tr><td>R7</td><td>UI rename only</td></tr>
+<tr><td>R8 / R9</td><td>Row-level buttons dropped, bulk only; lightbox read-only</td></tr>
+<tr><td>notes</td><td>Start = Upload purchase orders + Confirm only · Auto link all date = "Purchase order cut off" · SPO always at a pool location (BRW, MWH)</td></tr>
+</table>
+<div class="card ruled"><b>R10 ruled: keep the history rows, no drop, no move.</b> Your concern (will production's <code>spo_allocations</code> fill with SPO rows out of <code>purchase_orders</code>): yes, that is migration 420's job. Dev copy measured 79,969 rows / 3,517 docs moved, all <code>closed</code> history except 52 open <code>scm_upload</code> docs (715 lines). Closed rows never reach the cascade or the Use SPO card; from now on R4 is what adds OPEN lines. 420 finished on prod (captain, 27 Aug). <b style="display:inline">420 MOVED, it did not copy:</b> dev copy holds 0 SPO documents in <code>purchase_orders</code> (5,238 rows, all PO). The only copy of the SPO history is now <code>spo_allocations</code>, with 12,392 claims hanging off it. Removing those rows = deleting the SPO history outright, not a duplicate.<br><br><b style="display:inline">Can they be deleted?</b> Yes, by a separate script with its own go, not in this PR. Cost: 74,016 lines of SPO receipt history per SKU / warehouse gone; the 12,392 claims survive (<code>ON DELETE SET NULL</code>) but lose their pointer. And it is pointless alone: the next "Upload purchase history" files every SPO row back into <code>spo_allocations</code> (<code>po_history_service._write_shipping_order</code>), so that channel would have to stop filing SPO too. Nothing on this page reads them either way. Recommend keep; your call, separate go.</div>
+<div class="card ruled"><b>R11 ruled: show every location, link only from POOL locations</b> (BRW, MWH, DC1, WH3, RSW). <code>_candidates_for_row</code>'s SPO side filters to the pool set; a non-pool SPO line is visible in the lightbox, never drafted.</div>
+<h2>8. Order of work (one PR, three phases)</h2>
+<ol>
+<li><b style="display:inline">Phase 1 FE vs mocks:</b> toolbar (Actions / Start), Outstanding PO/SPO column (draft icon, location, late N d, Not found), Confirmed column, State column + filter removed, default To confirm chip, lightbox PO + SPO, bulk reject dialog, Auto link all dialog with the date. Browser check 1280 + 375.</li>
+<li><b style="display:inline">Phase 2 BE test-first:</b> (a) <code>late_days</code> + SPO location fallback + <code>to_confirm</code>; (b) re-deal + raise-time cascade; (c) reject drops links + batch reject; (d) SPO intake from the outstanding book; (e) SPO detail + PO allocations on the detail. Then wire.</li>
+<li><b style="display:inline">Phase 3:</b> /code-review, DoD gate, browser evidence on SO404352 + SO381895.</li>
+</ol>
+<div class="card warn"><b>Risks</b>(1) The handshake test "board confirm links NOTHING" inverts on purpose. (2) Re-deal touches PO remaining while the buyer may be reading the page: the list refetches after every press, and confirmed links are immune. (3) Outstanding-book SPO closing rule can close an SPO line the external API opened if both feeds name the same SPO: scope the close to <code>source_system = scm_upload</code>. (4) Main has two alembic heads until #348's merge rev lands; this PR expects NO migration.</div>
+</body></html>
