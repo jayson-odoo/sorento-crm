@@ -333,15 +333,17 @@ function BoardCellButton({
         </span>
       ) : null}
 
-      {/* Purchasing refused an instruction for one of these lines (AC-H6). The line is
-          undecided again, and this is why. */}
+      {/* Purchasing refused an instruction for one of these lines (AC-RB1). A BADGE, with
+          the refusal in its title: the cell is 150px wide and the reason is a sentence, so
+          printed in full it was a truncated fragment of somebody's words. The word tells
+          CS to look; the hover tells them who and why. */}
       {rejected ? (
         <span
           data-testid="cell-rejected"
-          className="block truncate text-[11px] font-medium text-destructive"
+          className="inline-flex w-fit rounded bg-destructive/10 px-1 text-[10px] font-medium text-destructive"
           title={rejected}
         >
-          {rejected}
+          Rejected
         </span>
       ) : null}
 

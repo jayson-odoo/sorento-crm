@@ -27,6 +27,8 @@ export function OrderInquiryRowActions({
   linkCount = 0,
   poLabel,
   hasLinkCandidate = true,
+  deliveryDate,
+  linkUpTo,
 }: {
   rowId: string;
   verb: string;
@@ -47,6 +49,10 @@ export function OrderInquiryRowActions({
    * empty state.
    */
   hasLinkCandidate?: boolean;
+  /** When the row is due, and how far out this page links (AC-LH3). Passed straight
+   *  through to the dialog, which shows the date and flags a row that falls past it. */
+  deliveryDate?: string | null;
+  linkUpTo?: string | null;
 }) {
   const [linking, setLinking] = React.useState(false);
   const [unlinking, setUnlinking] = React.useState(false);
@@ -79,6 +85,8 @@ export function OrderInquiryRowActions({
           itemCode={itemCode}
           qty={qty}
           linkedQty={linkedQty}
+          deliveryDate={deliveryDate}
+          linkUpTo={linkUpTo}
           onDone={() => setLinking(false)}
         />
       )}

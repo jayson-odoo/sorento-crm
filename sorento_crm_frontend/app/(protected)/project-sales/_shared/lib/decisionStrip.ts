@@ -142,3 +142,25 @@ export function cellCarriesKind(
     contributionCarriesKind(contribution, draft[contribution.key] ?? null, kind),
   );
 }
+
+/**
+ * How many LINES purchasing has refused across the selection (AC-RB2).
+ *
+ * A refusal bounces the line back to CS, and until this it showed on the Order Inquiries
+ * page alone: CS found out by going to look. The strip carries the count so the bounce is
+ * visible from the board they already work on.
+ *
+ * Counted per LINE, keyed by the contribution's own draft key, because one line can appear
+ * in one cell only and a cell routinely holds several lines - a per-cell count would say
+ * "1 rejected" over a cell holding two refusals. The flag itself is the board's own
+ * (`order_inquiry.ack_state`), which the backend already clears once CS decides the line
+ * again, so this drops to zero the moment the refusal is answered.
+ */
+export function rejectedLineCount(contributions: BoardContribution[]): number {
+  const lines = new Set<string>();
+  for (const contribution of contributions) {
+    if (contribution.order_inquiry?.ack_state !== 'rejected') continue;
+    lines.add(contribution.key);
+  }
+  return lines.size;
+}

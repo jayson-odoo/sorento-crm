@@ -24,6 +24,7 @@ import {
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
+import { acknowledgeOutcomeText, linkOutcomeText } from '../lib/linkHorizon';
 import type {
   AutoPlaceRequest,
   OrderInquiryListParams,
@@ -275,10 +276,7 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
-      toast.success(
-        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
-          `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`,
-      );
+      toast.success(linkOutcomeText(result));
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -365,16 +363,14 @@ export function useOrderInquiryHandshake() {
   }
 
   const acknowledge = useMutation({
-    mutationFn: (rowIds: string[]) => acknowledgeOrderInquiryRows(rowIds),
+    // `linkUpTo` is the LINK HORIZON the cascade half of the press runs under (AC-LH1):
+    // every ticked row is taken on, and one due after that date is left Not linked and
+    // reported back as "N after <date>".
+    mutationFn: ({ rowIds, linkUpTo }: { rowIds: string[]; linkUpTo?: string }) =>
+      acknowledgeOrderInquiryRows(rowIds, linkUpTo),
     onSuccess: (result) => {
       invalidate();
-      const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
-      toast.success(
-        result.linked_rows > 0
-          ? `${rows} acknowledged, ${result.linked_rows} linked across ` +
-              `${result.links} document line${result.links === 1 ? '' : 's'}`
-          : `${rows} acknowledged`,
-      );
+      toast.success(acknowledgeOutcomeText(result));
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -395,12 +391,7 @@ export function useOrderInquiryHandshake() {
     mutationFn: (params: AutoPlaceRequest = {}) => linkNowOrderInquiryRows(params),
     onSuccess: (result) => {
       invalidate();
-      toast.success(
-        result.placed_rows > 0
-          ? `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
-              `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`
-          : 'Nothing new to link yet',
-      );
+      toast.success(linkOutcomeText(result));
     },
     onError: (error: Error) => toast.error(error.message),
   });

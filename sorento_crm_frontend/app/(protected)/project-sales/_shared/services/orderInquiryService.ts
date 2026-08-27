@@ -246,14 +246,20 @@ export async function autoPlaceOrderInquiryRows(
  * One press does two things because they are one decision: the rows become purchasing's
  * work, and the cascade runs for exactly them, so whatever open document can cover them
  * is linked at that moment. Nothing links before this.
+ *
+ * `linkUpTo` is how far out the linking half reaches (AC-LH1): every ticked row is taken
+ * on, and one due after that date is left Not linked and reported on `after_horizon`.
  */
 export async function acknowledgeOrderInquiryRows(
   rowIds: string[],
+  linkUpTo?: string,
 ): Promise<AcknowledgeResult> {
   const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row_ids: rowIds }),
+    body: JSON.stringify(
+      linkUpTo ? { row_ids: rowIds, link_up_to: linkUpTo } : { row_ids: rowIds },
+    ),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to acknowledge those rows'));

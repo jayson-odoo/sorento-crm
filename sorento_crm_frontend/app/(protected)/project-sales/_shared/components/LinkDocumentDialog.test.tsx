@@ -352,3 +352,69 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
     expect(screen.getByText('No price on file')).toBeInTheDocument();
   });
 });
+
+/**
+ * The LINK HORIZON in the dialog (AC-LH3, `PLAN-scm-oi-handshake.md` section 11).
+ *
+ * The same date the page's presses run to, shown at the top so a hand-made link is made
+ * against a known horizon rather than a guessed one - and a notice on a row that falls
+ * past it. Never a refusal: this dialog is override and audit, so a person who has looked
+ * at the line may still take it.
+ */
+describe('LinkDocumentDialog: the link horizon', () => {
+  it('AC-LH3: shows the horizon, and flags a row due after it while still allowing the take', async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+
+    renderDialog(
+      <LinkDocumentDialog
+        rowId="row-1"
+        itemCode="BASIN-001"
+        qty="15"
+        deliveryDate="2030-01-01"
+        linkUpTo="2026-12-31"
+        onDone={onDone}
+      />,
+    );
+
+    // The candidates first: the horizon renders straight away, so asserting on it alone
+    // would pass on a dialog that never loaded a line.
+    expect(await screen.findByTestId('po-candidates-table')).toBeInTheDocument();
+    expect(screen.getByTestId('link-dialog-horizon')).toHaveTextContent(
+      'Link up to 31/12/2026',
+    );
+    expect(screen.getByTestId('link-dialog-due-after')).toHaveTextContent(
+      'Due after 31/12/2026',
+    );
+    expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
+  });
+
+  it('AC-LH4: a row with no delivery date is inside the horizon, so no notice', async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+
+    renderDialog(
+      <LinkDocumentDialog
+        rowId="row-1"
+        itemCode="BASIN-001"
+        qty="15"
+        deliveryDate={null}
+        linkUpTo="2026-12-31"
+        onDone={onDone}
+      />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.getByTestId('link-dialog-horizon')).toBeInTheDocument();
+    expect(screen.queryByTestId('link-dialog-due-after')).toBeNull();
+  });
+
+  it('says nothing about a horizon when none is in force', async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="15" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.queryByTestId('link-dialog-horizon')).toBeNull();
+  });
+});
