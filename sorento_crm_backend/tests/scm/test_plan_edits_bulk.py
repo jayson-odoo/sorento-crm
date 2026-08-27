@@ -243,13 +243,6 @@ def test_a_level_edit_with_no_suggestion_422s_and_rolls_the_batch_back(db):
     assert moq is None, "the whole batch rolls back, including the row before the failure"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B1 guard: the 422 level_suggestion_service.amend_suggestion raises "
-           "('There is no suggestion to amend for this item.') carries no rec id, "
-           "product code or row identifier at all - a batch of several Level edits "
-           "gives the buyer no way to tell which row failed. Not fixed by this lane.",
-)
 def test_the_422_names_which_row_had_no_suggestion(db):
     plan, prod, recs = _plan(db, members=1)
 

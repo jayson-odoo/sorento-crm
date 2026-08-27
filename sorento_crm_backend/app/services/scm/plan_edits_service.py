@@ -155,14 +155,29 @@ def _apply_row(
     # fanned-out grouped row still writes the same product row several times with the same
     # value, which is idempotent by construction.
     if "level" in row:
-        level_suggestion_service.amend_suggestion(
-            db,
-            product_id=str(rec.product_id),
-            warehouse_id=(str(rec.warehouse_id) if rec.warehouse_id is not None else None),
-            amended_level=(None if row["level"] is None else float(row["level"])),
-            amended_by=actor,
-            commit=False,
-        )
+        try:
+            level_suggestion_service.amend_suggestion(
+                db,
+                product_id=str(rec.product_id),
+                warehouse_id=(str(rec.warehouse_id) if rec.warehouse_id is not None else None),
+                amended_level=(None if row["level"] is None else float(row["level"])),
+                amended_by=actor,
+                commit=False,
+            )
+        except AppException as err:
+            # A batch can hold many rows; a message that names no row leaves the buyer
+            # guessing which one to undo. Product code, never the id.
+            if err.status_code != 422:
+                raise
+            code = db.execute(
+                text("SELECT product_code FROM products WHERE id = :pid"),
+                {"pid": str(rec.product_id)},
+            ).scalar()
+            base = (err.detail or {}).get("message") if isinstance(err.detail, dict) else str(err.detail)
+            raise AppException(
+                status_code=422,
+                message=f"{base} ({code or 'row ' + str(rec.id)})",
+            ) from err
 
     if "reorder_qty" in row:
         reorder_level_service.set_reorder_qty(
