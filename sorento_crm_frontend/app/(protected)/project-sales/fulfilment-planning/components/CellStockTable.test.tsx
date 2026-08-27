@@ -402,7 +402,7 @@ describe('CellStockTable: the documents, expanded in place', () => {
       screen.getByRole('button', { name: 'Show documents behind BRW-BB' }),
     );
 
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', []));
     const expansion = await screen.findByTestId('stock-expansion-BRW-BB');
     expect(within(expansion).getByTestId('stock-documents-panel')).toBeInTheDocument();
     expect(await within(expansion).findByText('SO391698')).toBeInTheDocument();
@@ -431,7 +431,7 @@ describe('CellStockTable: the documents, expanded in place', () => {
 
     await screen.findByTestId('stock-expansion-BRW-BB');
     expect(screen.getByTestId('stock-expansion-BRW')).toBeInTheDocument();
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-2'));
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-2', []));
   });
 
   /**

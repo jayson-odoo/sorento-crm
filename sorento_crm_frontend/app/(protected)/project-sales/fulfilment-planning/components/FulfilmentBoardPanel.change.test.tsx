@@ -185,16 +185,10 @@ describe('the changed cell', () => {
 
 /**
  * R13/D1/D5 retired the per-order commit rail this describe block was written against: no
- * `commit-row-*` card, no `commit-blocked` per order, no "Confirm this order" button, and no
- * `batch_id` on the confirm body (the board's ONE Confirm posts through `confirmMany`, whose
- * body carries only `{ orders: [{ pso_id, lines }] }` - the batch is never named on it).
- *
- * KNOWN GAP, surfaced rather than hidden: AC-P3-4 promised the batch is carried on Confirm so
- * the apply and the confirmation are one atomic write. The single-Confirm rewrite (this lane)
- * does not carry it - a batch that IS applied still blocks the board-wide Confirm (checked
- * below), but nothing marks `planning_change_batches` applied when a plannable Confirm posts
- * through here any more. Flagged for the captain; fixing it is a backend contract change
- * (`ConfirmManyBody` has no `batch_id` field) outside a frontend test pass.
+ * `commit-row-*` card, no `commit-blocked` per order, no "Confirm this order" button. The
+ * board's ONE Confirm posts through `confirmMany`, and AC-P3-4 still holds: when the board was
+ * opened on a planning-change batch, the body names it (`batch_id`) so the apply and the
+ * confirmation stay one atomic write on the server.
  */
 describe('the pre-marked decision, and Confirm', () => {
   it('arrives with the changed line already decided', async () => {
@@ -231,8 +225,8 @@ describe('the pre-marked decision, and Confirm', () => {
     // (unrelated) `pso-381895` - the confirm body is addressed off the BOARD, never the batch.
     expect(body.orders[0].pso_id).toBe('pso-so-381895');
     expect(body.orders[0].lines).toHaveLength(1);
-    // The known gap (see the describe comment): nothing here names the batch any more.
-    expect(body.batch_id).toBeUndefined();
+    // AC-P3-4: the batch the board was opened on rides on the confirm body.
+    expect(body.batch_id).toBe('pcb-so381895');
   });
 
   /**

@@ -927,6 +927,7 @@ describe('confirmLinesFor', () => {
     expect(untouched).toEqual({
       project_line_id: 'pl-so-a-2',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '20' }],
       borrow: [],
       buy_qty: '30',
@@ -941,6 +942,7 @@ describe('confirmLinesFor', () => {
     expect(approved).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '100' }],
       borrow: [],
       buy_qty: '0',
@@ -1156,6 +1158,7 @@ describe('confirmLinesFor and a composed amendment', () => {
     expect(lines[0]).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '20' }],
       borrow: [
         {
@@ -1328,6 +1331,7 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(amended).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '5' }],
       borrow: [],
       buy_qty: '38',
