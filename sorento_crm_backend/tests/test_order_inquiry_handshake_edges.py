@@ -271,21 +271,15 @@ def test_rejecting_a_partly_linked_row_is_allowed(api):
     """The other side of the same rule: half of it is still owed, so there is still
     something to refuse - and refusing it must not take the buyer's own placement down."""
     _client, world = api
-    _po, po_line = _open_po_line(world, qty=4)
+    _po, _po_line = _open_po_line(world, qty=4)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
         world.db.commit()
-        # 4 of the 10 put on the purchase order by hand, the way section G's own "Place on
-        # PO" does it: the cascade leaves a row it cannot cover whole alone.
-        ProjectOrderInquiryService(world.db).place_on_po_allocations(
-            str(row.id),
-            [{"po_line_id": str(po_line.id), "qty": Decimal("4")}],
-            actor_user_id=world.buyer,
-        )
-        world.db.commit()
+        # 4 of the 10 covered, and the acknowledgement's own cascade is what covers them:
+        # one purchase-order line of 4 against a row of 10 leaves 6 still owed.
         world.db.refresh(row)
         assert row.state == INQUIRY_PARTLY_LINKED
         response = buyer.post(

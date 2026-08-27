@@ -71,6 +71,7 @@ from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     project_customer_label,
 )
+from app.services.scm import priority
 
 logger = logging.getLogger(__name__)
 
@@ -994,6 +995,11 @@ class OrderInquiryWorklistService:
             # The four acknowledgement counts, computed with the ACK FILTER ITSELF
             # DROPPED, for the reason every other axis here drops its own.
             "ack": self._acks({**filters, "ack": None}),
+            # Where the page's "Link up to" date starts (AC-LH5). The reorder plan's own
+            # coverage date, read off the active fulfilment policy rather than guessed at
+            # on the page: one setting, so a plan that buys to October and a buyer linking
+            # to 2030 cannot both be right.
+            "link_up_to_default": priority.plan_link_horizon(self.db),
         }
 
     def _acks(self, filters: Dict[str, Any]) -> Dict[str, int]:

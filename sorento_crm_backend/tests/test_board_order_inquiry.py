@@ -343,3 +343,92 @@ def test_two_answered_refusals_leave_the_LATEST_inquiry_number_on_the_cell():
     # loses the objection's own word. With `rejected` still on it the grid printed
     # "Rejected by purchasing: no reason given" over a line CS had already re-decided.
     assert cell["ack_state"] is None
+
+
+# ---------------------------------------------------------------------------
+# AC-RB1 / AC-RB2: the refusal, on the board (`PLAN-scm-oi-handshake.md` section 11)
+# ---------------------------------------------------------------------------
+
+
+def _rejected(db, mirror, *, by_user_id, reason, at):
+    """Purchasing's refusal, written straight onto the line's row."""
+    from app.models.project_so import ACK_REJECTED
+
+    row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == mirror.id)
+        .one()
+    )
+    row.ack_state = ACK_REJECTED
+    row.rejected_by = by_user_id
+    row.rejected_reason = reason
+    row.rejected_at = at
+    db.flush()
+    return row
+
+
+def _buyer(db, name: str) -> str:
+    from app.models.user import User
+
+    uid = _uid()
+    db.add(User(id=uid, email=f"{uid}@{MARKER}.test", name=name))
+    db.flush()
+    return uid
+
+
+def test_a_rejected_line_names_who_refused_it_and_why(): 
+    """AC-RB1. The cell reads Rejected and the badge's title is "Rejected by <name>:
+    <reason>" - a NAME, resolved off `users`, never the id the column holds."""
+    from datetime import datetime
+
+    from app.models.project_so import ACK_REJECTED
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+        _inquiry(db, company_id, record, mirror, state=INQUIRY_RAISED)
+        joey = _buyer(db, f"{MARKER} Joey")
+        _rejected(
+            db, mirror, by_user_id=joey, reason="No supplier until November",
+            at=datetime(2026, 8, 18, 9, 0),
+        )
+
+        cell = _service(db)._order_inquiries([str(core_line.id)])[str(core_line.id)]
+
+    assert cell["ack_state"] == ACK_REJECTED
+    assert cell["rejected_by_name"] == f"{MARKER} Joey"
+    assert cell["rejected_reason"] == "No supplier until November"
+
+
+def test_the_refusal_clears_once_cs_decides_the_line_again():
+    """AC-RB2. A refusal is a line coming BACK to CS, so once they have decided it again -
+    an active revision covering the line, confirmed after the refusal - the cell is about
+    that decision. The count on the strip drops with it, because the flag it counts is
+    gone."""
+    from datetime import datetime
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+        _inquiry(db, company_id, record, mirror, state=INQUIRY_RAISED)
+        _rejected(
+            db, mirror, by_user_id=_buyer(db, f"{MARKER} Joey"),
+            reason="No supplier until November", at=datetime(2026, 8, 18, 9, 0),
+        )
+
+        cell = _service(db)._order_inquiries(
+            [str(core_line.id)],
+            decided_at={str(core_line.id): datetime(2026, 8, 19, 9, 0)},
+        )[str(core_line.id)]
+
+    assert cell["ack_state"] is None
+    assert cell["rejected_by_name"] is None
+    assert cell["rejected_reason"] is None

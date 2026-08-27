@@ -208,6 +208,24 @@ def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
     }
 
 
+def plan_link_horizon(db: Session) -> Optional[date]:
+    """How far out the reorder plan buys - and therefore how far out a link may reach.
+
+    `PLAN-scm-oi-handshake.md` section 11 (captain, 27 Aug 2026). Every path that ties a
+    document to an order-inquiry row takes a date to link up to, and the one a caller that
+    names none falls back to is THIS - the active policy's `reorder_coverage_until`, the
+    same calendar date the ladder already refuses to reserve or borrow beyond. One setting,
+    read in one place: a plan that stops at October and a buyer linking a 2030 order to
+    October's purchase orders would be two answers to one question.
+
+    `None` when no policy has ever been activated, or when the active one states no
+    coverage limit. That is "no horizon is in force", not "guess one": a fresh install has
+    never been asked how far out it plans, and inventing a date would refuse links nobody
+    asked to have refused.
+    """
+    return fulfilment_settings(active_policy(db)).get("reorder_coverage_until")
+
+
 def fulfilment_priority_as_dict(policy: Optional[PriorityPolicy]) -> dict:
     """The admin screen's whole answer for one policy row: weights, class weights and the
     ladder-v2 settings - in the shape `FulfilmentPriorityPolicy` serialises. Shared by the GET
