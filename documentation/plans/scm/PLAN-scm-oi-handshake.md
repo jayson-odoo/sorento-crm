@@ -259,11 +259,13 @@ order gained revision 2 from the board walk above (its rows re-raised, no links 
 
 ## 11. Link horizon and the rejected bounce (captain, 27 Aug, "go" at 15:40)
 
-Status: **built on `feat/scm-link-horizon`, reworked on `feat/scm-link-horizon-r2` after
-review (B1, B2, S1 to S5), not browser-verified.** pytest and vitest green (the one
-standing red on this dev copy, `test_every_new_field_reaches_the_list_the_row_and_the_export`,
-predates this branch); a tester still owes the browser walk of AC-LH1 to AC-LH5 and
-AC-RB1/AC-RB2.
+Status: **BUILT, REVIEWED TWICE, BROWSER-VERIFIED** 27 Aug on `feat/scm-uat-next` (781be48f1,
+now the head of `feat/scm-uat`, PR #337). pytest and vitest green (the one standing red on
+this dev copy, `test_every_new_field_reaches_the_list_the_row_and_the_export`, predates this
+branch). Browser on :3090 (sidebar, 1280 and 375): AC-LH1 to AC-LH5 and AC-RB1/AC-RB2 on
+ZZT scratch rows (deleted after); the per-row deficit exemption (the IB row placed, the CS
+row not offered); the cleared horizon through a reload and a second tab; the Auto-link
+dialog reading "Link up to 31/12/2026" and "No link horizon".
 
 **Link horizon.** Every path that links an order-inquiry row to a document (auto-link at
 acknowledge, Link now after an upload, the manual Link PO / Link SPO dialog, the PO-confirm

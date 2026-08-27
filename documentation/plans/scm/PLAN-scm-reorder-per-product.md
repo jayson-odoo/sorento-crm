@@ -2,7 +2,11 @@
 
 Status: **PHASE 2 BUILT** 2026-08-27 (captain's rulings on lane :3080, plan 181ab143). Built on
 `feat/scm-uat`; branch `feat/scm-reorder-per-product`. AC-R11..AC-R15 are green under pytest +
-vitest (migration `430_plan_row_price_supplier`). NOT yet verified in a browser.
+vitest (migration `430_plan_row_price_supplier`). Browser-verified 27 Aug on :3090 (run
+cc982a15, SRTWT7408 and B2155-NL-BLUE, 1280 and 375): level popover names ADU / lead / safety
+(AC-R11), health classes with no margin text (AC-R12), price switch and supplier select
+persist after a reload (AC-R13/R14, after the decision route was fixed to forward them),
+ledger order (AC-R8). On `feat/scm-uat` (PR #337) since 781be48f1.
 UAC: `scm-reorder-per-product-acceptance-criteria.md`.
 
 ## The ruling (captain, 27 Aug)
