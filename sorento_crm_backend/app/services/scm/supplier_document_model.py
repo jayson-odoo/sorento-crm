@@ -331,11 +331,11 @@ def _from_their_values(
     header_idx = None
     fields: dict[int, str] = {}
     for idx, raw in enumerate(rows):
-        mapped = {
-            pos: resolver.field_for_header(cell)
-            for pos, cell in enumerate(raw)
-            if resolver.field_for_header(cell)
-        }
+        mapped: dict[int, str] = {}
+        for pos, cell in enumerate(raw):
+            resolved = resolver.field_for_header(cell)
+            if resolved:
+                mapped[pos] = resolved
         if "item_code" in mapped.values():
             header_idx, fields = idx, mapped
             break
@@ -691,7 +691,12 @@ def _snapshot_bindings(db: Session, supplier_id: str) -> dict[str, str]:
         )
         .all()
     )
-    return {_key(r.item_code): str(r.product_id) for r in rows if _key(r.item_code)}
+    bindings: dict[str, str] = {}
+    for row in rows:
+        key = _key(row.item_code)
+        if key:
+            bindings[key] = str(row.product_id)
+    return bindings
 
 
 def _append_unlisted(model: SheetModel, lines: list[dict], *, serial: int) -> None:

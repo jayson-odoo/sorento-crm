@@ -107,6 +107,8 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
     assert src is not None  # `render` guards it; this keeps the type checker honest
     wb = openpyxl.load_workbook(BytesIO(src.data))
     ws = wb[src.sheet_title] if src.sheet_title in wb.sheetnames else wb.active
+    if ws is None:  # the model was built off this same workbook, so this cannot happen
+        raise ValueError("the retained workbook has no sheet")
 
     qty_col = src.qty_col
     like_col = qty_col - 1  # column J: the last column they styled themselves
