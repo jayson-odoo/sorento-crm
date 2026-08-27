@@ -128,6 +128,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
+  const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -235,6 +236,28 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
 
   const goBack = () => router.push('/scm/loading-plan');
+
+  /**
+   * The new cut-off, with the typed quantities dropped first.
+   *
+   * A cut-off change rebuilds the suggestion against a new date, exactly as Refresh does, so
+   * the typed quantities cannot survive it any more than they survive a Refresh: leaving them
+   * in `edits` left the screen showing numbers the new build never produced. The saved ones
+   * go too (`save.mutateAsync({})`), for the same reason Refresh clears them - a rebuild that
+   * kept them would hand back the old figures.
+   */
+  const applyCutOff = async () => {
+    if (editedCount > 0) {
+      setEdits({});
+      await save.mutateAsync({});
+    }
+    changeCutOff.mutate(cutOffDraft || null, {
+      onSuccess: () => {
+        setCutOffDropOpen(false);
+        setCutOffOpen(false);
+      },
+    });
+  };
 
   /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
   const doSend = async (options: ContainerRequestSendOptions) => {
@@ -498,6 +521,16 @@ export function LoadingPlanView({ planId }: { planId: string }) {
       />
 
       <ConfirmActionDialog
+        open={cutOffDropOpen}
+        onOpenChange={setCutOffDropOpen}
+        title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
+        description="A new cut-off is worked out from scratch against the new date, so it replaces what was typed rather than ranking around it."
+        confirmLabel="Change the cut-off"
+        isBusy={save.isPending || changeCutOff.isPending}
+        onConfirm={() => void applyCutOff()}
+      />
+
+      <ConfirmActionDialog
         open={cancelOpen}
         onOpenChange={setCancelOpen}
         title="Cancel this plan?"
@@ -573,12 +606,8 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               Cancel
             </Button>
             <Button
-              disabled={changeCutOff.isPending}
-              onClick={() =>
-                changeCutOff.mutate(cutOffDraft || null, {
-                  onSuccess: () => setCutOffOpen(false),
-                })
-              }
+              disabled={changeCutOff.isPending || save.isPending}
+              onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
               Save

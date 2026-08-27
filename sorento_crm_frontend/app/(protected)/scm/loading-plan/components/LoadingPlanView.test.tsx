@@ -415,3 +415,33 @@ describe('LoadingPlanView, measured against what is SAVED', () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+describe('LoadingPlanView, changing the cut-off with edits on the screen', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.plan = { ...PLAN };
+    state.rows = [ENGINE_ROW];
+  });
+
+  it('asks before the new cut-off drops the typed quantities, and drops them for real', async () => {
+    // The cut-off rebuilds the suggestion against a new date, so the typed quantities cannot
+    // survive it any more than a Refresh - and they were left in `edits`, so the screen went
+    // on showing numbers the new build never produced.
+    renderView();
+    fireEvent.click(screen.getByTestId('type-qty'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Drop your 1 typed quantity?')).toBeTruthy();
+    expect(changeCutOff).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change the cut-off' }));
+
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({}));
+    await waitFor(() => expect(changeCutOff).toHaveBeenCalled());
+    expect((screen.getByTestId('save-plan-edits') as HTMLButtonElement).textContent).toContain(
+      'Save (0)',
+    );
+  });
+});
