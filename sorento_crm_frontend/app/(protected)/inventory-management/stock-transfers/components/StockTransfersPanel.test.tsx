@@ -181,12 +181,12 @@ describe('StockTransfersPanel - row actions', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Mark moved' })).toBeNull();
   });
 
-  it('offers Mark moved on an approved transfer, never Approve', async () => {
+  it('offers Cancel alone on an approved transfer - Mark moved is not a press here (the captain, 27 Aug)', async () => {
     listStockTransfers.mockResolvedValue(envelope([transfer({ state: 'approved' })]));
     renderPanel();
     const menu = await openRowMenu();
 
-    expect(within(menu).getByRole('menuitem', { name: 'Mark moved' })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Mark moved' })).toBeNull();
     expect(within(menu).queryByRole('menuitem', { name: 'Approve' })).toBeNull();
   });
 
@@ -209,26 +209,6 @@ describe('StockTransfersPanel - row actions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(approveStockTransfer).toHaveBeenCalledWith('tr-1'));
-  });
-
-  it('asks for the AutoCount reference before marking moved, and refuses a blank one', async () => {
-    listStockTransfers.mockResolvedValue(envelope([transfer({ state: 'approved' })]));
-    markStockTransferMoved.mockResolvedValue(transfer({ state: 'moved' }));
-    renderPanel();
-    const menu = await openRowMenu();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Mark moved' }));
-
-    const submit = await screen.findByRole('button', { name: 'Mark moved' });
-    expect(submit).toBeDisabled();
-
-    fireEvent.change(screen.getByLabelText(/AutoCount transfer number/), {
-      target: { value: 'ST-2026/08-0042' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Mark moved' }));
-
-    await waitFor(() =>
-      expect(markStockTransferMoved).toHaveBeenCalledWith('tr-1', 'ST-2026/08-0042'),
-    );
   });
 
   it('asks for a reason before cancelling', async () => {
