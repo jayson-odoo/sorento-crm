@@ -94,6 +94,14 @@ INQUIRY_STATES = (
 #: the model's own tuple rather than retyped, so a fifth one cannot arrive here unnoticed.
 ACK_FILTER_STATES = ACK_STATES
 
+#: The page's DEFAULT view (R3, `PLAN-scm-oi-draft-links.md`): the rows purchasing still
+#: has to answer. NOT a stored state - no row is ever `to_confirm` - so it is a filter
+#: value and a facet count over the two states that make it up, and nothing else in the
+#: system has to learn a fifth word.
+ACK_TO_CONFIRM = "to_confirm"
+ACK_TO_CONFIRM_STATES = (ACK_AWAITING, ACK_CHANGED)
+ACK_FILTER_VALUES = tuple(ACK_FILTER_STATES) + (ACK_TO_CONFIRM,)
+
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
 #: value is a 422 rather than a silent fall back to the default, for the same reason it
 #: is on the fulfilment worklist: a grid drawing a sort arrow on a column the server
@@ -636,14 +644,21 @@ class OrderInquiryWorklistService:
             # "what has purchasing refused". A closed set, refused rather than ignored,
             # for the same reason `state` and `kind` are - a filter nothing can equal
             # reads on screen as "no work to do".
-            if ack not in ACK_FILTER_STATES:
+            if ack not in ACK_FILTER_VALUES:
                 raise AppException(
                     422,
                     f"'{ack}' is not an acknowledgement state. Use "
-                    f"{', '.join(ACK_FILTER_STATES)}.",
+                    f"{', '.join(ACK_FILTER_VALUES)}.",
                     code="invalid_ack_filter",
                 )
-            base = base.filter(OrderInquiryRow.ack_state == ack)
+            if ack == ACK_TO_CONFIRM:
+                # The page's own default (R3): awaiting AND changed, which is one question
+                # - "what has purchasing not answered yet" - asked of two stored states.
+                base = base.filter(
+                    OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES)
+                )
+            else:
+                base = base.filter(OrderInquiryRow.ack_state == ack)
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -919,6 +934,7 @@ class OrderInquiryWorklistService:
         )
         lines = (
             self.db.query(
+                PurchaseOrderLine.id,
                 Product.product_code,
                 Product.product_name,
                 PurchaseOrderLine.qty_ordered,
@@ -948,9 +964,198 @@ class OrderInquiryWorklistService:
                     "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
                     "location": warehouse_code,
                 }
-                for sku, product_name, qty_ordered, qty_received, warehouse_code in lines
+                for (
+                    _line_id,
+                    sku,
+                    product_name,
+                    qty_ordered,
+                    qty_received,
+                    warehouse_code,
+                ) in lines
             ],
+            # WHO is holding this document's quantity (AC-D18). Drafts included and marked
+            # as such: they occupy the quantity, so a panel that hid them would tell the
+            # buyer a line is free when the next Confirm is going to take it.
+            "allocations": self._allocations_on(
+                po_line_ids=[str(line[0]) for line in lines]
+            ),
         }
+
+    # -------------------------------------------------------------- spo detail
+
+    def get_spo_detail(self, spo_number: str) -> Dict[str, Any]:
+        """The "SPO no" cell's lightbox: one shipping order, every allocation line it has.
+
+        Addressed by NUMBER, because that is what a shipping order IS here: a set of
+        `spo_allocations` rows sharing a number, with no header table behind it and no id
+        for a person to quote. Gated the same as the PO lightbox next door
+        (`projects.projects.view`), and company-scoped by the session listener the same
+        way - a foreign company's document resolves to nothing, exactly as an unknown
+        number does.
+
+        EVERY line is listed, including one at a location outside the pool set that the
+        cascade will never draft onto (R11). Hiding it would leave the buyer reading a
+        document that says 50 while the page offers none of it, with nothing on screen to
+        explain the difference.
+        """
+        wanted = (spo_number or "").strip()
+        rows = (
+            self.db.query(
+                SPOAllocation,
+                Product.product_code,
+                Product.product_name,
+                Warehouse.warehouse_code,
+            )
+            .select_from(SPOAllocation)
+            .outerjoin(Product, Product.id == SPOAllocation.product_id)
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+            .filter(SPOAllocation.spo_number == wanted)
+            .order_by(
+                SPOAllocation.spo_line_number.asc().nulls_last(),
+                SPOAllocation.id.asc(),
+            )
+            .all()
+        )
+        if not rows:
+            raise AppException(
+                status_code=404,
+                message="That shipping order could not be found.",
+                code="order_inquiry_spo_not_found",
+            )
+        allocations = [allocation for allocation, *_rest in rows]
+        supplier_ids = {
+            str(allocation.supplier_id)
+            for allocation in allocations
+            if allocation.supplier_id
+        }
+        supplier = (
+            self.db.query(Supplier)
+            .filter(Supplier.id.in_(list(supplier_ids)))
+            .order_by(Supplier.id)
+            .first()
+            if supplier_ids
+            else None
+        )
+        shipment_ids = {
+            str(allocation.inbound_shipment_id)
+            for allocation in allocations
+            if allocation.inbound_shipment_id
+        }
+        shipment = None
+        if shipment_ids:
+            from app.models.procurement import InboundShipment
+
+            shipment = (
+                self.db.query(InboundShipment)
+                .filter(InboundShipment.id.in_(list(shipment_ids)))
+                .order_by(InboundShipment.id)
+                .first()
+            )
+        # The EARLIEST date the document's own lines state: what a person means by "when
+        # does this land". Absent when the book named none, rather than today.
+        etas = [
+            allocation.expected_date
+            for allocation in allocations
+            if allocation.expected_date
+        ]
+        return {
+            "spo_number": wanted,
+            "supplier_name": supplier.supplier_name if supplier else None,
+            "eta": min(etas) if etas else None,
+            "shipment_ref": shipment.shipment_number if shipment else None,
+            # The container the goods travel in, by its own column name
+            # (`inbound_shipments.shipping_container_number`).
+            "container_no": shipment.shipping_container_number if shipment else None,
+            "lines": [
+                {
+                    "sku": product_code,
+                    "product_name": product_name,
+                    "allocated": _qty_str(_dec(allocation.allocated_quantity)),
+                    "received": _qty_str(_dec(allocation.quantity_received)),
+                    "remaining": _qty_str(
+                        _dec(allocation.allocated_quantity)
+                        - _dec(allocation.quantity_received)
+                    ),
+                    # The warehouse we hold, else the code the book printed, else nothing
+                    # - and the screen says "no location" rather than inventing one.
+                    "location": warehouse_code or allocation.location_code,
+                }
+                for allocation, product_code, product_name, warehouse_code in rows
+            ],
+            "allocations": self._allocations_on(
+                spo_allocation_ids=[str(allocation.id) for allocation in allocations]
+            ),
+        }
+
+    # ------------------------------------------------------- who holds a document
+
+    def _allocations_on(
+        self,
+        *,
+        po_line_ids: Optional[Sequence[str]] = None,
+        spo_allocation_ids: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Every order inquiry row holding quantity on these document lines (AC-D18).
+
+        ONE reader for both lightboxes, because it is one question asked of two books. The
+        ROW's `ack_state` travels with each entry and is what makes the panel read Proposed
+        or Confirmed: a link carries no state of its own (R1), so the row is the answer.
+
+        A cancelled row's links are history rather than a claim on the document, and are
+        left out for the same reason `links_for_rows` leaves them out.
+        """
+        targets = []
+        if po_line_ids:
+            targets.append(OrderInquiryLink.po_line_id.in_(list(po_line_ids)))
+        if spo_allocation_ids:
+            targets.append(OrderInquiryLink.spo_allocation_id.in_(list(spo_allocation_ids)))
+        if not targets:
+            return []
+        rows = (
+            self.db.query(
+                OrderInquiryLink.qty,
+                OrderInquiryLink.linked_at,
+                OrderInquiryRow.item_code,
+                OrderInquiryRow.ack_state,
+                OrderInquiry.inquiry_no,
+                ProjectSalesOrder.autocount_doc_no,
+                ProjectSalesOrder.provisional_ref,
+            )
+            .select_from(OrderInquiryLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .outerjoin(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .filter(
+                or_(*targets),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+        return [
+            {
+                "inquiry_no": inquiry_no,
+                # The AutoCount number where the order has one, the reference this system
+                # minted where it does not. Never the id.
+                "so_number": autocount_doc_no or provisional_ref,
+                "item_code": item_code,
+                "qty": _qty_str(_dec(qty)),
+                "ack_state": ack_state,
+                "linked_at": linked_at,
+            }
+            for (
+                qty,
+                linked_at,
+                item_code,
+                ack_state,
+                inquiry_no,
+                autocount_doc_no,
+                provisional_ref,
+            ) in rows
+        ]
 
     # ---------------------------------------------------------------- summary
 
@@ -1021,6 +1226,11 @@ class OrderInquiryWorklistService:
         for state, count in rows:
             if state in counts:
                 counts[state] = int(count)
+        # The default view's own count (R3), summed from the two states rather than
+        # queried again: a second query could disagree with the chip beside it.
+        counts[ACK_TO_CONFIRM] = sum(
+            counts[state] for state in ACK_TO_CONFIRM_STATES
+        )
         return counts
 
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:

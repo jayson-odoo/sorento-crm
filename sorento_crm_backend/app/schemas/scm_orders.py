@@ -72,6 +72,12 @@ class SalesOrderLineLink(BaseModel):
     #: The document arrives AFTER the row's own required date (AC-P3-7). Read here as well
     #: as on the worklist, because "arrives late" has to say so wherever the link is shown.
     late: bool = False
+    #: HOW late, in days (AC-D17). `None` when the document is not late, or when either
+    #: date is missing. "Arrives late" without the number is a warning nobody can plan
+    #: against, and this schema is a second `response_model` over the same link: a field it
+    #: does not declare is dropped, so the badge here would say less than the identical
+    #: badge on Order Inquiries.
+    late_days: Optional[int] = None
 
 
 class SalesOrderLine(BaseModel):

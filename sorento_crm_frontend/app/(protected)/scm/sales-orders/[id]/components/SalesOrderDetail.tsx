@@ -85,6 +85,7 @@ import type {
 // ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
+import { lateDaysOf } from '../../../../project-sales/_shared/lib/orderInquiryWorklist';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -893,7 +894,12 @@ export function SalesOrderDetail({ id }: { id: string }) {
           return (
             <div className="min-w-0 space-y-0.5">
               {links.map((link, index) => {
-                const where = link.line_label || link.location || null;
+                // LOCATION first (AC-D16). Every SPO allocation carries a line number, so
+                // printing the label first meant this cell read `L14 1` on every SPO link
+                // and the warehouse - the one thing that says where the goods land -
+                // never showed. The label keeps its place in the title.
+                const where = link.location || null;
+                const labelled = [link.line_label || null, where].filter(Boolean).join(' ');
                 const due = link.expected_date ? fmtDate(link.expected_date) : null;
                 // WHEN it lands, beside where it sits (AC-G7). A link that says which SPO
                 // covers this line and not when it arrives answers half the question the
@@ -901,6 +907,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}${
                   due ? ` due ${due}` : ''
                 }`;
+                const titleLabel = `${link.document}${labelled ? ` ${labelled}` : ''} ${
+                  link.qty
+                }${due ? ` due ${due}` : ''}`;
+                const lateDays = lateDaysOf(link);
                 return (
                   <span
                     // The INDEX is always in the key. One line can be linked to the same
@@ -909,17 +919,25 @@ export function SalesOrderDetail({ id }: { id: string }) {
                     // second, which React reported as two children with the same key.
                     key={`${link.kind}-${link.document}-${where ?? 'x'}-${index}`}
                     className="flex min-w-0 items-center gap-1"
-                    title={link.late ? `${label} - arrives late` : label}
+                    title={
+                      link.late
+                        ? `${titleLabel} - ${
+                            lateDays !== null
+                              ? `lands ${lateDays} day${lateDays === 1 ? '' : 's'} late`
+                              : 'arrives late'
+                          }`
+                        : titleLabel
+                    }
                   >
                     <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
                       {link.kind}
                     </span>
                     <span className="truncate tabular-nums">{label}</span>
-                    {/* AC-P3-7: it lands after the line needs it. Purchasing decides;
-                        nothing is unlinked for lateness. */}
+                    {/* AC-D17: it lands after the line needs it, and by how much.
+                        Purchasing decides; nothing is unlinked for lateness. */}
                     {link.late ? (
                       <span className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
-                        arrives late
+                        {lateDays !== null ? `late ${lateDays} d` : 'late'}
                       </span>
                     ) : null}
                   </span>

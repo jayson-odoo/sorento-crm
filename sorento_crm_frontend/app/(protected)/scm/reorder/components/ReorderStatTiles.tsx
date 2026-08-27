@@ -171,10 +171,10 @@ export function ReorderStatTiles({
    *  existing cash-impact figure, unrelated to what has actually been decided. */
   cashTotal: number;
   /**
-   * Order inquiry rows purchasing has not acknowledged yet (`PLAN-scm-oi-handshake.md`,
-   * AC-H10). The plan counts acknowledged rows ONLY, so without this the work sitting in
-   * front of purchasing is invisible on the screen that decides what to buy. A count and
-   * a way in, never a sentence: pressing it opens that list already narrowed to them.
+   * Order inquiry rows purchasing has not confirmed yet (AC-D4). The plan counts confirmed
+   * rows ONLY, so without this the work sitting in front of purchasing is invisible on the
+   * screen that decides what to buy. A count and a way in, never a sentence: pressing it
+   * opens that list already narrowed to them.
    */
   awaitingRows?: number;
   /** Whether the grid is currently narrowed to undecided lines by the Decisions tile. */
@@ -201,11 +201,11 @@ export function ReorderStatTiles({
           past on the days the handshake is clear. */}
       {awaitingRows > 0 ? (
         <Link
-          href="/project-sales/order-inquiries?ack=awaiting"
+          href="/project-sales/order-inquiries?ack=to_confirm"
           className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         >
           <Tile
-            label="Awaiting acknowledgement"
+            label="To confirm"
             value={fmtInt(awaitingRows)}
             icon={ClipboardCheck}
             valueClass="text-amber-600"

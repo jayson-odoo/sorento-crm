@@ -9,9 +9,11 @@ import type {
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
+  OrderInquiryBulkRejectResult,
   OrderInquiryPoCandidate,
   OrderInquiryPoDetail,
   OrderInquiryRow,
+  OrderInquirySpoDetail,
   OrderInquirySummary,
   OrderInquiryWorklistEnvelope,
   OrderInquiryWorklistParams,
@@ -286,6 +288,28 @@ export async function rejectOrderInquiryRow(
 }
 
 /**
+ * Purchasing refuses a BATCH with ONE reason (plan section 5.6, item 15). Reject is a
+ * bulk action now that the row actions column is gone, and asking for the reason once
+ * per row would make refusing twenty rows twenty dialogs.
+ *
+ * ONE call, and the server takes it all or nothing: a press that half happened leaves the
+ * buyer to work out which half from a screen that has already moved on.
+ */
+export async function rejectOrderInquiryRows(
+  rowIds: string[],
+  reason: string,
+): Promise<OrderInquiryBulkRejectResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds, reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject those rows'));
+  return response.json();
+}
+
+/**
  * What the book this page uploaded has written (AC-H13), once the worker is done with it.
  * The two next steps read it: the products to link against, the documents to go and look
  * at. Asked for by the job id the upload dialog handed back.
@@ -426,6 +450,9 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       raised_by: params.raised_by,
       linked: params.linked,
       kind: params.kind,
+      // `to_confirm` travels as itself: the server reads it as awaiting OR changed on the
+      // list, the summary facet and the export alike (R3), so the page's default filter is
+      // one value rather than two the client would have to union.
       ack: params.ack,
     },
   );
@@ -505,6 +532,25 @@ export async function getOrderInquiryPoDetail(poId: string): Promise<OrderInquir
   const response = await apiFetch(`${BASE}/order-inquiries/po/${poId}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this purchase order'));
+  return response.json();
+}
+
+/**
+ * The same lightbox, for the other book (plan section 4.3): the shipping order's own
+ * allocation lines and who they are spoken for by. Addressed by NUMBER - an SPO has no
+ * purchase order id behind it, and the number is what the link on screen carries.
+ *
+ * The number is percent-encoded because it carries a slash (`SPO-2026/08-0015`); the
+ * route takes the rest of the path as one parameter for exactly that reason.
+ */
+export async function getOrderInquirySpoDetail(
+  spoNumber: string,
+): Promise<OrderInquirySpoDetail> {
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/spo/${encodeURIComponent(spoNumber)}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load this shipping order'));
   return response.json();
 }
 

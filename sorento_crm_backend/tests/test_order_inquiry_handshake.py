@@ -362,19 +362,27 @@ def _project_committed(world, *, planned: bool) -> Decimal:
 # ---------------------------------------------------------------------------
 
 
-def test_a_board_confirm_raises_awaiting_rows_and_links_nothing(api):
-    """The cascade left `supply.confirm` (plan section 3). An open purchase-order line for
-    the very product is sitting there, and the row still comes out unlinked: linking is
-    purchasing's word, and nobody has said it yet."""
+def test_a_board_confirm_raises_awaiting_rows_holding_a_draft(api):
+    """INVERTED by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026).
+
+    The handshake left the page blank until somebody pressed Confirm, and the captain's
+    answer to that was: find the documents up front, and mark them as a DRAFT. The row is
+    still `awaiting` and nobody has acknowledged anything - which is exactly what makes the
+    link a draft (R1) - but the answer purchasing came to the page for is already on it.
+
+    The full draft behaviour is pinned in `tests/test_order_inquiry_draft_links.py`; this
+    is the handshake's own AC-H1/AC-H11 restated where it was reversed, so the reversal is
+    recorded next to the rule it replaced rather than left implicit.
+    """
     _client, world = api
-    _open_po_line(world, qty=50)
+    po, _line = _open_po_line(world, qty=50)
 
     fixture = _raise_one_row(api)
     row = fixture["row"]
 
     assert row.ack_state == ACK_AWAITING
     assert row.acknowledged_by is None and row.acknowledged_at is None
-    assert _links_of(world, row) == [], "nothing links until somebody acknowledges"
+    assert [link.document for link in _links_of(world, row)] == [po.po_number]
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +403,9 @@ def test_acknowledge_stamps_who_and_when_and_runs_the_cascade_for_those_rows(api
 
     body = response.json()
     assert body["acknowledged"] == 1
-    assert body["linked_rows"] == 1 and body["links"] >= 1
+    # ZERO linked BY THIS PRESS, and the row is covered all the same: the raise-time pass
+    # already drafted it (R6), and this number has always meant "what this press linked".
+    assert body["linked_rows"] == 0
 
     world.db.refresh(row)
     assert row.ack_state == ACK_ACKNOWLEDGED
@@ -490,7 +500,15 @@ def test_the_ack_filter_narrows_the_list_and_the_facet_counts_all_four_states(ap
     ).json()
     # The facet drops its OWN filter, like every other control on this screen, so the
     # acknowledged row is still counted while the awaiting one is the only one listed.
-    assert set(summary["ack"]) == {"awaiting", "acknowledged", "changed", "rejected"}
+    assert set(summary["ack"]) == {
+        "awaiting",
+        "acknowledged",
+        "changed",
+        "rejected",
+        # The page's own default view (R3): a fifth COUNT over two of the four states
+        # above, never a fifth state a row can be in.
+        "to_confirm",
+    }
     assert summary["ack"]["acknowledged"] >= 1
     assert summary["ack"]["awaiting"] >= 1
 
@@ -783,7 +801,14 @@ def test_re_acknowledging_a_changed_row_returns_it_and_links_the_remainder(api):
 
 def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     """AC-H9. A reconfirm that cannot settle in place still owes purchasing the fact that
-    this line is one they had already taken on."""
+    this line is one they had already taken on.
+
+    Walked WITH a document in the book (review round 28 Aug): the purchase order lands
+    after the acknowledgement, so the row purchasing confirmed carries no link and IS
+    superseded, and the replacement is drafted onto the new order by the raise-time cascade
+    (`PLAN-scm-oi-draft-links.md` R6). Both halves matter - the handshake stamp AND the
+    document - because the two rules meet on this one press.
+    """
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
@@ -791,6 +816,9 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
+
+    # The book gains a purchase order for the item AFTER purchasing took the line on.
+    po, _line = _open_po_line(world, qty=50)
 
     # A plain reconfirm of the same line: no settle-in-place seam, so the row is
     # superseded and a fresh one is raised in its place.
@@ -805,6 +833,9 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     replacement = _order_row(world, fixture["line"])
     assert str(replacement.id) != str(row.id)
     assert replacement.ack_state == ACK_CHANGED
+    assert [link.document for link in _links_of(world, replacement)] == [po.po_number], (
+        "the replacement is drafted onto the document the raise could reach"
+    )
 
 
 def _raise_two_rows(api, *, first_qty="10", second_qty="6"):
@@ -985,7 +1016,14 @@ def test_the_awaiting_count_is_reported_for_the_plan_page_chip(api):
 # ---------------------------------------------------------------------------
 
 
-def test_link_now_links_acknowledged_rows_and_leaves_awaiting_ones_alone(api):
+def test_link_now_links_a_confirmed_row_and_drafts_an_awaiting_one(api):
+    """REVERSED by `PLAN-scm-oi-draft-links.md` R2/R6.
+
+    Link now IS the page's Auto link all, and what it deals for a row nobody has confirmed
+    is a DRAFT. Leaving awaiting rows out was the handshake's rule and it is the thing this
+    plan set out to undo: the buyer presses Auto link all precisely because a book has just
+    landed, and the rows it can answer are mostly rows nobody has confirmed yet.
+    """
     _client, world = api
     acknowledged = _raise_one_row(api, qty="10")
     awaiting = _raise_one_row(api, qty="10")
@@ -998,16 +1036,16 @@ def test_link_now_links_acknowledged_rows_and_leaves_awaiting_ones_alone(api):
             == 200
         )
         world.db.commit()
-        # Only now does the purchase order arrive, so the acknowledge itself linked
-        # nothing and Link now is what has work to do.
+        # Only now does the purchase order arrive, so nothing was linked at raise and Link
+        # now is what has work to do.
         _open_po_line(world, qty=100)
         response = buyer.post(LINK_NOW, json={"product_ids": [str(world.product.id)]})
     assert response.status_code == 200, response.text
     world.db.commit()
 
-    assert response.json()["placed_rows"] == 1
+    assert response.json()["placed_rows"] == 2
     assert _links_of(world, acknowledged["row"])
-    assert _links_of(world, awaiting["row"]) == []
+    assert _links_of(world, awaiting["row"]), "the awaiting row holds a draft now"
 
 
 def test_link_now_is_scoped_to_the_products_it_is_given(api):
@@ -1080,13 +1118,19 @@ def test_every_new_field_reaches_the_list_the_row_and_the_export(api):
     import openpyxl
 
     book = openpyxl.load_workbook(io.BytesIO(export.content))
-    sheet = book[book.sheetnames[0]]
-    headings = [cell.value for cell in sheet[2]]
-    assert "ACKNOWLEDGED" in headings
-    printed = [
-        row_values[headings.index("ACKNOWLEDGED")]
-        for row_values in sheet.iter_rows(min_row=3, values_only=True)
-    ]
+    # EVERY sheet, not the first one. The workbook is one sheet per delivery MONTH and this
+    # suite runs on the shared prod-copy database, which carries real rejected rows of its
+    # own: the first sheet is whichever month sorts first across all of them, and asserting
+    # against it made the test a statement about somebody else's data.
+    printed = []
+    for name in book.sheetnames:
+        sheet = book[name]
+        headings = [cell.value for cell in sheet[2]]
+        assert "ACKNOWLEDGED" in headings
+        printed.extend(
+            row_values[headings.index("ACKNOWLEDGED")]
+            for row_values in sheet.iter_rows(min_row=3, values_only=True)
+        )
     assert any("Factory closed" in (value or "") for value in printed)
 
 
@@ -1121,9 +1165,22 @@ SUMMARY = f"{LIST}/summary"
 
 def _due(world, row, when):
     """The row's delivery date, stated rather than inherited: the horizon is read off it
-    and the fixture's own required date says nothing about 2030."""
+    and the fixture's own required date says nothing about 2030.
+
+    Any DRAFT the raise wrote goes with it (`PLAN-scm-oi-draft-links.md` R6). The board
+    raises a row and the cascade finds its documents in the same breath, so a row this
+    helper moves to 2030 was drafted a moment earlier against the date it was raised with -
+    which the raise had no way to know was about to change. Re-dating it here stands in for
+    CS deciding the line for 2030 in the first place, and the state that decision leaves is
+    a row due then with nothing on it. Without this the horizon tests below would be
+    measuring a link the raise made under a different date.
+    """
     row.delivery_date = when
     world.db.flush()
+    if ProjectOrderInquiryService(world.db)._links_of(str(row.id)):
+        ProjectOrderInquiryService(world.db).unplace(
+            str(row.id), actor_user_id=world.buyer
+        )
     world.db.commit()
     return row
 

@@ -2404,6 +2404,33 @@ def _apply_one_order(
         confirm_lines.append(payload)
         confirmed += 1
 
+    # The book closed these lines. Their rows are CANCELLED, never deleted - they are what
+    # purchasing was told - and this apply owns that cancellation, so it happens BEFORE the
+    # confirm rather than after (CI round, 28 Aug). The confirm has a retirement of its own
+    # (`_retire_uncovered_rows`, B3) for any line that leaves the revision, and it takes a
+    # drafted row's links DOWN - correct where nothing else is going to want them, and
+    # exactly wrong here, because part 3's whole rule is that a closed line's placements
+    # move to the line that still needs them (AC-P3-6). Cancelling first leaves the rows
+    # already out of that retirement's reach WITH their links still on them, which is what
+    # `_shift_links_off_retired_lines` below is waiting for. The SHIFT itself still runs
+    # after the confirm, so the survivor already carries its new quantity and has the
+    # headroom to take them.
+    cancelled_row_ids: List[str] = []
+    for line_id in retired_line_ids:
+        cancelled_row_ids.extend(
+            _retire_inquiry_rows(
+                db, line_id, "The line was closed by a planning change batch."
+            )
+        )
+    if cancelled_row_ids:
+        # FLUSH FIRST. The application's session runs `autoflush=False`
+        # (`app.database.SessionLocal`), so the cancellations above are pending ORM state
+        # and the confirm's own reads - and the shift's query below - would come back
+        # empty, which is exactly what happened live on SO381895 (26 August 2026): both
+        # closed rows kept their links while the test suite, on an autoflushing session,
+        # saw them move.
+        db.flush()
+
     revised = False
     revision_no = current_revision
     confirm_result: Optional[dict] = None
@@ -2433,23 +2460,10 @@ def _apply_one_order(
         )
         revised = True
 
-    # The book closed these lines. Their rows are CANCELLED, never deleted - they are what
-    # purchasing was told - and their links move to the surviving row of the same product
-    # on the same order first (AC-P3-6). After the confirm, so the survivor already carries
-    # its new quantity and has the headroom to take them.
-    cancelled_row_ids: List[str] = []
-    for line_id in retired_line_ids:
-        cancelled_row_ids.extend(
-            _retire_inquiry_rows(
-                db, line_id, "The line was closed by a planning change batch."
-            )
-        )
+    # NOW the closed lines' placements move to the surviving row of the same product on the
+    # same order (AC-P3-6). After the confirm, so the survivor already carries its new
+    # quantity and has the headroom to take them; the rows themselves were cancelled above.
     if cancelled_row_ids:
-        # FLUSH FIRST. The application's session runs `autoflush=False`
-        # (`app.database.SessionLocal`), so the cancellations above are pending ORM state
-        # and the shift's own query would come back empty - which is exactly what happened
-        # live on SO381895 (26 August 2026): both closed rows kept their links while the
-        # test suite, on an autoflushing session, saw them move.
         db.flush()
         _shift_links_off_retired_lines(db, order, cancelled_row_ids, actor)
 

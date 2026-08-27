@@ -1457,7 +1457,11 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
     openTab('Lines');
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    expect(within(row).getAllByText(/SPO-2026\/08-0061 L4/)).toHaveLength(2);
+    // Location FIRST (AC-D16, item 5 of PLAN-scm-oi-draft-links.md): the visible text
+    // reads the pool warehouse code, never the SPO's own line label - that moved into
+    // the title, where it names which of the two identical-looking rows is which.
+    expect(within(row).getAllByText(/SPO-2026\/08-0061 BRW/)).toHaveLength(2);
+    expect(within(row).queryAllByText(/SPO-2026\/08-0061 L4/)).toHaveLength(0);
     expect(
       warn.mock.calls.some((call) => String(call[0]).includes('same key')),
     ).toBe(false);

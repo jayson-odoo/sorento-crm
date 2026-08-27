@@ -49,6 +49,11 @@ class OrderInquiryLinkOut(BaseModel):
     #: unlinking it here would take away the only cover the row has. Derived from the two
     #: dates rather than stored, so it can never go stale against either of them.
     late: bool = False
+    #: HOW late, in whole days between the row's own delivery date and the document's
+    #: expected date. `None` when the document is not late, so the column has nothing to
+    #: print rather than a zero it would have to read as "on time" (AC-D17). Derived
+    #: beside `late` from the same two dates, never stored.
+    late_days: Optional[int] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
@@ -315,6 +320,10 @@ class OrderInquiryAckCounts(BaseModel):
     acknowledged: int = 0
     changed: int = 0
     rejected: int = 0
+    #: The page's DEFAULT view (R3): awaiting plus changed, the rows purchasing has still
+    #: to answer. A fifth count rather than a fifth state - nothing is stored as
+    #: `to_confirm` - so the chip on screen and the filter behind it read one number.
+    to_confirm: int = 0
 
 
 class OrderInquiryKindTotals(BaseModel):
@@ -427,6 +436,39 @@ class RejectRowRequest(BaseModel):
         if not (self.reason or "").strip():
             raise ValueError("Say why this row is being rejected.")
         return self
+
+
+class RejectRowsRequest(BaseModel):
+    """Purchasing refuses a BATCH with ONE reason (`PLAN-scm-oi-draft-links.md` 5.6).
+
+    Reject is a bulk action now that the row Actions column is gone (R8), and asking for
+    the reason once per row would make refusing twenty rows twenty dialogs. One reason for
+    the press, because one press is one decision.
+    """
+
+    row_ids: List[str] = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _reason_is_not_blank(self) -> "RejectRowsRequest":
+        if not (self.reason or "").strip():
+            raise ValueError("Say why these rows are being rejected.")
+        return self
+
+
+class RejectRowResult(BaseModel):
+    """What the batch did to ONE row. `ok` is always true today - the whole batch is
+    refused before anything is written when any row cannot be rejected - and the shape
+    still reports per row, because that is what the screen names a failure by."""
+
+    row_id: str
+    ok: bool = True
+    error: Optional[str] = None
+
+
+class RejectRowsResult(BaseModel):
+    rejected: int = 0
+    results: List[RejectRowResult] = []
 
 
 class LinkNowRequest(BaseModel):
@@ -641,6 +683,26 @@ class OrderInquiryPoDetailLine(BaseModel):
     location: Optional[str] = None
 
 
+class OrderInquiryDocumentAllocation(BaseModel):
+    """WHO is holding this document's quantity - the lightbox's Allocated to panel
+    (`PLAN-scm-oi-draft-links.md` section 4.3).
+
+    `ack_state` is the whole point of it: a link on a row nobody has confirmed is a DRAFT
+    and the panel reads it Proposed, one on an acknowledged row reads Confirmed. There is
+    no state on the link itself (R1), so the ROW's own stamp travels here instead.
+
+    Nothing is an id: the inquiry number and the sales-order number are what a person
+    quotes, and a UUID on this panel is a UUID on the screen.
+    """
+
+    inquiry_no: Optional[str] = None
+    so_number: Optional[str] = None
+    item_code: Optional[str] = None
+    qty: str
+    ack_state: Optional[str] = None
+    linked_at: Optional[datetime] = None
+
+
 class OrderInquiryPoDetail(BaseModel):
     """The PO popup's whole answer: the header purchasing already reads off the sheet,
     plus every line, not only the one this row happened to be tagged to."""
@@ -652,3 +714,41 @@ class OrderInquiryPoDetail(BaseModel):
     expected_date: Optional[date] = None
     status: str
     lines: List[OrderInquiryPoDetailLine] = []
+    #: Who this purchase order's quantity is spoken for by, drafts included (AC-D18).
+    allocations: List[OrderInquiryDocumentAllocation] = []
+
+
+class OrderInquirySpoDetailLine(BaseModel):
+    """One allocation line of a shipping order: what is on it, what has landed, where.
+
+    `location` is the warehouse code when the book named a warehouse we hold, else the raw
+    code it printed, else nothing - the screen says "no location" rather than inventing
+    one. EVERY line is listed, including one outside the pool set that the cascade will
+    never take (R11): showing it is how a buyer learns why nothing was drafted onto it.
+    """
+
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    allocated: str
+    received: str
+    remaining: str
+    location: Optional[str] = None
+
+
+class OrderInquirySpoDetail(BaseModel):
+    """The same lightbox for the other book (section 4.3).
+
+    Addressed by NUMBER: a shipping order is a set of `spo_allocations` rows and has no
+    purchase order id behind it, and the number is what the link on screen carries.
+    """
+
+    spo_number: str
+    supplier_name: Optional[str] = None
+    #: When the goods are expected - the earliest date the document's own lines state.
+    eta: Optional[date] = None
+    #: The inbound shipment behind it, when one has been raised. Absent on a book line the
+    #: outstanding upload wrote, which names no shipment at all.
+    shipment_ref: Optional[str] = None
+    container_no: Optional[str] = None
+    lines: List[OrderInquirySpoDetailLine] = []
+    allocations: List[OrderInquiryDocumentAllocation] = []

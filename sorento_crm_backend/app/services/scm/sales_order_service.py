@@ -595,8 +595,10 @@ class SalesOrderService:
                         "location": link["location"],
                         # AC-P3-7: "arrives late" wherever the link is shown. Derived once,
                         # in `links_for_rows`; a reader that rebuilds the entry by hand has
-                        # to carry it, or the badge is dead on this surface only.
+                        # to carry it, or the badge is dead on this surface only. HOW late
+                        # travels with it (AC-D17), for the same reason and the same way.
                         "late": link["late"],
+                        "late_days": link["late_days"],
                         # ISO strings, like every other date this schema states: the SCM
                         # order contract spells dates as text and a `date` object would
                         # not validate against it.
