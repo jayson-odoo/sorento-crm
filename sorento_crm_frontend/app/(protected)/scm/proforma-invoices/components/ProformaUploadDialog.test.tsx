@@ -434,7 +434,10 @@ describe('ProformaUploadDialog - revisions are the default, not a question', () 
     const file = pickFile();
 
     fireEvent.click(testButton());
-    await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalledTimes(1));
+    // Wait for the read to LAND, not just to start: Confirm is disabled while the preview
+    // is in flight, and a click on a disabled button is a silent no-op (CI flaked here).
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(previewProformaInvoice).toHaveBeenCalledTimes(1);
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
