@@ -27,6 +27,7 @@ from tests.scm.test_container_request import (
     _incoming_spo,
     _on_hand,
     _outstanding_po,
+    _plan,
     _packing_list,
     _row,
     _so,
@@ -49,9 +50,13 @@ def _drill(app, supplier_id: str, product_id: str, kind: str):
     )
 
 
-def _cell(app, w: World, key: str) -> dict:
-    """The row the loading plan grid draws, so a test can read the cell it drills into."""
-    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+def _cell(app, db, w: World, key: str) -> dict:
+    """The row the loading plan grid draws, so a test can read the cell it drills into.
+
+    The build is scoped to a plan since part 4 R2, so the row comes back through one minted
+    here - the supplier the drill is asked about is the plan's own.
+    """
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
     assert r.status_code == 200, r.text
     return _row(r.json()["rows"], key, w)
 
@@ -125,7 +130,7 @@ def test_drill_po_total_is_the_po_cell(scm_app):
     _outstanding_po(db, w, "A", wh, 30)
     _outstanding_po(db, w, "A", wh, 12)
 
-    cell = _cell(app, w, "A")
+    cell = _cell(app, db, w, "A")
     r = _drill(app, str(w.supplier.id), str(w.product("A").id), "po")
 
     assert r.status_code == 200, r.text
@@ -148,7 +153,7 @@ def test_drill_incoming_pl_total_is_the_incoming_pl_cell(scm_app):
     ship.shipping_container_number = f"{MARKER}CONT1"
     db.flush()
 
-    cell = _cell(app, w, "A")
+    cell = _cell(app, db, w, "A")
     r = _drill(app, str(w.supplier.id), str(w.product("A").id), "incoming_pl")
 
     assert r.status_code == 200, r.text
@@ -174,7 +179,7 @@ def test_drill_incoming_pl_leaves_out_shipments_that_have_arrived(scm_app):
     _so(db, w, "A", 100)
     _packing_list(db, w, "A", 60, arrived=date(2026, 7, 1))
 
-    cell = _cell(app, w, "A")
+    cell = _cell(app, db, w, "A")
     r = _drill(app, str(w.supplier.id), str(w.product("A").id), "incoming_pl")
 
     assert r.status_code == 200, r.text
@@ -195,7 +200,7 @@ def test_drill_spo_total_is_the_spo_cell_and_counts_site_pools_only(scm_app):
     _incoming_spo(db, w, "A", pool, 90)
     _incoming_spo(db, w, "A", group, 70)
 
-    cell = _cell(app, w, "A")
+    cell = _cell(app, db, w, "A")
     r = _drill(app, str(w.supplier.id), str(w.product("A").id), "spo")
 
     assert r.status_code == 200, r.text
