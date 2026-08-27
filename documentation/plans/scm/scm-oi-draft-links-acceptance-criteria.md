@@ -49,15 +49,15 @@ diff fixed along the way, `SalesOrderDetail.test.tsx`).
 | AC-D1 | PASS, walked live 28 Aug | pytest `test_a_board_confirm_raises_a_to_confirm_row_that_already_holds_its_document`; browser walked fresh on SO414013 (plan section 11) - board Confirm raised OI-000015 and the row already showed `SPO-2026/08-0012 BRW 2` with the draft mark on first paint of the Order Inquiries list, `oi-walk-1-draft.png` |
 | AC-D2 | PASS | pytest `test_a_row_nothing_can_cover_still_comes_out_unlinked`; browser `oi-test-toolbar-1280.png` / `oi-test-confirmed-marks-1280.png` show live rows reading "Not found (new order)" |
 | AC-D2b | PASS | pytest `test_an_order_row_drafts_onto_a_shipping_order_before_any_purchase_order`, `test_a_shipping_order_line_outside_the_pool_is_never_drafted` |
-| AC-D3 | PASS, Proposed half walked live 28 Aug | pytest `test_two_rows_are_never_drafted_onto_the_same_units`, `test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate` (new); browser: SO414013's draft link opened in the SPO lightbox showed `OI-000015 / SO414013 / SRTKT72SS / 2 / Proposed` in Allocated to (plan section 11, `oi-walk-2-lightbox-proposed.png`); the "second row offered the rest" half stays pytest-only, not re-walked this round |
-| AC-D4 | PASS | pytest `test_the_plan_still_ignores_a_to_confirm_rows_remainder` |
+| AC-D3 | PASS, Proposed half walked live 28 Aug | pytest `test_two_rows_are_never_drafted_onto_the_same_units`, `test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate` (new); browser: SO414013's draft link opened in the SPO lightbox showed `OI-000015 / SO414013 / SRTKT72SS / 2 / Proposed` in Allocated to (plan section 11, `oi-walk-2-lightbox-proposed.png`); the "second row offered the rest" half stays pytest-only, not re-walked this round. Review round: the re-deal may not COST a row what it holds either - `test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off`, `..._when_the_document_has_since_closed` (B1) |
+| AC-D4 | PASS | pytest `test_the_plan_still_ignores_a_to_confirm_rows_remainder`; the chip half is `test_the_to_confirm_count_still_sees_a_row_its_draft_made_placed` (review round, S6 - a drafted row is `placed` and had vanished from the count) and `tests/test_order_inquiry_handshake_edges.py::test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed`; the tile now reads the run summary's own live count instead of a hardcoded 0 (vitest `ReorderStatTiles.test.tsx` + `ReorderPlanningView.test.tsx`) |
 | AC-D5 | PASS, walked live 28 Aug | pytest `test_confirm_stamps_the_row_and_moves_no_link`, `test_confirm_fills_a_remainder_the_draft_could_not_cover`; vitest `OrderInquiriesClient.test.tsx` "AC-D5: Confirm selected"; browser walked fresh on SO414013 (plan section 11): ticked the row, Start > Confirm selected (1), `POST .../order-inquiries/acknowledge` returned `acknowledged:1`, the mark flipped from dashed-draft to a green check on the SAME document without a page reload, Confirmed column read "Confirmed Jayson Personal 28/08/2026, 12:42 am", lightbox standing flipped Proposed -> Confirmed (`oi-walk-3-confirmed.png`) |
-| AC-D6 | PASS | pytest `test_reject_unplaces_every_link_and_gives_the_quantity_back`, `test_the_batch_reject_takes_one_reason_for_every_row`, `test_the_batch_reject_refuses_an_empty_reason`, `test_the_batch_reject_refuses_the_whole_batch_when_one_row_cannot_be_refused`, `test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled` (new); vitest `BulkRejectOrderInquiryDialog.test.tsx` (empty reason refused, live validation walked in Phase 1) |
-| AC-D7 | PASS | carried over unchanged from `PLAN-scm-oi-handshake.md`, pytest `test_order_inquiry_handshake.py` / `..._edges.py` |
+| AC-D6 | PASS | pytest `test_reject_unplaces_every_link_and_gives_the_quantity_back`, `test_the_batch_reject_takes_one_reason_for_every_row`, `test_the_batch_reject_refuses_an_empty_reason`, `test_the_batch_reject_refuses_the_whole_batch_when_one_row_cannot_be_refused`, `test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled`, and (review round, B4) `test_the_batch_reject_of_two_lines_of_one_order_refuses_both` - a batch over one order writes ONE revision and leaves no live unrefused row on either line; vitest `BulkRejectOrderInquiryDialog.test.tsx` (empty reason refused, live validation walked in Phase 1) |
+| AC-D7 | PASS | carried over from `PLAN-scm-oi-handshake.md`, pytest `test_order_inquiry_handshake.py` / `..._edges.py` (the AC-H9 supersede is now walked with a document in the book); the review round (B2) adds what a re-confirm does to a row still To confirm - `test_a_reconfirm_with_a_new_date_re_raises_the_drafted_row_on_that_date`, `..._that_lowers_a_drafted_rows_quantity_raises_no_exception`, `..._that_raises_a_drafted_rows_quantity_leaves_one_row` - and pins the confirmed case unchanged with `test_a_confirmed_rows_links_survive_a_reconfirm_untouched` |
 | AC-D8 | PASS | pytest `test_a_cs_user_may_not_reject_a_batch`; vitest "AC-D8: a CS user..." describe block; browser session did not re-log-in as a CS principal (out of scope for this pass, permission-boundary already pinned twice in pytest + vitest) |
-| AC-D9 | PASS | pytest `test_auto_link_all_moves_a_draft_onto_a_nearer_document`, `test_auto_link_all_never_moves_a_confirmed_rows_link` (found and fixed a real defect: the `/order-inquiries/auto-place` route the dialog calls was missing `redeal_drafts=True, include_awaiting=True` - see section 10); browser `oi-test-autolink-dialog-1280.png`, dialog opened and Cancelled, no `auto-place` request fired |
-| AC-D10 | PASS | pytest `tests/scm/test_outstanding_po_skips_spo.py` (SPO intake, both closure branches); browser `oi-test-upload-test-result-1280.png`, Test press against a real 2-row fixture book reports "1 row are shipping orders (SPO)..."; Confirm upload never pressed |
-| AC-D11 | PASS | pytest `test_a_purchase_order_confirm_drafts_a_to_confirm_row` |
+| AC-D9 | PASS | pytest `test_auto_link_all_moves_a_draft_onto_a_nearer_document`, `test_auto_link_all_never_moves_a_confirmed_rows_link` (found and fixed a real defect: the `/order-inquiries/auto-place` route the dialog calls was missing `redeal_drafts=True, include_awaiting=True` - see section 10); browser `oi-test-autolink-dialog-1280.png`, dialog opened and Cancelled, no `auto-place` request fired. Review round: the press leaves a row past the cut off, a row whose document has closed and a row it lands on the same document again exactly as they were (`test_two_presses_of_auto_link_all_change_nothing_at_all`, B1/S4) |
+| AC-D10 | PASS | pytest `tests/scm/test_outstanding_po_skips_spo.py` (SPO intake, both closure branches, and from the review round: a re-export that drops a line does not re-key the rest, the same product twice on one document keeps both rows, preview and write close the same rows, a fractional quantity lands whole); browser `oi-test-upload-test-result-1280.png`, Test press against a real 2-row fixture book reports "1 row are shipping orders (SPO)..."; Confirm upload never pressed |
+| AC-D11 | PASS | pytest `test_a_purchase_order_confirm_drafts_a_to_confirm_row`, and (review round, S5) `test_a_plan_purchase_order_confirm_moves_the_draft_it_was_bought_for` + `test_a_plan_purchase_order_confirm_never_moves_a_confirmed_rows_link` |
 | AC-D12 | PASS | pytest `test_the_to_confirm_filter_is_awaiting_and_changed`; vitest "AC-D12: the page opens on Confirmed = To confirm"; browser confirms the chip live (`ack=to_confirm` in the URL on load, clears to `ack=all`) |
 | AC-D13 | PASS | vitest "AC-D13/AC-D14"; browser `oi-test-toolbar-1280.png` (one row) and `oi-test-toolbar-375.png` (stacks, no page-level horizontal scroll) |
 | AC-D14 | PASS | vitest "AC-D13/AC-D14: one toolbar row..."; browser Actions/Start menus opened live with real counts and real disabled states |
@@ -67,7 +67,7 @@ diff fixed along the way, `SalesOrderDetail.test.tsx`).
 | AC-D18 | PASS | browser `oi-test-po-lightbox-1280.png`, `oi-test-po-lightbox-allocations-1280.png` (Allocated to, Confirmed badge), `oi-test-po-lightbox-375.png`; Escape-close and no console error confirmed |
 | AC-D19 | PASS | browser `oi-test-spo-lightbox-1280.png`, `oi-test-spo-lightbox-allocations-1280.png`, `oi-test-spo-lightbox-375.png`; real ETA / lines / Allocated to off `GET .../order-inquiries/spo/{number}` |
 | AC-D20 | PASS | `orderInquiryWorklistColumns.test.tsx` / `OrderInquiryDocumentDialog.test.tsx` import only the dialog module; grep confirms `OrderInquiryPoDetailPopover` is gone from the tree |
-| AC-D21 | PASS | pytest `test_the_sales_order_detail_carries_the_day_count_too`, `test_the_purchase_order_lightbox_names_who_is_holding_the_quantity`, `test_the_export_accepts_to_confirm` (rewritten to assert content, not just status) |
+| AC-D21 | PASS | pytest `test_the_sales_order_detail_carries_the_day_count_too`, `test_the_purchase_order_lightbox_names_who_is_holding_the_quantity`, `test_the_export_accepts_to_confirm` (rewritten to assert content, not just status); the review round adds the THIRD reader of the same link - `test_the_scm_sales_order_detail_states_the_day_count_too` over `GET /scm/sales-orders/{id}`, whose `SalesOrderLineLink` was dropping `late_days` (S1) |
 | AC-D22 | PASS | this round: pytest 340/17-file-sweep green + 3 new tests added, vitest 3800/3800 green, browser evidence above; no em/en dashes introduced (checked by hand in every new file) |
 
 ### Section 10 notes carried from the plan
@@ -89,3 +89,22 @@ diff fixed along the way, `SalesOrderDetail.test.tsx`).
   correct tests of `link_now`, just misleadingly named); the new
   `test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate`
   exercises the real `/auto-place` route and would have caught this on its own.
+
+### Review round (28 Aug, plan sections 13 and 14)
+
+Four blockers and eight should-fixes from the Phase 3 review, each with a red test written
+before its fix. Every AC above still holds; the rows whose EVIDENCE grew say so. Two AC
+readings were sharpened rather than changed:
+
+- **AC-D3 / AC-D9**: "a draft occupies the quantity" now also means the re-deal may not COST
+  a row the quantity it holds - a row past the cut off, a row whose document has closed and a
+  row the walk lands on the same document again all come out of the press untouched, notes
+  and link ids included.
+- **AC-D4**: the plan chip counts `changed` rows as well as `awaiting` (the To confirm set the
+  page itself opens on, R3) and is blind to whether a draft has made the row `placed`. The tile
+  reads the run summary's own live count instead of the hardcoded 0 it shipped with; the 27 Aug
+  "hidden" comment beside that 0 is flagged in plan section 13.
+
+Run: pytest 27 files green (the 17-file sweep plus the `refresh_for_decision` and
+purchase-order suites), 17 new tests; vitest `app/(protected)/project-sales` +
+`app/(protected)/scm/reorder` green. Full figures in plan section 14.

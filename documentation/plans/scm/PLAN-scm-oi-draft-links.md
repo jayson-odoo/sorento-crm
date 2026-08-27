@@ -1,6 +1,6 @@
 # PLAN - Order Inquiries: draft links up front, one Confirm, Outstanding PO/SPO
 
-Status: **TEST ROUND DONE** 2026-08-27 (section 10: vitest 3800/3800, pytest 340/17-file-sweep + `tests/scm` two halves with only pre-existing/unrelated reds, browser evidence on the lane for every AC except D1/D3/D5/D8's live walk, which rest on pytest+vitest - see section 10 for why SO381895 could not carry it fresh. One real defect found and fixed: `/order-inquiries/auto-place` was missing `redeal_drafts`/`include_awaiting`, so Auto link all never actually re-dealt anything). Was: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
+Status: **REVIEW FIXES DONE** 2026-08-28 (section 13: four blockers and eight should-fixes from the Phase 3 review, each with its red test first; section 14 has the run. Two deliberate deviations from the review brief and one flagged conflict are recorded in section 13). Was: **TEST ROUND DONE** 2026-08-27 (section 10: vitest 3800/3800, pytest 340/17-file-sweep + `tests/scm` two halves with only pre-existing/unrelated reds, browser evidence on the lane for every AC except D1/D3/D5/D8's live walk, which rest on pytest+vitest - see section 10 for why SO381895 could not carry it fresh. One real defect found and fixed: `/order-inquiries/auto-place` was missing `redeal_drafts`/`include_awaiting`, so Auto link all never actually re-dealt anything). Was: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
 
 ## 0. What the captain asked (27 Aug, screenshots 28 to 36)
 
@@ -35,7 +35,7 @@ Simplest thing that works. `OrderInquiryLink` gains NO state column. A link is a
 | CS amends a confirmed row | unchanged from handshake: settle-in-place, links kept, `changed`. They read as draft again, which is the truth: purchasing has to look again |
 | Do drafts occupy PO quantity | YES in `_candidates_for_row` (`remaining = ordered - received - other links`, unchanged). Two drafts never point at the same unit, and Confirm can never fail for lack of quantity. That is the whole reason to draft in the walk order rather than at confirm time |
 | Do drafts count as allocation on the PO page | shown, marked **Proposed** in the Allocated to panel (`_allocations_for` joins the row already; add `ack_state`). AutoCount "Split for" text lists confirmed only |
-| Plan demand / `committed_v` | unchanged: plan demand = unlinked remainder of acknowledged + changed rows; awaiting = count chip |
+| Plan demand / `committed_v` | `committed_v` DOES net a draft link (the draft also occupies the PO's remaining, so demand and supply move together); the plan's own read ignores awaiting rows as before - plan demand = unlinked remainder of acknowledged + changed rows, awaiting = the count chip (S7, section 12) |
 | Audit claim (`order_link_claim`) | written at link time as today; it is identity, not approval. `claim.source` unchanged |
 | Re-deal | Auto link all, Link now, PO confirm cascade, a fresh raise: they may UNPLACE and re-deal DRAFT links (rows not acknowledged), never a confirmed row's links. Today the cascade only ever adds; the re-deal is new and is what lets a better document (a nearer PO in the new book) take over before purchasing has said yes |
 
@@ -143,8 +143,19 @@ here so a reviewer meets them once:
   is every row at the moment it is raised, and the page would have read "Not found" for exactly
   the rows the buy was sized from.
 
+- **A history-source row of the same identity BLOCKS the open line rather than being restated.**
+  The two feeds share `spo_allocations` and are told apart by `source_system`, so where the
+  outstanding book states a line the history book already holds at the same
+  `(shipping order, item, location, occurrence)`, the line is skipped with
+  `DOCUMENT_OWNED_ELSEWHERE` - visible in the import log and nowhere else, because reopening a
+  2020 delivery would make it read as stock on its way in for ever. The buyer sees the document
+  short by that line; the log says which line and why.
+
 Also, `AcknowledgeResult.linked_rows` now reports 0 on a Confirm whose rows were already
 drafted, because that is what the press linked. The row is covered; the raise covered it.
+
+The PO-confirm cascade's `redeal_drafts=True` (section 5.4's fourth caller) was NOT wired in
+phase 2 and is wired in the review round (section 13, S5).
 
 ## 6. Order of work (one PR, three phases per PRINCIPLES.md)
 
@@ -363,3 +374,96 @@ Result: AC-D1, AC-D3 (Proposed half) and AC-D5 walked fresh end to end on a real
 previously-untouched order; AC-D3's "second row is offered the rest" half and every
 other AC stay on pytest/vitest per section 10 (not re-walked this round - out of
 this session's scope, which was these three ACs only).
+
+## 12. Section 1 correction: what a draft does to `committed_v` (S7, ruled)
+
+Section 1's table said "Plan demand / `committed_v`: unchanged". Half of that is right and the
+other half needed stating, so the reviewer's S7 question could not be answered from the plan:
+
+**`committed_v` DOES net a draft link** (the draft also occupies the PO's remaining, so demand
+and supply move together), **and the plan's own read ignores awaiting rows exactly as before.**
+No code change: the view already nets links whatever the row's `ack_state` says, and
+`demand.horizon_committed_select_sql` already counts acknowledged and changed rows only. Both
+halves are pinned by
+`tests/test_order_inquiry_handshake_edges.py::test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed`.
+
+## 13. Review round (28 Aug), the Phase 3 findings
+
+Phase 3 review of the branch. Every finding below has a test written before its fix; the
+run is in section 14.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| B1 | `auto_place_for_products(redeal_drafts=True)` unplaced the WHOLE scope before the per-row guards, so a drafted row past the cut off (or whose document had closed) lost its links and was reported as merely held back | the take is computed FIRST, per row, with the row's own links credited back (`_candidates_for_row(credit_own_links=True)`); the old links come down only when there is a better answer to write in their place |
+| B2 | a raise-time draft makes the row `placed`, and `refresh_for_decision` netted it as supply already bought: a re-confirm with a new date did nothing, a lower quantity raised a bogus CANCEL_BALANCE, a higher one split the line | a `placed` / `partly_linked` row that is not `acknowledged` is a DRAFT: its links come down (note kept) and it takes the raised path - superseded and re-raised, which the raise-time cascade drafts again. Acknowledged rows keep today's netting exactly |
+| B3 | `_retire_uncovered_rows` filtered `state == raised`, so a drafted row survived its line leaving the revision and held PO quantity for ever | it retires `placed` / `partly_linked` rows whose `ack_state` is not `acknowledged` too, unplacing the drafts first; a confirmed row is untouched |
+| B4 | `reject_rows` uncovered one line at a time, and each un-decide writes a revision that cancels and re-raises the other lines' rows - so the second refusal stamped a superseded row | every row is stamped first (`_stamp_rejected`), then the ORDERS are un-decided once each with every refused line named (`_uncover_rejected_lines`). The per-row endpoint and its 422s are unchanged |
+| S1 | `SalesOrderLineLink` dropped `late_days`, so the SO detail's badge said less than the identical badge on Order Inquiries | field added to the schema and to the hand-built dict in `sales_order_service._line_links` |
+| S2 | a shipping-order line's identity was its POSITION IN THE FILE, so a re-export that dropped a received line re-keyed the rest onto the wrong rows (links and claims then described another product) | identity is `(spo number, item, location, occurrence)` resolved to a `spo_line_number` the row KEEPS (`_spo_line_plans`); new lines are numbered after the highest the document holds; closure by absence reads the same identities |
+| S3 | preview and write counted `stated` on opposite sides of the product lookup, so a book with an unknown SKU had them closing different rows | one resolver for both (`_spo_line_plans` + `_spo_stated_keys` + `_spo_counts`); a line naming no product leaves no key on either side |
+| S4 | every press of Auto link all deleted and rewrote identical links and appended "Unlinked from X; Re-dealt by ..." to the note | the take is compared with what the row holds as a multiset (`_same_placement`); an identical answer skips the row whole |
+| S5 | the PO-confirm cascade did not pass `redeal_drafts=True`, so a plan-generated purchase order could not take the draft it was bought for | both passes now pass it (safe once B1 landed) |
+| S6 | `awaiting_acknowledgement_rows` counted `awaiting` in `raised` / `partly_linked`, so a drafted row (`placed`) vanished from the plan page's chip; the FE tile was hardcoded `awaitingRows={0}` as well | the count is `ack_state in (awaiting, changed)` with `state not in (cancelled, actioned)` - the To confirm set the page itself opens on - and `ReorderPlanningView` reads `summary.awaiting_rows` |
+| S7 | is `committed_v` netting a draft | ruled, no code change: section 12 above |
+| S8 | `ordered = qty + received` is a float on INTEGER columns, and `line_status` was decided on the unrounded remainder | `_spo_quantities` rounds both figures (preferring the file's own `qty_ordered`, as `_settled_quantities` does) and the status follows the two integers |
+| N1 | the R11 pool gate read the location with the book's raw code as a fallback, while the listing's own read (`link_candidate_products`) can only read the warehouse | the gate reads the WAREHOUSE code only; the raw code is still what the row DISPLAYS |
+| N2 | the "Best-effort" comment described the block below it, not the SPO write that had been inserted in front of it | the SPO write moved above that comment and got its own SAVEPOINT + `outcome.fail(DB_ERROR)`, so a defect on that side costs the shipping orders of one upload rather than the whole import |
+| N3 | `_groups_awaiting_a_link` / `_rows_awaiting_a_link` docstrings had run-on lines | re-wrapped |
+| N4 | `OrderInquiryDocumentAllocation` in `orderInquiry.types.ts` was missing `linked_at`, which the endpoint sends | added |
+| N5 | "Unlink selected (N)" detached without asking (ADR: confirm before every destructive OR detach action) | an `AlertDialog` in `OrderInquiriesClient`, wording taken from `UnlinkDialog`, with three vitest cases |
+
+**Two deviations from the review brief, both deliberate:**
+
+- The brief asked for `_open_po_line(world, qty=50)` at the TOP of
+  `test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed`. With the purchase
+  order present at raise time the row is drafted, then CONFIRMED, and a confirmed row's links
+  are supply: the reconfirm nets it, nothing is superseded, and the test's own assertions
+  (`row.state == cancelled`, a replacement with a different id) can only be made true by
+  cancelling a row whose link purchasing has promised - which R2 and section 1 forbid. The
+  purchase order therefore lands AFTER the acknowledgement, which is the shape that exercises
+  AC-H9 with drafts present: the acknowledged row carries no link, so it IS superseded, and the
+  replacement is drafted onto the new document (asserted).
+- `tests/test_supply_inquiry_handoff.py::test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_balance_exception`
+  placed a row through the real "Place on PO" path and never confirmed it. Under B2 that row is
+  a draft, so it is now re-raised rather than exception-flagged. The test acknowledges the row
+  after placing it, which keeps the rule it was written for (the 20 Aug regression: `placed`
+  counts as supply, not only `actioned`) pinned for a CONFIRMED row.
+
+One further judgement, recorded because it changes a number on a screen: the To confirm count
+now includes `changed` rows (`tests/test_order_inquiry_handshake_edges.py` expects +2 where it
+expected +1). A row CS has amended since purchasing read it is work in front of purchasing, and
+it is what the page's own To confirm filter has meant since R3.
+
+**Flagged, not resolved by this round:** `ReorderPlanningView.tsx` carried the comment
+"Hidden (the captain, 27 Aug): an awaiting row is not demand, and the tile only asked why"
+beside its hardcoded `awaitingRows={0}` (it arrived on main with PR #345, not on this branch).
+S6 asked for the chip to be wired, citing `PLAN-scm-oi-handshake.md` section 7 ("the awaiting
+count is LIVE"), so it is wired - the tile hides itself at 0, so a clear day still reads as
+three tiles. If the 27 Aug ruling stands, revert that one line.
+
+## 14. Review-round test run (28 Aug)
+
+**pytest**, the 17-file sweep plus the `refresh_for_decision` and purchase-order suites the
+review brief named (27 files): **507 passed, 0 failed** (321s). New tests, all written red
+first:
+
+- `tests/test_order_inquiry_draft_links.py` +13 (B1 x2, S4, B2 x4 including the confirmed-row
+  control, B3, B4, S1, S5 x2, S6) - 47 in the file.
+- `tests/scm/test_outstanding_po_skips_spo.py` +4 (S2 x2, S3, S8) - 16 in the file.
+- Rewritten with the reversal recorded beside them:
+  `test_order_inquiry_handshake.py::test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed`
+  (drafts present), `test_order_inquiry_handshake_edges.py::test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed`
+  (the chip counts `changed` too), `test_order_inquiry_links.py::test_the_sales_order_detail_states_where_each_lines_buy_sits`
+  (`late_days` on the wire), `test_supply_inquiry_handoff.py::test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_balance_exception`
+  (the placed row is confirmed before the reconfirm).
+
+**vitest**: `app/(protected)/project-sales` + `app/(protected)/scm/reorder`, **3646 passed /
+0 failed** (225 files), including three To confirm cases added to `ReorderStatTiles.test.tsx`,
+two to `ReorderPlanningView.test.tsx` (the tile reading `summary.awaiting_rows`, and no tile at
+0) and three Unlink-selected confirmation cases in `OrderInquiriesClient.test.tsx`.
+
+`npx tsc --noEmit` clean on every touched file (the repo's standing errors are all in other
+suites' test files). eslint clean on the touched files apart from one pre-existing
+`no-restricted-syntax` warning inside a mock. Pyright is not a usable gate on these two service
+files - the branch's own baseline is 233 SQLAlchemy `Column[...]` errors and the diff adds 8 of
+exactly that class.
