@@ -335,8 +335,12 @@ export async function getPlanningBoard(
 export async function getStockDetail(
   productId: string,
   warehouseId: string,
+  lineIds: string[] = [],
 ): Promise<StockDetail> {
   const search = new URLSearchParams({ product_id: productId, warehouse_id: warehouseId });
+  // The lines the drawer is planning. Their rows come back marked `is_this_line`; an absent
+  // parameter reads the list on nobody's behalf.
+  if (lineIds.length > 0) search.set('line_ids', lineIds.join(','));
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/stock-detail?${search.toString()}`,
   );

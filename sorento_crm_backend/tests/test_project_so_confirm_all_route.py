@@ -99,6 +99,10 @@ def test_confirm_all_commits_the_good_order_and_reports_the_bad_one_without_writ
     assert first["lines_decided"] == 1
     assert first["lines_undecided"] == 0
     assert first.get("error") is None
+    # The board's toast counts the movements PER ORDER, so both figures have to survive the
+    # response model - one it does not declare is dropped in silence (R16).
+    assert first["transfers_written"] == 1
+    assert first["transfers_kept"] == 0
 
     second = results[order_2.id]
     assert second["ok"] is False, second

@@ -210,10 +210,14 @@ describe('SalesOrdersList - planning the selected orders', () => {
     fireEvent.click(all);
   }
 
-  /** Open the toolbar's Actions dropdown. Radix opens on pointerdown, which jsdom does
-   *  not synthesise from `fireEvent.click`, so the keyboard opens it instead. */
-  async function openActions() {
-    const trigger = await screen.findByRole('button', { name: /Actions/i });
+  /**
+   * Open the toolbar's Start dropdown (A1/A3: Plan selected moved off the Actions menu and
+   * onto Start, beside Upload sales orders - the two ways a day's work begins). Radix opens
+   * on pointerdown, which jsdom does not synthesise from `fireEvent.click`, so the keyboard
+   * opens it instead.
+   */
+  async function openStart() {
+    const trigger = await screen.findByRole('button', { name: /^Start$/ });
     fireEvent.keyDown(trigger, { key: 'Enter' });
   }
 
@@ -222,7 +226,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     renderList();
 
     fireEvent.click(await screen.findByLabelText('Select SO900000'));
-    await openActions();
+    await openStart();
     fireEvent.click(screen.getByRole('menuitem', { name: /^Plan selected \(1\)$/ }));
 
     expect(push).toHaveBeenCalledWith(
@@ -235,7 +239,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     renderList();
     await selectAll();
 
-    await openActions();
+    await openStart();
     fireEvent.click(screen.getByRole('menuitem', { name: /^Plan selected \(3\)$/ }));
 
     expect(push).toHaveBeenCalledWith(
@@ -249,7 +253,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     stub(rows(2));
     renderList();
 
-    await openActions();
+    await openStart();
     const item = screen.getByRole('menuitem', { name: /^Plan selected \(0\)$/ });
     expect(item).toHaveAttribute('data-disabled');
     expect(item).toHaveAttribute('title', expect.stringContaining('Tick the sales orders'));
@@ -262,7 +266,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     renderList();
     await selectAll();
 
-    await openActions();
+    await openStart();
     const item = screen.getByRole('menuitem', { name: /^Plan selected \(51\)$/ });
     expect(item).toHaveAttribute('data-disabled');
     expect(item).toHaveAttribute('title', expect.stringContaining('up to 50'));
@@ -289,7 +293,7 @@ describe('SalesOrdersList - planning the selected orders', () => {
     await selectAll();
 
     await waitFor(() => expect(screen.getByText('2 selected')).toBeInTheDocument());
-    await openActions();
+    await openStart();
     expect(screen.queryByRole('menuitem', { name: /^Plan selected/ })).toBeNull();
   });
 });

@@ -23,6 +23,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 const getPlanningBoard = vi.fn();
 const confirmSupply = vi.fn();
+const confirmMany = vi.fn();
 
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
@@ -32,7 +33,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   adoptSalesOrder: vi.fn(),
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
-  confirmMany: vi.fn(),
+  confirmMany: (...args: unknown[]) => confirmMany(...args),
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
     readonly failingLines: unknown[] = [];
   },
@@ -49,6 +50,23 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+/**
+ * `BoardTransfersPanel` (D4) is on this screen now, above the matrix. Its own behaviour is
+ * `BoardTransfersPanel.test.tsx`'s; this mock only keeps the board itself renderable.
+ */
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
+  // The real key, because the confirm hook invalidates it by name (D6).
+  BOARD_TRANSFERS_KEY: 'board-stock-transfers',
+  useBoardTransfers: () => ({ data: { data: [] }, isLoading: false, error: undefined }),
+  useBoardTransferMutations: () => ({
+    approve: { mutate: vi.fn(), isPending: false },
+    approveAll: { mutate: vi.fn(), isPending: false },
+  }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -167,38 +185,59 @@ describe('the changed cell', () => {
   });
 });
 
+/**
+ * R13/D1/D5 retired the per-order commit rail this describe block was written against: no
+ * `commit-row-*` card, no `commit-blocked` per order, no "Confirm this order" button. The
+ * board's ONE Confirm posts through `confirmMany`, and AC-P3-4 still holds: when the board was
+ * opened on a planning-change batch, the body names it (`batch_id`) so the apply and the
+ * confirmation stay one atomic write on the server.
+ */
 describe('the pre-marked decision, and Confirm', () => {
   it('arrives with the changed line already decided', async () => {
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
+    fireEvent.click(
+      await screen.findByRole('button', { name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/ }),
+    );
+
     await waitFor(() => {
-      expect(screen.getByText(/1 approved/)).toBeInTheDocument();
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Approved');
     });
   });
 
-  it('carries the batch on Confirm, so one press applies it and writes one revision', async () => {
-    confirmSupply.mockResolvedValue({
-      revision_no: 3,
-      review_state: 'confirmed',
-      inquiry_rows_created: 1,
-      exceptions: [],
+  it('posts through confirmMany once Confirm is pressed, carrying the pre-marked line', async () => {
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-381895', ok: true, decision_revision: 3, inquiry_rows_created: 1 }],
     });
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
-    await waitFor(() => expect(screen.getByText(/1 approved/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
 
-    fireEvent.click(screen.getByRole('button', { name: /Confirm this order|Confirm 1 line/ }));
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
 
-    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
-    const [, body] = confirmSupply.mock.calls[0];
-    expect(body.batch_id).toBe(MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id);
-    expect(body.lines.length).toBe(1);
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders).toHaveLength(1);
+    // The board fixture's own `pso-${sales_order_id}` (`ordersFor`), not the mock batch's
+    // (unrelated) `pso-381895` - the confirm body is addressed off the BOARD, never the batch.
+    expect(body.orders[0].pso_id).toBe('pso-so-381895');
+    expect(body.orders[0].lines).toHaveLength(1);
+    // AC-P3-4: the batch the board was opened on rides on the confirm body.
+    expect(body.batch_id).toBe('pcb-so381895');
   });
 
-  it('blocks only the order the batch has already been applied to', async () => {
-    // One press confirms ONE order (B1). While another order of the same upload is still
-    // waiting, the batch itself is not applied - so a batch-wide block would put a wall in
-    // front of a change nobody has decided yet.
+  /**
+   * One press confirms every plannable order on the board now (R11) - there is no per-order
+   * card left to block selectively. So a batch NOT yet applied blocks nothing, even though one
+   * order's own rows already read `applied_state: 'applied'`: the board-wide block reads only
+   * `changeBatch.data.applied_at`.
+   */
+  it('does not block Confirm while the batch itself has not been applied, even if a row says it was', async () => {
     getPlanningChangeBatch.mockResolvedValue({
       ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
       applied_at: null,
@@ -208,32 +247,14 @@ describe('the pre-marked decision, and Confirm', () => {
         rows: order.rows.map((row) => ({ ...row, applied_state: 'applied' as const })),
       })),
     });
-    getPlanningBoard.mockResolvedValue(
-      buildBoard(
-        [
-          demand(),
-          demand({
-            sales_order_id: 'so-999999',
-            so_number: 'SO999999',
-            project_line_id: 'pl-999999-1',
-            item_code: 'SRTWC287A-RL',
-          }),
-        ],
-        { today: TODAY, freeStock: {}, granularity: 'week' },
-      ),
-    );
-    renderPanel(MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.id, ['SO381895', 'SO999999']);
-    await screen.findByTestId('fulfilment-board-matrix');
+    renderPanel();
+    await screen.findByTestId('board-change-pcr-381895-1');
 
-    const changed = await screen.findByTestId('commit-row-SO381895');
-    expect(within(changed).getByTestId('commit-blocked')).toHaveTextContent(
-      'This planning change was already applied to this sales order.',
-    );
-    const other = screen.getByTestId('commit-row-SO999999');
-    expect(within(other).queryByTestId('commit-blocked')).toBeNull();
+    expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
   });
 
-  it('refuses a second Confirm on a batch already applied, and says when it was', async () => {
+  it('refuses Confirm once the batch itself was applied, and says when and by whom', async () => {
     getPlanningChangeBatch.mockResolvedValue({
       ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
       applied_at: '2026-08-19T10:00:00Z',
@@ -242,11 +263,9 @@ describe('the pre-marked decision, and Confirm', () => {
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
 
-    const blocked = await screen.findByTestId('commit-blocked');
+    const blocked = await screen.findByTestId('confirm-blocked');
     expect(blocked).toHaveTextContent('This planning change was applied');
     expect(blocked).toHaveTextContent('Cyndi Tee');
-    expect(
-      screen.getByRole('button', { name: /Confirm this order|Confirm 1 line/ }),
-    ).toBeDisabled();
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 });
