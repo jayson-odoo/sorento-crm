@@ -65,6 +65,16 @@ Recorded here rather than in a commit message, because the next person to read t
 9. **One covered set (round 2, S-a).** The recheck computed `frozen - named` while the freeze walked `frozen - named - uncover`, so a line being RELEASED by the same transaction was in the freeze's unit and out of the recheck's, and the recheck refused what the freeze had proposed. `confirm` computes the set once and hands it to both. What it does NOT change is the facts: `replacing=named` still nets an uncovered line's hold for the duration of the call, which is `confirm`'s existing contract and a separate question from which lines were planned together.
 10. **`_proposals_for` takes the order's lines (round 2, S-e)** rather than re-querying `lines_of` inside `_write_decision` after the supersede flush; `confirm` already holds them.
 
+### Round 3 review, captain's own edits (28 Aug)
+
+- **S1 fixed:** `confirm` reads its facts with `replacing = named | uncover_line_ids`, and the R14 over-reserve guard excludes the released lines the same way. A released line stops holding at commit, so its hold is not netted against the payload and it is not an "other line holding here". Pinned by `test_a_released_lines_hold_is_free_for_the_line_the_board_gave_it_to` (10 on hand, all held by covered line 32; releasing 32 and reserving the 10 for line 31 in one confirm succeeds). Before the fix the recheck refused the board's own proposal.
+- AC-U12's second sentence is now asserted (the covered line's own live proposal offers back exactly its own hold).
+- `_write_decision(covered=...)` is required; the fallback that re-created the second subtraction is gone.
+
+### Follow-up, NOT built: the amend read un-nets EVERY covered line's hold (round 3, S2)
+
+`proposal_for` composes each covered line alone against `_facts_for(order, lines, replacing=covered_ids)`, which un-nets every covered line's hold at once, not only the line being composed. Two covered lines A and B holding 10 each at one location with 25 on the floor: A's "Compose again" draft is read against 25 free instead of 15, so an amendment of A above 15 is refused by `confirm` (`replacing={A}`). Trigger: two covered lines holding at one location AND an amendment above the line's own hold. Fix when it fires: one `_facts_for` read per covered line with `replacing={that line}`.
+
 ### Follow-up, NOT built: the donor GROUP ledger (S4)
 
 `_cross_group_borrow_candidates` rebuilds `group_left` per call from `donor_group_net(...).offer`, so the per-WAREHOUSE ledger added in section 3.5 does not bound a donor GROUP. Scenario: the NT group holds 10 at `DC1-NT` and 10 at `MWH-NT` and nets 10 between them; unit A borrows 10 at `DC1-NT` (ledger: DC1-NT 0), unit B is then offered 10 at `MWH-NT` because its own warehouse ledger is untouched and the group's net is re-read live. Two units take 20 out of a group that has 10. The confirmation's `_BorrowLedger` is per warehouse too, so it would not catch it either. Same shape as 3.5, one level up; build it when a live confirmation refuses a borrow the board proposed across two warehouses of one donor group.

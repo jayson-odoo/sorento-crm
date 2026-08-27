@@ -884,6 +884,67 @@ def test_a_covered_siblings_hold_is_not_offered_again_to_the_open_line():
     ]
     assert _stated_board(board[32]) == _stated_sheet(sheet[32])
     assert response.status_code == 200, response.text
+    # The covered line's OWN live proposal (what Amend starts from) is read with only its
+    # own hold un-netted: the 10 it holds at the sibling is offered back to it, and nothing
+    # more (AC-U12, second sentence).
+    assert _stated_sheet(sheet[31]) == [("reserve", "10", sibling_code, "group_take")]
+
+
+def test_a_released_lines_hold_is_free_for_the_line_the_board_gave_it_to():
+    """Round 3 S1. A line named in `uncover_line_ids` stops holding its stock when this
+    transaction commits, so `confirm` must not net that hold from the free stock the payload
+    is judged against - the planning-change apply previews the released line exactly so
+    (`exclude_covered_line_ids`), the board proposes the freed stock to the open line, and
+    a confirm that still netted the hold refused the composition it had just shown.
+
+    10 on the floor, all of it held by covered line 32. Releasing 32 and reserving the 10
+    for line 31 in one confirm is the board's own proposal, and it goes through.
+    """
+    from app.schemas.project_supply import ConfirmSupplyBody
+
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _stock(db, product, own, on_hand=10)
+
+        _core_so, order, mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "10", own, REQUIRED_DATE),
+            ],
+        )
+        _cover(
+            db, order, mirrors[1], eling,
+            components=[
+                {
+                    "kind": "reserve",
+                    "qty": "10",
+                    "source_location": own.warehouse_code,
+                    "source_warehouse_id": str(own.id),
+                    "rung": "group_take",
+                }
+            ],
+            hold=(own, 10),
+        )
+        service = ProjectSupplyService(db)
+        result = service.confirm(
+            service.get_order(str(order.id)),
+            ConfirmSupplyBody(
+                lines=[
+                    {
+                        "project_line_id": str(mirrors[0].id),
+                        "reserve": [{"warehouse_id": str(own.id), "qty": "10"}],
+                    }
+                ]
+            ),
+            actor_user_id=eling,
+            uncover_line_ids=[str(mirrors[1].id)],
+        )
+        db.commit()
+
+    assert result["revision_no"] == 2
 
 
 def test_an_uncovered_line_is_in_the_unit_the_recheck_judges_against():

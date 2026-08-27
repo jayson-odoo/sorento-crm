@@ -1329,11 +1329,9 @@ class ProjectSupplyService:
             ),
         )
         if unit.group_code:
-            # Both halves, exactly as `_apply_group_nets` stamps them on a line: what the
-            # group has arriving in time before its own backlog is served, and this unit's
-            # share of it. A screen reading the unnetted figure off this fact must see the
-            # same "110 arrives, and none of it is free" sentence it sees off a line's.
-            unit.timely_qty_before_group_net = first.timely_qty_before_group_net
+            # The unit's share of what the group has arriving in time, exactly as
+            # `_apply_group_nets` stamps it on a line (`timely_qty_before_group_net`, the
+            # unnetted figure, is already copied by `replace` above).
             unit.timely_qty = sum(
                 (
                     _dec(candidate.get("qty"))
@@ -2792,12 +2790,20 @@ class ProjectSupplyService:
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
-        # Only the NAMED lines are being replaced. A covered line the payload leaves alone
-        # is carried forward with its holds, so it is judged as any other order's covered
-        # line - hold netted, out of the queue - and the named lines cannot be offered what
-        # it is still holding. An unreconciled line is refused only when it is named.
+        # The NAMED lines are being replaced and the UNCOVERED lines are being released, and
+        # both stop holding stock when this transaction commits, so neither may be netted
+        # from what the payload is judged against: a released line whose hold stayed netted
+        # was demand in the queue AND stock still on the floor at once, and the line the
+        # board had just given its stock to was refused for it. A covered line the payload
+        # leaves alone is carried forward with its holds, so it is judged as any other
+        # order's covered line - hold netted, out of the queue - and the named lines cannot
+        # be offered what it is still holding. An unreconciled line is refused only when it
+        # is named.
         facts = self._facts_for(
-            order, lines, replacing=named, refuse_unmapped=named
+            order,
+            lines,
+            replacing=named | {str(line_id) for line_id in uncover_line_ids},
+            refuse_unmapped=named,
         )
         item_codes = {
             str(line.id): facts[str(line.id)].item_code for line in lines
@@ -2891,7 +2897,11 @@ class ProjectSupplyService:
         # capacity message can only say how much is left for this line. Order is all that is
         # at stake - both refuse by raising, before `_write_decision`, so nothing is written
         # either way; which sentence comes back is the whole difference.
-        self._check_reserve_against_on_hand(checked, named=seen)
+        # Released lines are excluded with the named ones: their holds are gone at commit
+        # (same reading as `replacing` above), so they are not "other lines" holding here.
+        self._check_reserve_against_on_hand(
+            checked, named=seen | {str(line_id) for line_id in uncover_line_ids}
+        )
 
         if stale:
             raise SupplyLinesRefused(
@@ -3779,7 +3789,7 @@ class ProjectSupplyService:
         *,
         lines: Sequence[ProjectSalesOrderLine],
         facts: Dict[str, _LineFacts],
-        covered: Optional[Set[str]] = None,
+        covered: Set[str],
         carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
         as_of: Optional[date] = None,
@@ -3809,9 +3819,7 @@ class ProjectSupplyService:
             lines,
             checked,
             facts=facts,
-            covered=covered if covered is not None else {
-                str(entry.line.id) for entry in carried
-            },
+            covered=covered,
             as_of=as_of,
         )
         # The named lines as decided now, then the carried ones exactly as they were
