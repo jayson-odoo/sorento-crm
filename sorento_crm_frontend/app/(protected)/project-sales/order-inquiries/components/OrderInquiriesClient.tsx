@@ -12,7 +12,9 @@ import {
 } from '@tanstack/react-table';
 import {
   AlertTriangle,
+  Ban,
   CheckCheck,
+  ChevronDown,
   Download,
   LayoutGrid,
   Link2,
@@ -39,6 +41,12 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -47,16 +55,24 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
+import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
+import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
+import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
-  useAutoPlaceOrderInquiryRows,
   useOrderInquiryHandshake,
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
   useUploadedBook,
 } from '../../_shared/hooks/useOrderInquiry';
-import { ACK_LABELS, ACK_STATES, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
+import {
+  ACK_ANY,
+  ACK_FILTER_OPTIONS,
+  ACK_TO_CONFIRM,
+  isAcknowledgeable,
+  isBulkRejectable,
+} from '../../_shared/lib/orderInquiryAck';
 import {
   NO_LINK_HORIZON,
   initialLinkHorizon,
@@ -66,7 +82,6 @@ import {
   startsCleared,
   storeLinkHorizon,
 } from '../../_shared/lib/linkHorizon';
-import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
@@ -80,30 +95,23 @@ import type {
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
+  OrderInquiryWorklistParams,
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldown';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
-const STATE_OPTIONS = [
-  { value: 'raised', label: 'Raised' },
-  { value: 'partly_linked', label: 'Partly linked' },
-  { value: 'actioned', label: 'Actioned' },
-  { value: 'cancelled', label: 'Cancelled' },
-  // Stored as `placed`; read as Linked everywhere (AC-I1).
-  { value: 'placed', label: 'Linked' },
-];
-
 /**
- * WHERE the row is linked (AC-I5), which is a different question from what state it is
- * in: a buyer asking "what have I still not put on anything" wants `none`, and one
- * chasing shipping orders wants `spo`.
+ * WHETHER anything in either book covers the row, and out of which one (AC-D15). The
+ * State column and its filter went with the drafts (item 11): what a buyer wants to know
+ * is whether a document was FOUND, which this column already answers, so a second
+ * vocabulary beside it was one thing too many to read. The stored values are untouched.
  */
 const LINKED_OPTIONS = [
-  { value: 'po', label: 'A purchase order' },
-  { value: 'spo', label: 'An SPO' },
-  { value: 'none', label: 'Nothing yet' },
+  { value: 'po', label: 'Found: a purchase order' },
+  { value: 'spo', label: 'Found: an SPO' },
+  { value: 'none', label: 'Not found' },
 ];
 
 type OrderInquiryView = 'list' | 'schedule';
@@ -162,11 +170,19 @@ const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
  */
 const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 
-/** Where the handshake stands (AC-H4), in the four words the column prints. */
-const ACK_OPTIONS = ACK_STATES.map((state) => ({
-  value: state,
-  label: ACK_LABELS[state],
-}));
+/**
+ * What the page opens on (R3/AC-D12): the rows nobody has said yes to yet. Purchasing
+ * works this page as a to-do list, and a to-do list that opens on every row ever raised
+ * is a list nobody works.
+ *
+ * A CLEARED filter travels as `?ack=all`, never as an absent parameter: an absent one
+ * means "nobody has chosen" and the default would go straight back over the choice on
+ * the next reload.
+ */
+function ackFilterFrom(value: string | null): string {
+  if (value === null) return ACK_TO_CONFIRM;
+  return value === ACK_ANY ? '' : value;
+}
 
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
@@ -200,7 +216,6 @@ export function OrderInquiriesClient() {
   const canActOnOrderInquiry = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const { acknowledge, linkNow } = useOrderInquiryHandshake();
-  const autoPlaceRows = useAutoPlaceOrderInquiryRows();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
@@ -214,16 +229,18 @@ export function OrderInquiriesClient() {
   const [search, setSearch] = React.useState(() => searchParams.get('query') ?? '');
   const [debounced, setDebounced] = React.useState(() => searchParams.get('query') ?? '');
   const [month, setMonth] = React.useState('');
-  const [stateFilter, setStateFilter] = React.useState('');
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
   // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
-  // page's "N awaiting acknowledgement" chip links straight into this list narrowed to
-  // them, and a chip that landed on an unfiltered list would leave the buyer to find them.
-  const [ackFilter, setAckFilter] = React.useState(() => searchParams.get('ack') ?? '');
+  // page's "N to confirm" chip links straight into this list narrowed to them, and a chip
+  // that landed on an unfiltered list would leave the buyer to find them. With NO `?ack=`
+  // at all the page opens on its own default (AC-D12).
+  const [ackFilter, setAckFilter] = React.useState(() =>
+    ackFilterFrom(searchParams.get('ack')),
+  );
   // How far out the three presses link (AC-LH1/AC-LH5). Sourced from the URL on mount -
   // `?link_up_to=` for a date and `?link_horizon=none` for a cleared box - then from this
   // browser's own memory, and seeded from the reorder plan's coverage date once the
@@ -267,6 +284,11 @@ export function OrderInquiriesClient() {
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
+  const [rejectingSelected, setRejectingSelected] = React.useState(false);
+  // The ONE ticked row the manual Link dialog is about (R8). Held by id rather than by
+  // the row, so a refetch between the press and the dialog cannot hand it a stale copy.
+  const [linkingRowId, setLinkingRowId] = React.useState<string | null>(null);
+  const [uploadingBook, setUploadingBook] = React.useState(false);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -313,8 +335,10 @@ export function OrderInquiriesClient() {
     else next.set('granularity', matrixGranularity);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
-    if (ackFilter) next.set('ack', ackFilter);
-    else next.delete('ack');
+    // A CLEARED Confirmed filter says so out loud, because an absent `ack` is what the
+    // DEFAULT is read from (AC-D12): dropping the parameter would put To confirm back on
+    // the next reload and read as the clear having failed.
+    next.set('ack', ackFilter || ACK_ANY);
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
     // A CLEARED horizon travels too (item 6). Dropping `link_up_to` and putting nothing in
@@ -355,7 +379,6 @@ export function OrderInquiriesClient() {
   }, [
     debounced,
     month,
-    stateFilter,
     supplierFilter,
     projectFilter,
     raisedDate,
@@ -370,23 +393,16 @@ export function OrderInquiriesClient() {
       query: debounced || undefined,
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
-      state: stateFilter || undefined,
       supplier_id: supplierFilter || undefined,
       project_id: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
-      ack: (ackFilter || undefined) as
-        | 'awaiting'
-        | 'acknowledged'
-        | 'changed'
-        | 'rejected'
-        | undefined,
+      ack: (ackFilter || undefined) as OrderInquiryWorklistParams['ack'],
     }),
     [
       debounced,
       month,
       raisedDate,
-      stateFilter,
       supplierFilter,
       projectFilter,
       raisedByFilter,
@@ -406,8 +422,8 @@ export function OrderInquiriesClient() {
   );
 
   // "Unplace all"'s own scope (the captain, 20-21 Aug): the SAME filters as `filters`,
-  // minus `state` - the action is always about placed rows, whatever else is filtered,
-  // so a State=raised selection must not zero its own scope out.
+  // minus the ones about where the row stands - the action is always about linked rows,
+  // whatever else is filtered.
   const unplaceAllFilters = React.useMemo(
     () => ({
       query: debounced || undefined,
@@ -479,7 +495,6 @@ export function OrderInquiriesClient() {
   const filtered = Boolean(
     debounced ||
       month ||
-      stateFilter ||
       supplierFilter ||
       projectFilter ||
       raisedDate ||
@@ -542,11 +557,7 @@ export function OrderInquiriesClient() {
   // Purchasing's page: the acknowledge grant is what marks purchasing, and CS (action
   // grant only) ticks nothing here.
   const canBulkLink = canAcknowledge && canActOnOrderInquiry;
-  const columns = useOrderInquiryWorklistColumns({
-    selectable: canAcknowledge,
-    canAcknowledge,
-    linkUpTo,
-  });
+  const columns = useOrderInquiryWorklistColumns({ selectable: canAcknowledge });
 
   const table = useReactTable({
     data: rows,
@@ -579,14 +590,20 @@ export function OrderInquiriesClient() {
 
   const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
   const selectedAcknowledgeable = selectedRows.filter((row) => isAcknowledgeable(row));
-  const selectedLinkable = selectedRows.filter(
-    (row) =>
-      (row.ack_state === 'acknowledged' || row.ack_state === 'changed') &&
-      (row.state === 'raised' || row.state === 'partly_linked'),
-  );
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
+  // Every OWED row, linked or not (plan section 1): with drafts written at raise most
+  // rows in front of purchasing are already `placed`, so a Reject that only took
+  // unlinked ones would refuse almost nothing.
+  const selectedRejectable = selectedRows.filter((row) => isBulkRejectable(row));
+  // The manual Link dialog is a ONE-row override (R8), so it is offered at exactly one
+  // tick: two ticked rows would leave the page choosing which of them it meant.
+  const linkTarget =
+    selectedRows.length === 1 ? (selectedRows[0] ?? null) : null;
+  const linkingRow = linkingRowId
+    ? (rows.find((row) => row.id === linkingRowId) ?? null)
+    : null;
 
   async function unlinkSelected() {
     if (selectedLinked.length === 0) return;
@@ -624,9 +641,25 @@ export function OrderInquiriesClient() {
   // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
   // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
+  // How many rows the default filter is about (AC-D12). PHASE2: drop the addition once
+  // the summary's `ack` facet carries `to_confirm` itself (plan section 5.2) - the
+  // server counts the filtered set, and adding two facets here is only right because
+  // awaiting and changed never overlap.
+  const toConfirmCount = summary.data?.ack
+    ? (summary.data.ack.to_confirm ??
+      summary.data.ack.awaiting + summary.data.ack.changed)
+    : undefined;
+
+  // What the chip above the grid says, so the buyer can see WHY the list is short and
+  // take the narrowing off in one press (AC-D12).
+  const ackChipLabel = ackFilter
+    ? `Confirmed: ${
+        ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)?.label ?? ackFilter
+      }`
+    : null;
+
   const filtersActiveCount =
     (month ? 1 : 0) +
-    (stateFilter ? 1 : 0) +
     (supplierFilter ? 1 : 0) +
     (projectFilter ? 1 : 0) +
     (raisedDate ? 1 : 0) +
@@ -893,6 +926,11 @@ export function OrderInquiriesClient() {
                   kind: 'custom',
                   active: filtersActiveCount > 0,
                   activeCount: filtersActiveCount,
+                  // The page opens narrowed to what purchasing has not confirmed, and a
+                  // list that is short for a reason nobody stated reads as missing data.
+                  activeSummary: ackChipLabel
+                    ? { label: ackChipLabel, onClear: () => setAckFilter('') }
+                    : undefined,
                   content: (
                     <div className="space-y-3">
                       <div className="space-y-1.5">
@@ -911,16 +949,6 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">State</Label>
-                        <SearchableSelect
-                          value={stateFilter}
-                          onChange={setStateFilter}
-                          clearable
-                          options={STATE_OPTIONS}
-                          placeholder="Every state"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">Linked</Label>
                         <SearchableSelect
                           value={linkedFilter}
@@ -931,17 +959,18 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Acknowledgement
-                        </Label>
+                        <Label className="text-xs text-muted-foreground">Confirmed</Label>
                         <SearchableSelect
                           value={ackFilter}
                           onChange={setAckFilter}
                           clearable
-                          options={ACK_OPTIONS.map((option) => {
-                            const count = summary.data?.ack?.[
-                              option.value as keyof NonNullable<typeof summary.data.ack>
-                            ];
+                          options={ACK_FILTER_OPTIONS.map((option) => {
+                            const count =
+                              option.value === ACK_TO_CONFIRM
+                                ? toConfirmCount
+                                : summary.data?.ack?.[
+                                    option.value as keyof NonNullable<typeof summary.data.ack>
+                                  ];
                             return {
                               value: option.value,
                               label:
@@ -1010,7 +1039,6 @@ export function OrderInquiriesClient() {
                           className="w-full"
                           onClick={() => {
                             setMonth('');
-                            setStateFilter('');
                             setSupplierFilter('');
                             setProjectFilter('');
                             setRaisedDate('');
@@ -1032,30 +1060,30 @@ export function OrderInquiriesClient() {
                 // month, is the file anyone outside the system reads - so the generic
                 // selection-scoped export is replaced rather than offered beside it.
                 exportConfig={false}
-                // The press purchasing works this page with (AC-H2): tick the rows,
-                // take them on, and whatever open document can cover them is linked at
-                // that moment. Count-bearing, because a bulk action that does not say how
-                // many it is about is one nobody presses twice.
-                bulkActions={[
+                // The bulk strip keeps its COUNT and its Clear and nothing else
+                // (item 12, AC-D13). Every press moved into the Actions menu, where
+                // each one states how many ticked rows it applies to - a strip of
+                // buttons on the left and a menu of the same names on the right was two
+                // places to look for one action.
+                bulkActions={[]}
+                secondaryActions={[
+                  {
+                    key: 'auto-place',
+                    label: 'Auto link all\u2026',
+                    icon: Wand2,
+                    onClick: () => setAutoPlacing(true),
+                  },
                   ...(canBulkLink
                     ? [
                         {
                           key: 'link-selected',
-                          label: `Link selected (${selectedLinkable.length})`,
+                          label: `Link selected (${linkTarget ? 1 : 0})`,
                           icon: Link2,
-                          disabled: selectedLinkable.length === 0 || autoPlaceRows.isPending,
-                          disabledReason:
-                            selectedLinkable.length === 0
-                              ? 'Tick acknowledged rows that still have quantity to link.'
-                              : undefined,
-                          onClick: () =>
-                            autoPlaceRows.mutate(
-                              {
-                                row_ids: selectedLinkable.map((row) => row.id),
-                                ...horizonRequest,
-                              },
-                              { onSuccess: () => setRowSelection({}) },
-                            ),
+                          disabled: !linkTarget,
+                          disabledReason: linkTarget
+                            ? undefined
+                            : 'Tick exactly one row to choose its document by hand.',
+                          onClick: () => setLinkingRowId(linkTarget?.id ?? null),
                         },
                         {
                           key: 'unlink-selected',
@@ -1063,29 +1091,32 @@ export function OrderInquiriesClient() {
                           icon: Unlink,
                           disabled: selectedLinked.length === 0 || unlinkingSelected,
                           disabledReason:
-                            selectedLinked.length === 0 ? 'Tick linked rows to unlink.' : undefined,
+                            selectedLinked.length === 0
+                              ? 'Tick linked rows to unlink.'
+                              : undefined,
                           onClick: () => void unlinkSelected(),
                         },
                       ]
                     : []),
-                ]}
-                secondaryActions={[
-                  {
-                    key: 'export',
-                    label: exporting ? 'Preparing…' : 'Export Excel',
-                    icon: Download,
-                    disabled: exporting,
-                    onClick: () => void handleExport(),
-                  },
-                  {
-                    key: 'auto-place',
-                    label: 'Auto-link',
-                    icon: Wand2,
-                    onClick: () => setAutoPlacing(true),
-                  },
+                  ...(canAcknowledge
+                    ? [
+                        {
+                          key: 'reject-selected',
+                          label: `Reject selected (${selectedRejectable.length})`,
+                          icon: Ban,
+                          destructive: true,
+                          disabled: selectedRejectable.length === 0,
+                          disabledReason:
+                            selectedRejectable.length === 0
+                              ? 'Tick rows purchasing still owes an answer on.'
+                              : undefined,
+                          onClick: () => setRejectingSelected(true),
+                        },
+                      ]
+                    : []),
                   {
                     key: 'unplace-all',
-                    label: 'Unlink all',
+                    label: 'Unlink all\u2026',
                     icon: Undo2,
                     onClick: () => setUnplacingAll(true),
                     // N1: a lacking action grant, or the preview call failing for any
@@ -1101,67 +1132,62 @@ export function OrderInquiriesClient() {
                           ? 'No linked rows to unlink'
                           : undefined,
                   },
+                  {
+                    key: 'export',
+                    label: exporting ? 'Preparing\u2026' : 'Export Excel',
+                    icon: Download,
+                    disabled: exporting,
+                    onClick: () => void handleExport(),
+                  },
                 ]}
+                // START: the two things purchasing DOES here (item 12). Feeding the book
+                // and saying yes to the rows are the whole job, so they sit behind one
+                // primary press rather than a split button and a wide count-bearing one
+                // that together pushed the left cluster onto a second row.
                 primaryAction={
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* How far out the three presses link (AC-LH1/AC-LH5). One control, sat
-                        beside the presses it governs, carried in the URL so a link to this
-                        worklist carries the horizon it was read at, and remembered per
-                        browser so the buyer states it once. */}
-                    {canAcknowledge ? (
-                      <div className="flex items-center gap-2">
-                        <Label
-                          htmlFor="link-up-to"
-                          className="text-sm text-muted-foreground"
-                        >
-                          Link up to
-                        </Label>
-                        <Input
-                          id="link-up-to"
-                          type="date"
-                          className="w-40"
-                          value={linkUpTo}
-                          onChange={(event) => {
-                            setLinkUpTo(event.target.value);
-                            // Emptying the box is a DECISION - "no horizon" - and not the
-                            // same as never having chosen (S1).
-                            setHorizonCleared(!event.target.value);
+                  canAcknowledge ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" size="sm">
+                          Start
+                          <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-60">
+                        <DropdownMenuItem onSelect={() => setUploadingBook(true)}>
+                          <Upload className="size-4" aria-hidden />
+                          Upload purchase orders
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={
+                            selectedAcknowledgeable.length === 0 || acknowledge.isPending
+                          }
+                          title={
+                            selectedAcknowledgeable.length === 0
+                              ? 'Tick the rows you are taking on.'
+                              : undefined
+                          }
+                          onSelect={() => {
+                            if (selectedAcknowledgeable.length === 0) return;
+                            acknowledge.mutate(
+                              {
+                                rowIds: selectedAcknowledgeable.map((row) => row.id),
+                                // No horizon of its own (R6): Confirm links the
+                                // remainder of rows somebody has already decided to
+                                // take on, and the plan's own date is the right reach
+                                // for that. The cut off belongs to Auto link all, which
+                                // is the press that reaches rows nobody has looked at.
+                              },
+                              { onSuccess: () => setRowSelection({}) },
+                            );
                           }}
-                        />
-                      </div>
-                    ) : null}
-                    {/* The books purchasing works from, uploaded from THEIR page (AC-H12):
-                        the same two dialogs and the same worker jobs as the reorder and
-                        purchase-order pages, so nothing is a second importer. */}
-                    {canAcknowledge ? (
-                      <OrderInquiryUploadMenu
-                        onQueued={(queued) => setUploadJobId(queued.job_id)}
-                      />
-                    ) : null}
-                    {/* The press purchasing works this page with (AC-H2), as the page's
-                        own button (the captain, 27 Aug): tick the rows, take them on, and
-                        whatever open document can cover them is linked at that moment.
-                        Count-bearing, because a press that does not say how many it is
-                        about is one nobody presses twice. */}
-                    {canAcknowledge ? (
-                      <Button
-                        type="button"
-                        disabled={selectedAcknowledgeable.length === 0 || acknowledge.isPending}
-                        onClick={() =>
-                          acknowledge.mutate(
-                            {
-                              rowIds: selectedAcknowledgeable.map((row) => row.id),
-                              horizon: horizonRequest,
-                            },
-                            { onSuccess: () => setRowSelection({}) },
-                          )
-                        }
-                      >
-                        <CheckCheck className="size-4" aria-hidden />
-                        {`Acknowledge (${selectedAcknowledgeable.length})`}
-                      </Button>
-                    ) : null}
-                  </div>
+                        >
+                          <CheckCheck className="size-4" aria-hidden />
+                          {`Confirm selected (${selectedAcknowledgeable.length})`}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null
                 }
                 onRefresh={() => {
                   void list.refetch();
@@ -1199,7 +1225,41 @@ export function OrderInquiriesClient() {
         onOpenChange={setAutoPlacing}
         linkUpTo={linkUpTo}
         horizonCleared={horizonCleared}
+        onHorizonChange={(value, cleared) => {
+          setLinkUpTo(value);
+          setHorizonCleared(cleared);
+        }}
       />
+      {/* One reason for the batch (item 15/AC-D6). */}
+      <BulkRejectOrderInquiryDialog
+        open={rejectingSelected}
+        onOpenChange={setRejectingSelected}
+        rowIds={selectedRejectable.map((row) => row.id)}
+        onRejected={() => setRowSelection({})}
+      />
+      {/* The manual override for ONE ticked row (R8), reached from the Actions menu. */}
+      {linkingRow ? (
+        <LinkDocumentDialog
+          rowId={linkingRow.id}
+          itemCode={linkingRow.item_code}
+          qty={linkingRow.qty}
+          linkedQty={linkingRow.linked_qty}
+          deliveryDate={linkingRow.delivery_date}
+          linkUpTo={linkUpTo}
+          onDone={() => setLinkingRowId(null)}
+        />
+      ) : null}
+      {/* The book purchasing feeds, from purchasing's own page (AC-H12) - the SAME dialog
+          and the same worker job the purchase orders list mounts, never a second
+          importer. The history book is not offered here: it is a different desk's file. */}
+      {uploadingBook ? (
+        <OutstandingUploadDialog
+          open
+          onOpenChange={(next) => !next && setUploadingBook(false)}
+          kind="purchase-orders"
+          onQueued={(queued) => setUploadJobId(queued.job_id)}
+        />
+      ) : null}
       <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}

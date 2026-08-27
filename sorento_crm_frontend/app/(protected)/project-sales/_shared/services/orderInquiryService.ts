@@ -9,9 +9,11 @@ import type {
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
+  OrderInquiryBulkRejectResult,
   OrderInquiryPoCandidate,
   OrderInquiryPoDetail,
   OrderInquiryRow,
+  OrderInquirySpoDetail,
   OrderInquirySummary,
   OrderInquiryWorklistEnvelope,
   OrderInquiryWorklistParams,
@@ -286,6 +288,40 @@ export async function rejectOrderInquiryRow(
 }
 
 /**
+ * Purchasing refuses a BATCH with ONE reason (plan section 5.6, item 15). Reject is a
+ * bulk action now that the row actions column is gone, and asking for the reason once
+ * per row would make refusing twenty rows twenty dialogs.
+ *
+ * PHASE2: `POST {BASE}/order-inquiries/reject` does not exist yet, so this loops the
+ * per-row endpoint. Replace the whole body with the single call once it ships - the
+ * signature and the result shape are already the batch's.
+ */
+export async function rejectOrderInquiryRows(
+  rowIds: string[],
+  reason: string,
+): Promise<OrderInquiryBulkRejectResult> {
+  const results: NonNullable<OrderInquiryBulkRejectResult['results']> = [];
+  for (const rowId of rowIds) {
+    try {
+      await rejectOrderInquiryRow(rowId, reason);
+      results.push({ row_id: rowId, ok: true });
+    } catch (error) {
+      results.push({
+        row_id: rowId,
+        ok: false,
+        error: error instanceof Error ? error.message : 'Failed to reject this row',
+      });
+    }
+  }
+  const rejected = results.filter((entry) => entry.ok).length;
+  // A batch where nothing at all went through is a failure, not a quiet zero.
+  if (rejected === 0 && results.length > 0) {
+    throw new Error(results[0].error ?? 'Failed to reject those rows');
+  }
+  return { rejected, results };
+}
+
+/**
  * What the book this page uploaded has written (AC-H13), once the worker is done with it.
  * The two next steps read it: the products to link against, the documents to go and look
  * at. Asked for by the job id the upload dialog handed back.
@@ -426,7 +462,11 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       raised_by: params.raised_by,
       linked: params.linked,
       kind: params.kind,
-      ack: params.ack,
+      // PHASE2: remove this branch. The backend's `ack` filter is a closed set of the
+      // four stored states and answers 422 on `to_confirm`; plan section 5.2 adds it to
+      // the list, the summary facet and the export. Until then the page's default filter
+      // narrows to `awaiting` alone, which is the larger half of what it means.
+      ack: params.ack === 'to_confirm' ? 'awaiting' : params.ack,
     },
   );
 }
@@ -505,6 +545,25 @@ export async function getOrderInquiryPoDetail(poId: string): Promise<OrderInquir
   const response = await apiFetch(`${BASE}/order-inquiries/po/${poId}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this purchase order'));
+  return response.json();
+}
+
+/**
+ * The same lightbox, for the other book (plan section 4.3): the shipping order's own
+ * allocation lines and who they are spoken for by. Addressed by NUMBER - an SPO has no
+ * purchase order id behind it, and the number is what the link on screen carries.
+ *
+ * PHASE2: `GET {BASE}/order-inquiries/spo/{spo_number}` is not built yet, so this 404s
+ * and the dialog shows its empty state. Nothing to remove here when it ships.
+ */
+export async function getOrderInquirySpoDetail(
+  spoNumber: string,
+): Promise<OrderInquirySpoDetail> {
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/spo/${encodeURIComponent(spoNumber)}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load this shipping order'));
   return response.json();
 }
 

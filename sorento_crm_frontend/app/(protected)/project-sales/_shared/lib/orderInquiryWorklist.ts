@@ -102,41 +102,111 @@ export function flowExclusionLabel(verb: string): string | null {
   return NON_ORDER_FLOW_LABEL[verb] ?? 'Not an ORDER row';
 }
 
+/** `2026-08-27T00:00:00` or `2026-08-27` to a day count, else null. */
+function dayNumber(value: string | null | undefined): number | null {
+  const text = (value ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const ms = Date.parse(`${text}T00:00:00Z`);
+  return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
+}
+
 /**
- * "Linked to", in the shape the plan asked for: `8 of 8: 202607-S0105 L3 5, L7 3`
- * (PLAN-scm-cs-planning-uat.md section 3.I, AC-I5/AC-I6/AC-I9).
+ * How many days late this document is for this row (AC-D17).
+ *
+ * The server's own `late_days` is the answer whenever it sends one. The fallback below
+ * is computed from the two dates the link already carries, and it exists only so the
+ * column reads correctly before the field is on the wire.
+ *
+ * PHASE2: remove the fallback branch once `OrderInquiryLinkOut.late_days` ships
+ * (plan section 5.1); `late_days ?? null` is all that should be left.
+ */
+export function lateDaysOf(
+  /** Structural, so the sales-order detail's own link shape reads here too. */
+  link: { late?: boolean; late_days?: number | null; expected_date?: string | null },
+  deliveryDate?: string | null,
+): number | null {
+  if (typeof link.late_days === 'number') return link.late_days > 0 ? link.late_days : null;
+  if (!link.late) return null;
+  const due = dayNumber(deliveryDate);
+  const lands = dayNumber(link.expected_date);
+  if (due === null || lands === null) return null;
+  return lands > due ? lands - due : null;
+}
+
+/**
+ * "Outstanding PO/SPO", in the shape the plan asked for: `8 of 8`, then per document
+ * `202607-S0105  BRW-NTC 5, BRW 3` (plan section 4.2).
  *
  * `headline` is the coverage - how much of the row's quantity is on a document at all -
  * and `documents` groups the links by document so a row split across two lines of one
  * purchase order reads as one document with two lines, which is how the buyer keys it
- * into AutoCount. A row with no links returns `null`, and the cell says "Not linked"
- * rather than printing "0 of 8" at somebody: nothing has happened to it yet.
+ * into AutoCount. A row with no links returns `null`, and the cell says "Not found
+ * (new order)" rather than printing "0 of 8" at somebody.
+ *
+ * LOCATION FIRST, and the line label only in the title (item 5, 27 Aug). Every SPO
+ * allocation has carried a line number since migration 420, so printing the label first
+ * meant the cell read `L14 1` on every SPO row and the warehouse - the one thing the
+ * buyer needs to key the split into AutoCount - never showed at all. A link with
+ * neither reads "no location", which is a fact about the book rather than a dash.
  */
 export function linkedSummary(
   qty: string | null | undefined,
   linkedQty: string | null | undefined,
   links: OrderInquiryLink[] | null | undefined,
+  deliveryDate?: string | null,
 ): {
   headline: string;
-  documents: { document: string; kind: 'po' | 'spo'; parts: string; late: boolean }[];
+  documents: {
+    document: string;
+    kind: 'po' | 'spo';
+    /** What the cell prints: the location and the quantity. */
+    parts: string;
+    /** The same, with the book's own line label in front of each part. Title only. */
+    partsTitle: string;
+    late: boolean;
+    /** By how many days, when that is known. Null on a document that is not late. */
+    lateDays: number | null;
+  }[];
 } | null {
   const list = links ?? [];
   if (list.length === 0) return null;
-  const grouped: { document: string; kind: 'po' | 'spo'; parts: string[]; late: boolean }[] = [];
+  const grouped: {
+    document: string;
+    kind: 'po' | 'spo';
+    parts: string[];
+    titleParts: string[];
+    late: boolean;
+    lateDays: number | null;
+  }[] = [];
   for (const link of list) {
     let entry = grouped.find((g) => g.document === link.document && g.kind === link.kind);
     if (!entry) {
-      entry = { document: link.document, kind: link.kind, parts: [], late: false };
+      entry = {
+        document: link.document,
+        kind: link.kind,
+        parts: [],
+        titleParts: [],
+        late: false,
+        lateDays: null,
+      };
       grouped.push(entry);
     }
     // AC-P3-7: any line of this document landing after the row needs it makes the
-    // document late. Said, never acted on - purchasing decides.
+    // document late. Said, never acted on - purchasing decides. The document's lateness
+    // is its WORST line's: a document half of which lands on time is still late for the
+    // half that does not.
     if (link.late) entry.late = true;
-    // The line when the book numbered it, the location when it did not: both name WHICH
-    // line of the document holds the quantity, and a bare number beside a document with
-    // six open lines names nothing.
-    const where = link.line_label || link.location || null;
-    entry.parts.push(where ? `${where} ${formatInquiryQty(link.qty)}` : formatInquiryQty(link.qty));
+    const days = lateDaysOf(link, deliveryDate);
+    if (days !== null && (entry.lateDays === null || days > entry.lateDays)) {
+      entry.lateDays = days;
+    }
+    const amount = formatInquiryQty(link.qty);
+    const where = link.location || null;
+    entry.parts.push(where ? `${where} ${amount}` : `no location ${amount}`);
+    // The line label names WHICH line of the document holds it, which matters when the
+    // buyer opens the document and not when they are scanning the list.
+    const labelled = [link.line_label || null, where].filter(Boolean).join(' ');
+    entry.titleParts.push(labelled ? `${labelled} ${amount}` : `no location ${amount}`);
   }
   return {
     headline: `${formatInquiryQty(linkedQty ?? '0')} of ${formatInquiryQty(qty ?? '0')}`,
@@ -144,7 +214,9 @@ export function linkedSummary(
       document: g.document,
       kind: g.kind,
       parts: g.parts.join(', '),
+      partsTitle: g.titleParts.join(', '),
       late: g.late,
+      lateDays: g.lateDays,
     })),
   };
 }

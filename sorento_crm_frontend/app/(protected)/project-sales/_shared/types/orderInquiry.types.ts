@@ -78,6 +78,13 @@ export interface OrderInquiryLink {
    * for lateness would leave the row with nothing rather than with something late.
    */
   late?: boolean;
+  /**
+   * BY HOW MUCH it is late, in days between the row's own required date and the
+   * document's expected date (AC-D17). Null or absent when the document is not late.
+   * `late` says THAT it arrives after the row needs it; this says how far after, which
+   * is the difference between "look at this" and "this is fine".
+   */
+  late_days?: number | null;
   /** Written by the cascade rather than by a person. */
   auto?: boolean;
   linked_at?: string | null;
@@ -335,8 +342,11 @@ export interface OrderInquiryWorklistParams {
    * WHERE THE HANDSHAKE STANDS (AC-H4). A third question beside `state` and `linked`:
    * purchasing's own worklist is "what have I not acknowledged yet", and CS reads the
    * same list for "what has purchasing refused".
+   *
+   * `to_confirm` is the page's own default (R3): awaiting AND changed in one word,
+   * because both mean the same thing to purchasing - nobody has said yes to this yet.
    */
-  ack?: OrderInquiryAckState;
+  ack?: OrderInquiryAckState | 'to_confirm';
   page?: number;
   limit?: number;
   sort?: string;
@@ -433,6 +443,12 @@ export interface OrderInquiryAckCounts {
   acknowledged: number;
   changed: number;
   rejected: number;
+  /**
+   * Awaiting plus changed, which is what the default filter asks for (R3). Optional
+   * while the summary still answers the four states alone; the page adds the two up
+   * itself until it arrives.
+   */
+  to_confirm?: number;
 }
 
 /**
@@ -694,6 +710,21 @@ export interface OrderInquiryPoDetailLine {
   location?: string | null;
 }
 
+/**
+ * WHO is holding this document's quantity - the Allocated to panel of the lightbox
+ * (plan section 4.3). A draft allocation (its row still awaiting or changed) reads
+ * Proposed; one on a confirmed row reads Confirmed. Never an id on screen: the inquiry
+ * number and the sales order number are what a person quotes.
+ */
+export interface OrderInquiryDocumentAllocation {
+  inquiry_no?: string | null;
+  so_number?: string | null;
+  item_code?: string | null;
+  qty: string;
+  /** The ROW's handshake state, which is what makes its link a draft or a real one (R1). */
+  ack_state?: OrderInquiryAckState | string | null;
+}
+
 export interface OrderInquiryPoDetail {
   id: string;
   po_number: string;
@@ -702,4 +733,52 @@ export interface OrderInquiryPoDetail {
   expected_date?: string | null;
   status: string;
   lines: OrderInquiryPoDetailLine[];
+  /**
+   * Who this purchase order's quantity is spoken for by. Absent until the backend
+   * answers it (plan section 5.1), and the panel then says so rather than claiming none.
+   */
+  allocations?: OrderInquiryDocumentAllocation[];
+}
+
+/* --------------------------------------------------------- the SPO lightbox
+ *
+ * `GET {BASE}/order-inquiries/spo/{spo_number}` - the same dialog the PO number opens,
+ * for the other book. An SPO has no purchase order behind it, so it is addressed by its
+ * NUMBER (which is what the link carries) rather than by an id.
+ */
+
+/** One allocation line of the shipping order: what is on it, what has landed, where. */
+export interface OrderInquirySpoDetailLine {
+  sku?: string | null;
+  product_name?: string | null;
+  allocated: string;
+  received: string;
+  remaining: string;
+  /**
+   * The warehouse code the book named, else its raw location code. Blank when the book
+   * named neither, and the cell says "no location" rather than printing a dash.
+   */
+  location?: string | null;
+}
+
+export interface OrderInquirySpoDetail {
+  spo_number: string;
+  supplier_name?: string | null;
+  /** When the shipment is expected. */
+  eta?: string | null;
+  /** The inbound shipment behind it, when one exists. */
+  shipment_ref?: string | null;
+  container_no?: string | null;
+  lines: OrderInquirySpoDetailLine[];
+  allocations?: OrderInquiryDocumentAllocation[];
+}
+
+/**
+ * `POST {BASE}/order-inquiries/reject` - one reason, many rows (plan section 5.6). The
+ * batch reports per row so a refusal the server would not take is named rather than
+ * swallowed into a count.
+ */
+export interface OrderInquiryBulkRejectResult {
+  rejected: number;
+  results?: { row_id: string; ok: boolean; error?: string | null }[];
 }

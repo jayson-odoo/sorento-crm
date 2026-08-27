@@ -416,7 +416,12 @@ export function DataGridListToolbar<TData extends object>({
             </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
+          // `grow` (flex-grow, basis auto), not the default `0 1 auto`: without it a
+          // wrapping flex item is sized at its own basis rather than at the free space
+          // beside it, so Columns and Refresh dropped onto a second row at 1280 with
+          // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
+          // the row is genuinely full - the item still shrinks to min-content and wraps.
+          <div className="flex grow flex-wrap items-center gap-2">
             {searchSlot}
             {filters ? (
               filters.kind === 'listQuery' ? (
