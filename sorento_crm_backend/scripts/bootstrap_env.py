@@ -409,6 +409,20 @@ def seed_scm_module_data() -> None:
     )
     module_428 = importlib.util.module_from_spec(spec_428)
     spec_428.loader.exec_module(module_428)
+    # 435 / 436 add the weight (`净重(kg)` / `毛重(kg)` / N.W. / G.W.) and measurement
+    # (材质 / 装箱数 / 外箱尺寸, L / W / H) spellings to the `proforma_invoice` doc type. Same
+    # gap again: the columns are ORM columns, the header aliases are rows, and without them
+    # a CI database reads every weight and carton size as absent.
+    spec_435 = importlib.util.spec_from_file_location(
+        "_scm_seed_435", versions / "435_proforma_line_weights.py"
+    )
+    module_435 = importlib.util.module_from_spec(spec_435)
+    spec_435.loader.exec_module(module_435)
+    spec_436 = importlib.util.spec_from_file_location(
+        "_scm_seed_436", versions / "436_packing_list_workbook_fields.py"
+    )
+    module_436 = importlib.util.module_from_spec(spec_436)
+    spec_436.loader.exec_module(module_436)
 
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
@@ -420,6 +434,8 @@ def seed_scm_module_data() -> None:
         aliases += module_kailu.seed(conn)
         aliases += module_415.seed(conn)
         aliases += module_428.seed(conn)
+        aliases += module_435.seed(conn)
+        aliases += module_436.seed(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

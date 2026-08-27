@@ -413,9 +413,13 @@ class SPOAllocation(Base, CompanyScopedMixin):
     storage_zone_id = Column(UUID(as_uuid=False), ForeignKey("storage_zones.id", ondelete="SET NULL"), nullable=True)
     allocated_quantity = Column(Integer, nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
-    receipt_status = Column(String(50), default="pending", nullable=False)
-    quantity_received = Column(Integer, default=0, nullable=False)
-    quantity_rejected = Column(Integer, default=0, nullable=False)
+    # `server_default` as well as `default`: a raw INSERT (the SPO history import, the
+    # tests' own seeding) never sees the Python default, and a `create_all` database (CI)
+    # has no migration to give the column one - so without this the same statement that
+    # works on every migrated database fails NOT NULL on CI.
+    receipt_status = Column(String(50), default="pending", server_default="pending", nullable=False)
+    quantity_received = Column(Integer, default=0, server_default="0", nullable=False)
+    quantity_rejected = Column(Integer, default=0, server_default="0", nullable=False)
     allocation_notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
