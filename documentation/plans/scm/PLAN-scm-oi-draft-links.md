@@ -1,6 +1,6 @@
 # PLAN - Order Inquiries: draft links up front, one Confirm, Outstanding PO/SPO
 
-Status: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
+Status: **TEST ROUND DONE** 2026-08-27 (section 10: vitest 3800/3800, pytest 340/17-file-sweep + `tests/scm` two halves with only pre-existing/unrelated reds, browser evidence on the lane for every AC except D1/D3/D5/D8's live walk, which rest on pytest+vitest - see section 10 for why SO381895 could not carry it fresh. One real defect found and fixed: `/order-inquiries/auto-place` was missing `redeal_drafts`/`include_awaiting`, so Auto link all never actually re-dealt anything). Was: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
 
 ## 0. What the captain asked (27 Aug, screenshots 28 to 36)
 
@@ -165,3 +165,117 @@ Renaming `ack_state` or the permission slug; a link state column; moving SPO doc
 Built against the section 5 contract with four `// PHASE2:` fallbacks (ack `to_confirm` rewritten to `awaiting`, `lateDaysOf` computed client-side, bulk reject looping the per-row endpoint, `toConfirmCount` summed client-side), all removed in Phase 2. Deleted: `OrderInquiryPoDetailPopover`, `OrderInquiryRejectAction`, `OrderInquiryUploadMenu` (+ tests). `OrderInquiryRowActions` kept: the per-project page still mounts it. One shared-component change: `DataGridListToolbar`'s left cluster gained `grow` (it sat at its own 424px basis beside 721px of free space, which is why Columns + refresh wrapped on every listing).
 
 Browser evidence (:3050, sidebar, session `scm-oi-draft-p1`, screenshots `mockups/oi-p1-*.png`): AC-D12 default `?ack=to_confirm` with the chip, cleared state round-trips as `?ack=all`; AC-D13 one row at 1280, no sideways scroll at 375; AC-D14 both menus with counts disabling at 0; AC-D15 headers, State column + filter gone; AC-D16 SRTSC07 reads `SPO-2026/08-0015 BRW 1`; AC-D17 `late 31 d`; AC-D2 "Not found (new order)"; AC-D18 PO lightbox at 1280 and 375; AC-D19 SPO lightbox empty state until Phase 2; D6 empty reason refused, no request sent. Draft icon not walkable yet: no unconfirmed row carries a link until the raise-time cascade lands.
+
+## 10. Test round (tester, 27 Aug, commit stack ending `502ff3602` -> this round)
+
+**vitest** - `app/(protected)/project-sales`, `app/(protected)/scm/reorder`,
+`app/(protected)/scm/sales-orders`, `components/ui`: 3800 passed, 0 failed (238 files;
+was 1 failing before this round - see "defect" below). Rewrote the three Phase 1
+suites that predated the real endpoints (`orderInquiryWorklistColumns.test.tsx`,
+`OrderInquiryAckCell.test.tsx`, `OrderInquiriesClient.test.tsx` - the last cut from
+1303 to ~700 lines, obsolete link-horizon-on-toolbar and per-row-action tests
+dropped, Actions/Start menu + to_confirm default + counts-disable-at-0 tests added),
+extended `orderInquiryAck.test.ts` (`ACK_TO_CONFIRM`, `ACK_FILTER_OPTIONS`,
+`isBulkRejectable`) and `orderInquiryWorklist.test.ts` (`lateDaysOf`, `linkedSummary`
+location-first/no-fourth-arg). New: `OrderInquiryDocumentDialog.test.tsx` (8 tests,
+opens from PO and SPO, Proposed/Confirmed badges, empty states),
+`BulkRejectOrderInquiryDialog.test.tsx` (7), `AutoLinkOrderInquiryDialog.test.tsx` (9).
+
+**Defect found while writing `orderInquiryWorklistColumns.test.tsx`, not this
+branch's cause but its own diff**: `SalesOrderDetail.test.tsx`'s "two links to the
+same SPO line" test still asserted the OLD label-first reading
+(`SPO-2026/08-0061 L4`) that item 5 replaced with location-first
+(`SPO-2026/08-0061 BRW`) in `SalesOrderDetail.tsx` itself (already correct, in this
+branch's own diff) - the coder updated the component but missed its test. Fixed the
+assertion; all 63 tests in that file pass.
+
+**pytest** - the 17-file sweep the brief named: 338 -> 340 passed (3 tests added to
+`test_order_inquiry_draft_links.py`, one pre-existing test count adjusted), 0 failed.
+Checked `test_order_inquiry_draft_links.py` against section 7 and the AC list;
+added three the brief flagged as possibly missing: reject on a `placed` row frees
+the PO's remaining for a SECOND row's own draft (not just the internal accounting -
+`test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate`); batch
+reject with one CANCELLED row (a different `_assert_rejectable` branch from the
+already-rejected case already covered -
+`test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled`);
+`to_confirm` on the export rewritten to assert CONTENT (a confirmed row's SO number
+absent, an awaiting row's present), not just a 200 and a workbook. The other three
+items the brief named turned out already covered: SPO 404
+(`test_the_shipping_order_lightbox_404s_on_a_number_nobody_holds`), the non-pool
+SPO line visible-but-never-drafted (`test_a_shipping_order_line_outside_the_pool_is_never_drafted`,
+both halves), the outstanding book's SPO-closure-skipped-when-book-carries-none rule
+(`tests/scm/test_outstanding_po_skips_spo.py::test_a_purchase_order_only_export_settles_no_shipping_order`
+and its closes-when-present sibling), and the CS-403-on-batch-reject
+(`test_a_cs_user_may_not_reject_a_batch`).
+
+**Defect found and fixed while writing the "frees the PO's remaining for the next
+candidate" test**: it went red for a real reason. `POST /order-inquiries/auto-place`
+- the route "Actions > Auto link all" calls (`orderInquiryService.autoPlaceOrderInquiryRows`)
+- built its `auto_place_for_products(...)` call with neither `redeal_drafts=True` nor
+`include_awaiting=True`, so the toolbar's own Auto link all never actually re-dealt a
+draft or reached an awaiting row - only `link_now` (the service method behind Start's
+post-upload "Link now" button and `POST .../link-now`, whose docstring even claims
+"It is also the page's Auto link all") carried the two flags. The two existing pytest
+tests named "Auto link all" (`test_auto_link_all_moves_a_draft_onto_a_nearer_document`,
+`test_auto_link_all_never_moves_a_confirmed_rows_link`) both call `LINK_NOW`, not the
+worklist's `auto-place` route, so they never exercised the real Actions-menu path and
+the gap shipped past them. Fixed in `app/api/v1/projects/order_inquiries.py` (two
+kwargs added, doc comment explaining why); full 17-file sweep and the two scm halves
+re-ran green after the fix. Left the two misleadingly-named `link_now` tests as they
+are (they are correct tests of `link_now`, not of `auto-place`) rather than
+retargeting them, since the new test now covers the route the UI actually calls.
+
+**pytest** - `tests/scm` full sweep, in two halves per the brief (99 files each,
+alphabetical split): half A 340 passed / 47 failed / 13 xfailed (881s); half B 1438
+passed / 1 failed / 1 skipped (461s). Standing red named in the brief:
+`tests/scm/test_order_link_both_ways.py` (5 of the 47, hardcoded `202605-S0042`
+collision). The other 42 in half A (`test_m2_demand.py`, `test_m2_job.py`,
+`test_m3_run.py`, `test_m5_explainer.py`, `test_m5_market.py`, `test_m8_slice_e.py`)
+and the 1 in half B (`test_po_history_import.py::test_an_so_named_in_a_note_becomes_a_claim`)
+have zero file overlap with this branch's 9-file diff (`git diff --stat
+origin/main...HEAD -- app/` checked) and sit in an unrelated domain (demand
+analytics forecasting / market signals / PO-history note parsing); read as
+pre-existing shared-dev-DB drift (golden-set / real-fixture assertions against a
+prod-copy database other lanes also write to), not diagnosed further given this
+branch's scope is order inquiries. Not re-verified against a clean `origin/main`
+checkout (would have needed `git stash`, avoided after a near-miss - see below).
+
+**Browser** (:3050, session `scm-oi-draft-test`, `documentation/plans/scm/mockups/oi-test-*.png`).
+SO381895 (the sanctioned fixture) has **nothing outstanding on the fulfilment
+board and no order-inquiry rows at all** on the dev copy right now - a prior
+verification pass already carried it to Confirmed, and the "To confirm" +
+company-wide "ack=all" list both return zero rows for it (`oi-test-so381895-no-rows.png`,
+`oi-test-fp-so381895-nothing-outstanding.png`). **Nothing on it was changed this
+round** - no board confirm, no acknowledge, no reject. AC-D1/AC-D3/AC-D5's live
+"confirm on the board, watch the draft appear then flip to confirmed" walk could
+therefore not be freshly demonstrated; those three rest on pytest (draft: `test_a_board_confirm_raises_a_to_confirm_row_that_already_holds_its_document`,
+`test_two_rows_are_never_drafted_onto_the_same_units`; confirm:
+`test_confirm_stamps_the_row_and_moves_no_link`) plus vitest ("AC-D5: Confirm
+selected"). The adjacent, same-code-path evidence WAS captured live and read-only
+on SO404352's already-real rows (never acted on): AC-D2 "Not found (new order)"
+with the faded bar, AC-D16/AC-D17 a confirmed mark reading `SPO-2026/08-0015 BRW 1`
+and `202607-S0044 BRW 2 late 31 d`. AC-D9 Auto link all opened, "Purchase order
+cut off" confirmed, Cancelled (no `auto-place` request fired, checked via `network
+requests`). AC-D10 Start > Upload purchase orders with a 2-row fixture book (one PO
+line, one SPO line, built the way `tests/scm/test_outstanding_po_skips_spo.py`
+builds its own, seeded catalogue rows under a fresh `ZZTOI-` marker), Test pressed
+and reported "Rows: 2 - Would import: 1 - Skipped: 0 - Errors: 0" plus a warning
+naming the 1 SPO row; Confirm upload never pressed, `network requests` shows only
+the `/preview` call. AC-D13 one row at 1280 (`oi-test-toolbar-1280.png`), stacks
+with no page-level horizontal scroll at 375 (`oi-test-toolbar-375.png`). AC-D18/D19
+both lightboxes at 1280 and 375, lines table + Allocated to panel with a real
+`Confirmed` badge, scroll-inside-itself and Escape-close both work, `console` /
+`errors` clean throughout, `network requests` confirms the right endpoint per
+lightbox. AC-D8 (CS 403) rests on pytest + vitest only - the browser session was
+not re-logged-in as a CS principal this round.
+
+**Near-miss**: mid-diagnosis of the one `tests/scm` half-B failure, ran `git stash`
+in the backend worktree to compare against a clean tree - `git stash` operates
+repo-wide from a worktree root and pulled every uncommitted frontend test file
+along with it too (the frontend lives in the same git worktree, different
+directory). Caught immediately (the harness's own "file changed on disk" note on
+the next read) and `git stash pop` recovered everything with `git diff --stat`
+confirming an exact match before and after; the plan to diagnose that failure
+against a clean checkout was dropped rather than risked twice. Logged here so the
+next agent does not reach for `git stash` in a lane holding uncommitted work across
+both halves of the monorepo.

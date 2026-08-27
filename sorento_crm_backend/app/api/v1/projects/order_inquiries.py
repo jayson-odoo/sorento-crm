@@ -716,12 +716,17 @@ async def auto_place_order_inquiries(
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Run the cascade now (the worklist's "Auto-link"): every raised or partly linked
-    ORDER / RESERVE & ORDER / ORDER BACK row of the named products - or of every product
-    carrying one, when `product_ids` is omitted - linked to its own open document lines in
-    the walk's order (cited document, then SPO before PO on an order back, then location
-    tier, then the purchase order's issue date, then the line's expected date). Idempotent:
-    a second call links nothing more."""
+    """Run the cascade now - the toolbar's "Auto link all" (AC-D9,
+    `PLAN-scm-oi-draft-links.md` R2/R6): every raised or partly linked ORDER / RESERVE &
+    ORDER / ORDER BACK row of the named products - or of every product carrying one, when
+    `product_ids` is omitted - linked to its own open document lines in the walk's order
+    (cited document, then SPO before PO on an order back, then location tier, then the
+    purchase order's issue date, then the line's expected date). Idempotent: a second call
+    links nothing more.
+
+    `redeal_drafts=True, include_awaiting=True`: this is one of the DRAFT re-deal doors
+    (section 5.4) - it reaches rows nobody has confirmed yet and may move a draft off a
+    document a nearer one has since beaten, never a confirmed row's link (R2)."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
@@ -734,6 +739,8 @@ async def auto_place_order_inquiries(
             row_ids=payload.row_ids,
             link_up_to=payload.link_up_to,
             link_horizon=payload.link_horizon,
+            redeal_drafts=True,
+            include_awaiting=True,
         )
         db.commit()
         return body

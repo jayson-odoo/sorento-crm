@@ -1,5 +1,7 @@
 /**
- * The Acknowledged column's four readings (AC-H2/AC-H5/AC-H8), `PLAN-scm-oi-handshake.md`.
+ * The Confirmed column's four readings (AC-D15/AC-H5/AC-H8), `PLAN-scm-oi-draft-links.md`
+ * R7: Acknowledge became Confirm everywhere a person can see it; the stored `ack_state`
+ * values (`acknowledged`, `awaiting`, ...) are untouched.
  *
  * One test per state - a buyer scanning this column needs a different fact from each of
  * them - plus the truncate + title pair the ADR mandates for any long text in a fixed-
@@ -35,12 +37,12 @@ function row(overrides: Partial<OrderInquiryWorklistRow>): OrderInquiryWorklistR
 }
 
 describe('OrderInquiryAckCell', () => {
-  it('reads Awaiting for a row nobody has touched, no `ack_state` at all', () => {
+  it('reads To confirm for a row nobody has touched, no `ack_state` at all', () => {
     render(<OrderInquiryAckCell row={row({})} />);
-    expect(screen.getByText('Awaiting')).toBeInTheDocument();
+    expect(screen.getByText('To confirm')).toBeInTheDocument();
   });
 
-  it('reads Acknowledged with who and when, truncated with the same text as its title', () => {
+  it('reads Confirmed with who and when, truncated with the same text as its title', () => {
     render(
       <OrderInquiryAckCell
         row={row({
@@ -50,7 +52,7 @@ describe('OrderInquiryAckCell', () => {
         })}
       />,
     );
-    expect(screen.getByText('Acknowledged')).toBeInTheDocument();
+    expect(screen.getByText('Confirmed')).toBeInTheDocument();
     const detail = screen.getByText(/Joey Ang/);
     expect(detail).toHaveClass('truncate');
     expect(detail.getAttribute('title')).toBe(detail.textContent);

@@ -50,6 +50,7 @@ from app.models.project_so import (
     ACK_AWAITING,
     ACK_CHANGED,
     ACK_REJECTED,
+    INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     IV_ORDER,
     OrderInquiryLink,
@@ -83,6 +84,11 @@ from .test_order_inquiry_handshake import (
 )
 
 REJECT_BATCH = f"{LIST}/reject"
+#: "Auto link all" - the worklist-wide re-deal (AC-D9), distinct from `LINK_NOW` (which the
+#: page only offers after an upload and which reaches acknowledged rows via a narrower
+#: seam). Named here rather than imported: the handshake test module defines its own
+#: `AUTO_PLACE` mid-file, past the block this module already imports from.
+AUTO_PLACE = f"{LIST}/auto-place"
 
 #: A document that lands twelve days after the row needs it (AC-D17). `WAS` is the row's
 #: own delivery date, so the number in the test is the arithmetic, not a magic constant.
@@ -340,6 +346,34 @@ def test_reject_unplaces_every_link_and_gives_the_quantity_back(api):
     assert by_po.get(str(line.id), Decimal("0")) == Decimal("0")
 
 
+def test_reject_on_a_placed_row_frees_the_pos_remaining_for_the_next_candidate(api):
+    """Not just a number on a report: the freed quantity is real enough for a SECOND row's
+    own draft to take it on the next re-deal. The first row takes the whole line, so a
+    second row raised straight after it is left with nothing - the proof the reject really
+    freed something rather than merely zeroing a count."""
+    _client, world = api
+    _open_po_line(world, qty=10)
+    first = _raise_one_row(api, qty="10")["row"]
+    assert sum(Decimal(str(l.qty)) for l in _links_of(world, first)) == Decimal("10")
+
+    second = _raise_one_row(api, qty="5")["row"]
+    assert _links_of(world, second) == [], "nothing was left for it while the first held it"
+
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(
+                f"{LIST}/{first.id}/reject", json={"reason": "Cancelled by customer"}
+            ).status_code
+            == 200
+        )
+        world.db.commit()
+        assert buyer.post(AUTO_PLACE, json={}).status_code == 200
+    world.db.commit()
+
+    world.db.refresh(second)
+    assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("5")
+
+
 def test_the_batch_reject_takes_one_reason_for_every_row(api):
     _client, world = api
     _open_po_line(world, qty=50)
@@ -395,6 +429,28 @@ def test_the_batch_reject_refuses_the_whole_batch_when_one_row_cannot_be_refused
         response = buyer.post(
             REJECT_BATCH,
             json={"row_ids": [str(good.id), str(already.id)], "reason": "Second"},
+        )
+
+    assert response.status_code == 422, response.text
+    world.db.rollback()
+    world.db.refresh(good)
+    assert good.ack_state == ACK_AWAITING, "nothing was written for the batch"
+
+
+def test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled(api):
+    """A different branch of `_assert_rejectable` from the already-rejected case above -
+    `order_inquiry_row_not_rejectable` rather than `order_inquiry_already_rejected` - and
+    the same ALL-OR-NOTHING rule has to hold for it too."""
+    _client, world = api
+    good = _raise_one_row(api, qty="4")["row"]
+    cancelled = _raise_one_row(api, qty="6")["row"]
+    cancelled.state = INQUIRY_CANCELLED
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            REJECT_BATCH,
+            json={"row_ids": [str(good.id), str(cancelled.id)], "reason": "Whole batch"},
         )
 
     assert response.status_code == 422, response.text
@@ -548,8 +604,17 @@ def test_the_summary_facet_counts_to_confirm(api):
 
 
 def test_the_export_accepts_to_confirm(api):
+    """Not a status check alone: `to_confirm` FILTERS the sheet the same way it filters the
+    list - a row purchasing has confirmed is off it, one still owed is on it."""
     client, world = api
-    _raise_one_row(api, qty="4")
+    to_confirm = _raise_one_row(api, qty="4")
+    confirmed = _raise_one_row(api, qty="6")
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(ACK_URL, json={"row_ids": [str(confirmed["row"].id)]}).status_code
+            == 200
+        )
+    world.db.commit()
 
     export = client.get(f"{LIST}/export", params={"ack": "to_confirm"})
 
@@ -558,6 +623,13 @@ def test_the_export_accepts_to_confirm(api):
 
     book = openpyxl.load_workbook(io.BytesIO(export.content))
     assert book.sheetnames
+    numbers: set[str] = set()
+    for name in book.sheetnames:
+        for row in book[name].iter_rows(min_row=3, values_only=True):
+            if row and row[1]:
+                numbers.add(str(row[1]))
+    assert to_confirm["core_so"].so_number in numbers
+    assert confirmed["core_so"].so_number not in numbers
 
 
 def test_an_unknown_acknowledgement_filter_is_still_refused(api):

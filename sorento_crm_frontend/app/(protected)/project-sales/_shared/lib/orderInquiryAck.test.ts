@@ -5,9 +5,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ACK_ANY,
+  ACK_FILTER_OPTIONS,
   ACK_LABELS,
+  ACK_TO_CONFIRM,
   ackStateOf,
   isAcknowledgeable,
+  isBulkRejectable,
   isRejectable,
   previousValueOf,
 } from './orderInquiryAck';
@@ -31,12 +35,34 @@ describe('ackStateOf', () => {
   });
 });
 
-describe('ACK_LABELS', () => {
+describe('ACK_LABELS (R7: Confirm replaced Acknowledge everywhere a person can see it)', () => {
   it('prints the label the column, the filter and the bulk bar all read', () => {
-    expect(ACK_LABELS.awaiting).toBe('Awaiting');
-    expect(ACK_LABELS.acknowledged).toBe('Acknowledged');
+    expect(ACK_LABELS.awaiting).toBe('To confirm');
+    expect(ACK_LABELS.acknowledged).toBe('Confirmed');
     expect(ACK_LABELS.changed).toBe('Changed');
     expect(ACK_LABELS.rejected).toBe('Rejected');
+  });
+});
+
+describe('ACK_TO_CONFIRM / ACK_FILTER_OPTIONS (R3: the page opens on a to-do list)', () => {
+  it('is its own filter value, not the raw awaiting state', () => {
+    expect(ACK_TO_CONFIRM).toBe('to_confirm');
+    expect(ACK_ANY).toBe('all');
+  });
+
+  it('offers To confirm first, then the three other states, in that order', () => {
+    expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
+      'to_confirm',
+      'acknowledged',
+      'changed',
+      'rejected',
+    ]);
+    expect(ACK_FILTER_OPTIONS.map((option) => option.label)).toEqual([
+      'To confirm',
+      'Confirmed',
+      'Changed',
+      'Rejected',
+    ]);
   });
 });
 
@@ -80,6 +106,33 @@ describe('isRejectable', () => {
 
   it('is false once already rejected - nothing left to refuse', () => {
     expect(isRejectable({ ack_state: 'rejected' })).toBe(false);
+  });
+});
+
+describe('isBulkRejectable (plan section 1: Reject takes ANY owed row, draft-linked included)', () => {
+  it('is true for a raised row, whether or not it already carries drafted links', () => {
+    // Drafts are written at raise now, so most rows purchasing sees are already
+    // `placed` - a Reject scoped to unlinked rows would refuse almost nothing.
+    expect(isBulkRejectable({ ack_state: 'awaiting', state: 'raised' })).toBe(true);
+    expect(isBulkRejectable({ ack_state: 'awaiting', state: 'placed' })).toBe(true);
+    expect(isBulkRejectable({ ack_state: 'awaiting', state: 'partly_linked' })).toBe(true);
+  });
+
+  it('is true for a changed row still placed - purchasing has to look again', () => {
+    expect(isBulkRejectable({ ack_state: 'changed', state: 'placed' })).toBe(true);
+  });
+
+  it('is true for an already-confirmed row - Reject accepts a placed row too (R1)', () => {
+    expect(isBulkRejectable({ ack_state: 'acknowledged', state: 'placed' })).toBe(true);
+  });
+
+  it('is false once already rejected', () => {
+    expect(isBulkRejectable({ ack_state: 'rejected', state: 'placed' })).toBe(false);
+  });
+
+  it('is false for a cancelled or an actioned row - nothing left to refuse', () => {
+    expect(isBulkRejectable({ ack_state: 'awaiting', state: 'cancelled' })).toBe(false);
+    expect(isBulkRejectable({ ack_state: 'awaiting', state: 'actioned' })).toBe(false);
   });
 });
 
