@@ -9,7 +9,7 @@ reviewed lines into a notice through the same S8 machinery `approve_loading_plan
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, model_validator
@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.services.scm import container_request_service, supplier_notice_service
+from app.services.scm import (
+    container_request_drill,
+    container_request_service,
+    supplier_notice_service,
+)
 from app.utils.http import content_disposition
 
 router = APIRouter()
@@ -176,3 +180,30 @@ def send_container_request(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/container-requests/drill")
+def drill_container_request_cell(
+    supplier_id: str,
+    product_id: str,
+    kind: Literal["spo", "incoming_pl", "po"],
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The documents behind the SPO / Incoming PL / PO figure on one row (R8, AC-B4).
+
+    `{kind, rows, total, history}`, where `total` is the SAME number the cell shows because
+    both are one predicate - see `container_request_drill`'s module docstring, including why
+    the SPO reader stays on `spo_allocations` after migration 420.
+
+    `kind` is a `Literal`, so a kind nothing reads is a 422 from FastAPI rather than an
+    empty 200 that reads as "there is nothing here". `on_hand` is deliberately absent: the
+    On hand lightbox is served by `/reorder-runs/location-stock?product_id=`, which already
+    answers it per product and is reused as-is (R7).
+
+    A GET, and behind `_READ` for the same reason `/container-requests/history` is: it is a
+    pure read of what the screen is already showing, scoped to one product.
+    """
+    return container_request_drill.drill(
+        db, supplier_id=supplier_id, product_id=product_id, kind=kind
+    )
