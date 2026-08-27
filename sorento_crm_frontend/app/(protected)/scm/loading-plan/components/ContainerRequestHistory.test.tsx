@@ -1,10 +1,10 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import {
   ContainerRequestHistoryBars,
-  ContainerRequestHistoryCell,
+  ContainerRequestHistoryPeakCell,
   monthLabel,
 } from './ContainerRequestHistory';
 import type {
@@ -56,33 +56,42 @@ describe('monthLabel', () => {
   });
 });
 
-describe('ContainerRequestHistoryCell', () => {
-  it('shows each series twelve-month total with a sparkline, the peak on hover (AC-B6)', () => {
-    render(<ContainerRequestHistoryCell history={history()} loading={false} />);
-
-    expect(
-      screen.getByTitle('Project 1,240 in 12 months, peak Apr 26 1,240'),
-    ).toHaveTextContent('P1,240');
-    expect(screen.getByTitle('Retail 320 in 12 months, peak Jun 26 320')).toHaveTextContent(
-      'R320',
+describe('ContainerRequestHistoryPeakCell', () => {
+  it('names the peak month and quantity per series, and opens that series on click (AC-B6)', async () => {
+    render(
+      <>
+        <ContainerRequestHistoryPeakCell history={history()} loading={false} kind="project" />
+        <ContainerRequestHistoryPeakCell history={history()} loading={false} kind="retail" />
+      </>,
     );
-    expect(screen.getByTestId('history-spark-project')).toBeInTheDocument();
-    expect(screen.getByTestId('history-spark-retail')).toBeInTheDocument();
+
+    const project = screen.getByTitle('Project ordered, last 12 months');
+    expect(project).toHaveTextContent('1,240');
+    expect(project).toHaveTextContent('Apr 26');
+    const retail = screen.getByTitle('Retail ordered, last 12 months');
+    expect(retail).toHaveTextContent('320');
+    expect(retail).toHaveTextContent('Jun 26');
+
+    fireEvent.click(project);
+    expect(await screen.findByTestId('history-series-project')).toBeInTheDocument();
+    expect(screen.queryByTestId('history-series-retail')).not.toBeInTheDocument();
   });
 
-  it('says so when a product has not been ordered in twelve months', () => {
+  it('reads a dash when the series has no orders in twelve months', () => {
     render(
-      <ContainerRequestHistoryCell
-        history={history({ project: series(null, 0), retail: series(null, 0) })}
+      <ContainerRequestHistoryPeakCell
+        history={history({ project: series(null, 0) })}
         loading={false}
+        kind="project"
       />,
     );
 
-    expect(screen.getByText('No orders in 12 months')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('shows the sidecar is still coming rather than an empty answer', () => {
-    render(<ContainerRequestHistoryCell history={undefined} loading />);
+    render(<ContainerRequestHistoryPeakCell history={undefined} loading kind="project" />);
 
     expect(screen.getByText('Loading')).toBeInTheDocument();
   });

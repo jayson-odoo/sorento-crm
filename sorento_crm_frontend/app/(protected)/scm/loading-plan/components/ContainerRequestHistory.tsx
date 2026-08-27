@@ -1,5 +1,6 @@
 'use client';
 
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import type {
@@ -33,91 +34,56 @@ export function monthLabel(month: string | null): string {
 
 /** Project is the channel this business plans around; retail is read beside it, never instead. */
 const SERIES_PAINT = {
-  project: { bar: 'bg-sky-500', text: 'text-sky-700', fill: 'text-sky-500' },
-  retail: { bar: 'bg-slate-400', text: 'text-slate-600', fill: 'text-slate-400' },
+  project: { bar: 'bg-sky-500', text: 'text-sky-700' },
+  retail: { bar: 'bg-slate-400', text: 'text-slate-600' },
 } as const;
 
-/** Twelve bars in a 48x14 box: the year's shape at a glance, each series against its own peak. */
-function Sparkline({
-  series,
-  kind,
-}: {
-  series: ContainerRequestHistorySeries;
-  kind: 'project' | 'retail';
-}) {
-  const scale = Math.max(...series.months.map((p) => p.qty), 0);
-  const w = 3;
-  const gap = 1;
-  const h = 14;
-  return (
-    <svg
-      width={series.months.length * (w + gap)}
-      height={h}
-      className={cn('shrink-0', SERIES_PAINT[kind].fill)}
-      aria-hidden
-      data-testid={`history-spark-${kind}`}
-    >
-      {series.months.map((point, i) => {
-        const bar = scale > 0 ? Math.max(Math.round((point.qty / scale) * h), point.qty > 0 ? 1 : 0) : 0;
-        const peak = point.month === series.peak_month && point.qty > 0;
-        return (
-          <rect
-            key={point.month}
-            x={i * (w + gap)}
-            y={h - bar}
-            width={w}
-            height={bar}
-            opacity={peak ? 1 : 0.5}
-            fill="currentColor"
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
 /**
- * The grid cell: per series, the twelve-month TOTAL and a sparkline, the peak in the hover
- * (captain, 27 Aug: the peak-month text was hard to read). The total is the figure a buyer
- * compares against the ask; the sparkline says whether it arrived in one month or twelve.
+ * The grid cell, one per series (captain, 27 Aug): the peak month and its quantity, and a
+ * click opens that series' twelve bars. Peak, not total, because the question is "how big
+ * does this product get in a month" (AC-B6); the trend is one click away rather than crammed
+ * beside the figure.
  */
-export function ContainerRequestHistoryCell({
+export function ContainerRequestHistoryPeakCell({
   history,
   loading,
+  kind,
 }: {
   history: ContainerRequestHistoryProduct | undefined;
   loading: boolean;
+  kind: 'project' | 'retail';
 }) {
   if (loading && !history) {
     return <span className="text-2xs text-muted-foreground">Loading</span>;
   }
   if (!history) return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
-
-  const { project, retail } = history;
-  if (project.total === 0 && retail.total === 0) {
-    return <span className="text-2xs text-muted-foreground">No orders in 12 months</span>;
+  const series = history[kind];
+  if (series.total === 0 || !series.peak_month) {
+    return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
   }
-
+  const label = kind === 'project' ? 'Project' : 'Retail';
   return (
-    <div className="flex flex-col gap-0.5 text-2xs">
-      {(['project', 'retail'] as const).map((kind) => {
-        const series = history[kind];
-        const peak = series.peak_month
-          ? `peak ${monthLabel(series.peak_month)} ${fmtInt(series.peak_qty)}`
-          : 'no orders';
-        return (
-          <span
-            key={kind}
-            className={cn('flex items-center gap-1.5 tabular-nums', SERIES_PAINT[kind].text)}
-            title={`${kind === 'project' ? 'Project' : 'Retail'} ${fmtInt(series.total)} in 12 months, ${peak}`}
-          >
-            <span className="w-3 font-medium">{kind === 'project' ? 'P' : 'R'}</span>
-            <span className="w-10 text-right">{fmtInt(series.total)}</span>
-            <Sparkline series={series} kind={kind} />
-          </span>
-        );
-      })}
-    </div>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          title={`${label} ordered, last 12 months`}
+          className={cn(
+            'inline-flex items-baseline gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+            SERIES_PAINT[kind].text,
+          )}
+        >
+          <span>{fmtInt(series.peak_qty)}</span>
+          <span className="text-2xs text-muted-foreground">{monthLabel(series.peak_month)}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent className="w-80" align="end">
+          <p className="mb-2 text-xs font-medium">{label} ordered qty (SO booked), last 12 months</p>
+          <SeriesBars series={series} kind={kind} />
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 

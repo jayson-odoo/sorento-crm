@@ -66,7 +66,7 @@ import {
   type ContainerRequestSoLine,
   type SupplierNotice,
 } from '../../services/fulfilmentService';
-import { ContainerRequestHistoryCell } from './ContainerRequestHistory';
+import { ContainerRequestHistoryPeakCell } from './ContainerRequestHistory';
 import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
 import { ContainerRequestStatCards } from './ContainerRequestStatCards';
 import { summariseContainerRequest } from './containerRequestSummary';
@@ -573,24 +573,37 @@ export function ContainerRequestSection({
         sortDescFirst: true,
         meta: { headerTitle: 'Packed' },
       },
+      // Read through a ref for the same reason the editable qty cell does: the sidecar is
+      // fetched for the page THIS table decides, which is not known until the table exists,
+      // so the column cannot depend on it without a cycle. Cell functions run on every
+      // render, so an arriving sidecar still paints. One column per series (captain, 27 Aug).
       {
-        id: 'ordered_12m',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Ordered 12 months" column={column} />
-        ),
-        // Read through a ref for the same reason the editable qty cell does: the sidecar is
-        // fetched for the page THIS table decides, which is not known until the table exists,
-        // so the column cannot depend on it without a cycle. Cell functions run on every
-        // render, so an arriving sidecar still paints.
+        id: 'project_peak',
+        header: ({ column }) => <DataGridColumnHeader title="Project peak" column={column} />,
         cell: ({ row }) => (
-          <ContainerRequestHistoryCell
+          <ContainerRequestHistoryPeakCell
             history={historyRef.current.get(row.original.product_id)}
             loading={historyLoadingRef.current}
+            kind="project"
           />
         ),
-        size: 160,
+        size: 120,
         enableSorting: false,
-        meta: { headerTitle: 'Ordered 12 months' },
+        meta: { headerTitle: 'Project peak' },
+      },
+      {
+        id: 'retail_peak',
+        header: ({ column }) => <DataGridColumnHeader title="Retail peak" column={column} />,
+        cell: ({ row }) => (
+          <ContainerRequestHistoryPeakCell
+            history={historyRef.current.get(row.original.product_id)}
+            loading={historyLoadingRef.current}
+            kind="retail"
+          />
+        ),
+        size: 120,
+        enableSorting: false,
+        meta: { headerTitle: 'Retail peak' },
       },
     ],
     [renderQtyCell, linesByProduct],
