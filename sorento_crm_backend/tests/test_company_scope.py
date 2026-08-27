@@ -455,7 +455,18 @@ def test_every_company_id_table_is_registered():
     # `product_set_proposals`, the candidate rows inside a batch, are deliberately NOT owned
     # for the same reason `product_set_members` is not: each one is reachable only through
     # its parent batch, which is already scoped, so a second filter would drop it twice.
-    expected_owned = 120
+    #
+    # PLAN-scm-cs-planning-uat.md adds 1 and PLAN-scm-fulfilment-feedback.md adds 1.
+    # `order_inquiry_links` (migration 421) is one placement of part of an inquiry row's
+    # quantity on one document line. Owned rather than derived through the row because the
+    # unlink path loads the link BY ID and the netting read joins it straight off `row_id`,
+    # the same reason `so_amendments` is owned beside its own parent; the row's own company
+    # is what the migration copies onto it. `stock_transfers` (migration 419) is one
+    # company's move of its own stock between its own warehouses, loaded by id on every
+    # approve and cancel, and `(company_id, transfer_no)` is what makes the number unique -
+    # a transfer table scoped through a warehouse would filter on a place instead of on the
+    # company whose goods moved.
+    expected_owned = 122
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -29,6 +29,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
 )
 from app.services.scm import outstanding_import_service as svc
@@ -159,7 +160,14 @@ def _placed_oi_row(db, company_id: str, product: Product, crm_po: PurchaseOrder,
                    crm_line: PurchaseOrderLine) -> OrderInquiryRow:
     """A raised buy row already tagged onto the CRM's own PO line - the shape
     `place_on_po`/`place_on_po_allocations` leave behind, built directly on the models so
-    this file stays independent of that route."""
+    this file stays independent of that route.
+
+    BOTH halves of that shape: since migration 421 a placement is a
+    `projects.order_inquiry_links` row and the `po_ref`/`po_line_id` columns are the
+    single-document summary beside it. The unplace this test drives works off the links,
+    so a row carrying only the summary refuses with `order_inquiry_not_placed` - and no
+    writer produces one (the migration backfilled a link for every placed row).
+    """
     user_id = _confirm_user(db, f"{MARKER} buyer")
     warehouse = _confirm_warehouse(db, f"ZZT-{MARKER}-{uuid.uuid4().hex[:6]}".upper())
     core_so = _confirm_core_so(db, company_id)
@@ -186,6 +194,13 @@ def _placed_oi_row(db, company_id: str, product: Product, crm_po: PurchaseOrder,
         state=INQUIRY_PLACED, po_ref=crm_po.po_number, po_line_id=crm_line.id,
     )
     db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_u(), company_id=company_id, row_id=row.id, po_line_id=crm_line.id,
+            document=crm_po.po_number, qty=Decimal("20"), auto=True,
+        )
+    )
     db.flush()
     return row
 

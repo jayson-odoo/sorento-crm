@@ -458,6 +458,13 @@ def test_adoption_leaves_committed_v_byte_identical_for_that_order():
     Runs against the real database because `scm.committed_v` is a VIEW, and views are
     installed by migrations rather than by `Base.metadata.create_all`. Scoped to a product
     this test seeds, so nothing it asserts depends on a row it did not write.
+
+    A RETAIL order is seeded at the same product and location beside the project one, and
+    it is what makes this test say anything. Only a project-class order can be adopted
+    (`_assert_plannable`), and since P3 a project-class order contributes nothing to the
+    view from the book - so with the project order alone the snapshot would be empty
+    before and empty after, and "byte identical" would be a claim about nothing. The
+    neighbour is a real commitment at the very row adoption could disturb.
     """
     with pg_session() as db:
         company_id = _sorento(db)
@@ -466,6 +473,8 @@ def test_adoption_leaves_committed_v_byte_identical_for_that_order():
             warehouse = _warehouse(db, company_id)
             core = _core_order(db, company_id)
             _core_line(db, core, product, warehouse=warehouse, qty_ordered="7")
+            neighbour = _core_order(db, company_id, demand_class="retail")
+            _core_line(db, neighbour, product, warehouse=warehouse, qty_ordered="3")
             db.flush()
 
             def _snapshot():
@@ -480,7 +489,7 @@ def test_adoption_leaves_committed_v_byte_identical_for_that_order():
                 ).fetchall()
 
             before = _snapshot()
-            assert before, "the seeded line must be counted before adoption"
+            assert before, "the neighbouring retail line must be counted before adoption"
 
             ProjectSOAdoptionService(db).adopt(core.id, actor_user_id=None)
             db.flush()
@@ -489,7 +498,14 @@ def test_adoption_leaves_committed_v_byte_identical_for_that_order():
 
 
 def test_adoption_leaves_the_plan_demand_predicate_selecting_the_same_orders():
-    """`is_plan_demand_order()` is the other demand reader AC-FP09 names."""
+    """`is_plan_demand_order()` is the other demand reader AC-FP09 names.
+
+    Which orders it selects is a fact about demand CLASS since P3 and about nothing else:
+    the book speaks for retail, the adopted project order is not in it either side of the
+    adoption, and the retail order beside it is in it both times. Asserted over the pair
+    rather than over the adopted order alone, so "the same orders" is a set that has
+    something in it.
+    """
     with blank_session() as db:
         company_id = _sorento(db)
         with company_scope(db, frozenset({company_id})):
@@ -499,18 +515,23 @@ def test_adoption_leaves_the_plan_demand_predicate_selecting_the_same_orders():
             warehouse = _warehouse(db, company_id)
             core = _core_order(db, company_id)
             _core_line(db, core, product, warehouse=warehouse)
+            neighbour = _core_order(db, company_id, demand_class="retail")
+            _core_line(db, neighbour, product, warehouse=warehouse)
             db.flush()
 
             def _selected():
                 return {
                     str(row[0])
                     for row in db.query(SalesOrder.id)
-                    .filter(SalesOrder.id == core.id, is_plan_demand_order())
+                    .filter(
+                        SalesOrder.id.in_([core.id, neighbour.id]),
+                        is_plan_demand_order(),
+                    )
                     .all()
                 }
 
             before = _selected()
-            assert before == {str(core.id)}
+            assert before == {str(neighbour.id)}
 
             ProjectSOAdoptionService(db).adopt(core.id, actor_user_id=None)
             db.flush()

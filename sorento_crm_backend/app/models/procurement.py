@@ -379,8 +379,14 @@ class SPOAllocation(Base, CompanyScopedMixin):
     allocated_quantity = Column(Integer, nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     receipt_status = Column(String(50), default="pending", nullable=False)
-    quantity_received = Column(Integer, default=0, nullable=False)
-    quantity_rejected = Column(Integer, default=0, nullable=False)
+    #: `server_default` as well as `default`, because the live table carries `DEFAULT 0` on
+    #: both and a create_all database did not. Every writer that reaches this table with raw
+    #: SQL - the purchase-history import, the SPO conversion, the tests that seed a document
+    #: line - names the columns it cares about and leaves the rest to the default, so the
+    #: two schemas have to agree about what the default is or the same INSERT works on the
+    #: dev copy and raises NotNullViolation in CI.
+    quantity_received = Column(Integer, default=0, server_default="0", nullable=False)
+    quantity_rejected = Column(Integer, default=0, server_default="0", nullable=False)
     allocation_notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)

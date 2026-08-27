@@ -3,6 +3,7 @@
   "tables": [
     "projects.so_divergence_lines",
     "projects.so_divergences",
+    "projects.order_inquiry_links",
     "projects.order_inquiry_rows",
     "projects.order_inquiries",
     "projects.so_amendments",

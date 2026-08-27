@@ -8,7 +8,7 @@ module carries its own uninstall story.
 
 Three rules govern what is in here:
 
-* **Module-owned tables only, and the model file is what says so.** All 47 live in the
+* **Module-owned tables only, and the model file is what says so.** All 49 live in the
   ``projects`` Postgres schema (ADR-0011), which is a second, mechanically checkable
   expression of the same fact - but ownership is still "declared in
   ``app/models/projects.py`` or ``app/models/project_so.py``", which is exactly what
@@ -55,6 +55,7 @@ from app.models.project_so import (
     DeliveryScheduleVersion,
     OrderChangeNotice,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectDeliveryPhase,
     ProjectPOAnnotation,
@@ -108,6 +109,9 @@ PURGE_ORDER: List[Type] = [
     # --- sales order side: divergences, inquiries and amendments hang off the SO -------
     ProjectSODivergenceLine,
     ProjectSODivergence,
+    # order_inquiry_links.row_id CASCADEs, so the row would take its links anyway; the
+    # link still gets its own statement so the operator sees the placements counted.
+    OrderInquiryLink,
     OrderInquiryRow,
     OrderInquiry,
     SOAmendment,

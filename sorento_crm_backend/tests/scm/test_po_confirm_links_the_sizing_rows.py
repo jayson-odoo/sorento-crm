@@ -39,10 +39,20 @@ def _linked_qty(db, row_id) -> float:
 
 
 def test_the_confirm_links_the_two_rows_that_sized_the_line_not_the_older_one(scm_app):
+    """POOL locations - codes with no `-<group>` suffix - and that is deliberate.
+
+    Ladder v4 section 1d refuses a GROUP-location purchase-order line to the cascade
+    unless `group_net + the group's own open PO balance > 0`, and a purchase order raised
+    off the plan to cover exactly the plan's Project figure lands on zero: the backlog it
+    is sized against is the very demand it would be linked to. That rule is about which
+    LINES may be offered and this test is about which ROWS get them, so the scenario is
+    put where only one rule is in play. `group_of_warehouse_code` reads the suffix after
+    the first hyphen, so a code with no hyphen carries no group at all.
+    """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}-HERE")
-    elsewhere = _mk_warehouse(db, f"{MARKER}-AWAY")
+    here = _mk_warehouse(db, f"{MARKER}HERE")
+    elsewhere = _mk_warehouse(db, f"{MARKER}AWAY")
     pid = _mk_product(db, f"{MARKER}-SKU")
 
     # OLDEST first, so the plain cascade would reach for it before either of the two below.

@@ -306,6 +306,33 @@ def uploaded(world):
     return world
 
 
+def acknowledge_all(world):
+    """Purchasing takes the raised rows on, which is when anything may link to them.
+
+    The handshake (`PLAN-scm-oi-handshake.md` section 3) moved the cascade off every write
+    path and onto three presses: acknowledge, Link now, and a PO confirm. A CS form upload
+    raises its rows `awaiting` and reports `rows_linked` 0 BY DESIGN - the form is CS
+    telling purchasing what is needed, and a row purchasing has not read is one CS is still
+    free to change. So the link tests below acknowledge first: what they are about is WHICH
+    document the cascade picks, and that question only exists once the cascade may run.
+
+    Every document a test means to compete has to exist BEFORE this is called: one press
+    links what it can and a later decoy never gets a turn.
+    """
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    ProjectOrderInquiryService(world.db).acknowledge_rows(
+        [str(row.id) for row in world.rows()], actor_user_id=world.actor
+    )
+    world.db.flush()
+    return world
+
+
+@pytest.fixture()
+def acknowledged(world, uploaded):
+    return acknowledge_all(world)
+
+
 # ------------------------------------------------------------------ the rows are raised
 
 
@@ -460,7 +487,7 @@ def test_an_amended_form_restates_the_row_rather_than_adding_one(world, uploaded
 
 
 def test_a_row_purchasing_has_already_linked_is_not_rewritten_by_a_re_upload(
-    world, documents, uploaded
+    world, documents, acknowledged
 ):
     """Once a row sits on a document, the form is no longer the only word about it: rewriting
     its quantity under a link would leave the link claiming more than the row asks for."""
@@ -492,7 +519,7 @@ def test_a_restatement_never_blanks_the_note_a_relocation_wrote(world, uploaded)
 # -------------------------------------------------------------------------- the auto-link
 
 
-def test_the_cited_document_is_linked_before_any_other(world, documents, uploaded):
+def test_the_cited_document_is_linked_before_any_other(world, documents, acknowledged):
     """AC-I3. The form is the oracle: CS named `202604-S0083`, and the decoy purchase order
     would win on the cascade's own date ordering (issued January, arriving May) if the
     citation did not come first."""
@@ -520,8 +547,9 @@ def test_every_citation_is_tried_before_the_generic_walk_in_the_order_written(
         [(ITEM_Y, "BRW-IB", 500, date(2026, 5, 1))],
     )
     world.db.flush()
-    svc.apply(world.db, workbook(FORM), actor=world.actor)
-    world.db.flush()
+    # Acknowledged HERE rather than through the fixture, so the decoy is on the book before
+    # the one press that links anything and really does compete for the row.
+    acknowledge_all(world)
 
     row = world.row_for(ITEM_Y)
     documents_linked = [link.document for link in world.links_of(row.id)]
@@ -529,7 +557,7 @@ def test_every_citation_is_tried_before_the_generic_walk_in_the_order_written(
     assert f"{MARKER}-Y-DECOY" not in documents_linked[:2]
 
 
-def test_an_order_back_row_reaches_its_cited_spo_allocation(world, documents, uploaded):
+def test_an_order_back_row_reaches_its_cited_spo_allocation(world, documents, acknowledged):
     """AC-I3 and part 2 section 4b: an order back is owed against what is already shipped
     before it is owed against a new purchase, and the SPO is the only kind of document this
     verb may name."""

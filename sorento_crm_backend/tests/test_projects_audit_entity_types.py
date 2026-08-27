@@ -59,15 +59,24 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-so-book-diff-replanning.md (migration 29d85dc3ccc3), same reason as above.
     "planning_change_batches",
     "planning_change_rows",
+    # PLAN-scm-cs-planning-uat.md (migration 421_order_inquiry_links): one inquiry row's
+    # quantity placed across several documents.
+    "order_inquiry_links",
+    # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
+    "stock_transfers",
 })
+
+
+def _projects_schema_classes():
+    """Every mapped class in the `projects` schema, whenever it was born."""
+    return [cls for cls in _mapped_classes() if cls.__table__.schema == "projects"]
 
 
 def _projects_classes():
     return [
         cls
-        for cls in _mapped_classes()
-        if cls.__table__.schema == "projects"
-        and cls.__tablename__ not in BORN_AFTER_THE_MOVE
+        for cls in _projects_schema_classes()
+        if cls.__tablename__ not in BORN_AFTER_THE_MOVE
     ]
 
 
@@ -75,16 +84,20 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     """`so_supply_decisions` never wrote a pre-move audit row, so nothing constrains it
     historically; it adopted its siblings' `project_` prefix and this pins that choice.
 
-    `planning_change_batches` / `planning_change_rows` (PLAN-so-book-diff-replanning.md)
-    are the same case: born straight into `projects` by their own migration, so they pin
-    the same convention rather than the rename contract.
+    `planning_change_batches` / `planning_change_rows` (PLAN-so-book-diff-replanning.md),
+    `order_inquiry_links` and `stock_transfers` are the same case: born straight into
+    `projects` by their own migration, so they pin the same convention rather than the
+    rename contract.
     """
     from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
-    from app.models.project_so import SOSupplyDecision
+    from app.models.project_so import OrderInquiryLink, SOSupplyDecision
+    from app.models.stock_transfer import StockTransfer
 
     assert _audit_entity_type(SOSupplyDecision) == "project_so_supply_decisions"
     assert _audit_entity_type(PlanningChangeBatch) == "project_planning_change_batches"
     assert _audit_entity_type(PlanningChangeRow) == "project_planning_change_rows"
+    assert _audit_entity_type(OrderInquiryLink) == "project_order_inquiry_links"
+    assert _audit_entity_type(StockTransfer) == "project_stock_transfers"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
@@ -133,7 +146,7 @@ def test_no_projects_entity_type_collides_with_any_other_model():
         if cls.__table__.schema != "projects"
     }
 
-    for cls in _projects_classes():
+    for cls in _projects_schema_classes():
         entity_type = _audit_entity_type(cls)
         assert entity_type not in others, (
             f"{cls.__name__} audits as {entity_type!r}, which {others[entity_type]} "

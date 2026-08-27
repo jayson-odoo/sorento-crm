@@ -130,8 +130,11 @@ def _core_order(
     """A core `sales_orders` row carrying open demand for the world's product.
 
     Each row is seeded as the channel that writes it actually writes it, because
-    `scm.committed_v` reads BOTH demand columns since migration 346: a `project`-class
-    order counts only when the inquiry created it.
+    `scm.committed_v` reads the demand CLASS: since P3 (`PLAN-scm-purchasing-uat-journey.md`,
+    26 Aug 2026) the book leg speaks for the retail channel alone, so a `project`-class
+    row contributes nothing to the view from the book whatever its origin stamp says. Its
+    quantity reaches the plan as the un-linked Order Inquiry ROW the import service raises
+    beside it, which is a different table and not what this suite seeds.
 
     * The sheet's row - `project` class with the `scm_order_inquiry` origin, which is
       exactly what `project_order_inquiry_import_service` stamps on the header it creates.
@@ -195,9 +198,11 @@ def _ingest(world, *, doc_no: str = DOC_NO):
 def _committed(world) -> float:
     """What the plan actually sees for this product, straight out of the view.
 
-    The view is read, never reimplemented here, so its demand-source clause is part of
-    every assertion below. That is why the seeds have to be shaped like the rows their
-    channel really writes - see `_core_order`.
+    The view is read, never reimplemented here, so its class rule is part of every
+    assertion below. That is why the seeds have to be shaped like the rows their channel
+    really writes - see `_core_order`. Since P3 that rule reads a project-class row as
+    zero, so the numbers below are the BOOK's total and the reconciliation is measured
+    against it: what must never happen is one piece of book demand under two numbers.
     """
     value = world["db"].execute(
         text("SELECT COALESCE(SUM(committed), 0) FROM scm.committed_v WHERE product_id = :p"),
@@ -290,12 +295,20 @@ def test_the_sheet_created_row_is_renumbered_in_place(world):
 
 
 def test_the_renumbered_row_is_still_counted_once(world):
+    """The renumber moves a row; it must never add one.
+
+    The number was SHEET_QTY until P3 retired the sheet leg and is 0 now - a project-class
+    core row is not book demand, whoever wrote it. What the assertion is for is unchanged
+    and is why it is written as before == after: a renumber that left the old row behind
+    would show up here as twice whatever the book counts.
+    """
     world_pso = world["pso"]
     _core_order(world, world_pso.provisional_ref, demand_origin=SOURCE_SYSTEM, qty=SHEET_QTY)
+    before = _committed(world)
 
     _ingest(world)
 
-    assert _committed(world) == SHEET_QTY
+    assert _committed(world) == before == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -308,8 +321,12 @@ def test_the_book_row_wins_and_the_provisional_one_is_retired(world):
     sheet = _core_order(world, pso.provisional_ref, demand_origin=SOURCE_SYSTEM, qty=SHEET_QTY)
     book_id, sheet_id = str(book.id), str(sheet.id)
 
-    # The bug this exists to stop: one piece of demand, counted under both numbers.
-    assert _committed(world) == BOOK_QTY + SHEET_QTY
+    # The bug this exists to stop: one piece of demand, counted under both numbers. The
+    # VIEW can no longer show it - since P3 the sheet's project-class row counts zero from
+    # the book, so the total is the book row's alone before and after - and what stops it
+    # is therefore asserted where it now lives, on the rows themselves: the provisional one
+    # is retired, its lines closed, and the project order points at the real number.
+    assert _committed(world) == BOOK_QTY
 
     _ingest(world)
 
@@ -471,7 +488,9 @@ def test_re_ingesting_after_a_renumber_changes_nothing(world):
     assert [str(row.id) for row in _by_number(world, DOC_NO)] == [sheet_id]
     assert _by_number(world, pso.provisional_ref) == []
     assert pso.so_id == sheet_id
-    assert _committed(world) == SHEET_QTY
+    # Zero rather than SHEET_QTY since P3: one project-class row, counted from the book
+    # zero times, and a second ingest must not turn that into two rows counted once each.
+    assert _committed(world) == 0
 
 
 def test_re_ingesting_after_a_retire_does_not_fire_again(world):
