@@ -141,13 +141,14 @@ describe('SalesOrdersList - where an order came from', () => {
   });
 
   it('labels an order CS uploaded differently', async () => {
-    // The distinction IS the feature: it decides whose figures win. Named after the upload
-    // as the toolbar names it - "Sales order upload", never "Outstanding upload": the file
-    // carries the whole book, completed orders included.
+    // The distinction IS the feature: it decides whose figures win. Read "Upload" (A4, the
+    // captain 27 Aug): the column is called Source and every row of this list is already a
+    // sales order, so "Sales order upload" spent two of its three words repeating the screen
+    // it is on.
     stub([order({ source: 'upload' })]);
     renderList();
 
-    expect(await screen.findByText('Sales order upload')).toBeInTheDocument();
+    expect(await screen.findByText('Upload')).toBeInTheDocument();
   });
 
   it('defaults to Manual when the backend says nothing', async () => {

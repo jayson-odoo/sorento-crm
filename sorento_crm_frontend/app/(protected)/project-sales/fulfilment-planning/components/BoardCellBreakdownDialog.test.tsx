@@ -37,7 +37,6 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
-import { boardAxis } from '../../_shared/lib/fulfilmentBoard';
 import {
   buildBoard,
   PREVIEW_POLICY,
@@ -253,55 +252,49 @@ describe('BoardCellBreakdownDialog: the Product column', () => {
 });
 
 describe('BoardCellBreakdownDialog: the table', () => {
-  it('carries the columns the captain named', () => {
+  /**
+   * C1: the columns in order, and none of the three that left (R8, the captain 27 Aug: "rank
+   * goes"). Ordered and Delivered moved into the expanded row's read-only strip
+   * (`BoardLineDecisionPanel.test.tsx`), so this table no longer states them as columns.
+   */
+  it('carries the columns the captain named, in order, with no Rank, Ordered or Delivered', () => {
     renderDialog([demand()]);
 
     const table = contributionTable();
     const headers = within(table)
       .getAllByRole('columnheader')
       .map((node) => node.textContent ?? '');
-    for (const title of [
+    const order = [
       'Sales order',
       'Customer',
+      'Agent',
       'Project',
-      'Ordered',
       'Outstanding',
       'Delivery date',
       'Location',
       'Sourced from',
-      'Rank',
-    ]) {
-      expect(headers.some((header) => header.includes(title))).toBe(true);
+      'Order inquiry',
+      'Decision',
+    ];
+    const positions = order.map((title) =>
+      headers.findIndex((header) => header.includes(title)),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+    for (const gone of ['Rank', 'Ordered', 'Delivered']) {
+      expect(headers.some((header) => header === gone)).toBe(false);
     }
   });
 
-  it('shows the SO ordered quantity beside the owed quantity, both off the server', () => {
-    renderDialog([demand({ qty_ordered: '120', qty: '100' })]);
-
-    const row = contributionTable().querySelectorAll('tbody tr')[0];
-    expect(within(row as HTMLElement).getByText('120')).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText('100')).toBeInTheDocument();
-  });
-
-  it('says so rather than guessing when the server has not stated the ordered quantity', () => {
-    // Never derived by adding delivered to owed on the client: a number nobody sent is a
-    // number nobody can be held to.
-    renderDialog([demand({ qty_ordered: null })]);
-
-    // Ordered and Delivered both state their absence rather than printing a 0.
-    const row = contributionTable().querySelectorAll('tbody tr')[0];
-    expect(within(row as HTMLElement).getAllByText('Not stated').length).toBeGreaterThan(0);
-  });
-
-  it('totals the quantity columns in a summary row inside the table', () => {
+  it('totals the outstanding quantity in a summary row inside the table', () => {
     renderDialog([
-      demand({ line_no: 1, qty: '60', qty_ordered: '70' }),
-      demand({ line_no: 2, qty: '40', qty_ordered: '50', so_number: 'SO398322', sales_order_id: 'so-b' }),
+      demand({ line_no: 1, qty: '60' }),
+      demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
     ]);
 
     const cells = footerCells();
     expect(cells.some((cell) => cell === 'Total')).toBe(true);
-    expect(cells).toContain('120');
     expect(cells).toContain('100');
   });
 
@@ -358,18 +351,6 @@ describe('BoardCellBreakdownDialog: the table', () => {
     expect(rows[1].textContent).toContain('SO403340');
   });
 
-  it('names a ranking factor in words, never as a database column', () => {
-    renderDialog([demand()]);
-
-    // In the calculation popover now, not in the cell body - but still words, never a
-    // column name.
-    fireEvent.click(screen.getByTestId('rank-info-so-a|1|WESERP10B|2026-08-31'));
-    const detail =
-      screen.getByTestId('rank-calculation-so-a|1|WESERP10B|2026-08-31').textContent ?? '';
-    expect(detail).toContain('Purchase order sequence');
-    expect(detail).not.toContain('po_document_sequence');
-    expect(detail).not.toContain('need_by_date');
-  });
 });
 
 /**
@@ -483,282 +464,131 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
     expect(row).not.toContain('0');
   });
 
-  it('carries delivered beside ordered and outstanding', () => {
+  /**
+   * C1: Delivered left with Ordered, into the expanded row's read-only strip
+   * (`BoardLineDecisionPanel.test.tsx`). C1: Rank left the table entirely (R8).
+   */
+  it('carries neither a Delivered column nor a Rank column any more', () => {
     renderDialog([demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' })]);
 
     const table = contributionTable();
     const headers = within(table)
       .getAllByRole('columnheader')
       .map((node) => node.textContent ?? '');
-    expect(headers.some((header) => header.includes('Delivered'))).toBe(true);
-    const row = table.querySelectorAll('tbody tr')[0];
-    expect(within(row as HTMLElement).getByText('20')).toBeInTheDocument();
-  });
-
-  it('shows the rank and NOTHING else, with the factors reachable as a tooltip', () => {
-    const cell = cellOf([demand()]);
-    const ranked = {
-      ...cell,
-      contributions: [
-        {
-          ...cell.contributions[0],
-          rank_score: 0.72,
-          rank_factors: [
-            { key: 'need_by_date', weight: 3, value: 1, raw: '2026-09-03', present: true },
-            { key: 'customer_credit', weight: 1, value: 0.5, raw: '45 days', present: true },
-          ],
-        },
-      ],
-    };
-    renderCell({ ...ranked, rank_separates: true });
-
-    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    // The captain: "the word here is too long already, don't explain too much". The cell is
-    // the number; the facts behind it are behind the icon, wanted only when comparing rows.
-    expect(rank.textContent).toBe('0.72');
-    fireEvent.click(screen.getByTestId(`rank-info-${cell.contributions[0].key}`));
-    const detail =
-      screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`).textContent ?? '';
-    expect(detail).toContain('Delivery date');
-    expect(detail).toContain('2026-09-03');
-  });
-
-  it('reads the number as a number: right-aligned, tabular figures', () => {
-    const cell = cellOf([demand()]);
-    renderCell({ ...cell, rank_separates: true });
-
-    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    expect(rank.className).toContain('tabular-nums');
-    expect(rank.className).toContain('text-end');
-  });
-
-  it('sorts by rank, because comparing rows is the whole reason the column exists', () => {
-    const cell = cellOf([
-      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
-      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
-    ]);
-    const ranked = {
-      ...cell,
-      rank_separates: true,
-      contributions: cell.contributions.map((entry, index) => ({
-        ...entry,
-        rank_score: index === 0 ? 0.9 : 0.2,
-      })),
-    };
-    renderCell(ranked);
-
-    // Opens in the order the allocation rule served, which is the order the stock was given
-    // out in - never a sort of our own choosing.
-    const before = [...contributionTable().querySelectorAll('tbody tr')].map(
-      (row) => row.textContent ?? '',
-    );
-    expect(before[0]).toContain('0.90');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Rank' }));
-
-    const after = [...contributionTable().querySelectorAll('tbody tr')].map(
-      (row) => row.textContent ?? '',
-    );
-    expect(after[0]).toContain('0.20');
-  });
-
-  it('leads a rank factor with the RAW fact, not the normalised number', () => {
-    const cell = cellOf([demand()]);
-    const withRaw = {
-      ...cell,
-      contributions: [
-        {
-          ...cell.contributions[0],
-          rank_score: 0.72,
-          rank_factors: [
-            { key: 'need_by_date', weight: 3, value: 1, raw: '2026-09-03', present: true },
-            { key: 'customer_credit', weight: 1, value: 0.5, raw: '45 days', present: true },
-          ],
-        },
-      ],
-    };
-    renderCell({ ...withRaw, rank_separates: true });
-
-    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    fireEvent.click(screen.getByTestId(`rank-info-${cell.contributions[0].key}`));
-    const detail =
-      screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`).textContent ?? '';
-    expect(detail).toContain('2026-09-03');
-    expect(detail).toContain('45 days');
-    // The weight never sits beside the value as a bare number: "need_by_date 1.00 x3" reads
-    // to everybody as a weight of 1.00. It gets its own column in the calculation instead.
-    expect(rank.textContent).not.toContain('x3');
-    expect(detail).toContain('Weighted');
-  });
-
-  it('prints no score at all when the server says the policy separates nothing', () => {
-    const cell = cellOf([demand()]);
-    renderCell({ ...cell, rank_separates: false, distinct_order_count: 2 });
-
-    // The live policy scores every row 0.00, and a column of 0.00 reads as a considered
-    // ranking rather than as no ranking.
-    const rank = screen.getByTestId(`rank-factors-${cell.contributions[0].key}`);
-    expect(rank.textContent).toBe('Not ranked');
-  });
-
-  /**
-   * The sentence was identical on all eleven rows because the FACTORS are identical there -
-   * which is a fact about the POLICY, not about any row. Repeating it per row is eleven copies
-   * of one sentence; it belongs once, at the top.
-   */
-  /**
-   * The four cases, from one place. "The active policy separates none of these rows" is true
-   * whenever nothing separated them, but under the fair policy the usual cause is that one
-   * order's lines in one week share their date, document date and terms - which is not a policy
-   * failure, and reading it as one sent people hunting a broken weighting.
-   */
-  it('says nothing at all about a cell holding one line', () => {
-    // "Only line in this cell" restated the single row underneath it. Removed 25 August 2026:
-    // the Rank column still reads "Not ranked", because a flat 0.00 there would claim a
-    // ranking nobody ran, but no sentence is printed for it.
-    const cell = cellOf([demand()]);
-    renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
-
-    expect(screen.queryByText('Only line in this cell')).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/The active policy separates none of these rows/),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent,
-    ).toBe('Not ranked');
-  });
-
-  it('says nothing when one sales order is competing with itself (ladder v4)', () => {
-    const cell = cellOf([
-      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
-      demand({ line_no: 2, so_number: 'SO000001', sales_order_id: 'so-a' }),
-    ]);
-    renderCell({ ...cell, rank_separates: false, distinct_order_count: 1 });
-
-    expect(
-      screen.queryByText('Same sales order; line order decided which line was served first'),
-    ).toBeNull();
-  });
-
-  it('keeps the policy sentence for a real tie between different orders', () => {
-    const cell = cellOf([
-      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
-      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
-    ]);
-    renderCell({ ...cell, rank_separates: false, distinct_order_count: 2 });
-
-    expect(
-      screen.getByText('The active policy separates none of these rows'),
-    ).toBeInTheDocument();
-  });
-
-  it('shows each line\'s own score on a pivoted cell, which states no ranking of its own', () => {
-    // A sales-order, customer or project cell is built on the client from the server's product
-    // cells and spans several piles: it carries neither flag, and used to print "Not ranked" on
-    // every row for it. The lines keep the score the server gave them.
-    const board = buildBoard(
-      [
-        demand({ line_no: 1, item_code: 'AAA', sales_order_id: 'so-a', so_number: 'SO000001' }),
-        demand({ line_no: 2, item_code: 'BBB', sales_order_id: 'so-a', so_number: 'SO000001' }),
-      ],
-      { today: TODAY, policy: PREVIEW_POLICY },
-    );
-    const { cells } = boardAxis(
-      'sales_order',
-      board.cells.map((cell) => ({ ...cell, rank_separates: false, distinct_order_count: 1 })),
-    );
-    expect(cells).toHaveLength(1);
-    renderCell(cells[0]);
-
-    for (const contribution of cells[0].contributions) {
-      expect(screen.getByTestId(`rank-factors-${contribution.key}`).textContent).toBe(
-        contribution.rank_score.toFixed(2),
-      );
-    }
-    expect(screen.queryByText(/Not ranked/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/line order decided/)).not.toBeInTheDocument();
-  });
-
-  it('says nothing about the ranking, and shows it, when the policy does separate the rows', () => {
-    const cell = cellOf([demand()]);
-    renderCell({ ...cell, rank_separates: true, distinct_order_count: 1 });
-
-    expect(screen.queryByText(/Only line in this cell/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/The active policy separates none of these rows/),
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent).toBe(
-      '0.00',
-    );
+    expect(headers.some((header) => header === 'Delivered')).toBe(false);
+    expect(headers.some((header) => header === 'Rank')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Rank' })).not.toBeInTheDocument();
   });
 });
 
-describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
-  it('approves a row', () => {
+/**
+ * Deciding a line IN THE ROW (C3, C4, C5, C6, C9). `BoardLineDecisionPanel.test.tsx` owns the
+ * panel's own behaviour (the three verbs, the balance hint, the flag); what belongs here is the
+ * dialog's part of the contract - the pill in the Decision column, the row opening the panel in
+ * place, and one row open at a time.
+ */
+describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
+  it('shows a pill, never a button, in the Decision column (C2, C3)', () => {
+    renderDialog([demand()]);
+
+    expect(
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Suggested');
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+  });
+
+  it('expands the row in place on a click, and collapses it on a second click (C3, C6)', () => {
+    renderDialog([demand()]);
+    const key = 'so-a|1|WESERP10B|2026-08-31';
+
+    expect(screen.queryByTestId(`line-decision-${key}`)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('SO403340'));
+    expect(screen.getByTestId(`line-decision-${key}`)).toBeInTheDocument();
+    // No modal opened over the dialog: it is the SAME dialog, one row wider.
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('SO403340'));
+    expect(screen.queryByTestId(`line-decision-${key}`)).not.toBeInTheDocument();
+  });
+
+  it('opening a second row closes the first (C5)', () => {
+    renderDialog([
+      demand({ line_no: 1 }),
+      demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
+    ]);
+    const first = 'so-a|1|WESERP10B|2026-08-31';
+    const second = 'so-b|2|WESERP10B|2026-08-31';
+
+    fireEvent.click(screen.getByText('SO403340'));
+    expect(screen.getByTestId(`line-decision-${first}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('SO398322'));
+    expect(screen.queryByTestId(`line-decision-${first}`)).not.toBeInTheDocument();
+    expect(screen.getByTestId(`line-decision-${second}`)).toBeInTheDocument();
+  });
+
+  it('asks before discarding an unsaved edit when another row is opened (C5)', () => {
+    renderDialog([
+      demand({ line_no: 1 }),
+      demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
+    ]);
+    const first = 'so-a|1|WESERP10B|2026-08-31';
+
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Typing, not yet saved.' },
+    });
+
+    fireEvent.click(screen.getByText('SO398322'));
+    // The row underneath has NOT switched yet: the prompt is answered first.
+    expect(screen.getByTestId(`line-decision-${first}`)).toBeInTheDocument();
+    expect(screen.getByText('Leave this decision unsaved?')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(screen.queryByTestId(`line-decision-${first}`)).not.toBeInTheDocument();
+  });
+
+  it('approve suggestion, from the row, writes into the draft with no reason and no flag', () => {
     const { onDecide } = renderDialog([demand()]);
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
+      suspected_system_issue: undefined,
     });
   });
 
-  it('rejects a row, and a rejection carries a reason', () => {
+  it('reject, from the row, needs a reason', () => {
     const { onDecide } = renderDialog([demand()]);
+
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Cancelled by the customer.' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'rejected',
-      reason: 'Rejected on the planning board.',
+      reason: 'Cancelled by the customer.',
+      suspected_system_issue: undefined,
     });
   });
 
-  /**
-   * The captain, 18 August 2026: "the amend is not working, I should be able to amend the
-   * decision and quantity, like I can decide to reserve, or buy, or borrow".
-   *
-   * Amend now OPENS SOMETHING. It used to reveal a one-input panel under a 25-row table, in
-   * the same scroll region, with no focus moved to it: pressing the button moved nothing the
-   * planner could see, so the form was never found and the verb read as broken.
-   */
-  it('opens the amendment as a dialog of its own', () => {
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-
-    expect(screen.getByText('Amend SO403340 · line 1 · WESERP10B')).toBeInTheDocument();
-    // Its own dialog, over the breakdown, rather than a panel inside it.
-    expect(screen.getAllByRole('dialog').length).toBeGreaterThan(1);
-  });
-
-  it('takes the proposal as it stands, and carries the whole composition into the draft', () => {
-    // Wholly from stock (AC-L5), which is what the engine can propose: a mix of stock and a
-    // Buy on one line is refused by `lineBlockers` and by the confirmation alike.
+  it('save amendment, from the row, posts the whole composition typed (AC-L5, whole-line)', () => {
+    // Wholly from stock (AC-L5): a mix of stock and a Buy on one line is refused by
+    // `lineBlockers` and by the confirmation alike.
     const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
-
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'amended',
-      reserve_qty: '100',
-      timely_spo_qty: '0',
-      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
-      borrow: [],
-      buy_qty: '0',
-      reason: undefined,
-    });
-  });
-
-  it('demands a reason the moment the amendment displaces the rule, and blocks Save until it has one', () => {
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    // Buy is a whole-line switch (AC-L5): on, the stock rows clear and the whole 100 is
-    // bought, which is exactly the amendment that displaces the proposal.
+    fireEvent.click(screen.getByText('SO403340'));
+    // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
     fireEvent.click(screen.getByLabelText('Buy the whole line'));
-
-    const save = screen.getByRole('button', { name: 'Save the amendment' });
+    const save = screen.getByRole('button', { name: 'Save amendment' });
     expect(save).toBeDisabled();
-    expect(onDecide).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The site wants new stock, not what is standing there.' },
@@ -766,81 +596,102 @@ describe('BoardCellBreakdownDialog: approve, amend, reject', () => {
     expect(save).toBeEnabled();
     fireEvent.click(save);
 
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'amended',
-      reserve_qty: '0',
-      timely_spo_qty: '0',
-      reserve: [],
-      borrow: [],
-      buy_qty: '100',
-      reason: 'The site wants new stock, not what is standing there.',
-    });
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({
+        verdict: 'amended',
+        buy_qty: '100',
+        reserve: [],
+        reason: 'The site wants new stock, not what is standing there.',
+      }),
+    );
   });
 
-  it('shuts the editor again when the amendment is cancelled', () => {
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(screen.queryByText('Amend SO403340 · line 1 · WESERP10B')).not.toBeInTheDocument();
-    expect(onDecide).not.toHaveBeenCalled();
-  });
-
-  it('shows a decided row as decided, and lets it be undone', () => {
-    const { onDecide } = renderDialog([demand()], {}, {
+  it('shows Approved on a row the draft already decided, and reads the pill accordingly', () => {
+    renderDialog([demand()], {}, {
       'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
     });
 
-    expect(screen.getByText('Approved')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
+    expect(
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Approved');
   });
 
-  /**
-   * A decision is not a dead end. Undo-then-Amend is two presses and loses the composition
-   * the planner had already made; the verb they want is on the row.
-   */
-  it('lets a decided row be amended again, without undoing it first', () => {
+  it('a row the draft already decided opens unlocked - no undo step before it can be edited again', () => {
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' }, {
       'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    expect(screen.getByText('Amend SO403340 · line 1 · WESERP10B')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('SO403340'));
+
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
   });
 
-  it('states an amended row as the composition it was amended to', () => {
-    renderDialog([demand()], {}, {
+  it('an amended row can be returned to the suggestion by Approve suggestion (no Undo button)', () => {
+    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' }, {
       'so-a|1|WESERP10B|2026-08-31': {
         verdict: 'amended',
-        reserve_qty: '20',
+        reserve: [],
+        borrow: [],
+        buy_qty: '100',
         timely_spo_qty: '0',
-        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '20' }],
-        borrow: [
-          {
-            source: 'other_location',
-            warehouse_id: 'wh-ib',
-            warehouse_code: 'BRW-IB',
-            qty: '10',
-            reason: 'Agreed with the other site.',
-          },
-        ],
-        buy_qty: '13',
+        reason: 'Overridden earlier.',
       },
     });
 
     expect(
-      screen.getByText('Own 20 BRW-BB · Borrow (other) 10 BRW-IB · Buy 13'),
-    ).toBeInTheDocument();
-  });
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Amended');
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 
-  it('still states a decision taken before the editor existed', () => {
-    renderDialog([demand()], {}, {
-      'so-a|1|WESERP10B|2026-08-31': { verdict: 'amended', reserve_qty: '12' },
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
+      verdict: 'approved',
+      suspected_system_issue: undefined,
     });
+  });
+});
 
-    expect(screen.getByText('Amended to reserve 12')).toBeInTheDocument();
+/**
+ * C11: a line an active decision covers opens locked, with Amend the only way in.
+ * `BoardLineDecisionPanel.test.tsx` owns the panel's own field-level behaviour once unlocked.
+ */
+describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)', () => {
+  const frozen = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [
+      {
+        source: 'other_location' as const,
+        warehouse_id: 'wh-mwh-ib',
+        location: 'MWH-IB',
+        donor_project_id: null,
+        qty: '10',
+        reason: 'The other site can wait a week.',
+      },
+    ],
+    buy_qty: '33',
+    amend_reason: 'Borrowed rather than bought, agreed with the other site.',
+  };
+
+  it('reads Confirmed on the pill, and expands with an Amend button and nothing else', () => {
+    renderDialog([demand({ qty: '43', decision: frozen })]);
+    const key = 'so-a|1|WESERP10B|2026-08-31';
+
+    expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent('Confirmed');
+
+    fireEvent.click(screen.getByText('SO403340'));
+
+    const panel = screen.getByTestId(`line-decision-${key}`);
+    expect(within(panel).getByRole('button', { name: 'Amend' })).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Approve suggestion' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Save amendment' })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
   });
 });
 
@@ -871,12 +722,15 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
 describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
   it('keeps the scrolling region that stops a row action being covered', () => {
     renderDialog([demand()]);
+    fireEvent.click(screen.getByText('SO403340'));
 
     const body = screen.getByTestId('cell-dialog-body');
     expect(body.className).toContain('overflow-y-auto');
     expect(body.className).toContain('min-h-0');
     expect(body.contains(contributionTable())).toBe(true);
-    expect(body.contains(screen.getAllByRole('button', { name: 'Approve' })[0])).toBe(true);
+    expect(
+      body.contains(screen.getByRole('button', { name: 'Approve suggestion' })),
+    ).toBe(true);
   });
 
   /**
@@ -1303,157 +1157,26 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
     expect(onDecide.mock.calls[0][0]).toBe('so-a|1|WESERP10B|2026-08-31');
   });
 
-  it('leaves the per-row verbs alone: bulk is an addition, not a replacement', () => {
+  it('leaves the per-row decision alone: bulk is an addition, not a replacement', () => {
     const { onDecide } = renderDialog(threeLines());
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Approve' })[0]);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO000001 line 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    // Only the ticked row carries the bulk verdict.
     expect(onDecide).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByRole('button', { name: 'Amend' })).toHaveLength(3);
-  });
-});
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', { verdict: 'approved' });
 
-/**
- * HOW the rank was calculated (the captain: "how is the rank calculated? can have an
- * information tooltip to show the calculation").
- *
- * A TABLE behind an icon, not hover text: the same instruction that turned this dialog from
- * cards into rows applies to the explanation of a number nobody can otherwise check. Every row
- * is one factor with the fact behind it, its normalised score, the policy's weight and the
- * product of the two; the footer is the division that produces the number in the cell.
- */
-describe('BoardCellBreakdownDialog: how the rank was calculated', () => {
-  function rankedCell(factors: BoardContribution['rank_factors'], score: number): BoardCell {
-    const cell = cellOf([demand()]);
-    return {
-      ...cell,
-      rank_separates: true,
-      contributions: [{ ...cell.contributions[0], rank_score: score, rank_factors: factors }],
-    };
-  }
-
-  function renderCell(cell: BoardCell) {
-    render(
-      <BoardCellBreakdownDialog
-        cell={cell}
-        bucketLabel="31 Aug 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    );
-  }
-
-  const FACTORS = [
-    { key: 'need_by_date', weight: 3, value: 1, raw: '2026-09-03', present: true },
-    { key: 'customer_credit', weight: 1, value: 0.5, raw: '45 days', present: true },
-    { key: 'po_document_sequence', weight: 1, value: null, raw: null, present: false },
-  ];
-
-  function openRank(cell: BoardCell) {
-    fireEvent.click(
-      screen.getByTestId(`rank-info-${cell.contributions[0].key}`),
-    );
-  }
-
-  it('opens the calculation from an icon on the Rank cell, not from hover text', () => {
-    const cell = rankedCell(FACTORS, 0.875);
-    renderCell(cell);
-
-    const button = screen.getByTestId(`rank-info-${cell.contributions[0].key}`);
-    expect(button).toHaveAttribute('aria-label', 'How this rank was calculated');
-    // The prose title the captain rejected is gone; the structure replaces it.
+    // Row 2 is untouched: still Suggested, and still expandable and decidable on its own -
+    // the bulk verb is an addition, never a replacement for the per-row decision.
     expect(
-      screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).getAttribute('title'),
-    ).toBeNull();
+      screen.getByTestId('decision-pill-so-b|2|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Suggested');
 
-    fireEvent.click(button);
-    for (const heading of ['Factor', 'Fact', 'Score', 'Weight', 'Weighted']) {
-      expect(screen.getByText(heading)).toBeInTheDocument();
-    }
-  });
-
-  it('gives every factor a row: the fact, its score, its weight and the product', () => {
-    const cell = rankedCell(FACTORS, 0.875);
-    renderCell(cell);
-    openRank(cell);
-
-    const row = screen.getByTestId('rank-factor-need_by_date');
-    expect([...row.querySelectorAll('td')].map((node) => node.textContent)).toEqual([
-      'Delivery date',
-      '2026-09-03',
-      '1.00',
-      '3',
-      '3.00',
-    ]);
-    // Named in words, never as the database column it comes from.
-    expect(screen.queryByText('need_by_date')).not.toBeInTheDocument();
-  });
-
-  it('adds up to the number in the cell, and shows the division that got there', () => {
-    // (3 x 1.00 + 1 x 0.50) / (3 + 1) = 0.875, which the cell prints as 0.88.
-    const cell = rankedCell(FACTORS, 0.875);
-    renderCell(cell);
-    openRank(cell);
-
-    expect(screen.getByTestId(`rank-total-${cell.contributions[0].key}`).textContent).toBe(
-      '3.50 / 4 = 0.88',
-    );
-    expect(screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent).toBe(
-      '0.88',
-    );
-  });
-
-  it('leaves an absent fact out of the sums rather than scoring it zero', () => {
-    const cell = rankedCell(FACTORS, 0.875);
-    renderCell(cell);
-    openRank(cell);
-
-    const row = screen.getByTestId('rank-factor-po_document_sequence');
-    expect([...row.querySelectorAll('td')].map((node) => node.textContent)).toEqual([
-      'Purchase order sequence',
-      '-',
-      'not recorded',
-      '1',
-      '-',
-    ]);
-    // Its weight of 1 is in neither sum: the divisor is 4, the three weighted factors' 3 + 1.
-    expect(screen.getByTestId(`rank-total-${cell.contributions[0].key}`).textContent).toContain(
-      '/ 4 =',
-    );
+    fireEvent.click(screen.getByText('SO000002'));
     expect(
-      screen.getByText(
-        'Score 1.00 = best in this cell; absent facts are left out, not counted as zero',
-      ),
+      screen.getByRole('button', { name: 'Approve suggestion' }),
     ).toBeInTheDocument();
-  });
-
-  it('still shows the calculation on a cell the policy could not rank', () => {
-    const base = rankedCell(FACTORS, 0);
-    const cell = {
-      ...base,
-      rank_separates: false,
-      distinct_order_count: 2,
-      // TWO lines, because that is the case the sentence is about: a cell holding one line
-      // says nothing at all about its ranking any more, and this test is about the sentence.
-      contributions: [
-        base.contributions[0],
-        { ...base.contributions[0], key: 'so-b|1|WESERP10B|2026-08-31', sales_order_id: 'so-b' },
-      ],
-    };
-    renderCell(cell);
-    openRank(cell);
-
-    // The cell says Not ranked; the popover says WHY - the cell's own sentence, from
-    // `rankingNote`, so the two can never drift - and still shows the arithmetic.
-    expect(screen.getByTestId(`rank-factors-${cell.contributions[0].key}`).textContent).toBe(
-      'Not ranked',
-    );
-    expect(
-      within(screen.getByTestId(`rank-calculation-${cell.contributions[0].key}`)).getByText(
-        'The active policy separates none of these rows',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId('rank-factor-need_by_date')).toBeInTheDocument();
   });
 });
 
@@ -1963,24 +1686,6 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   const covered = (overrides: Partial<BoardDemandLine> = {}) =>
     demand({ qty: '43', decision: frozen, ...overrides });
 
-  it('states the revision and the composition that was frozen, not a verdict', () => {
-    renderDialog([covered()]);
-
-    expect(
-      screen.getByText('Confirmed rev 1 · Borrow (other) 10 MWH-IB · Buy 33'),
-    ).toBeInTheDocument();
-  });
-
-  it('offers Amend and nothing else: there is no approving what is already decided', () => {
-    renderDialog([covered()]);
-
-    const table = contributionTable();
-    expect(within(table).getByRole('button', { name: 'Amend' })).toBeInTheDocument();
-    expect(within(table).queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-    expect(within(table).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-    expect(within(table).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
-  });
-
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
 
@@ -2009,6 +1714,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('seeds the amendment from the frozen composition, not from a fresh proposal', () => {
     renderDialog([covered()]);
 
+    fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
     // The borrow the planner made is IN the editor, at the quantity they made it, rather
@@ -2018,7 +1724,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
   });
 
-  it('behaves like any amended row once it has been amended', () => {
+  it('behaves like any amended row once it has been amended: the pill reads Amended, and it opens unlocked', () => {
     renderDialog([covered()], {}, {
       'so-a|1|WESERP10B|2026-08-31': {
         verdict: 'amended',
@@ -2031,9 +1737,14 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
       },
     });
 
-    expect(screen.getByText('Buy 43')).toBeInTheDocument();
-    const table = contributionTable();
-    expect(within(table).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+    expect(
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Amended');
+
+    fireEvent.click(screen.getByText('SO403340'));
+    expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
   });
 
   it('cannot be swept into a bulk verdict, because Amend is the only verb it has', () => {

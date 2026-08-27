@@ -1149,7 +1149,8 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     renderClient();
     await screen.findByText('Planning 1 sales orders together');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to sales orders' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
 
     await waitFor(() => {
       const back = String(routerPush.mock.calls[routerPush.mock.calls.length - 1][0]);
@@ -1177,7 +1178,8 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     renderClient();
     await screen.findByText('Planning 1 sales orders together');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to sales orders' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
 
     await waitFor(() => expect(routerPush).toHaveBeenLastCalledWith('/scm/sales-orders'));
   });
@@ -1190,7 +1192,8 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     renderClient();
     await screen.findByText('Planning 1 sales orders together');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to sales orders' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
 
     await waitFor(() =>
       expect(routerPush).toHaveBeenLastCalledWith('/scm/sales-orders'),

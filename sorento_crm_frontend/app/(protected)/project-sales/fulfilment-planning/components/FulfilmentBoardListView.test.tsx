@@ -4,7 +4,7 @@
  * of the board, with the same `onDecide` write path the grid view uses.
  */
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardContribution,
@@ -107,7 +107,8 @@ describe('FulfilmentBoardListView', () => {
     expect(screen.getByText('Line 20')).toBeInTheDocument();
   });
 
-  it('shows the verdict for a row already covered by an active decision', async () => {
+  /** No revision number on the pill (R6): "Confirmed", full stop. */
+  it('shows a pill reading Confirmed for a row already covered by an active decision, with no rev', async () => {
     renderView({
       contributions: [
         contribution({
@@ -123,28 +124,38 @@ describe('FulfilmentBoardListView', () => {
       ],
     });
 
-    expect(await screen.findByText('Confirmed rev 3')).toBeInTheDocument();
+    const pill = await screen.findByTestId('decision-pill-so-1:line-10');
+    expect(pill.textContent).toBe('Confirmed');
   });
 
-  it('calls onDecide with an approved verdict when Approve is pressed on an undecided row', async () => {
+  it('calls onDecide with an approved verdict from the expanded row’s Approve suggestion (pill + panel, not a row button)', async () => {
     const { onDecide } = renderView();
 
-    const approve = await screen.findByRole('button', { name: /approve/i });
-    approve.click();
+    // No row-level Approve button any more: the row expands, the same panel the grid uses.
+    // Clicked on the Agent cell, not the Sales order cell - that one is a `Link` that stops
+    // the click from bubbling to the row, on purpose (it navigates instead of expanding).
+    expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getByText('JEREMY'));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
 
     await waitFor(() =>
-      expect(onDecide).toHaveBeenCalledWith('so-1:line-10', { verdict: 'approved' }),
+      expect(onDecide).toHaveBeenCalledWith('so-1:line-10', {
+        verdict: 'approved',
+        suspected_system_issue: undefined,
+      }),
     );
   });
 
-  it('updates the verdict cell when the draft prop carries a decision for the row', async () => {
+  it('updates the pill when the draft prop carries a decision for the row', async () => {
     const row = contribution();
     const { rerender } = render(
       <FulfilmentBoardListView contributions={[row]} draft={{}} onDecide={vi.fn()} />,
     );
 
-    expect(await screen.findByRole('button', { name: /approve/i })).toBeInTheDocument();
-    expect(screen.queryByText('Approved')).not.toBeInTheDocument();
+    expect(
+      await screen.findByTestId('decision-pill-so-1:line-10'),
+    ).toHaveTextContent('Suggested');
 
     rerender(
       <FulfilmentBoardListView
@@ -154,8 +165,9 @@ describe('FulfilmentBoardListView', () => {
       />,
     );
 
-    expect(await screen.findByText('Approved')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(
+      await screen.findByTestId('decision-pill-so-1:line-10'),
+    ).toHaveTextContent('Approved');
   });
 
   it('marks an unplannable line rather than offering it a verdict', async () => {

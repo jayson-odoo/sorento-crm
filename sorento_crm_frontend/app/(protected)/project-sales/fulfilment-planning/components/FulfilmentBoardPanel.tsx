@@ -58,6 +58,7 @@ import {
   boardAxis,
   bucketLabelText,
   orderByProductRows,
+  plannedLineCount,
   rowMatchesSearch,
   confirmLinesFor,
   shiftedDayWindow,
@@ -377,7 +378,6 @@ export function FulfilmentBoardPanel({
    * server carries it into the next revision itself, so this press does not confirm it.
    */
   const confirmSummary = React.useMemo(() => {
-    let toConfirm = 0;
     let rejected = 0;
     const orderIds = new Set<string>();
     for (const contribution of allContributions) {
@@ -388,9 +388,18 @@ export function FulfilmentBoardPanel({
         continue;
       }
       if (contribution.covered && decision?.verdict !== 'amended') continue;
-      toConfirm += 1;
       orderIds.add(contribution.sales_order_id);
     }
+    // `plannedLineCount`, not a manual re-filter of the same rule: it counts a line the
+    // press INTENDS to commit, whether or not adoption has minted its mirror yet, but never
+    // one that cannot be addressed for a reason adoption does not fix (no Reserve warehouse,
+    // a discontinued Buy with no reason) - the same population `confirmLinesFor` posts once
+    // the order IS adopted, so the number beside the button and what the button does can
+    // never disagree, on an adopted order or on one Confirm is about to adopt.
+    const toConfirm = [...orderIds].reduce(
+      (total, salesOrderId) => total + plannedLineCount(allContributions, salesOrderId, draft),
+      0,
+    );
     return { toConfirm, rejected, orderCount: orderIds.size };
   }, [allContributions, draft]);
 
@@ -819,50 +828,59 @@ export function FulfilmentBoardPanel({
       {/* THE ONE ACTION BAR (D1). Its own row above the grid/list so it is visible whichever
           view is on screen. What it says on the left is what the button on the right will
           do, counted over the same population, and the order is fixed: the gear (the rare
-          things) then Confirm, last on the right, where a primary action belongs. */}
-      {board.data && board.data.cells.length > 0 && (
-        <div
-          data-testid="board-action-bar"
-          className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
-        >
+          things) then Confirm, last on the right, where a primary action belongs.
+          The gear renders EVEN WHILE THE BOARD IS STILL LOADING or has come back empty: it
+          is this screen's only way off it, since the header row deliberately carries none
+          (the comment above it) - a board slow to load, or with nothing to plan, still needs
+          an exit. Confirm and its counter stay gated on real data: there is nothing to
+          confirm before there is a board. */}
+      <div
+        data-testid="board-action-bar"
+        className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+      >
+        {board.data && board.data.cells.length > 0 ? (
           <span
             data-testid="board-confirm-summary"
             className="text-sm text-muted-foreground tabular-nums"
           >
             {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
           </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  mode="icon"
-                  aria-label="Board actions"
-                >
-                  <Settings2 className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {/* Every decision taken on this board since it was opened, or since the
-                    last confirm, goes back to the suggestion. Nothing on the server moves -
-                    the draft is the only thing cleared. */}
-                <DropdownMenuItem
-                  disabled={Object.keys(draft).length === 0}
-                  onSelect={
-                    Object.keys(draft).length === 0 ? undefined : () => setDraft({})
-                  }
-                >
-                  <Undo2 className="size-4" aria-hidden />
-                  Undo all
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={onBack}>
-                  <ArrowLeft className="size-4" aria-hidden />
-                  Back to sales orders
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+        ) : (
+          <span />
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                mode="icon"
+                aria-label="Board actions"
+              >
+                <Settings2 className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {/* Every decision taken on this board since it was opened, or since the
+                  last confirm, goes back to the suggestion. Nothing on the server moves -
+                  the draft is the only thing cleared. */}
+              <DropdownMenuItem
+                disabled={Object.keys(draft).length === 0}
+                onSelect={
+                  Object.keys(draft).length === 0 ? undefined : () => setDraft({})
+                }
+              >
+                <Undo2 className="size-4" aria-hidden />
+                Undo all
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onBack}>
+                <ArrowLeft className="size-4" aria-hidden />
+                Back to sales orders
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {board.data && board.data.cells.length > 0 ? (
             <Button
               type="button"
               size="sm"
@@ -875,9 +893,9 @@ export function FulfilmentBoardPanel({
             >
               {`Confirm (${confirmSummary.toConfirm})`}
             </Button>
-          </div>
+          ) : null}
         </div>
-      )}
+      </div>
 
       {/* Why Confirm is off, when it is - stated, never a dead button. */}
       {confirmBlockedReason ? (
