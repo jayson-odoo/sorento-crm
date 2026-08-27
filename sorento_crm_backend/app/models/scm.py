@@ -264,7 +264,7 @@ class ReorderRun(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     created_by = Column(String, nullable=True)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     warehouse_ids = Column(JSONB, nullable=True)
     # The product scope of a manual plan. NULL means none was asked for (the daily run,
     # which plans everything); an EMPTY list means one was asked for and nothing resolved
@@ -273,7 +273,7 @@ class ReorderRun(Base, CompanyScopedMixin):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 - chosen budget the "Apply budget" action persists
-    include_market = Column(Boolean, nullable=False, default=False)  # M7 - opt-in market-trend priority factor
+    include_market = Column(Boolean, nullable=False, default=False, server_default="false")  # M7 - opt-in market-trend priority factor
     # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
     # run's netting; NULL (the default) plans every open SO line regardless of need date,
     # unchanged from before this column existed. Stamped once at creation, like
@@ -351,7 +351,7 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     explanation = Column(Text, nullable=True)  # LLM (M5)
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred
-    status = Column(String(20), default="proposed", nullable=False)  # proposed | accepted | adjusted | dismissed
+    status = Column(String(20), default="proposed", nullable=False, server_default="proposed")  # proposed | accepted | adjusted | dismissed
     # Whether THIS location's purchase order has been keyed into AutoCount (AC-E2.2), for a
     # run decided at LOCATION grain, where the decision lives here rather than on the
     # product summary row. Same three values and the same manual semantics as
@@ -473,6 +473,17 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
     po_refs = Column(JSONB, nullable=True)
     reason_text = Column(Text, nullable=True)
+    #: `use_last` (cost the line at what we last paid) or `ask_new` (the price is still a
+    #: question, so the drafted line carries none). AC-R13.
+    price_mode = Column(String(20), nullable=True)
+    #: The supplier the BUYER chose, when they overrode the engine's. NULL = the
+    #: recommendation's own proposed supplier stands (AC-R14).
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The price this row is costed at, in the chosen supplier's currency. NULL under
+    #: `ask_new`: an unknown price is not a price of zero.
+    unit_cost = Column(Numeric, nullable=True)
     decided_by = Column(String, nullable=True)
     decided_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -655,7 +666,7 @@ class MarketResearchRun(Base, CompanyScopedMixin):
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
     topic_count = Column(Integer, nullable=True)  # active topics searched this run

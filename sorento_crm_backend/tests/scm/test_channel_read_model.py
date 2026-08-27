@@ -320,7 +320,7 @@ def test_project_class_without_sheet_origin_or_decision_is_set_aside(db, world):
 
 def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="active",
                     inquiry_state=None, core_line=None, sales_agent_id=None,
-                    unit_price=None):
+                    unit_price=None, ack_state=None):
     """The full section-4 chain: a Project SO whose core SO line is reconciled, with one
     Buy-verb Order Inquiry row pointing at an `active` `SOSupplyDecision`.
 
@@ -411,8 +411,10 @@ def _confirmed_leg(db, *, product_id, warehouse_id, buy_qty, decision_state="act
         # instructions purchasing has taken on, and an awaiting one is a count on the plan
         # page rather than demand. `scm.committed_v` counts either, so the view-level tests
         # in this file read the same figure whichever way this is seeded; the RUN-level
-        # ones do not, and a confirmed Buy a buyer is working is what they are about.
-        ack_state=ACK_ACKNOWLEDGED,
+        # ones do not, and a confirmed Buy a buyer is working is what they are about. A
+        # caller may state `awaiting` instead, which is what proves the plan leaves it
+        # alone (`test_reorder_per_product.py`, AC-R4).
+        ack_state=ack_state or ACK_ACKNOWLEDGED,
     )
     db.add(row)
     db.flush()

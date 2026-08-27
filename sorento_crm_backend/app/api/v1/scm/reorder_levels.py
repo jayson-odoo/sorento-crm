@@ -71,14 +71,21 @@ def list_levels(product_query: Optional[str] = Query(None),
 @router.put("/reorder-levels")
 def set_level(payload: dict = Body(...), db: Session = Depends(get_db),
               _=Depends(_EDIT)) -> dict[str, Any]:
-    """Set the level for one (product, location). `warehouse_id` omitted = product-wide."""
+    """Set the level for a PRODUCT (AC-R9).
+
+    A `warehouse_id` in the payload is accepted and ignored: the plan reads one level per
+    product now (`PLAN-scm-reorder-per-product.md`), so writing a per-location row would be
+    a save that changes nothing the next run reads - which is worse than refusing it,
+    because it looks like it worked. The file import keeps writing whatever location a
+    sheet names; that is the sheet stating a fact, not a buyer setting the plan's number.
+    """
     product_id = payload.get("product_id")
     if not product_id:
         raise AppException(status_code=422, message="product_id is required.")
     level = payload.get("level")
     row = svc.upsert_level(
         db, product_id=str(product_id),
-        warehouse_id=(str(payload["warehouse_id"]) if payload.get("warehouse_id") else None),
+        warehouse_id=None,
         level=(float(level) if level is not None else None),
         source=str(payload.get("source") or svc.SOURCE_MANUAL),
         notes=payload.get("notes"),
@@ -174,7 +181,8 @@ async def apply_level_import(
 @router.post("/reorder-levels/refresh-suggestions")
 def refresh(payload: dict = Body(default_factory=dict), db: Session = Depends(get_db),
             _=Depends(_EDIT)) -> dict[str, Any]:
-    """Recompute suggestions from the last N months of movement. Stored levels are untouched."""
+    """Recompute suggestions from the last 90 days of delivery orders. Stored levels are
+    untouched. `study_months` only sizes the evidence bars the popover charts."""
     product_ids = [str(p) for p in (payload.get("product_ids") or [])]
     if not product_ids:
         raise AppException(status_code=422,
@@ -183,7 +191,6 @@ def refresh(payload: dict = Body(default_factory=dict), db: Session = Depends(ge
     written = svc.refresh_suggestions(
         db, product_ids, warehouse_ids,
         study_months=int(payload.get("study_months") or svc.DEFAULT_STUDY_MONTHS),
-        cover_months=float(payload.get("cover_months") or svc.DEFAULT_COVER_MONTHS),
         company_id=_company_id(db))
     return {"updated": written}
 

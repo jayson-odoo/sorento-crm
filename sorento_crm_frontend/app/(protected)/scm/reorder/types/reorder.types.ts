@@ -333,13 +333,17 @@ export interface ReorderRecommendation {
   last_purchase_date?: string | null;
   last_purchase_ref?: string | null;
   last_purchase_basis?: 'own_segment' | 'unattributed' | 'never_purchased' | null;
-  /** What three months of movement implies. Never applied on the buyer's behalf. */
+  /** `ADU x lead time + 14 days of safety`. Never applied on the buyer's behalf. */
   suggested_level?: number | null;
   suggestion_basis?: {
     months?: { month: string; qty: number }[];
-    months_studied?: number;
-    avg_monthly?: number;
-    cover_months?: number;
+    adu?: number;
+    lead_time_days?: number;
+    lead_time_source?: string | null;
+    safety_days?: number;
+    safety_stock?: number;
+    window_days?: number;
+    window_qty?: number | null;
     raw_level?: number;
     no_movement?: boolean;
   } | null;

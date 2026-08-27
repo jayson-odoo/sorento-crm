@@ -1160,6 +1160,12 @@ def test_a_group_in_deficit_offers_none_of_its_purchase_order_lines(world):
     The POOL line is offered in the same breath, which is what makes this a rule about the
     group rather than a rule about purchase orders: a pool belongs to no ownership group,
     so nobody's backlog has a prior claim on it.
+
+    The asking row sits at the POOL, and that is load-bearing since the captain's 27 August
+    ruling: a group holding an ACKNOWLEDGED, UNLINKED row of this product is never in
+    deficit, because that row is the demand somebody bought its purchase order for. The IB
+    group's backlog here is core sales-order demand, which nobody has acknowledged an
+    instruction for, so the deficit stands. The exception has its own test below.
     """
     world.stock("BRW-IB", 5290)
     world.demand("BRW-IB", 27804)
@@ -1168,7 +1174,7 @@ def test_a_group_in_deficit_offers_none_of_its_purchase_order_lines(world):
     )
     world.purchase_order("202607-S0039", date(2026, 7, 2), [("BRW", 9, SOON, "1")])
 
-    candidates = world.svc._candidates_for_row(world.row("ORDER", 60))
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60, location="BRW"))
 
     assert [c["location"] for c in candidates] == ["BRW"]
     assert [c["document"] for c in candidates] == ["202607-S0039"]
@@ -1193,13 +1199,17 @@ def test_the_same_group_offers_its_lines_again_once_the_orders_cover_its_backlog
 
 def test_a_deficit_group_line_is_withheld_from_the_auto_link_cascade_too(world):
     """The dialog and the cascade walk ONE list, so the cascade cannot place what the
-    dialog refuses to offer."""
+    dialog refuses to offer.
+
+    The row is at the POOL, so the IB group holds no acknowledged instruction of its own -
+    see the ruling in the test above.
+    """
     world.stock("BRW-IB", 10)
     world.demand("BRW-IB", 9000)
     world.purchase_order(
         "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
     )
-    row = world.row("ORDER", 60)
+    row = world.row("ORDER", 60, location="BRW")
 
     world.svc.auto_place_for_products(
         [world.product], actor_user_id=None, trigger="test"
@@ -1228,6 +1238,70 @@ def test_has_link_candidate_applies_the_same_deficit_rule(world):
     assert world.product in offered["po"]
 
 
+def test_the_listing_flag_offers_a_group_bought_to_exactly_its_backlog(world):
+    """The listing flag and the walk are one rule, at the BOUNDARY too (captain, 27 Aug:
+    "a group is offered when net + remaining >= 0").
+
+    `_groups_in_deficit` has offered zero since that ruling, because a purchase order
+    raised off the plan lands the group on exactly zero; the flag still asked for strictly
+    more than zero, so the row action hid a Link the dialog would have filled.
+    """
+    world.stock("BRW-IB", 0)
+    world.demand("BRW-IB", 500)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60, location="BRW")
+
+    assert [c["location"] for c in world.svc._candidates_for_row(row)] == ["BRW-IB"]
+    assert world.product in world.svc.link_candidate_products([world.product])["po"]
+
+
+def test_the_listing_flag_follows_the_acknowledged_row_exemption(world):
+    """The other half of the same ruling on the same flag. The group is genuinely short,
+    and it holds the acknowledged row the purchase order was bought for - so the walk
+    offers that row its line, and a flag that said "nowhere to link" would hide the action
+    on the one row the exemption exists for.
+
+    Answered per PRODUCT, which is all this flag has: it cannot tell the exempt group's
+    own row from a neighbour's, so it errs towards offering. The dialog is exact.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    world.row("ORDER", 60, location="BRW-IB")
+
+    assert world.product in world.svc.link_candidate_products([world.product])["po"]
+
+
+def test_the_listing_flag_stops_offering_once_the_exempt_row_is_linked(world):
+    """The memo is cleared when a link is written (item 4, re-review 27 Aug 2026).
+
+    `_rows_awaiting_a_link` is remembered per product on the SERVICE INSTANCE, and the
+    route that writes a link serialises the answer through that same instance - so the
+    listing read the awaiting rows as they were BEFORE the write and went on offering a
+    Link for a row it had just fully covered. The exemption is the only thing offering this
+    group's line (it is 8,990 short), so once the row that earned it is linked, the flag
+    must stop.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    (line_id,) = world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60, location="BRW-IB")
+
+    assert world.product in world.svc.link_candidate_products([world.product])["po"]
+
+    world.svc.place_on_po(str(row.id), line_id, actor_user_id=None)
+
+    assert world.product not in world.svc.link_candidate_products([world.product])["po"], (
+        "the listing offered a Link for a row this very instance had just fully linked"
+    )
+
+
 def test_a_person_may_still_link_a_deficit_group_line_by_hand(world):
     """The deficit rule governs what is OFFERED, not what a person may insist on.
 
@@ -1241,12 +1315,169 @@ def test_a_person_may_still_link_a_deficit_group_line_by_hand(world):
     (line_id,) = world.purchase_order(
         "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
     )
-    row = world.row("ORDER", 60)
+    row = world.row("ORDER", 60, location="BRW")
 
     assert world.svc._candidates_for_row(row) == []
     by_hand = world.svc._candidates_for_row(row, manual=True)
 
     assert [c["target_id"] for c in by_hand] == [line_id]
+
+
+def test_a_group_bought_to_exactly_its_backlog_still_offers_its_line(world):
+    """The BOUNDARY, and the ordinary case (captain, 27 Aug 2026).
+
+    A purchase order raised off the plan buys exactly what the plan said the group was
+    short, so the group lands on `group_net + remaining == 0` every time. Read as "at or
+    below zero is deficit", that group was refused its own purchase order and the rows that
+    sized it stayed raised forever. Nothing is promised twice at zero: the demand the buy
+    covers is the demand the group carries.
+    """
+    world.stock("BRW-IB", 0)
+    world.demand("BRW-IB", 500)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60, location="BRW"))
+
+    assert [c["location"] for c in candidates] == ["BRW-IB"]
+
+
+def test_a_group_holding_an_acknowledged_unlinked_row_is_offered_its_own_line(world):
+    """The second half of the same ruling. The group is genuinely short - it owes far more
+    than its open purchase orders can cover - but it holds an ACKNOWLEDGED row nobody has
+    linked, and that row is the demand somebody bought this purchase order for. Withholding
+    the line leaves the buy sitting open beside the instruction it answers.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60, location="BRW-IB"))
+
+    assert [c["location"] for c in candidates] == ["BRW-IB"]
+
+
+def test_the_deficit_exemption_belongs_to_the_row_that_earned_it(world):
+    """B1 (code review, 27 Aug 2026). The exemption is per ROW, never per PRODUCT.
+
+    The IB group owes 9,000 against 500 on order, so it is deep in deficit, and it holds
+    ONE acknowledged unlinked row of its own - the demand somebody bought that 500 for.
+    Lifting the whole product out of the deficit set instead let the row walked FIRST take
+    the line whatever group it sat at: a BB row here, whose own group never bought
+    anything, walks ahead of the IB row on the earlier delivery date and helped itself to
+    IB's purchase order while IB's 8,500-short backlog stayed unpromised.
+
+    The candidates are only RANKED by location, never filtered by it, so nothing further
+    down the walk would have stopped it.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    stranger = world.row("ORDER", 10, location="BRW-BB")
+    owner = world.row("ORDER", 10, location="BRW-IB")
+    # Walked first, which is the whole point: the earlier date wins the scarce line.
+    stranger.delivery_date = date(2026, 9, 1)
+    owner.delivery_date = date(2026, 11, 1)
+    world.db.flush()
+
+    assert world.svc._candidates_for_row(stranger) == [], (
+        "the BB row took a purchase order the IB group is 8,500 short without"
+    )
+    assert [c["location"] for c in world.svc._candidates_for_row(owner)] == ["BRW-IB"]
+
+    world.svc.auto_place_for_products(
+        [world.product], actor_user_id=None, trigger="test"
+    )
+    world.db.refresh(stranger)
+    world.db.refresh(owner)
+
+    assert stranger.state == "raised"
+    assert owner.state == "placed"
+
+
+def test_a_deficit_group_offers_its_line_to_its_own_acknowledged_row(world):
+    """S4: AC-L11's ORIGINAL scenario - the asking row at BRW-IB - with the outcome the
+    27 August ruling gives it.
+
+    `B2155-NL-BLUE` measured 26 August 2026: the IB group nets -22,514 and its own open
+    purchase orders come to 860. Before the ruling the group was refused its own lines
+    outright, whoever was asking. Now the row doing the asking IS the group's own
+    acknowledged, unlinked instruction, so the 860 is what somebody bought for it and the
+    line is offered - ahead of the pool line, on the same-location tier.
+    """
+    world.stock("BRW-IB", 5290)
+    world.demand("BRW-IB", 27804)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 860, SOON, "3")]
+    )
+    world.purchase_order("202607-S0039", date(2026, 7, 2), [("BRW", 9, SOON, "1")])
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60, location="BRW-IB"))
+
+    assert [c["location"] for c in candidates] == ["BRW-IB", "BRW"]
+
+
+def test_the_cascade_places_a_deficit_groups_own_acknowledged_row(world):
+    """S4, the cascade half: the dialog and the cascade walk ONE list, so a line the
+    dialog now offers the group's own row is one the cascade must place.
+
+    The pool-row control for this same book is the test above it - there the IB group
+    holds no acknowledged instruction, and the deficit stands.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60, location="BRW-IB")
+
+    world.svc.auto_place_for_products(
+        [world.product], actor_user_id=None, trigger="test"
+    )
+
+    world.db.refresh(row)
+    assert row.state == "placed", "the whole 60 taken off the group's own 500-line"
+
+
+def test_the_groups_own_row_needs_no_override_to_reach_its_line(world):
+    """S4, the override half. A person may still take a deficit group's line by hand
+    (`manual`, the test above), but the group's OWN acknowledged row never has to: the
+    automatic walk offers it the identical list.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    (line_id,) = world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60, location="BRW-IB")
+
+    automatic = world.svc._candidates_for_row(row)
+    by_hand = world.svc._candidates_for_row(row, manual=True)
+
+    assert [c["target_id"] for c in automatic] == [line_id]
+    assert [c["target_id"] for c in by_hand] == [line_id]
+
+
+def test_an_awaiting_row_at_the_group_does_not_lift_the_deficit(world):
+    """The exception is ACKNOWLEDGED demand, not demand. An awaiting row is an instruction
+    purchasing has not read, so it is no evidence that anybody bought this purchase order
+    for it - and the cascade would refuse to link it anyway.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    world.row("ORDER", 60, location="BRW-IB", ack_state="awaiting")
+
+    candidates = world.svc._candidates_for_row(world.row("ORDER", 60, location="BRW"))
+
+    assert candidates == []
 
 
 def test_the_cascade_builds_the_availability_reader_once_for_the_whole_pass(world, monkeypatch):

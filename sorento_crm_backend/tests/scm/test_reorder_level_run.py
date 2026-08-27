@@ -4,6 +4,11 @@ The pure-function coverage lives in `test_reorder_level_basis.py`. What is pinne
 part that only a run can prove: that the buyer's stored number reaches the engine, that it
 alone decides the quantity, that an item without one is named rather than guessed at, and
 that switching a policy row is the whole of turning the basis on.
+
+The level is per PRODUCT since 27 Aug (`PLAN-scm-reorder-per-product.md`): stored with no
+warehouse, netted across every location, and the buy names none. The per-product arithmetic
+itself lives in `test_reorder_per_product.py`; what this file keeps proving is that the
+number the buyer stores is the number the engine uses.
 """
 from __future__ import annotations
 
@@ -36,11 +41,20 @@ def _use_level_basis(db) -> None:
     db.flush()
 
 
-def _set_level(db, pid: str, wid: str | None, level: float | None) -> None:
+def _set_level(db, pid: str, level: float | None) -> None:
+    """The level the buyer owns, stored where the plan reads it: on the PRODUCT."""
     db.execute(text(
         "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, "
-        "created_at) VALUES (:id, :p, :w, :l, 'manual', now())"
-    ), {"id": str(uuid.uuid4()), "p": pid, "w": wid, "l": level})
+        "created_at) VALUES (:id, :p, NULL, :l, 'manual', now())"
+    ), {"id": str(uuid.uuid4()), "p": pid, "l": level})
+    db.flush()
+
+
+def _no_master_level(db, pid: str) -> None:
+    """`products.reorder_level` still carries a legacy server default of 10, so a product
+    built without one arrives holding a level nobody set - and the AutoCount master level is
+    what the plan falls back to when there is no override."""
+    db.execute(text("UPDATE products SET reorder_level = NULL WHERE id = :p"), {"p": pid})
     db.flush()
 
 
@@ -59,7 +73,9 @@ def _plan(db, code: str, *, on_hand: float, level: float | None,
     _mk_demand(db, pid, wid, demand_rate)
     _link(db, pid, _mk_supplier(db, f"ZZT Lvl Supplier {code}"), moq=moq, mult=mult)
     if level is not None:
-        _set_level(db, pid, wid, level)
+        _set_level(db, pid, level)
+    else:
+        _no_master_level(db, pid)
     db.flush()
     created = svc.create_run(db, [code], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
@@ -155,7 +171,8 @@ def test_a_suggestion_is_never_planned_as_a_level(scm_app):
     _mk_stock(db, pid, wid, 0)
     _mk_demand(db, pid, wid, 1.0)
     _link(db, pid, _mk_supplier(db, "ZZT Sugg Supplier"), moq=None, mult=None)
-    rl.store_suggestion(db, product_id=pid, warehouse_id=wid, suggested_level=99.0,
+    _no_master_level(db, pid)
+    rl.store_suggestion(db, product_id=pid, warehouse_id=None, suggested_level=99.0,
                         basis={"avg_monthly": 49.5, "cover_months": 2, "months_studied": 3})
     db.flush()
 
@@ -185,15 +202,19 @@ def _po_line(db, pid: str, wid: str | None, cost: float, days_ago: int = 3) -> N
 
 
 def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
+    """Attribution is a per-LOCATION question - "what does a dealer order cost" - so it is
+    proven on the forecast basis, which still plans per location. A level-basis row is the
+    whole product and states the unattributed price instead (see
+    `test_reorder_per_product.py`)."""
     _, db, _, _ = scm_app
-    _use_level_basis(db)
+    svc.eng.ensure_reorder_policy_defaults(db)
     wid = _mk_warehouse(db, "ZZTW-SEG-D")
     db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": wid})
     pid = _mk_product(db, f"ZZTP-SEGD-{uuid.uuid4().hex[:6]}")
     _mk_stock(db, pid, wid, 8)
-    _mk_demand(db, pid, wid, 0.0)
+    # A rate, so the forecast basis has something to trigger against.
+    _mk_demand(db, pid, wid, 1.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg D"), moq=None, mult=None)
-    _set_level(db, pid, wid, 20)
     _po_line(db, pid, wid, 33.0)
     db.flush()
 
@@ -207,9 +228,10 @@ def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
 
 def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
     # The whole reason the split exists. A purchase into the dealer bin must not be
-    # presented as what a project order costs.
+    # presented as what a project order costs. On the forecast basis, which still plans per
+    # location - the level basis is one row for the whole product now.
     _, db, _, _ = scm_app
-    _use_level_basis(db)
+    svc.eng.ensure_reorder_policy_defaults(db)
     dealer = _mk_warehouse(db, "ZZTW-SEG-DD")
     project = _mk_warehouse(db, "ZZTW-SEG-PP")
     db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": dealer})
@@ -217,8 +239,8 @@ def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
     pid = _mk_product(db, f"ZZTP-SEGP-{uuid.uuid4().hex[:6]}")
     for w in (dealer, project):
         _mk_stock(db, pid, w, 8)
-        _mk_demand(db, pid, w, 0.0)
-        _set_level(db, pid, w, 20)
+        # A rate, so the forecast basis has something to trigger against.
+        _mk_demand(db, pid, w, 1.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg P"), moq=None, mult=None)
     _po_line(db, pid, dealer, 33.0)
     db.flush()
@@ -243,7 +265,7 @@ def test_a_purchase_with_no_destination_is_never_relabelled(scm_app):
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg U"), moq=None, mult=None)
-    _set_level(db, pid, wid, 20)
+    _set_level(db, pid, 20)
     _po_line(db, pid, None, 21.0)
     db.flush()
 
@@ -263,7 +285,7 @@ def test_never_purchased_says_so_rather_than_showing_nothing(scm_app):
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg N"), moq=None, mult=None)
-    _set_level(db, pid, wid, 20)
+    _set_level(db, pid, 20)
     db.flush()
 
     created = svc.create_run(db, ["ZZTW-SEG-N"], enqueue=False)
@@ -274,12 +296,13 @@ def test_never_purchased_says_so_rather_than_showing_nothing(scm_app):
     assert inp["last_purchase_basis"] == "never_purchased"
 
 
-def test_a_pooled_buy_row_still_carries_the_checklist(scm_app):
-    """A pool sizes the buy; the row still has to describe the PLACE it lands in.
+def test_a_grouped_buy_row_still_carries_the_checklist(scm_app):
+    """A group sizes the buy; the row still has to carry the weekly checklist.
 
-    Found in the browser: pooled rows were built from the aggregate cell, which has no
+    Found in the browser: grouped rows were built from the aggregate cell, which has no
     on-hand, no level and no last price, so the checklist was blank on exactly the rows a
-    pool produces - and a pool produces most of them.
+    group produces - and a group produces most of them. Still true now that the group is
+    the whole product: the figures are the PRODUCT's totals.
     """
     _, db, _, _ = scm_app
     _use_level_basis(db)
@@ -292,8 +315,7 @@ def test_a_pooled_buy_row_still_carries_the_checklist(scm_app):
     _mk_stock(db, pid, bin_, 6)
     _mk_demand(db, pid, root, 0.0)
     _mk_demand(db, pid, bin_, 0.0)
-    _set_level(db, pid, root, 50)
-    _set_level(db, pid, bin_, 50)
+    _set_level(db, pid, 100)
     _link(db, pid, _mk_supplier(db, "ZZT Pool Supplier"), moq=None, mult=None)
     _po_line(db, pid, bin_, 7.5)
     db.flush()
@@ -301,7 +323,7 @@ def test_a_pooled_buy_row_still_carries_the_checklist(scm_app):
     created = svc.create_run(db, ["ZZTW-POOL-R", "ZZTW-POOL-B"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     buys = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
-    assert buys, "10 across the pool against a level of 100 is a shortage"
+    assert buys, "10 across the two locations against a level of 100 is a shortage"
     for b in buys:
         inp = b["inputs"]
         assert inp.get("on_hand") is not None, "a pooled row must still say what is on hand"
@@ -309,8 +331,8 @@ def test_a_pooled_buy_row_still_carries_the_checklist(scm_app):
         assert inp.get("last_purchase_basis") is not None
 
 
-def test_a_pool_where_nobody_set_a_level_buys_nothing(scm_app):
-    """Found in the browser: summing the levels that exist gave a pool with NONE a target
+def test_a_product_where_nobody_set_a_level_buys_nothing(scm_app):
+    """Found in the browser: summing the levels that exist gave a group with NONE a target
     of 0, and 0 is a real target that any deficit trips - so it bought its whole shortage
     (52,872 units on the live data) against a number nobody chose."""
     _, db, _, _ = scm_app
@@ -325,14 +347,15 @@ def test_a_pool_where_nobody_set_a_level_buys_nothing(scm_app):
     _mk_demand(db, pid, root, 3.0)
     _mk_demand(db, pid, bin_, 3.0)
     _link(db, pid, _mk_supplier(db, "ZZT PoolNL Supplier"), moq=None, mult=None)
+    _no_master_level(db, pid)
     db.flush()
 
     created = svc.create_run(db, ["ZZTW-POOL-NL-R", "ZZTW-POOL-NL-B"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rows = _recs(db, created["run_id"], pid)
     kinds = {r["rec_type"] for r in rows}
-    assert "buy" not in kinds, "a pool with no level anywhere must not buy on a target of 0"
-    assert "needs_level" in kinds, "and each unset member must still be named"
+    assert "buy" not in kinds, "no level anywhere must not buy on a target of 0"
+    assert "needs_level" in kinds, "and the product must still be named"
 
 
 # --- pooled netting is opt-in ------------------------------------------------------------

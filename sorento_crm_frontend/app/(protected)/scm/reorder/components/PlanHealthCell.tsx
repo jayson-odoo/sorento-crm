@@ -4,61 +4,49 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { EM_DASH, fmtSupplierCost } from '../../lib/format';
-import type { DiscontinueAdvice, MarginVerdict, ProductEconomics } from '../lib/productHealth';
+import { EM_DASH } from '../../lib/format';
+import type { HealthVerdict, ProductEconomics } from '../lib/productHealth';
 
 /**
- * The health chapter's cell: the margin the item really earns, the discontinue ask when
- * the factors align, and the buyer's ANSWER to it.
+ * The health chapter's cell: is this item still moving, and should we keep selling it?
  *
  * > "this is a suggestion by the system and also an action needs to be taken / decide by
  * >  the user ... it is defaulted to our suggestion but they can decide otherwise"
  *
- * So the popup carries two buttons, Keep selling and Discontinue, with the system's
- * suggestion presented as the default. The recorded decision replaces the ask on the row
- * ("You chose: discontinue") and survives across plans until withdrawn - the advisory
- * itself still recomputes every run and the case stays readable behind the decision.
- * Recording "discontinue" never touches AutoCount; marking it there is the buyer's job.
+ * The pill is the movement class (Fast moving / Slow moving / Dead / No history), read
+ * off delivery orders out and GRN receipts in. A margin percentage used to sit here; it
+ * compared a CNY cost against a MYR price through an exchange rate nobody trusted, so it
+ * is gone (captain, 27 Aug). Only Dead carries an ask, and the popup carries two buttons,
+ * Keep selling and Discontinue, with the system's suggestion presented as the default.
+ * The recorded decision replaces the ask on the row ("You chose: discontinue") and
+ * survives across plans until withdrawn. Recording "discontinue" never touches AutoCount;
+ * marking it there is the buyer's job.
  */
 
-const MARGIN_VARIANT = {
-  healthy: 'success',
-  thin: 'warning',
-  negative: 'destructive',
-  unknown: 'secondary',
-} as const;
-
 export function PlanHealthCell({
-  margin,
-  advice,
+  health,
   econ,
   onDecideLifecycle,
 }: {
-  margin: MarginVerdict | null;
-  advice: DiscontinueAdvice | null;
+  health: HealthVerdict | null;
   econ: ProductEconomics | null;
   /** Record (or withdraw, with null) the keep-or-discontinue answer. Absent = read-only. */
   onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
 }) {
   const [saving, setSaving] = useState(false);
 
-  if (!margin && !advice) {
+  if (!health) {
     return (
-      <span className="text-muted-foreground" title="No economics for this product">
+      <span className="text-muted-foreground" title="No movement on file for this product">
         {EM_DASH}
       </span>
     );
   }
 
   const decision = econ?.lifecycle_decision ?? null;
-  // Null when there is no verdict to offer, so NEITHER button gets the outline that means
-  // "this is the suggestion". Defaulting it to keep would put a recommendation on screen
-  // that nothing computed.
-  const suggested: 'keep' | 'discontinue' | null = advice
-    ? advice.consider
-      ? 'discontinue'
-      : 'keep'
-    : null;
+  // Only a Dead product is suggested for discontinuation; every other class suggests
+  // keeping it. Neither button gets the "this is the suggestion" outline by accident.
+  const suggested: 'keep' | 'discontinue' = health.consider ? 'discontinue' : 'keep';
 
   const record = async (next: 'keep' | 'discontinue' | null) => {
     if (!onDecideLifecycle || !econ) return;
@@ -74,16 +62,9 @@ export function PlanHealthCell({
     <Popover>
       <PopoverTrigger asChild>
         <button type="button" className="min-w-0 text-left" aria-label="Product health">
-          {margin ? (
-            <Badge variant={MARGIN_VARIANT[margin.tone]} appearance="light" size="sm">
-              {/* The amount rides along with the percentage (user feedback, 2026-08-12) -
-                  the vs-list-price nuance already lives in the popover body below, so the
-                  pill's own subtitle for that case is gone rather than duplicated. */}
-              {margin.pct === null || margin.sell === null || margin.cost === null
-                ? 'Margin unknown'
-                : `Margin ${margin.pct}% (${fmtSupplierCost(margin.sell - margin.cost, null)})`}
-            </Badge>
-          ) : null}
+          <Badge variant={health.tone} appearance="light" size="sm">
+            {health.label}
+          </Badge>
           {decision ? (
             <span
               className={`mt-0.5 block truncate text-2xs font-medium ${
@@ -92,70 +73,26 @@ export function PlanHealthCell({
             >
               {decision === 'discontinue' ? 'You chose: discontinue' : 'You chose: keep selling'}
             </span>
-          ) : advice?.consider ? (
+          ) : health.suggestion ? (
             <span className="mt-0.5 block truncate text-2xs font-medium text-destructive">
-              Consider discontinuing
+              {health.suggestion}
             </span>
           ) : null}
         </button>
       </PopoverTrigger>
       <PopoverPortal>
         <PopoverContent className="w-80 text-xs" align="start">
-          {/* One line, the same shape every time: the verdict, named. The prose it replaces
-              ("The product is earning its place.") told the buyer nothing the factor lines
-              below do not already say, and read as an opinion rather than an answer.
-              No advice yet (still loading, or no economics to judge on) says so with a dash
-              rather than defaulting to "keep selling", which would be a claim. */}
+          {/* One line, the same shape every time: the verdict, named. */}
           <p className="font-medium text-foreground">
-            Suggestion: {advice ? (advice.consider ? 'Discontinue' : 'Keep selling') : EM_DASH}
+            Suggestion: {health.consider ? 'Discontinue' : 'Keep selling'}
           </p>
 
-          {/* The arithmetic behind "Margin 33.3%" - no prose, just the three figures the
-              badge is computed from, so the number can be checked at a glance. */}
-          {margin ? (
-            <div className="mt-2 border-t pt-2 text-2xs">
-              {margin.sell === null ? (
-                <p className="text-muted-foreground">Selling price not set - margin unknown.</p>
-              ) : margin.cost === null || margin.cost <= 0 ? (
-                <p className="text-muted-foreground">Cost not set - margin unknown.</p>
-              ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <p className="text-muted-foreground">Selling price</p>
-                    <p className="tabular-nums font-medium text-foreground">
-                      {fmtSupplierCost(margin.sell, null)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Cost</p>
-                    <p className="tabular-nums font-medium text-foreground">
-                      {fmtSupplierCost(margin.cost, null)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Margin</p>
-                    <p className="tabular-nums font-medium text-foreground">
-                      {fmtSupplierCost(margin.sell - margin.cost, null)}
-                      {margin.pct !== null ? ` (${margin.pct}%)` : ''}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          {advice?.factors.length ? (
-            <ul className="mt-2 space-y-1 text-muted-foreground">
-              {advice.factors.map((f) => (
-                <li key={f}>{f}</li>
-              ))}
-            </ul>
-          ) : null}
-          {margin?.sell_source === 'list_price' ? (
-            <p className="mt-2 text-2xs text-muted-foreground">
-              No sales in the window, so the margin compares against the list price.
-            </p>
-          ) : null}
+          {/* The counts the verdict is drawn from - no prose, just the movement. */}
+          <ul className="mt-2 space-y-1 border-t pt-2 text-muted-foreground">
+            {health.factors.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
 
           {/* The buyer's answer. The system's suggestion is the highlighted default;
               either click records, a second click on the same one withdraws. */}
@@ -178,10 +115,8 @@ export function PlanHealthCell({
               >
                 {decision === 'discontinue' ? '✓ Discontinue' : 'Discontinue'}
               </Button>
-              {!decision ? (
-                <span className="text-2xs text-muted-foreground">
-                  {suggested === 'discontinue' ? 'suggested' : ''}
-                </span>
+              {!decision && suggested === 'discontinue' ? (
+                <span className="text-2xs text-muted-foreground">suggested</span>
               ) : null}
             </div>
           ) : null}

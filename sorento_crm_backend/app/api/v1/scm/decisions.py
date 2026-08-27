@@ -91,6 +91,9 @@ def adjust(
         payload.override_supplier_id,
         payload.reason_text,
         (_user or {}).get("id"),
+        price_mode=payload.price_mode,
+        supplier_code=payload.supplier_code,
+        unit_cost=payload.unit_cost,
     )
     db.commit()
     return result
@@ -173,6 +176,9 @@ def record_decision(
         payload.po_refs,
         payload.reason_text,
         (_user or {}).get("id"),
+        price_mode=payload.price_mode,
+        supplier_code=payload.supplier_code,
+        unit_cost=payload.unit_cost,
     )
     db.commit()
     return result

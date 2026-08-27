@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import type {
   AcknowledgeResult,
   AutoPlaceRequest,
@@ -246,14 +247,20 @@ export async function autoPlaceOrderInquiryRows(
  * One press does two things because they are one decision: the rows become purchasing's
  * work, and the cascade runs for exactly them, so whatever open document can cover them
  * is linked at that moment. Nothing links before this.
+ *
+ * `horizon` is how far out the linking half reaches (AC-LH1): every ticked row is taken
+ * on, and one due after that date is left Not linked and reported on `after_horizon`. It
+ * is `linkHorizonRequest`'s own fragment - a date, an explicit `link_horizon: 'none'`, or
+ * nothing at all, which the server reads as the reorder plan's own (S1).
  */
 export async function acknowledgeOrderInquiryRows(
   rowIds: string[],
+  horizon?: LinkHorizonRequest,
 ): Promise<AcknowledgeResult> {
   const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row_ids: rowIds }),
+    body: JSON.stringify({ row_ids: rowIds, ...(horizon ?? {}) }),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to acknowledge those rows'));

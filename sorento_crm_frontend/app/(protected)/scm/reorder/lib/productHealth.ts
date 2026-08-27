@@ -1,23 +1,27 @@
 /**
- * Product health: the margin an item really earns, and whether to keep selling it.
+ * Product health: whether an item is still moving, and whether to keep selling it.
  *
  * > "maybe it is a hot selling item, but the margin is so little ... we need to suggest
  * >  to discontinue or not, looking into multiple factors like the sales, the mobility
  * >  of the stock, is it having good margin, what's the cost, what's the turnover"
  *
- * Mirrors `app/services/scm/product_economics_service.py`, which states the facts
- * (realized selling price, on hand, pace, months of stock); this file draws the verdicts
- * and the words. Margin compares in the BASE currency - the cost side is the plan's own
- * `unit_cost_base`, the sell side is what customers actually paid in MYR - because a
- * margin across two currencies is an exchange rate wearing a percentage.
+ * The margin half of that is gone (captain, 27 Aug): costs are often CNY and selling
+ * prices MYR with no exchange rate anyone trusts, so a margin percentage on the plan was
+ * an exchange rate wearing a verdict. What is left is MOVEMENT, which the books do agree
+ * on - delivery orders out, GRN receipts in:
  *
- * The discontinue advisory is an ASK built on two hard factors - the demand is dying
- * (trend) AND the stock has stopped moving (turnover past the policy line) - with the
- * margin cited as evidence either way. A thin margin alone never suggests killing a
- * product that still sells; that is a pricing conversation, not a discontinuation.
+ *     Fast moving  - sold in the last 3 months AND bought in the last 6
+ *     Slow moving  - one of the two, not both
+ *     Dead         - neither, and stock still on hand -> "Consider discontinuing"
+ *     No history   - neither, and nothing on hand
+ *
+ * `app/services/scm/product_economics_service.py` draws the class (it is the same four
+ * rules whichever side counts them, and the backend is where the movement lives); this
+ * file turns it into the words the column says.
  */
-import type { TrajectoryEntry } from './trajectory';
 import { fmtTrimmedDecimal } from '../../lib/format';
+
+const fmt = (v: number) => fmtTrimmedDecimal(v, 1);
 
 export interface ProductEconomics {
   product_id: string;
@@ -33,109 +37,93 @@ export interface ProductEconomics {
   /** The buyer's standing answer to the advisory, or null while undecided. */
   lifecycle_decision: 'keep' | 'discontinue' | null;
   lifecycle_decided_at: string | null;
+  /** Delivery-order quantity in the last `sold_window_months`. */
+  sold_recent_qty: number;
+  /** GRN receipt quantity in the last `bought_window_months`. A PO issued is not a buy. */
+  bought_recent_qty: number;
+  movement_class: MovementClass;
 }
+
+export type MovementClass = 'fast_moving' | 'slow_moving' | 'dead' | 'no_history';
 
 export interface EconomicsPayload {
   products: Record<string, ProductEconomics>;
   count: number;
   thresholds: { margin_floor_pct: number; dead_turnover_months: number };
   sell_window_months: number;
+  /** The windows the health class was judged on: 3 months out, 6 months in. */
+  sold_window_months?: number;
+  bought_window_months?: number;
 }
 
-export type MarginTone = 'healthy' | 'thin' | 'negative' | 'unknown';
+export const MOVEMENT_LABEL: Record<MovementClass, string> = {
+  fast_moving: 'Fast moving',
+  slow_moving: 'Slow moving',
+  dead: 'Dead',
+  no_history: 'No history',
+};
 
-export interface MarginVerdict {
-  tone: MarginTone;
-  /** (sell - cost) / sell, as a percent. Null when either side is unknown. */
-  pct: number | null;
-  sell: number | null;
-  cost: number | null;
-  sell_source: 'orders' | 'list_price' | null;
-}
+/** Badge tone per class. Dead is the only one that asks the buyer for anything. */
+export const MOVEMENT_TONE: Record<MovementClass, 'success' | 'warning' | 'destructive' | 'secondary'> = {
+  fast_moving: 'success',
+  slow_moving: 'warning',
+  dead: 'destructive',
+  no_history: 'secondary',
+};
 
-export function marginOf(
-  costBase: number | null,
-  econ: ProductEconomics | undefined,
-  floorPct: number,
-): MarginVerdict {
-  const sell = econ?.avg_sell_price ?? null;
-  // Zero cost is the zero_cost price problem, not a 100% margin; unknown, not healthy.
-  if (sell === null || costBase === null || costBase <= 0) {
-    return { tone: 'unknown', pct: null, sell, cost: costBase, sell_source: econ?.sell_source ?? null };
-  }
-  const pct = ((sell - costBase) / sell) * 100;
-  const tone: MarginTone = pct < 0 ? 'negative' : pct < floorPct ? 'thin' : 'healthy';
-  return {
-    tone,
-    pct: Math.round(pct * 10) / 10,
-    sell,
-    cost: costBase,
-    sell_source: econ?.sell_source ?? null,
-  };
-}
+/** Sort weight: the rows the buyer should re-question float to the top of the column. */
+export const MOVEMENT_SORT: Record<MovementClass, number> = {
+  dead: 0,
+  no_history: 1,
+  slow_moving: 2,
+  fast_moving: 3,
+};
 
-export interface DiscontinueAdvice {
+export interface HealthVerdict {
+  klass: MovementClass;
+  label: string;
+  tone: 'success' | 'warning' | 'destructive' | 'secondary';
+  /** True only for Dead - the one class that carries an ask. */
   consider: boolean;
-  /** Every factor with its number, verdict or not - the drill shows the whole case. */
+  /** The line under the pill, or null when the class asks for nothing. */
+  suggestion: string | null;
+  /** Every fact behind the verdict, with its number - the drill shows the whole case. */
   factors: string[];
 }
 
-const fmt = (v: number) => fmtTrimmedDecimal(v, 1);
-
-export function discontinueAdvice(
+/**
+ * The verdict, its wording and the movement behind it.
+ *
+ * Every factor names a number. A verdict without its counts is the one thing the buyer
+ * said they would not trust, and the counts are the whole case now that margin is gone.
+ */
+export function healthVerdict(
   econ: ProductEconomics | undefined,
-  margin: MarginVerdict,
-  trend: TrajectoryEntry | undefined,
-  thresholds: { margin_floor_pct: number; dead_turnover_months: number },
-): DiscontinueAdvice | null {
+  windows?: { sold_window_months?: number; bought_window_months?: number },
+): HealthVerdict | null {
   if (!econ) return null;
-
-  const demandDying =
-    econ.no_movement || trend?.verdict === 'falling' || trend?.verdict === 'quiet';
-  const turnoverDead =
-    econ.turnover_months !== null
-      ? econ.turnover_months > thresholds.dead_turnover_months
-      : econ.no_movement && econ.on_hand > 0;
-
-  // Two paths in (user markup, 2026-08-11): a dying product whose stock has stopped
-  // moving, OR one sold BELOW cost while its demand falls - fast turnover does not
-  // redeem selling at a loss on a dying book. A negative margin alone (demand rising or
-  // holding) stays a pricing conversation, not a discontinuation.
-  const consider =
-    (demandDying && turnoverDead) || (demandDying && margin.tone === 'negative');
-
-  const factors: string[] = [];
-  factors.push(
-    econ.no_movement
-      ? 'Sales: nothing left this product in the last 12 months.'
-      : `Sales: ${fmt(econ.sold_qty)} sold in the last 12 months (${fmt(econ.avg_monthly_out)} a month)${
-          trend?.verdict === 'falling' ? ', and falling' :
-          trend?.verdict === 'rising' ? ', and rising' : ''
-        }.`,
-  );
-  factors.push(
-    econ.turnover_months === null
-      ? econ.on_hand > 0
-        ? `Turnover: ${fmt(econ.on_hand)} on hand and no movement to clear it.`
-        : 'Turnover: nothing on hand, nothing moving.'
-      : `Turnover: ${fmt(econ.on_hand)} on hand is ${fmt(econ.turnover_months)} months of stock (the line is ${fmt(thresholds.dead_turnover_months)}).`,
-  );
-  factors.push(
-    margin.pct === null
-      ? 'Margin: unknown - a selling price or a cost is missing.'
-      : `Margin: ${margin.pct}% (sells ${fmt(margin.sell ?? 0)}, costs ${fmt(margin.cost ?? 0)})${
-          margin.tone === 'healthy'
-            ? consider
-              ? ' - the one thing in its favour'
-              : ''
-            : `, below the ${fmt(thresholds.margin_floor_pct)}% floor`
-        }.`,
-  );
-  if (margin.cost !== null && econ.on_hand > 0) {
-    factors.push(`Cash tied up: ${fmt(econ.on_hand * margin.cost)} sitting in stock.`);
-  }
-
-  return { consider, factors };
+  const klass = econ.movement_class;
+  const soldMonths = windows?.sold_window_months ?? 3;
+  const boughtMonths = windows?.bought_window_months ?? 6;
+  const factors = [
+    econ.sold_recent_qty > 0
+      ? `Sold: ${fmt(econ.sold_recent_qty)} delivered in the last ${fmt(soldMonths)} months.`
+      : `Sold: nothing delivered in the last ${fmt(soldMonths)} months.`,
+    econ.bought_recent_qty > 0
+      ? `Bought: ${fmt(econ.bought_recent_qty)} received in the last ${fmt(boughtMonths)} months.`
+      : `Bought: nothing received in the last ${fmt(boughtMonths)} months.`,
+    econ.on_hand > 0
+      ? `On hand: ${fmt(econ.on_hand)} across every location.`
+      : 'On hand: nothing left anywhere.',
+  ];
+  return {
+    klass,
+    label: MOVEMENT_LABEL[klass],
+    tone: MOVEMENT_TONE[klass],
+    consider: klass === 'dead',
+    suggestion: klass === 'dead' ? 'Consider discontinuing' : null,
+    factors,
+  };
 }
 
 /**

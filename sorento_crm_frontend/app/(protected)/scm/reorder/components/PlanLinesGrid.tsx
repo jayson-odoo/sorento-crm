@@ -68,8 +68,8 @@ import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
 import { PlanSupplierCell } from './PlanSupplierCell';
 import {
-  discontinueAdvice,
-  marginOf,
+  MOVEMENT_SORT,
+  healthVerdict,
   moqGap,
   moqGapNote,
   type ProductEconomics,
@@ -94,6 +94,7 @@ import {
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
 import type { ChannelTrendEntry } from '../lib/trajectory';
+import type { PlanRowChoice, ResolvedRowChoice } from '../hooks/usePlanLines';
 
 /**
  * ONE grid for every line of a plan.
@@ -315,8 +316,11 @@ function GroupMembersPanel({
   runId: string | null;
   onOpenMember: (rec: ReorderRecommendation) => void;
 }) {
-  const active = group.members.filter(memberHasActivity);
-  const visible = active.length > 0 ? active : group.members;
+  // The product's own row is the row above this panel, so it is not repeated inside it.
+  // What belongs here is where the item actually sits: the per-location rows.
+  const locations = group.members.filter((m) => m.id !== group.productLine?.id);
+  const active = locations.filter(memberHasActivity);
+  const visible = active.length > 0 ? active : locations;
   const productId = group.members[0]?.product_id ?? null;
   const { data: liveStock, isLoading: liveLoading } = useLocationStock(productId, true);
 
@@ -433,6 +437,22 @@ function GroupMembersPanel({
   );
 }
 
+/**
+ * The price the row is COSTED at: nothing while a new price is being asked for (AC-R13),
+ * the chosen supplier's own last price once the buyer switches supplier (AC-R14), and the
+ * engine's figure otherwise. Null is not zero - it is the reason the line cannot yet be
+ * weighed against a budget.
+ */
+function decidedUnitCost(line: PlanLine, choice: ResolvedRowChoice | undefined): number | null {
+  if (choice?.priceMode === 'ask_new') return null;
+  const code = choice?.supplierCode;
+  if (code && code !== line.supplier?.code) {
+    const picked = (line.alternatives ?? []).find((a) => a.value === code);
+    if (picked) return picked.unit_cost;
+  }
+  return line.unit_cost;
+}
+
 export function PlanLinesGrid({
   lines,
   decisions,
@@ -449,6 +469,7 @@ export function PlanLinesGrid({
   channelTrendFor,
   trendSeriesMonths = 24,
   purchaseTrendFor,
+  purchaseTrendReady,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
   hasPhotoFor,
@@ -456,6 +477,9 @@ export function PlanLinesGrid({
   onOpenPhoto,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
+  healthWindows,
+  choiceFor,
+  onChoose,
   onDecideLifecycle,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -504,6 +528,10 @@ export function PlanLinesGrid({
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
   purchaseTrendWindowMonths?: number;
+  /** Whether the lazy purchase-trend fetch has answered - "no purchases" and "not asked
+   *  yet" are the same `undefined` otherwise, and the ledger's History block must not
+   *  print the first for the second. */
+  purchaseTrendReady?: boolean;
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
@@ -518,6 +546,12 @@ export function PlanLinesGrid({
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
+  /** The windows the movement class was judged on, so the popup can say them. */
+  healthWindows?: { sold_window_months?: number; bought_window_months?: number };
+  /** The price call + supplier the row is set to (AC-R13 / AC-R14). */
+  choiceFor?: (line: PlanLine) => ResolvedRowChoice;
+  /** Record a change to either. Absent = both controls are read-only. */
+  onChoose?: (line: PlanLine, patch: PlanRowChoice) => Promise<void> | void;
   /** Record (or withdraw) the buyer's keep-or-discontinue answer. Absent = read-only. */
   onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -702,9 +736,13 @@ export function PlanLinesGrid({
    */
   const suggestedQtyCellInputsRef = useRef({
     decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+    runId, purchaseTrendFor, purchaseTrendWindowMonths, purchaseTrendReady,
+    onOpenPurchaseTrend,
   });
   suggestedQtyCellInputsRef.current = {
     decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+    runId, purchaseTrendFor, purchaseTrendWindowMonths, purchaseTrendReady,
+    onOpenPurchaseTrend,
   };
   const renderSuggestedQtyCell = useCallback((ctx: CellContext<PlanLine, unknown>) => {
     const original = ctx.row.original;
@@ -714,11 +752,21 @@ export function PlanLinesGrid({
     const {
       decisions: liveDecisions, coverFor: liveCoverFor, poFor: livePoFor,
       economicsFor: liveEconomicsFor, healthThresholds: liveHealthThresholds,
-      trendFor: liveTrendFor, onDecide: liveOnDecide,
+      trendFor: liveTrendFor, onDecide: liveOnDecide, runId: liveRunId,
+      purchaseTrendFor: livePurchaseTrendFor,
+      purchaseTrendWindowMonths: liveWindowMonths,
+      purchaseTrendReady: liveTrendReady,
+      onOpenPurchaseTrend: liveOnNeedPurchaseTrend,
     } = suggestedQtyCellInputsRef.current;
+    // A covered row is telling the buyer they already have it, so the quantity it SUGGESTS
+    // is 0 - never the rounded "buy anyway" offer, which is what the engine still stores on
+    // the row for the Covered-by-stock view and for the decision the buyer records if they
+    // take it. Read off the row's own kind rather than a zeroed field, so nothing else that
+    // reads `order_qty` (the ledger, the decision cell) loses the offer.
+    const suggested = original.status === 'covered_by_stock' ? 0 : original.order_qty;
     return (
       <span className="inline-flex items-center gap-1">
-        <span className="tabular-nums">{fmtInt(original.order_qty)}</span>
+        <span className="tabular-nums">{fmtInt(suggested)}</span>
         <StopClick>
           <Popover>
             <PopoverTrigger asChild>
@@ -742,6 +790,11 @@ export function PlanLinesGrid({
                   healthThresholds={liveHealthThresholds}
                   trend={liveTrendFor?.(original)}
                   onDecide={(next) => liveOnDecide(original, next)}
+                  runId={liveRunId ?? null}
+                  purchaseTrend={livePurchaseTrendFor?.(original)}
+                  purchaseWindowMonths={liveWindowMonths}
+                  purchaseTrendReady={liveTrendReady}
+                  onNeedPurchaseTrend={liveOnNeedPurchaseTrend}
                 />
               </PopoverContent>
             </PopoverPortal>
@@ -1171,12 +1224,22 @@ export function PlanLinesGrid({
           const line = row.original;
           if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
           const qty = decidedQty(line, decisions[line.id]) || line.order_qty;
-          const cost = decidedCost({ ...line }, { buy: qty });
+          // A row waiting on a new price has no cost yet either - carrying the old figure
+          // here while the Price column reads a dash would put two answers on one row.
+          const asking = choiceFor?.(line).priceMode === 'ask_new';
+          const cost = asking ? null : decidedCost({ ...line }, { buy: qty });
           // A price we do not hold is never rendered as a number: it is the reason the line
           // cannot be weighed against a budget. A dash rather than the words, so the row does
           // not repeat "No price" twice; the title carries the detail.
           return cost === null ? (
-            <span className="text-muted-foreground" title="No price on file, so this line cannot be costed">
+            <span
+              className="text-muted-foreground"
+              title={
+                asking
+                  ? 'Waiting on a new price, so this line cannot be costed yet'
+                  : 'No price on file, so this line cannot be costed'
+              }
+            >
               {EM_DASH}
             </span>
           ) : (
@@ -1201,12 +1264,16 @@ export function PlanLinesGrid({
         cell: ({ row }) => (
           <StopClick>
             <PlanPriceCell
-              unitCost={row.original.unit_cost}
+              unitCost={decidedUnitCost(row.original, choiceFor?.(row.original))}
               currency={row.original.currency}
               price={priceFor?.(row.original)}
               cheaper={cheaperFor?.(row.original) ?? null}
               staleAfterDays={staleAfterDays}
               purchasable={row.original.purchasable}
+              priceMode={choiceFor?.(row.original).priceMode ?? 'use_last'}
+              onPriceMode={
+                onChoose ? (mode) => void onChoose(row.original, { priceMode: mode }) : undefined
+              }
             />
           </StopClick>
         ),
@@ -1241,6 +1308,10 @@ export function PlanLinesGrid({
                 price={priceFor?.(row.original)}
                 cheaper={cheaperFor?.(row.original) ?? null}
                 purchasable={row.original.purchasable}
+                chosenCode={choiceFor?.(row.original).supplierCode ?? null}
+                onSupplierChange={
+                  onChoose ? (code) => void onChoose(row.original, { supplierCode: code }) : undefined
+                }
               />
             </StopClick>
           ),
@@ -1315,31 +1386,23 @@ export function PlanLinesGrid({
       },
       {
         id: 'health',
-        // The rows the buyer should re-question float up: discontinue candidates first,
-        // then the margin problems, then the healthy book.
+        // The rows the buyer should re-question float up: dead stock first, then the
+        // items with no history at all, then the slow book, then what is still moving.
         accessorFn: (row) => {
           const econ = economicsFor?.(row);
-          if (!econ) return 9;
-          const margin = marginOf(row.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(econ, margin, trendFor?.(row), healthThresholds);
-          if (advice?.consider) return 0;
-          return { negative: 1, thin: 2, unknown: 3, healthy: 4 }[margin.tone];
+          return econ ? MOVEMENT_SORT[econ.movement_class] : 9;
         },
         header: ({ column }) => (
           <DataGridColumnHeader title="Product health" visibility column={column} />
         ),
         cell: ({ row }) => {
           const econ = economicsFor?.(row.original);
-          if (!econ) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          const margin = marginOf(
-            row.original.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(
-            econ, margin, trendFor?.(row.original), healthThresholds);
+          const health = healthVerdict(econ, healthWindows);
+          if (!econ || !health) return <span className="text-muted-foreground">{EM_DASH}</span>;
           return (
             <StopClick>
               <PlanHealthCell
-                margin={margin}
-                advice={advice}
+                health={health}
                 econ={econ}
                 onDecideLifecycle={onDecideLifecycle}
               />
@@ -1466,6 +1529,7 @@ export function PlanLinesGrid({
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
+     healthWindows, choiceFor, onChoose,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
   );
 

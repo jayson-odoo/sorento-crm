@@ -256,3 +256,171 @@ order gained revision 2 from the board walk above (its rows re-raised, no links 
   puts one order back to never-planned on a dev copy (inquiries, links, claims,
   allocations, transfers, decisions, planning-change rows; `--rewind-book` restores the
   lines a batch moved from that batch's own `from_json`). Dry run by default.
+
+## 11. Link horizon and the rejected bounce (captain, 27 Aug, "go" at 15:40)
+
+Status: **BUILT, REVIEWED TWICE, BROWSER-VERIFIED** 27 Aug on `feat/scm-uat-next` (781be48f1,
+now the head of `feat/scm-uat`, PR #337). pytest and vitest green (the one standing red on
+this dev copy, `test_every_new_field_reaches_the_list_the_row_and_the_export`, predates this
+branch). Browser on :3090 (sidebar, 1280 and 375): AC-LH1 to AC-LH5 and AC-RB1/AC-RB2 on
+ZZT scratch rows (deleted after); the per-row deficit exemption (the IB row placed, the CS
+row not offered); the cleared horizon through a reload and a second tab; the Auto-link
+dialog reading "Link up to 31/12/2026" and "No link horizon".
+
+**Link horizon.** Every path that links an order-inquiry row to a document (auto-link at
+acknowledge, Link now after an upload, the manual Link PO / Link SPO dialog, the PO-confirm
+cascade) takes a `link_up_to` date: rows whose delivery date is AFTER it are left Not linked
+and are not counted toward the document. The Order Inquiries page carries the date beside
+Acknowledge and Link selected (a date input, default = today + the reorder plan's horizon
+days, remembered per browser); the Link dialog shows the same date at its top; a PO confirm
+uses the plan's horizon. A row with no delivery date is inside the horizon.
+
+- AC-LH1 GIVEN two acknowledged rows of one product, due 2026-10-01 and 2030-01-01, one open
+  PO line of 100, `link_up_to = 2026-12-31` WHEN Acknowledge runs THEN the 2026 row links,
+  the 2030 row stays Not linked, the PO line keeps its remainder.
+- AC-LH2 Same rows WHEN Link selected runs with both ticked THEN the same result and the
+  result banner says "1 linked, 1 after <date>".
+- AC-LH3 The manual Link dialog on the 2030 row opens with the candidate list and a notice
+  "Due after <date>"; a hand-take is still allowed.
+- AC-LH4 A row with no delivery date links.
+- AC-LH5 The date travels in the URL (`?link_up_to=`) and is what the page's buttons send.
+
+**Rejected on the board.** A fulfilment-board cell whose line has a rejected order-inquiry
+row shows a "Rejected" badge with the reason on hover, and the strip's decision cards count
+rejected lines ("2 rejected") so CS sees the bounce without visiting Order Inquiries.
+
+- AC-RB1 GIVEN a rejected row on line 24 THEN the SRTWCX7405-RL-S-PJ cell reads "Rejected"
+  and the badge's title is "Rejected by <name>: <reason>".
+- AC-RB2 The count clears once CS re-decides the line and a new row is raised.
+
+### What was built, and where it differs from the paragraphs above
+
+Rewritten 27 Aug after the review round (B1, B2, S1 to S5), and again after the re-review
+the same day (items 1 to 7). Where a bullet says "the first round", that is what shipped on
+`feat/scm-link-horizon` and what the fix changed.
+
+- **The default is the reorder RUN's own horizon, not the policy's coverage date (S2).**
+  The paragraph above says "default = today + the reorder plan's horizon days"; there is no
+  horizon-days setting in the codebase and never was. The first round therefore read
+  `scm.priority_policy.reorder_coverage_until`, which was WRONG in a way the tests could
+  not see: that field is the ladder's BUY-NOW line - "a line required AFTER this date is
+  proposed Buy now" (`app/models/scm.py`, `front_planning_engine`) - so the rows beyond it
+  are exactly the ones the engine ordered bought, and using it as the link horizon meant
+  the purchase order raised FOR those rows could never be linked BACK to them. The two
+  dates say opposite things about the same rows. `scm.priority.plan_link_horizon` now reads
+  the LATEST COMPLETED `scm.reorder_run.plan_horizon_date` ("Plan until", the date the run's
+  own netting stopped at). `reorder_coverage_until` is untouched, doing its own job. NULL
+  (no completed run, or a run that named no horizon) means no horizon is in force - a fresh
+  install has never been asked how far out it plans, and a guessed date would refuse links
+  nobody asked to have refused.
+- **A purchase-order confirm links under the horizon of the run IT was drafted off (S2).**
+  A draft may sit for days while a later run plans further out, and linking it under the
+  newer horizon would hand the buy to rows the run that ordered it never counted.
+  `bulk_confirm` reads its own lines' `source_ref` back to the run
+  (`_plan_run_for_source_refs`: a location-grain line names its `scm.reorder_recommendation`
+  id, a product-grain line names a member rec id or `"{order_summary_row id}:{warehouse
+  id}"`, and both tables carry `run_id`), and falls back to the latest completed run for a
+  purchase order nobody drafted from a plan.
+- **A run that named NO horizon is an answer, not a silence (item 1, re-review).** The
+  confirm passed the resolved DATE and nothing else, so a run whose `plan_horizon_date` is
+  NULL handed on a bare `None` - which `resolve_link_horizon` cannot tell from "this caller
+  named nothing" and answers by reaching for the LATEST completed run. The daily scheduled
+  run (`task_scheduler.py`) never names a horizon, so every purchase order drafted off it
+  was linked under whatever date somebody's last manual run happened to plan to, and a 2030
+  row could eat a buy sized for 2026. `bulk_confirm` now says which of the three answers it
+  means, through `_link_horizon_for`: its run's date (`"date"`), its run's silence
+  (`"none"`), or - only when the order names no single run - the plan in force (`"plan"`).
+- **The run is resolved PER PURCHASE ORDER, not per batch (item 2, re-review).** One
+  `bulk_confirm` call resolved one run off every confirmed line's `source_ref` at once, and
+  the lookup ended in `.limit(1)` with no ORDER BY - so a press over two orders drafted off
+  two plans linked both under whichever run Postgres handed back first. Each order carries
+  its own products, plan cells and source refs through the confirm loop and cascades under
+  its own horizon; one service instance still serves the whole batch, because its caches are
+  per product and per link and both are dropped on every write. An order whose own lines
+  name MORE than one run is treated as naming none - the plan in force, logged with the run
+  ids - because picking either would be picking at random.
+- **A caller that names no date still gets the plan's - and a caller may now say "no
+  horizon" out loud (S1).** The first round had two answers where there are three, so the
+  buyer's empty date box travelled as silence and came back as the plan's own date: once a
+  run named a horizon, the page could not link a far-future row at all. Requests carry
+  `link_horizon: "date" | "plan" | "none"` beside `link_up_to`; OMITTED is inferred (the
+  date when one is given, the plan when not), which is what keeps the CS form's own pass,
+  the board confirm, the PO-confirm cascade and the MCP meaning exactly what they always
+  did. `"date"` with no date is a 422 rather than a quiet reinterpretation. No magic string
+  ever rides in a date field.
+- **The count rides the response, so the banner has both halves.** `after_horizon`, the
+  `link_up_to` it was measured against, and (S1) `link_horizon` - `"none"` when nothing was
+  held back for a date at all - are on `AcknowledgeResult` and `AutoPlaceResult`;
+  `link_up_to_default` is on the worklist summary, which is what the page's date input
+  starts at. All of them are declared on the schemas: `response_model` drops what it has not
+  been told about, and each has a test that asserts it over the wire.
+- **The page's date is URL-first, and CLEARING it sticks (S1).** `?link_up_to=` beats this
+  browser's memory, which beats the plan default, and the plan default is taken ONCE. The
+  first round then lost the clear: emptying the box REMOVED the storage key, so the next
+  visit read "never chosen" and the plan default seeded straight back over the choice.
+  Storage now holds an explicit `none` marker, the page holds a `horizonCleared` flag beside
+  the date, and the seeding effect refuses to run against it.
+- **A cleared horizon travels in the URL too (item 6, re-review).** The clear stuck in this
+  browser and nowhere else: the URL effect deleted `?link_up_to` and put nothing in its
+  place, so a shared worklist said "nobody has chosen" and opened on the plan's own date in
+  the other browser - AC-LH5's "the URL is what the buttons send" held for a date and not
+  for the cleared state. The page writes `?link_horizon=none` in that case and reads it back
+  through `readUrlLinkHorizon`, at the front of the same precedence the date has (URL, then
+  this browser, then the plan). A link carrying both is read as the date, the more exact of
+  the two words.
+- **Auto-link presses under the same date, and shows it (B2).** The worklist's Auto-link
+  dialog sent `{}` - the one press that reaches every open row in the company was the one
+  press that ignored the date sat on its own toolbar, and nothing on the confirmation said
+  so. It takes the page's horizon now, prints `Link up to <date>` in the dialog body the
+  way the manual Link dialog does, and sends it. One helper, `linkHorizonRequest`, builds
+  the fragment for all four presses - Acknowledge, Link selected, Link now, Auto-link - so
+  no two can mean different things by the same box. The cleared box is its own phrase, `No
+  link horizon`, built by `horizonSentence` rather than pasted into the date one: the first
+  round read `Link up to No horizon`, which is not a sentence anybody wrote (item 5,
+  re-review).
+- **The manual Link dialog was left as override.** It shows the date and flags a row due
+  past it, and takes the hand-made link anyway (AC-LH3) - the same carve-out `manual`
+  already makes for a purchase order that is not yet active.
+- **The rejected bounce was HALF built already.** `_order_inquiries` on the board service
+  has carried `ack_state` / `rejected_reason` / `rejected_by_name` per line since the
+  handshake shipped, and it already clears them once CS decides the line again - which is
+  AC-RB2's own rule. What was missing was the reading: the cell printed the whole sentence
+  into a 150px column, so it was a truncated fragment of somebody's words. It is a
+  **Rejected badge with the sentence in its title** now, and the strip carries "N rejected"
+  beside the cards (`rejectedLineCount`, counted per LINE - a cell holds several).
+- **`_groups_in_deficit` had a boundary that hid the ordinary case** (captain's item 4). A
+  purchase order raised off the plan buys exactly what the plan said the group was short, so
+  the group lands on `group_net + remaining == 0` - and "at or below zero is deficit" then
+  refused that group its own buy: the rows that sized it stayed raised, the PO-confirm
+  cascade offered them nothing and the Link dialog listed nothing. Ruled and built: a group
+  is offered at zero, AND a group holding an acknowledged unlinked row of the product may
+  reach its own purchase order, because that row is the demand the order was bought for.
+- **That second exemption is per ROW, not per product (B1).** The first round subtracted it
+  inside `_groups_in_deficit`, which lifted the whole PRODUCT out of the deficit set - and
+  candidates are only RANKED by location, never filtered by it, so a row at any other group
+  walked first simply helped itself to the exempt group's line while that group's own
+  backlog stayed unpromised. `_candidates_for_row` now subtracts
+  `_exempt_groups_for_row(row, product)`: the group is lifted only for a row that is itself
+  acknowledged, still unlinked, and resolves to that group.
+- **The listing flag follows both halves of the ruling (B1 follow-on).**
+  `link_candidate_products` promises "the SAME group-deficit rule the walk does" and did not
+  keep it: it asked for `net + remaining > 0` (so it hid the Link at the zero boundary the
+  plan lands on every time) and knew nothing of the acknowledged-row exemption. It reads
+  `>= 0` and honours the exemption now. It is answered per PRODUCT, which is all a
+  listing-wide flag has to go on - it cannot tell the exempt group's own row from a
+  neighbour's, so it errs towards offering and the dialog stays the exact answer.
+- **The awaiting-row read is memoised per product (S3).** It costs up to three uncached
+  queries and the cascade asks it once per row; `_rows_awaiting_a_link` answers per product
+  and remembers on the instance, the same shape `_netting` already uses. The
+  `_groups_in_deficit` docstring's claim that it "costs no query beyond the netting read" was
+  false while the exemption lived there, and is true again now.
+- **The ladder-v4 tests keep BOTH scenarios (S4).** The first round moved three asking rows
+  from `BRW-IB` to the pool to keep them green, which hid the rule change. The pool variants
+  stay (they are what keeps the deficit rule itself under test - core sales-order demand at
+  a group nobody acknowledged an instruction for), and the original `BRW-IB` scenario is
+  back beside each of them with the new expected outcome.
+- **The handshake suites pin the default rather than reading the live one (S5).**
+  `tests/test_order_inquiry_handshake.py`'s `world` fixture runs on the shared prod-copy,
+  which carries real planning runs, so "the latest completed run" was whatever somebody last
+  planned. The fixture seeds one completed run finishing now and naming NO horizon, and the
+  two AC-LH5 tests write a date onto that same run.

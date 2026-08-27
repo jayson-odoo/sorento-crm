@@ -53,7 +53,7 @@ describe('PlanPurchaseTrendPopover', () => {
     expect(screen.getByText('210')).toBeInTheDocument();
     open();
     expect(
-      screen.getByText('Purchased 400 in the last 3 months, 1,200 in the 3 months before.'),
+      screen.getByText('Ordered 400 in the last 3 months, 1,200 in the 3 months before.'),
     ).toBeInTheDocument();
   });
 
@@ -77,7 +77,7 @@ describe('PlanPurchaseTrendPopover', () => {
     );
     open();
 
-    expect(screen.getByText('Never purchased in the imported history.')).toBeInTheDocument();
+    expect(screen.getByText('Never ordered in the imported history.')).toBeInTheDocument();
     expect(screen.getByText('No purchases in the imported history.')).toBeInTheDocument();
   });
 

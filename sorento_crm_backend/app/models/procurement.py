@@ -545,7 +545,7 @@ class PickingLine(Base, CompanyScopedMixin):
     quantity_picked = Column(Integer, nullable=False)
     quantity_discrepancy = Column(Integer, Computed("(quantity_expected - quantity_picked)"), nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
-    picked_condition = Column(String(50), default="good", nullable=False)
+    picked_condition = Column(String(50), default="good", nullable=False, server_default="good")
     condition_remarks = Column(Text, nullable=True)
     batch_number_picked = Column(String(100), nullable=True)
     expiry_date = Column(Date, nullable=True)

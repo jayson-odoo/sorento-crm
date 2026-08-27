@@ -28,6 +28,7 @@ import {
   useOrderInquiryPoCandidates,
 } from '../hooks/useOrderInquiry';
 import { formatInquiryQty } from '../lib/orderInquiryWorklist';
+import { formatHorizon, isDueAfterHorizon } from '../lib/linkHorizon';
 import type { OrderInquiryPoAllocation, OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
 const CHEVRON_COL = 'w-[28px] min-w-[28px] max-w-[28px]';
@@ -105,6 +106,8 @@ export function LinkDocumentDialog({
   itemCode,
   qty,
   linkedQty,
+  deliveryDate,
+  linkUpTo,
   onDone,
 }: {
   rowId: string;
@@ -116,6 +119,15 @@ export function LinkDocumentDialog({
    * allocation the backend refuses as over-allocated.
    */
   linkedQty?: string | null;
+  /** When this row is due, so the horizon below has something to compare against. */
+  deliveryDate?: string | null;
+  /**
+   * The horizon the page's own presses run to (AC-LH3), `YYYY-MM-DD`. Shown at the top,
+   * and a row due past it carries a notice - but the take is still allowed: this dialog is
+   * override and audit rather than the workflow, so a person who has looked at the line is
+   * never refused it.
+   */
+  linkUpTo?: string | null;
   onDone: () => void;
 }) {
   const candidatesQuery = useOrderInquiryPoCandidates(rowId);
@@ -154,6 +166,8 @@ export function LinkDocumentDialog({
     setTakes((prev) => ({ ...prev, [key]: value }));
   }
 
+  const horizon = formatHorizon(linkUpTo);
+  const dueAfter = isDueAfterHorizon(deliveryDate, linkUpTo);
   const need = Math.max(toNumber(qty) - toNumber(linkedQty ?? '0'), 0);
   const totalTaken = candidates.reduce(
     (sum, candidate) => sum + toNumber(takes[candidateKey(candidate)] ?? '0'),
@@ -199,6 +213,24 @@ export function LinkDocumentDialog({
         </DialogHeader>
 
         <DialogBody className="max-h-[65vh] space-y-3 overflow-y-auto">
+          {/* The horizon this page links to, and whether this row is inside it (AC-LH3).
+              A fact and a date, never an explanation of what a horizon is. */}
+          {horizon ? (
+            <div
+              data-testid="link-dialog-horizon"
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              <span>Link up to {horizon}</span>
+              {dueAfter ? (
+                <span
+                  data-testid="link-dialog-due-after"
+                  className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800"
+                >
+                  {`Due after ${horizon}`}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {candidatesQuery.isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-9 w-full" />

@@ -2,8 +2,54 @@
 
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { EM_DASH, fmtDate, fmtDecimal, fmtInt, fmtSupplierCost } from '../../lib/format';
-import { describePurchaseTrend, type ProductPurchaseTrend } from '../lib/purchaseTrend';
+import {
+  describePurchaseTrend,
+  type ProductPurchaseTrend,
+  type PurchaseTrendLine,
+} from '../lib/purchaseTrend';
 import { humanAge, type PriceAdvice } from '../lib/priceAdvice';
+
+/**
+ * Supplier, date, quantity, unit cost - the receipts behind the trend sentence.
+ *
+ * Exported because the order-qty ledger's History block asks the same question at the
+ * bottom of the card (AC-R8) and a second copy of the table would be free to drift from
+ * this one.
+ */
+export function RecentPurchasesTable({ lines }: { lines: PurchaseTrendLine[] }) {
+  if (!lines.length) {
+    return <p className="text-muted-foreground">No purchases in the imported history.</p>;
+  }
+  return (
+    <table className="mt-0.5 w-full text-muted-foreground">
+      <thead>
+        <tr className="text-2xs uppercase text-muted-foreground/70">
+          <th className="pb-0.5 text-left font-normal">Supplier</th>
+          <th className="pb-0.5 text-right font-normal">Date</th>
+          <th className="pb-0.5 text-right font-normal">Qty</th>
+          <th className="pb-0.5 text-right font-normal">Unit cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {lines.map((l, i) => (
+          <tr key={`${l.po_number ?? 'po'}-${l.order_date ?? 'date'}-${i}`}>
+            <td
+              className="max-w-32 truncate py-0.5"
+              title={l.supplier_name ?? l.supplier_code ?? undefined}
+            >
+              {l.supplier_name ?? l.supplier_code ?? EM_DASH}
+            </td>
+            <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
+            <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
+            <td className="py-0.5 text-right tabular-nums">
+              {fmtSupplierCost(l.unit_cost, l.currency)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 /**
  * The PO cell's mirror of the order-trend popup: the trend of purchase, then the receipts.
@@ -80,37 +126,7 @@ export function PlanPurchaseTrendPopover({
 
           <div className="mt-2">
             <p className="font-medium text-foreground">Recent purchases</p>
-            {lines.length ? (
-              <table className="mt-0.5 w-full text-muted-foreground">
-                <thead>
-                  <tr className="text-2xs uppercase text-muted-foreground/70">
-                    <th className="pb-0.5 text-left font-normal">Supplier</th>
-                    <th className="pb-0.5 text-right font-normal">Date</th>
-                    <th className="pb-0.5 text-right font-normal">Qty</th>
-                    <th className="pb-0.5 text-right font-normal">Unit cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l, i) => (
-                    <tr key={`${l.po_number ?? i}-${l.order_date ?? i}`}>
-                      <td
-                        className="max-w-32 truncate py-0.5"
-                        title={l.supplier_name ?? l.supplier_code ?? undefined}
-                      >
-                        {l.supplier_name ?? l.supplier_code ?? EM_DASH}
-                      </td>
-                      <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
-                      <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
-                      <td className="py-0.5 text-right tabular-nums">
-                        {fmtSupplierCost(l.unit_cost, l.currency)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-muted-foreground">No purchases in the imported history.</p>
-            )}
+            <RecentPurchasesTable lines={lines} />
           </div>
 
           {/* "How do I know last cost is high vs previous" - the buyer's own question,

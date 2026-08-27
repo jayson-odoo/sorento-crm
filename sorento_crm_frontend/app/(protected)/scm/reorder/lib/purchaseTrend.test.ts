@@ -16,23 +16,23 @@ const trend = (over: Partial<ProductPurchaseTrend> = {}): ProductPurchaseTrend =
 describe('describePurchaseTrend', () => {
   it('states both windows with their numbers, never a bare percentage', () => {
     expect(describePurchaseTrend(trend(), 3)).toBe(
-      'Purchased 400 in the last 3 months, 1,200 in the 3 months before.',
+      'Ordered 400 in the last 3 months, 1,200 in the 3 months before.',
     );
   });
 
   it('says never purchased when the product has no purchase history at all', () => {
     expect(
       describePurchaseTrend(trend({ recent_qty: 0, previous_qty: 0, lines: [] }), 3),
-    ).toBe('Never purchased in the imported history.');
+    ).toBe('Never ordered in the imported history.');
   });
 
   it('says never purchased for an undefined entry (the product carries no opinion)', () => {
-    expect(describePurchaseTrend(undefined, 3)).toBe('Never purchased in the imported history.');
+    expect(describePurchaseTrend(undefined, 3)).toBe('Never ordered in the imported history.');
   });
 
   it('still states the trend when only the earlier window has activity', () => {
     expect(
       describePurchaseTrend(trend({ recent_qty: 0, previous_qty: 500 }), 3),
-    ).toBe('Purchased 0 in the last 3 months, 500 in the 3 months before.');
+    ).toBe('Ordered 0 in the last 3 months, 500 in the 3 months before.');
   });
 });

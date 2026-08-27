@@ -184,6 +184,9 @@ function openActionsMenu() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The "Link up to" date is remembered per browser (AC-LH5), and jsdom keeps ONE storage
+  // for the whole file - so a test that set it would seed every test after it.
+  window.localStorage.clear();
   granted = new Set(['projects.order_inquiry.action']);
   uploadSessions = [];
   getOrderInquiryUploadJob.mockResolvedValue({
@@ -862,8 +865,11 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     const button = await screen.findByRole('button', { name: 'Acknowledge (2)' });
     fireEvent.click(button);
 
+    // The horizon travels with the press (AC-LH1) and is EMPTY here: this summary names no
+    // plan horizon, nothing is in the URL or in storage, and nobody has cleared the box -
+    // so the press says nothing about the horizon and the server takes the plan's own.
     await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3']),
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3'], {}),
     );
   });
 
@@ -1037,5 +1043,261 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     expect(screen.queryByRole('button', { name: 'Upload (stub)' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open purchase orders' })).toBeNull();
+  });
+});
+
+/**
+ * The LINK HORIZON on the page (`PLAN-scm-oi-handshake.md` section 11, AC-LH1/AC-LH5).
+ *
+ * One date, beside the presses it governs: it starts at the reorder plan's own coverage
+ * date, a URL that names one wins over that, it is what the two presses send, and it is
+ * written back into the URL so the worklist a buyer shares carries the horizon they read
+ * it at.
+ */
+describe('The link horizon', () => {
+  const HORIZON = '2026-12-31';
+
+  function withPlanHorizon(value: string | null) {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      link_up_to_default: value,
+    });
+  }
+
+  beforeEach(() => {
+    granted = new Set([
+      'projects.order_inquiry.action',
+      'projects.order_inquiries.acknowledge',
+    ]);
+  });
+
+  it("AC-LH5: the date starts at the reorder plan's own coverage date", async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+  });
+
+  it('AC-LH5: a date in the URL wins over the plan default', async () => {
+    withPlanHorizon(HORIZON);
+    currentSearchParams = new URLSearchParams('link_up_to=2027-06-30');
+    renderClient();
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(input.value).toBe('2027-06-30');
+    // And the plan's own date never overwrites it once the summary answers.
+    await screen.findByText('SO385126');
+    expect(input.value).toBe('2027-06-30');
+  });
+
+  it('AC-LH5: changing the date writes it back into the URL', async () => {
+    withPlanHorizon(null);
+    renderClient();
+
+    const input = await screen.findByLabelText('Link up to');
+    fireEvent.change(input, { target: { value: '2027-06-30' } });
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        expect.stringContaining('link_up_to=2027-06-30'),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('AC-LH5: clearing the date puts the cleared horizon IN the URL', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+
+    fireEvent.change(input, { target: { value: '' } });
+
+    // Removing `link_up_to` and putting nothing in its place says "nobody has chosen",
+    // which is the one thing the buyer did NOT say - and the browser the link is shared
+    // with would open on the plan's own date (item 6).
+    await waitFor(() => {
+      const last = routerReplace.mock.calls.at(-1)?.[0] as string;
+      expect(last).toContain('link_horizon=none');
+      expect(last).not.toContain('link_up_to=');
+    });
+  });
+
+  it('AC-LH5: a cleared horizon in the URL beats this browser and the plan', async () => {
+    withPlanHorizon(HORIZON);
+    window.localStorage.setItem('sorento.order-inquiries.link-up-to', '2027-06-30');
+    currentSearchParams = new URLSearchParams('link_horizon=none');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(input.value).toBe('');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    // AC-LH5: the URL is what the buttons send, cleared state included.
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_horizon: 'none',
+      }),
+    );
+  });
+
+  it('AC-LH1: Acknowledge sends the date the page is showing', async () => {
+    withPlanHorizon(HORIZON);
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 1,
+      link_up_to: HORIZON,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_up_to: HORIZON,
+      }),
+    );
+  });
+
+  it('S1: clearing the date is remembered, and the plan default never seeds back', async () => {
+    withPlanHorizon(HORIZON);
+    const first = renderClient();
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+
+    fireEvent.change(input, { target: { value: '' } });
+    expect(input.value).toBe('');
+
+    // A reload. The plan still names a horizon, and it must not put itself back: a control
+    // that undoes itself is one nobody uses twice.
+    first.unmount();
+    renderClient();
+
+    const again = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(again.value).toBe('');
+    await screen.findByText('SO385126');
+    expect(again.value).toBe('');
+  });
+
+  it('S1: a cleared date sends an explicit no-horizon, not silence', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+    fireEvent.change(input, { target: { value: '' } });
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    // Silence means "take the plan's own date", which is the opposite of what the buyer
+    // just said by emptying the box.
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_horizon: 'none',
+      }),
+    );
+  });
+
+  it('B2: Auto-link shows the page date and sends it', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    expect(within(dialog).getByTestId('auto-link-horizon')).toHaveTextContent(
+      'Link up to 31/12/2026',
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ link_up_to: HORIZON }),
+    );
+  });
+
+  it('B2: Auto-link carries a cleared horizon too', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+    fireEvent.change(input, { target: { value: '' } });
+
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    // ONE phrase, not the date phrase with the label pasted into its hole (item 5).
+    expect(within(dialog).getByTestId('auto-link-horizon')).toHaveTextContent(
+      'No link horizon',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ link_horizon: 'none' }),
+    );
+  });
+
+  it('AC-LH2: Link selected sends the date, and the banner reports what it left behind', async () => {
+    const { linkOutcomeText } = await import('../../_shared/lib/linkHorizon');
+    withPlanHorizon(HORIZON);
+    // Row 3 is partly linked and ACKNOWLEDGED, which is what "Link selected" counts: a row
+    // nobody has taken on is not one the cascade may place.
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope(
+        MOCK_WORKLIST_ROWS.map((row) =>
+          row.id === 'row-3' ? { ...row, ack_state: 'acknowledged' as const } : row,
+        ),
+      ),
+    );
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 1,
+      allocations: 1,
+      products_touched: 1,
+      after_horizon: 1,
+      link_up_to: HORIZON,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Link selected (1)' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({
+        row_ids: ['row-3'],
+        link_up_to: HORIZON,
+      }),
+    );
+    expect(
+      linkOutcomeText({
+        placed_rows: 1,
+        allocations: 1,
+        products_touched: 1,
+        after_horizon: 1,
+        link_up_to: HORIZON,
+      }),
+    ).toBe('1 linked, 1 after 31/12/2026');
   });
 });

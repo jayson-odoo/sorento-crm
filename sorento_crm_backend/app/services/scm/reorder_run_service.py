@@ -863,6 +863,57 @@ def _last_purchase_for(costs: dict, product_id: str,
     return None, "never_purchased"
 
 
+#: Written into a frozen row's `reorder_level_source` when the level came from the item
+#: master rather than from a buyer's own row. NOT a `scm.reorder_level.source` value (the
+#: master level is not stored there) - it is provenance for the screen, so a card can say
+#: "AutoCount master" rather than presenting AutoCount's number as somebody's decision.
+MASTER_LEVEL_SOURCE = "autocount_master"
+
+
+def _product_level(levels: dict, product_id: str,
+                   row: dict) -> tuple[dict, Optional[float], Optional[str]]:
+    """The ONE level a product is planned against, and where it came from.
+
+    > "our reorder is per product, so it doesn't matter your location, just take the total
+    >  across all locations"   (captain, 27 Aug 2026)
+
+    The buyer's product-wide override (`scm.reorder_level` with `warehouse_id IS NULL`)
+    first, the AutoCount master level (`products.reorder_level`) second, and per-location
+    rows NEVER. With one net across every location there is no location whose level could
+    be the answer: reading one bought 11,430 of B2155-NL-BLUE against that bin's own net of
+    570 while a sibling held 10,860, and summing them proposed 4,507 of SRTWT7408 by
+    reading one master level of 500 once per empty bin.
+
+    A master level of 0 is not a level. It is a target every deficit trips, which is the
+    same failure `needs_level` exists to prevent, so it reads as unset.
+
+    ONLY A PERSON'S ROW IS AN OVERRIDE. `scm.reorder_level` holds two different things
+    under one shape: the level a buyer typed or accepted (`source` in
+    `reorder_level_service.VALID_SOURCES`), and the AutoCount master MIRRORED into the same
+    table by the level upload (`source = 'autocount'`, 11,007 product-wide rows on the live
+    copy, 7,852 of them a level of 0). Treating the mirror as an override made B2155-NL-BLUE
+    plan against a level of 0 and emit `covered` on a net of 3,065, when nobody had set a
+    level for it at all. So a mirror row follows the MASTER's rule, which is the rule it is
+    a copy of: 0 is not a level.
+
+    The row returned is the product-wide `scm.reorder_level` row (possibly empty): its
+    suggestion columns are what a `needs_level` row carries, and they are keyed the same
+    way `level_suggestion_service` writes them for a product-grain plan row.
+    """
+    wide = levels.get((product_id, None)) or {}
+    level = _fnum(wide.get("level"))
+    source = wide.get("source")
+    if level is not None and source in rl_service.VALID_SOURCES:
+        return wide, level, source
+    # Not a person's row, so whatever it carries is the master level under another name.
+    # The mirror is read before `products.reorder_level` because the upload is the fresher
+    # of the two readings, and a 0 in either is not a level.
+    for candidate in (level, _fnum(row.get("master_reorder_level"))):
+        if candidate:
+            return wide, float(candidate), MASTER_LEVEL_SOURCE
+    return wide, None, None
+
+
 # ===========================================================================
 # per-warehouse planning (buy_scope=warehouse)
 # ===========================================================================
@@ -946,6 +997,16 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                               levels=levels, last_cost=last_cost)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
+
+        # The reorder-level basis is planned per PRODUCT, whatever the pooling
+        # configuration says: one level, one net across every location, one buy
+        # (`PLAN-scm-reorder-per-product.md`). Pools group locations that may cover for one
+        # another, which is a question this basis no longer asks - the stock is already in
+        # the net.
+        if _is_product_level_basis(db, pid, policies):
+            recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
+                                      flags, wh_meta, last_cost=last_cost))
+            continue
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
         for r, c in zip(prows, computed):
@@ -1066,10 +1127,12 @@ def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
         target["retail_committed"] = float(target.get("retail_committed") or 0.0) + qty
 
 
-def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg_cell: dict,
-                 *, moq: Optional[float] = None,
+def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor: dict,
+                 agg_cell: dict, *, moq: Optional[float] = None,
                  order_multiple: Optional[float] = None,
-                 plan_basis: Optional[dict] = None) -> Optional[ReorderRecommendation]:
+                 plan_basis: Optional[dict] = None,
+                 scope_label: str = "in this pool",
+                 include_project_on_hand: bool = False) -> Optional[ReorderRecommendation]:
     """A demand line the pool's own stock covers is a SUGGESTION, never a silent omission.
 
     An order-inquiry line reaching the plan has already been through CS: they decided this
@@ -1097,7 +1160,11 @@ def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg
     # supply here too, or a pool sitting on a PO for the exact committed quantity still
     # reads as "buy this anyway" instead of "you already have this on order".
     available = sum(float(r["quantity_on_hand"] or 0.0) + float(r["on_order"] or 0.0)
-                    + float(r["po_ordered"] or 0.0) for r in prows)
+                    + float(r["po_ordered"] or 0.0)
+                    # Per-product scope counts every `stock` row (AC-R1); every other
+                    # scope keeps the pool-only reading it was netted with.
+                    + (float(r["project_on_hand"] or 0.0) if include_project_on_hand else 0.0)
+                    for r in prows)
     rounded = eng.round_order_qty(committed, moq, order_multiple)
     cell = dict(agg_cell)
     # The row's own facts, so the grid states the trade-off without re-deriving it from
@@ -1106,8 +1173,14 @@ def _covered_rec(run_id: str, pool_id: str, prows: list[dict], anchor: dict, agg
     cell["covered_available"] = available
     return _build_rec(
         run_id, "covered", anchor, cell, warehouse_id=pool_id,
-        order_qty=committed, rounded=rounded,
-        reason_label=(f"{_qty_label(available)} available in this pool covers "
+        # NOTHING IS BEING BOUGHT, so the suggested quantity is 0. `recommended_qty` means
+        # "the gap this row was sized to close" everywhere else, and storing the committed
+        # demand in it made a covered product row read as a 7,936-unit suggestion on a
+        # product holding more than it owes. What buying anyway WOULD cost stays on
+        # `rounded_qty` (the Covered-by-stock view's "Buy anyway", and the quantity
+        # `decision_service` records if the buyer takes it) and on `covered_committed`.
+        order_qty=0.0, rounded=rounded,
+        reason_label=(f"{_qty_label(available)} available {scope_label} covers "
                       f"{_qty_label(committed)} committed"),
         plan_basis=plan_basis,
     )
@@ -1350,6 +1423,229 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     return recs
 
 
+def _cell_full_on_hand(c: dict) -> float:
+    """Everything the company holds of this item AT THIS LOCATION.
+
+    `on_hand` is the pool-only reading (captain, 20 Aug: a project bin's stock is not
+    freely usable), with the rest parked in `project_on_hand`. The per-product basis asks
+    "how much do we have", not "how much may this site sell", so it reads both (AC-R1).
+    """
+    return float(c.get("on_hand") or 0.0) + float(c.get("project_on_hand") or 0.0)
+
+
+def _cell_full_net(c: dict) -> float:
+    """The cell's net with the group-bin stock added back - see `_cell_full_on_hand`."""
+    return float(c.get("net") or 0.0) + float(c.get("project_on_hand") or 0.0)
+
+
+def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) -> bool:
+    """Whether this product is planned on the buyer's level rather than on a forecast.
+
+    Resolved with NO warehouse: the basis is a property of the product now, and asking per
+    location could answer differently for two bins of one product - which is exactly the
+    per-location thinking this change removes.
+    """
+    policy = eng.resolve_policy_for_sku(db, product_id, None, policies) or {}
+    return (policy.get("policy_type") or "reorder_point") == "reorder_level"
+
+
+def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict],
+                  policies: list[dict], cands: list[dict], flags: dict, wh_meta: dict,
+                  *, last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
+    """ONE decision for the whole product: one level, one net, one buy.
+
+    > "our reorder is per product, so it doesn't matter your location, just take the total
+    >  across all locations" ... "with our net, we need to reorder up to the reorder level"
+    >  (captain, 27 Aug 2026, `PLAN-scm-reorder-per-product.md`)
+
+    The buy names NO warehouse, exactly as a network-scope buy already does: where the goods
+    land is the `allocation`, a placement detail, never a second sizing. That also puts the
+    level lifecycle where the rule now is - a `needs_level` row for a product carries no
+    location, so accepting its suggestion writes the product-wide row the next plan reads.
+
+    Disposition stays per LOCATION (AC-R10): "this bin is sitting on a year of cover" is a
+    statement about a place, and aggregating it away would hide the thing it exists to say.
+    """
+    recs: list[ReorderRecommendation] = []
+    pid = str(prows[0]["product_id"])
+    policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
+    tog = eng.policy_toggles(policy)
+    sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    chosen = sel["chosen"]
+    by_id = {c["supplier_id"]: c for c in cands}
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
+                   if a["supplier_id"] in by_id]
+    lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
+    moq = _fnum(chosen.get("moq")) if chosen else None
+    order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
+
+    # Every cell resolved the SAME product-wide figure (`_product_level`), so reading the
+    # first is reading the product's level rather than picking a location's.
+    level = _fnum(cells[0].get("reorder_level"))
+    wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
+                  "demand_rate": float(r["avg_daily_demand"] or 0.0),
+                  # The cell's own net: on hand + SPO + the open PO book - what is
+                  # committed, project demand included. The project channel is NETTED here
+                  # rather than added on top of a retail-only sizing, because there is one
+                  # net now and the level is measured against all of it (AC-R2).
+                  #
+                  # `project_on_hand` is ADDED BACK (AC-R1, "the total across all
+                  # locations"). Every other planning path drops it, because a project bin
+                  # holds stock a site cannot freely sell (captain, 20 Aug) - but this
+                  # basis asks a different question, "how much of this item does the
+                  # company have", and the answer is every `stock` row whatever segment the
+                  # bin was sorted into. Without it B2155-NL-BLUE read 1 on hand against
+                  # 28,831 in the warehouses, and SRTWT7408 read 1,296 against 5,498.
+                  "net": _cell_full_net(c)}
+                 for r, c in zip(prows, cells)]
+    agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
+                                order_multiple=order_multiple)
+    if level is None:
+        triggered, reason_label = False, None
+    else:
+        triggered, reason_label = eng.trigger("reorder_level", net=agg["agg_net"],
+                                              reorder_level=level)
+    recommended = float(agg["recommended_qty"]) if triggered else 0.0
+    rounded = float(agg["buy_qty"]) if triggered else 0.0
+    split = eng.allocate(rounded, agg["warehouses"]) if rounded > 0 else {}
+
+    # The row's identity comes from a real location - the one holding the most of the item,
+    # which is where the goods would come from and the row a planner recognises. Ties break
+    # on code so a re-run cannot move it. Only `sku` / `product_name` are read off it: the
+    # emitted row names no warehouse.
+    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0)
+                                            + float(r["project_on_hand"] or 0.0),
+                                            str(r["warehouse_code"] or ""))))
+    # Demand nobody located was landed on ONE location of the product; the product row was
+    # sized against all of it, so it states the whole of it rather than only the part that
+    # happened to land on the anchor.
+    anchor["unlocated_added"] = sum(float(r.get("unlocated_added") or 0.0) for r in prows)
+    # Firm project demand, capped by what is actually being bought: the two halves of the
+    # basis have to sum to the sized quantity, or the Summary Order Report re-derives a
+    # bigger number than the plan row it is reporting (AC-F03).
+    project_need = min(sum(float(c.get("project_need") or 0.0) for c in cells), recommended)
+    retail_need = max(recommended - project_need, 0.0)
+    cell = _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
+                             order_multiple, prows, cells,
+                             supplier_reason=sel.get("reason"), level=level,
+                             triggered=triggered, reason_label=reason_label,
+                             recommended=recommended, rounded=rounded,
+                             project_need=project_need, retail_need=retail_need,
+                             last_cost=last_cost)
+    # A location has no level of its own any more, so its own "retail need" is what it is
+    # SHORT by beyond its firm project demand - a statement about that place. The group's
+    # netted figure is the one that sized the buy, and it is stated once, above.
+    # Each location's `on_hand` is its WHOLE stock for the same reason the net is: a bin
+    # reading 0 beside a `project_on_hand` of 5,290 is the number that made the product
+    # look empty. The split is not lost - `project_on_hand` still says how much of it sits
+    # at a project-held bin.
+    loc_cells = [dict(c,
+                      on_hand=_cell_full_on_hand(c),
+                      retail_need=max(max(-_cell_full_net(c), 0.0)
+                                      - float(c.get("project_need") or 0.0), 0.0))
+                 for c in cells]
+    basis = _plan_basis(pid, "product", prows, loc_cells, split,
+                        retail_need=retail_need, recommended=recommended,
+                        rounded=rounded, project_need=project_need)
+
+    if level is None:
+        # Nobody has set a level for this item anywhere. Proposing a quantity would be a
+        # guess and omitting the row would read as "nothing to do", so the product is named
+        # once - not once per bin, which said the same thing ten times and asked the buyer
+        # to set ten numbers that no longer exist.
+        recs.append(_build_rec(run_id, "needs_level", anchor, cell, warehouse_id=None,
+                               order_qty=None, rounded=None, reason_enum="needs_level",
+                               reason_label=_needs_level_label(cell), plan_basis=basis))
+    elif triggered and rounded > 0 and chosen:
+        recs.append(_build_rec(run_id, "buy", anchor, cell, warehouse_id=None,
+                               order_qty=recommended, rounded=rounded,
+                               allocation=_allocation_lines(split, wh_meta),
+                               plan_basis=basis))
+    elif triggered and rounded > 0:
+        recs.append(_build_rec(
+            run_id, "exception", anchor, cell, warehouse_id=None,
+            order_qty=None, rounded=None,
+            reason_label="no linked supplier - cannot source this reorder",
+            plan_basis=basis))
+    else:
+        covered = _covered_rec(run_id, None, prows, anchor, cell, moq=moq,
+                               order_multiple=order_multiple, plan_basis=basis,
+                               scope_label="across every location",
+                               include_project_on_hand=True)
+        if covered is not None:
+            recs.append(covered)
+
+    for r, c in zip(prows, cells):
+        disp = c["disposition"]
+        if disp:
+            action = "discontinue" if disp["type"] == "dead" else "hold"
+            recs.append(_build_rec(run_id, "disposition", r, c,
+                                   warehouse_id=str(r["warehouse_id"]),
+                                   order_qty=None, rounded=None,
+                                   reason_enum=disp["type"],
+                                   reason_label=_disposition_label(
+                                       disp["type"], c, disp.get("basis")),
+                                   disposition_action=action,
+                                   transfer_flag=flags.get(str(r["warehouse_id"]))))
+    return recs
+
+
+def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_multiple,
+                      prows: list[dict], cells: list[dict], *,
+                      supplier_reason: Optional[dict], level: Optional[float],
+                      triggered: bool, reason_label: Optional[str],
+                      recommended: float, rounded: float,
+                      project_need: float, retail_need: float,
+                      last_cost: Optional[dict] = None) -> dict:
+    """The frozen cell of a per-product buy: the network aggregate, plus the checklist.
+
+    The aggregate cell states the DECISION (supplier, terms, net, target). What it has
+    never carried is the weekly checklist - on hand, incoming, the level - because a
+    network row names no location to read them from. A per-product row does not either,
+    and the answer is the same one the reader wants: the PRODUCT's totals, which is
+    precisely what the ledger's "Net now, all locations" block shows (AC-R8).
+    """
+    cell = _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
+                             order_multiple, prows, supplier_reason=supplier_reason,
+                             policy_type="reorder_level", min_override=None,
+                             max_override=None, target_oup=level, triggered=triggered,
+                             reason_label=reason_label, recommended=recommended,
+                             rounded=rounded, cells=cells)
+    first = cells[0]
+
+    def _total(key: str) -> float:
+        return float(sum(float(c.get(key) or 0.0) for c in cells))
+
+    lp, lp_basis = _last_purchase_for(last_cost or {}, str(prows[0]["product_id"]), None)
+    cell.update({
+        # The product's WHOLE stock, group bins included (AC-R1). `project_on_hand` stays
+        # beside it saying how much of that total sits at a project-held bin.
+        "on_hand": _total("on_hand") + _total("project_on_hand"),
+        "project_on_hand": _total("project_on_hand"),
+        "on_order": _total("on_order"),
+        "po_ordered": _total("po_ordered"),
+        # The group's own figures, not the sum of ten locations each measured against the
+        # product's level - that sum is the multiplication this basis exists to end.
+        "project_need": project_need,
+        "retail_need": retail_need,
+        "reorder_level": level,
+        "reorder_level_source": first.get("reorder_level_source"),
+        "suggested_level": first.get("suggested_level"),
+        "suggestion_basis": first.get("suggestion_basis"),
+        "needs_level": level is None,
+        "master_reorder_level": _fnum(prows[0].get("master_reorder_level")),
+        "master_reorder_quantity": _fnum(prows[0].get("master_reorder_quantity")),
+        # A product-wide row sells to no one segment, so the price it shows is the
+        # unattributed one and says so rather than borrowing a bin's attribution.
+        "segment": None,
+        "last_purchase": lp,
+        "last_purchase_basis": lp_basis,
+        "demand_window_days": first.get("demand_window_days"),
+        "short": level is not None and float(agg["agg_net"]) < float(level),
+    })
+    return cell
+
+
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
                   today: date, last_move: dict, last_buy: Optional[dict] = None,
                   levels: Optional[dict] = None,
@@ -1427,8 +1723,15 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
     # to SEE what the industry-standard basis would have said; they simply no longer decide.
     lp, lp_basis = _last_purchase_for(last_cost or {}, pid, row.get("segment"))
-    level_row = rl_service.resolve_level(levels or {}, pid, wid) or {}
-    reorder_level = _fnum(level_row.get("level"))
+    if policy_type == "reorder_level":
+        # One level per PRODUCT (captain, 27 Aug) - see `_product_level`. Every location of
+        # the product resolves the SAME number, which is what lets the product be netted
+        # and sized once.
+        level_row, reorder_level, level_source = _product_level(levels or {}, pid, row)
+    else:
+        level_row = rl_service.resolve_level(levels or {}, pid, wid) or {}
+        reorder_level = _fnum(level_row.get("level"))
+        level_source = level_row.get("source")
     # A level nobody has set is not a level of zero. The row is emitted as `needs_level` so
     # the item is neither bought on a guess nor quietly dropped off the plan.
     needs_level = policy_type == "reorder_level" and reorder_level is None
@@ -1539,7 +1842,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         # S10 - carried onto the frozen row so the buyer sees their number, our suggestion,
         # and where the number came from, without a second query.
         "reorder_level": reorder_level,
-        "reorder_level_source": level_row.get("source"),
+        "reorder_level_source": level_source,
         "suggested_level": _fnum(level_row.get("suggested_level")),
         "suggestion_basis": level_row.get("suggestion_basis"),
         "needs_level": needs_level,
@@ -1678,6 +1981,14 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                                   levels=levels, last_cost=last_cost)
                     for r in prows]
         flags = _transfer_flags_for(prows, computed)
+
+        # Same answer under either scope: the reorder-level basis is per product, and a
+        # network run is already a per-product aggregate - it simply summed the members'
+        # levels for its target, which is the multiplication this basis had to stop doing.
+        if _is_product_level_basis(db, pid, policies):
+            recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
+                                      flags, wh_meta, last_cost=last_cost))
+            continue
 
         # --- aggregate buy on the network ---
         policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
@@ -1881,7 +2192,8 @@ def _allocation_lines(allocation: dict, wh_meta: dict) -> list[dict]:
 
 def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
                 shares: dict, *, retail_need: float,
-                recommended: Optional[float], rounded: Optional[float]) -> dict:
+                recommended: Optional[float], rounded: Optional[float],
+                project_need: Optional[float] = None) -> dict:
     """What ONE sizing group was sized on, and the locations it read.
 
     A buy is sized against a GROUP of locations - one on its own, the members of a
@@ -1937,7 +2249,14 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
         # Project is additive across locations, so the group's figure IS the sum of its
         # members'. Retail is not: it is netted once, on the aggregate, and only the
         # aggregate knows what it sized.
-        "project_need": _r(sum(l["project_need"] for l in locations)),
+        #
+        # `project_need` overrides that sum for a PRODUCT-scope group, where the firm
+        # project demand is netted into the one figure the level was measured against
+        # rather than added on top of it: the group's two halves have to sum to the
+        # quantity the run sized, or the Summary Order Report states a bigger number than
+        # the plan row it reports (AC-F03).
+        "project_need": _r(sum(l["project_need"] for l in locations)
+                           if project_need is None else project_need),
         "retail_need": _r(retail_need) or 0.0,
         "recommended": _r(recommended),
         "rounded": _r(rounded),

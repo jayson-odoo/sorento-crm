@@ -322,12 +322,20 @@ async def acknowledge_order_inquiry_rows(
     One press does two things because they are one decision: the rows become purchasing's
     work, stamped with who and when, and the cascade runs for EXACTLY these rows, so the
     open documents that can cover them are linked at that moment. Nothing linked before
-    this - a row CS raised is one they are still free to change."""
+    this - a row CS raised is one they are still free to change.
+
+    `link_up_to` is how far out the linking half reaches (AC-LH1): every named row is taken
+    on, and one due after that date is left Not linked and counted on `after_horizon`.
+    Omitted, it is the reorder plan's own horizon; `link_horizon: "none"` is how a caller
+    asks for no horizon at all (S1)."""
     try:
         for row_id in payload.row_ids:
             validate_uuid_path(row_id, resource="Order inquiry row")
         body = ProjectOrderInquiryService(db).acknowledge_rows(
-            payload.row_ids, actor_user_id=current_user["id"]
+            payload.row_ids,
+            actor_user_id=current_user["id"],
+            link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body
@@ -374,7 +382,10 @@ async def link_acknowledged_order_inquiry_rows(
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
         body = ProjectOrderInquiryService(db).link_now(
-            payload.product_ids, actor_user_id=current_user["id"]
+            payload.product_ids,
+            actor_user_id=current_user["id"],
+            link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body
@@ -661,6 +672,8 @@ async def auto_place_order_inquiries(
             actor_user_id=current_user["id"],
             trigger="worklist",
             row_ids=payload.row_ids,
+            link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body
