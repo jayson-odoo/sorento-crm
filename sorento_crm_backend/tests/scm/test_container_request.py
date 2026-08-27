@@ -25,6 +25,7 @@ from app.models.job import ImportJob, JobStatus
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    InboundShipmentLine,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
@@ -33,6 +34,7 @@ from app.models.scm import PriorityPolicy
 from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
 from tests.scm.test_outstanding_import_routes import as_company_user
 
@@ -73,6 +75,12 @@ def _policy(db, factors: dict, class_weights: dict | None = None) -> str:
     return str(row.id)
 
 
+#: Sentinel meaning "derive demand_origin from demand_class" - a caller who wants to
+#: exercise the S13b order-level gate explicitly still overrides it with a real value
+#: (including `None`).
+_AUTO_ORIGIN = object()
+
+
 def _so(
     db,
     w: World,
@@ -80,7 +88,7 @@ def _so(
     qty: float,
     *,
     demand_class: str | None = "retail",
-    demand_origin: str | None = None,
+    demand_origin: str | None = _AUTO_ORIGIN,
     required_date: date | None = None,
     order_date: date | None = None,
     delivered: float = 0,
@@ -88,13 +96,13 @@ def _so(
     line_status: str = "open",
     purchasing_status: str = "not_reviewed",
 ) -> SalesOrder:
-    # RETAIL by default, because the sales-order BOOK speaks for the retail channel and
-    # for nothing else (`is_plan_demand_order()`, P3 of PLAN-scm-purchasing-uat-journey.md).
-    # A project-class line is not purchasing demand as a book line at all - it becomes
-    # demand when CS raises an Order Inquiry ORDER row for it, which this screen does not
-    # read yet (F1 of PLAN-scm-fulfilment-feedback.md, ruling R1). So `demand_class` is
-    # stated as "project" below only where the point is that the row is EXCLUDED, and
-    # `demand_origin` no longer decides anything: the retired sheet leg is what read it.
+    # S13b / `is_plan_demand_order()`: a project-class order counts as purchasing demand
+    # only when the Order Inquiry named it. Every helper call in this file means "the
+    # sheet named this" unless a test explicitly says otherwise (the auth/404/422 tests
+    # below don't care), so default the stamp rather than making every project-class
+    # `_so(...)` call in the file repeat it.
+    if demand_origin is _AUTO_ORIGIN:
+        demand_origin = "scm_order_inquiry" if demand_class == "project" else None
     so = SalesOrder(
         id=str(uuid.uuid4()),
         so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
@@ -126,16 +134,62 @@ def _row(rows: list[dict], key: str, w: World) -> dict:
     return next(r for r in rows if r["item_code"] == code)
 
 
-def _warehouse(db) -> Warehouse:
+def _warehouse(db, *, segment: str | None = None) -> Warehouse:
+    """A location. `segment='project'` makes it a GROUP location - stock there is spoken for.
+
+    The pool predicate is `COALESCE(segment, 'dealer') <> 'project'`, the reorder engine's own
+    (`reorder_run_service`), so a warehouse with no segment stated is a site pool: a location
+    nobody has classified is not assumed to be a project bin.
+    """
     wh = Warehouse(
         id=str(uuid.uuid4()),
         warehouse_code=f"{MARKER}-WH-{uuid.uuid4().hex[:8]}",
         warehouse_name=f"{MARKER} warehouse",
+        segment=segment,
         is_active=True,
     )
     db.add(wh)
     db.flush()
     return wh
+
+
+def _packing_list(
+    db,
+    w: World,
+    key: str,
+    qty: float,
+    *,
+    received: float = 0,
+    eta: date | None = None,
+    arrived: date | None = None,
+    number: str | None = _AUTO_ORIGIN,
+) -> InboundShipment:
+    """A packing list carrying this product. `number=None` is a draft nobody has numbered."""
+    ship = InboundShipment(
+        id=str(uuid.uuid4()),
+        shipment_number=(
+            f"{MARKER}-PL-{uuid.uuid4().hex[:8]}" if number is _AUTO_ORIGIN else number
+        ),
+        supplier_id=w.supplier.id,
+        shipment_date=date(2026, 1, 1),
+        estimated_arrival_date=eta,
+        actual_arrival_date=arrived,
+        shipment_status="fully_received" if arrived else "in_transit",
+    )
+    db.add(ship)
+    db.flush()
+    db.add(
+        InboundShipmentLine(
+            id=str(uuid.uuid4()),
+            shipment_id=ship.id,
+            product_id=w.product(key).id,
+            supplier_id=w.supplier.id,
+            quantity_shipped=qty,
+            quantity_received=received,
+        )
+    )
+    db.flush()
+    return ship
 
 
 def _on_hand(db, w: World, key: str, wh: Warehouse, qty: float) -> None:
@@ -282,17 +336,18 @@ def _foreign_supplier(db) -> str:
 
 
 def test_build_scope_is_the_whole_stock_list_ranked_rows_then_no_demand_rows(scm_app):
-    # CHANGE 1: row scope is now the WHOLE stock list - a product on the list with no
-    # open need still gets a row (has_demand false, rank null), sorted after the ranked
-    # demand rows. A product with need but off the list is still absent - the stock list
-    # is what makes a product a candidate at all.
+    # CHANGE 1: row scope is the WHOLE stock list - a product on the list with no open need
+    # still gets a row (has_demand false, rank null), sorted after the ranked demand rows.
+    # A product with need that this supplier neither lists nor is sourced from is still
+    # absent: since F1 the universe is the stock list UNION `product_suppliers`, and product
+    # C is in neither.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=5, cbm=0.5)  # on the list, has open need
     w.stock("B", packed=5, cbm=0.5)  # on the list, no open need
     _so(db, w, "A", 20)
-    _so(db, w, "C", 30)  # need exists, but not on the list
+    _so(db, w, "C", 30)  # need exists, but neither on the list nor sourced from them
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -380,6 +435,188 @@ def test_build_suggested_qty_floors_at_zero_when_stock_and_incoming_cover_the_ne
     assert row["suggested_qty"] == 0
 
 
+# --------------------------------------------------------------------------- #
+# F2 - the pool predicate, and the packing list as a reference
+# --------------------------------------------------------------------------- #
+
+
+def test_build_on_hand_counts_site_pools_only_and_reports_group_stock_beside_it(scm_app):
+    # AC-B1. Stock in a group location is real and it is spoken for - a project bin holds it
+    # for an order that is already promised - so it can neither be asked against nor netted
+    # off the ask. Same predicate the reorder engine nets by.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _on_hand(db, w, "A", pool, 200)
+    _on_hand(db, w, "A", group, 50)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["on_hand"] == 200
+    assert row["on_hand_group"] == 50
+    assert row["suggested_qty"] == 300  # 500 - 200, the group 50 is NOT netted
+
+
+def test_build_spo_counts_site_pools_only(scm_app):
+    # AC-B2, review item 1: an allocation bound for a group location lands in a bin this
+    # container cannot draw on, so it is out of the cell and muted in the breakdown.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _incoming_spo(db, w, "A", pool, 30)
+    _incoming_spo(db, w, "A", group, 70)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_spo"] == 30
+    assert row["incoming_spo_group"] == 70
+    assert row["suggested_qty"] == 470  # 500 - 30
+
+
+def test_build_lists_every_site_pool_including_the_empty_ones(scm_app):
+    # AC-B3: a site with nothing in it is a fact the reader needs ("we looked, there is
+    # none"), not an absence to be inferred from a missing row.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    held = _warehouse(db)
+    empty = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    _on_hand(db, w, "A", held, 40)
+    _on_hand(db, w, "A", group, 15)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    sites = {s["warehouse_code"]: s for s in row["sites"]}
+    assert sites[held.warehouse_code]["on_hand"] == 40
+    assert empty.warehouse_code in sites
+    assert sites[empty.warehouse_code]["on_hand"] == 0
+    # The group location is never a site row - it has its own muted line.
+    assert group.warehouse_code not in sites
+    assert row["group_locations"]["on_hand"] == 15
+    assert row["group_locations"]["count"] == 1
+    assert group.warehouse_code in row["group_locations"]["warehouse_codes"]
+
+
+def test_build_incoming_packing_list_is_shown_and_never_subtracted(scm_app):
+    # AC-B4 / Q1: a packing list names no destination, so it cannot be netted against a pool
+    # the way an SPO can. It travels as a reference, with the shipment and ETA behind it.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    ship = _packing_list(db, w, "A", 60, received=10, eta=date(2026, 7, 27))
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 50  # 60 shipped - 10 already received
+    assert row["suggested_qty"] == 100  # untouched
+    assert row["incoming_pl_shipments"] == [
+        {
+            "shipment_id": str(ship.id),
+            "shipment_number": ship.shipment_number,
+            "estimated_arrival_date": "2026-07-27",
+            "qty": 50,
+        }
+    ]
+
+
+def test_build_incoming_packing_list_ignores_shipments_that_have_arrived(scm_app):
+    # Arrived stock is already in `on_hand`; counting it here would show it twice.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    _packing_list(db, w, "A", 60, arrived=date(2026, 7, 1))
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 0
+    assert row["incoming_pl_shipments"] == []
+
+
+def test_build_a_draft_packing_list_reads_as_a_draft_not_as_a_missing_number(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    _packing_list(db, w, "A", 25, number=None)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["incoming_pl"] == 25
+    assert row["incoming_pl_shipments"][0]["shipment_number"] is None
+    assert row["incoming_pl_shipments"][0]["estimated_arrival_date"] is None
+
+
+def test_build_outstanding_po_lines_foot_to_the_outstanding_po_figure(scm_app):
+    # AC-H2: still shown, still not deducted - now with the POs named, so the reader can see
+    # which order the figure is.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    wh = _warehouse(db)
+    _outstanding_po(db, w, "A", wh, 30)
+    _outstanding_po(db, w, "A", wh, 12)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["outstanding_po"] == 42
+    assert sum(line["qty"] for line in row["outstanding_po_lines"]) == 42
+    assert all(line["po_number"] for line in row["outstanding_po_lines"])
+    assert row["suggested_qty"] == 100  # never deducted
+
+
+def test_build_a_no_demand_row_carries_the_same_breakdown_fields(scm_app):
+    # The two row builders are one shape or the breakdown dialog breaks on half the grid.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("B", packed=5, cbm=0.5)  # stock, no open need
+    pool = _warehouse(db)
+    _on_hand(db, w, "B", pool, 7)
+    _packing_list(db, w, "B", 3)
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "B", w)
+    assert row["has_demand"] is False
+    assert row["on_hand"] == 7
+    assert row["incoming_pl"] == 3
+    assert row["on_hand_group"] == 0
+    assert any(s["warehouse_code"] == pool.warehouse_code for s in row["sites"])
+
+
 def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_app):
     app, db, gcu, gcuk = scm_app
     scope = as_company_user(app, db, gcu, gcuk)
@@ -399,26 +636,30 @@ def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_a
         "po_book_as_of",
         "spo_as_of",
         "stock_list_as_of",
+        "proforma_as_of",
+        "proforma_pi_number",
     }
     assert sources["so_book_as_of"] is not None
     assert sources["stock_list_as_of"] == body["stock_list_as_of"]
     # Nothing seeded for these two families - honest absence, not a stale guess.
     assert sources["po_book_as_of"] is None
     assert sources["spo_as_of"] is None
+    # A stock list exists, so the proforma stand-in is not consulted and does not name
+    # itself (AC-A3).
+    assert sources["proforma_as_of"] is None
 
 
-def test_build_include_lines_returns_flat_lines_summing_to_open_so_need(scm_app):
-    # CHANGE 2 + the invariant `build`'s docstring states: sum(lines.qty per product) ==
-    # open_so_need (the GROSS need, not the netted suggestion).
+def test_build_include_lines_returns_flat_lines_summing_to_the_retail_need(scm_app):
+    # CHANGE 2 + the invariant `build`'s docstring states, as P3 leaves it: sum(lines.qty per
+    # product) == retail_qty. The flat lines are the sales-order BOOK, and the book speaks for
+    # retail alone - project need lives on `projects.order_inquiry_rows` and has no book line
+    # to list (`test_container_request_universe.py` covers that half).
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
     so1 = _so(db, w, "A", 20)
     so2 = _so(db, w, "A", 15)
-    # A project-class book line is not demand here at all, so it contributes neither a
-    # line nor a unit to `open_so_need` - the invariant holds over what the screen counts.
-    _so(db, w, "A", 99, demand_class="project")
 
     r = TestClient(app).post(
         BUILD_URL,
@@ -431,7 +672,7 @@ def test_build_include_lines_returns_flat_lines_summing_to_open_so_need(scm_app)
     row = _row(body["rows"], "A", w)
     lines = [ln for ln in body["lines"] if ln["product_id"] == row["product_id"]]
     assert len(lines) == 2
-    assert sum(ln["qty"] for ln in lines) == row["open_so_need"] == 35
+    assert sum(ln["qty"] for ln in lines) == row["retail_qty"] == row["open_so_need"] == 35
     assert {ln["so_number"] for ln in lines} == {so1.so_number, so2.so_number}
 
 
@@ -468,43 +709,29 @@ def test_build_with_a_malformed_supplier_id_is_a_404_not_a_500(scm_app):
 
 
 def test_build_splits_project_and_retail_qty(scm_app):
-    """The split columns are read off the BOOK, which speaks for retail alone (P3).
-
-    A project-class book line contributes nothing - not to `project_qty`, not to
-    `open_so_need`, not to `so_count` - because project demand has one source and it is
-    the un-linked Order Inquiry row, which this screen does not read yet (R1 of
-    PLAN-scm-fulfilment-feedback.md; F1 restores the Project column from that source).
-    A row with no class stated is the book-direct channel and still counts.
-    """
+    # The two channels, both off the sales-order book and told apart by `demand_class`
+    # (R15, captain 27 Aug), the project half net of what CS already placed. `so_count`
+    # counts the orders behind BOTH, which is what the "Open SOs" drill lists.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     w.stock("A", packed=1, cbm=0.5)
-    _so(db, w, "A", 80, demand_class="project")
+    project_need(db, w, "A", 80)
     _so(db, w, "A", 40, demand_class="retail")
-    _so(db, w, "A", 20, demand_class=None)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
     assert r.status_code == 200, r.text
     row = _row(r.json()["rows"], "A", w)
-    assert row["suggested_qty"] == 60
-    assert row["project_qty"] == 0
+    assert row["suggested_qty"] == 120
+    assert row["project_qty"] == 80
     assert row["retail_qty"] == 40
-    assert row["unclassified_qty"] == 20
+    assert row["unclassified_qty"] == 0
     assert row["so_count"] == 2
 
 
-def test_build_leaves_a_project_class_book_row_unranked_and_ranks_the_retail_one(scm_app):
-    """The ACTIVE policy still ranks (AC-H5), but a project book line is not demand.
-
-    This used to assert that the project row OUTRANKED the retail one at equal dates,
-    under a policy whose dominant factor is `demand_class`. P3 removed the ground it
-    stood on: the book speaks for retail alone, so the project-class row reaches this
-    screen with no demand at all - it is a stock-list row with `has_demand` false and no
-    rank, and the retail row is the only ranked one. When F1 reads the Project column off
-    the un-linked Order Inquiry rows (R1), the class weighting comes back with it.
-    """
+def test_build_a_project_row_outranks_a_retail_row_at_equal_dates(scm_app):
+    # AC-H5, the ACTIVE policy - mirrors the seeded weighting (demand_class dominant).
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -517,7 +744,7 @@ def test_build_leaves_a_project_class_book_row_unranked_and_ranks_the_retail_one
     w.stock("B", packed=1, cbm=0.5)
     same_date = date(2026, 9, 1)
     _so(db, w, "A", 10, demand_class="retail", required_date=same_date, order_date=same_date)
-    _so(db, w, "B", 10, demand_class="project", required_date=same_date, order_date=same_date)
+    project_need(db, w, "B", 10, required=same_date)
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -525,11 +752,8 @@ def test_build_leaves_a_project_class_book_row_unranked_and_ranks_the_retail_one
     rows = r.json()["rows"]
     project_row = _row(rows, "B", w)
     retail_row = _row(rows, "A", w)
-    assert project_row["has_demand"] is False
-    assert project_row["rank"] is None
-    assert project_row["open_so_need"] == 0
-    assert retail_row["has_demand"] is True
-    assert retail_row["rank"] == 1
+    assert project_row["rank"] < retail_row["rank"]
+    assert project_row["rank_score"] > retail_row["rank_score"]
 
 
 def test_build_a_sooner_required_date_outranks_within_the_same_class(scm_app):
@@ -539,12 +763,14 @@ def test_build_a_sooner_required_date_outranks_within_the_same_class(scm_app):
     _policy(
         db,
         {"need_by_date": 1.0, "demand_class": 0.0, "document_age": 0.0, "po_document_sequence": 0.0},
-        {"retail": 1.0},
+        {"project": 1.0},
     )
     w.stock("A", packed=1, cbm=0.5)
     w.stock("B", packed=1, cbm=0.5)
-    _so(db, w, "A", 10, required_date=date(2026, 9, 4))
-    _so(db, w, "B", 10, required_date=date(2027, 5, 15))
+    # Both project, both dated off `sales_order_lines.required_date` - the same column the
+    # retail half ranks on since R15, so the two classes cannot rank on different clocks.
+    project_need(db, w, "A", 10, required=date(2026, 9, 4))
+    project_need(db, w, "B", 10, required=date(2027, 5, 15))
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 
@@ -562,7 +788,7 @@ def test_build_with_no_stock_list_reads_as_an_empty_result_not_an_error(scm_app)
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
-    _so(db, w, "A", 10)  # demand exists, but no stock list at all
+    _so(db, w, "A", 10, demand_class="project")  # demand exists, but no stock list at all
 
     r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
 

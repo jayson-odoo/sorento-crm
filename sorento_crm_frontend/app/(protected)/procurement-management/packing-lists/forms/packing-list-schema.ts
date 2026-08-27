@@ -64,7 +64,9 @@ export const CLEARANCE_ATTRIBUTE_FIELDS = [
 ] as const;
 
 export const packingListSchema = clearanceSchema.extend({
-  shipment_number: z.string().optional(),
+  // No `shipment_number`: the create form does not ask for one. A shipment number is ours
+  // to issue, and the backend numbers a container that arrives without one. It is still
+  // editable on the detail page, where the container already exists to be renamed.
   supplier_id: z.string().optional(),
   shipment_date: z.string().min(1, 'Shipment date is required'),
   estimated_arrival_date: z.string().optional(),

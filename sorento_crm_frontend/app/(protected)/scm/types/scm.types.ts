@@ -587,6 +587,23 @@ export interface PurchaseOrderLine {
  * already prints for them.
  */
 export interface PurchaseOrderPlacement {
+  /**
+   * Which kind of placement this is (F7).
+   *
+   * `inquiry` is the original panel - somebody's order inquiry linked to this line.
+   * `spo` is a CRM SPO that PULLED from this line: the goods are already on a container,
+   * and the fields below that describe a customer are null because there is no inquiry
+   * behind it.
+   */
+  kind?: 'inquiry' | 'spo';
+  /** The SPO that took this quantity - `spo` rows only. */
+  spo_number?: string | null;
+  /** The container it is on, by container number or shipment number - `spo` rows only. */
+  packing_list?: string | null;
+  /** Where it is landing, and how much at each - `spo` rows only. */
+  warehouses?: { warehouse_code: string; qty: number }[];
+  /** When the container is due - `spo` rows only. */
+  arrival_date?: string | null;
   /** `OI-000006`. Null only on a row raised before the numbering stamp existed. */
   inquiry_no: string | null;
   /** The sales order this quantity is owed to - the AutoCount number where there is one. */

@@ -47,9 +47,9 @@ export type SearchableMultiSelectProps = {
   /** Trigger size - shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
   /**
-   * Size the menu to its options and WRAP a long label instead of truncating it.
-   * Same contract as `SearchableSelect.wrapOptions`, kept in step so the two
-   * halves of one standard cannot behave differently.
+   * Size the MENU to its widest option instead of to the trigger. Option labels wrap
+   * in both modes either way. Same contract as `SearchableSelect.wrapOptions`, kept in
+   * step so the two halves of one standard cannot behave differently.
    */
   wrapOptions?: boolean;
   /** Forwarded to the trigger so a <Label htmlFor> can point at it, as SearchableSelect does. */
@@ -247,15 +247,17 @@ export function SearchableMultiSelect({
           aria-expanded={open}
           className={cn(
             selectTriggerVariants({ size }),
-            // Chips grow the trigger vertically; keep border/focus identical, drop the fixed height.
-            'h-auto min-h-8.5 flex-wrap gap-1 py-1',
+            // Chips grow the trigger vertically; keep border/focus identical.
+            'flex-wrap gap-1',
             triggerClassName,
           )}
         >
           {renderTriggerLabel ? (
             <span className="min-w-0 flex-1 text-left">{renderTriggerLabel(chosen)}</span>
           ) : chosen.length === 0 ? (
-            <span className="flex-1 truncate text-left text-muted-foreground">{placeholder}</span>
+            <span className="min-w-0 flex-1 text-left text-muted-foreground break-words">
+              {placeholder}
+            </span>
           ) : (
             // `min-w-0` is what actually makes the chips wrap inside the
             // trigger: a flex child refuses to shrink below its content without
@@ -268,7 +270,9 @@ export function SearchableMultiSelect({
                   key={opt.value}
                   className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs"
                 >
-                  <span className="truncate">{opt.label}</span>
+                  {/* No truncation: a chip that reads "CHAOZHOU JINBAICHUAN SANITAR..."
+                      does not say which supplier was chosen. It wraps instead. */}
+                  <span className="break-words">{opt.label}</span>
                   <span
                     role="button"
                     tabIndex={-1}
@@ -286,7 +290,7 @@ export function SearchableMultiSelect({
               ))}
             </span>
           )}
-          <ChevronDown className="size-4 shrink-0 self-start mt-1 opacity-60 -me-0.5" />
+          <ChevronDown className="mt-0.5 size-4 shrink-0 self-start opacity-60 -me-0.5" />
         </button>
         )}
       </PopoverTrigger>
@@ -378,9 +382,7 @@ export function SearchableMultiSelect({
                       ) : (
                       <div className="flex flex-1 flex-col min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className={wrapOptions ? 'break-words' : undefined}>
-                            {opt.label}
-                          </span>
+                          <span className="break-words">{opt.label}</span>
                           {opt.badgeText ? (
                             <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900">
                               {opt.badgeText}
@@ -389,10 +391,7 @@ export function SearchableMultiSelect({
                         </div>
                         {opt.description ? (
                           <span
-                            className={cn(
-                              'text-xs text-muted-foreground',
-                              wrapOptions ? 'break-words' : 'truncate',
-                            )}
+                            className="text-xs text-muted-foreground break-words"
                             title={opt.description}
                           >
                             {opt.description}

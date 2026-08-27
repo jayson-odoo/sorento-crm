@@ -1,60 +1,21 @@
-import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Container } from '@/components/common/container';
-import PackingListDetail from '../components/PackingListDetail';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'Packing List Details',
-  description: 'View packing list details and shipment lines',
-};
+import PackingListDetailsTab from '../components/PackingListDetailsTab';
+import { PackingListRecordSkeleton } from './components/packing-list-skeleton';
+import { usePackingListRecord } from './components/packing-list-context';
 
-export default function PackingListDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  return (
-    <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/procurement-management/packing-lists">
-              Packing Lists
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-      <div className="mt-6">
-        <PackingListDetailWrapper params={params} />
-      </div>
-    </Container>
-  );
+/** Details: what the container is, what it costs to land, and how far it has cleared. */
+export default function PackingListDetailsPage() {
+  const { isLoading, packingList } = usePackingListRecord();
+  if (isLoading) return <PackingListRecordSkeleton />;
+  if (!packingList) return <PackingListNotFound />;
+  return <PackingListDetailsTab />;
 }
 
-async function PackingListDetailWrapper({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  return <PackingListDetail packingListId={id} />;
+function PackingListNotFound() {
+  return (
+    <p className="py-12 text-center text-sm text-muted-foreground">
+      Packing list not found.
+    </p>
+  );
 }

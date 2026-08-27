@@ -17,6 +17,7 @@ from app.schemas.download import DownloadListResponse, DownloadResponse, Downloa
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.download_service import DownloadService
 from app.services.storage_router import get_backend, resolve_signed_url
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ def stream_download_file(
         content=content,
         media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": content_disposition(filename),
             "Content-Length": str(len(content)),
         },
     )

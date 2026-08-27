@@ -894,10 +894,20 @@ export function SalesOrderDetail({ id }: { id: string }) {
             <div className="min-w-0 space-y-0.5">
               {links.map((link, index) => {
                 const where = link.line_label || link.location || null;
-                const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}`;
+                const due = link.expected_date ? fmtDate(link.expected_date) : null;
+                // WHEN it lands, beside where it sits (AC-G7). A link that says which SPO
+                // covers this line and not when it arrives answers half the question the
+                // person reading it came with.
+                const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}${
+                  due ? ` due ${due}` : ''
+                }`;
                 return (
                   <span
-                    key={`${link.kind}-${link.document}-${where ?? index}`}
+                    // The INDEX is always in the key. One line can be linked to the same
+                    // SPO line twice - the SPO covers it in two goes, each link carrying
+                    // its own quantity - and kind + document + label collided on the
+                    // second, which React reported as two children with the same key.
+                    key={`${link.kind}-${link.document}-${where ?? 'x'}-${index}`}
                     className="flex min-w-0 items-center gap-1"
                     title={link.late ? `${label} - arrives late` : label}
                   >

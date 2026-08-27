@@ -8,20 +8,51 @@ import {
   convertProformaInvoicesToDraftShipment,
   deleteProformaInvoice,
   getProformaInvoice,
+  listDraftShipments,
   listProformaInvoices,
+  markProformaInvoiceAsRevisionOf,
+  saveProformaInvoice,
+  type ConvertOptions,
   type ListProformaInvoicesOptions,
+  type ProformaInvoiceDetail,
+  type ProformaInvoiceWrite,
+  type ProformaPlacement,
 } from '../services/proformaInvoiceService';
 
 const KEY = ['scm', 'proforma-invoices'] as const;
 
 export function useProformaInvoices(
   supplierId: string | null,
-  opts: { limit?: number; offset?: number } = {},
+  opts: {
+    limit?: number;
+    offset?: number;
+    placement?: ProformaPlacement | null;
+    /** The list toolbar's search box: PI number, supplier, container or BL. */
+    query?: string | null;
+  } = {},
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };
   return useQuery({
-    queryKey: [...KEY, 'list', supplierId, opts.limit ?? 25, opts.offset ?? 0],
+    queryKey: [
+      ...KEY,
+      'list',
+      supplierId,
+      opts.placement ?? 'all',
+      opts.query ?? '',
+      opts.limit ?? 25,
+      opts.offset ?? 0,
+    ],
     queryFn: () => listProformaInvoices(options),
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** The draft packing lists a convert can be added to instead of creating a new one. */
+export function useDraftShipments(supplierId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'draft-shipments', supplierId],
+    queryFn: () => listDraftShipments(supplierId),
+    enabled,
     refetchOnWindowFocus: false,
   });
 }
@@ -75,6 +106,50 @@ export function useBulkDeleteProformaInvoices() {
   });
 }
 
+/**
+ * The writes that change ONE invoice (AC-E1, AC-E2, AC-D4, AC-E11).
+ *
+ * Each returns the whole invoice, so the detail cache is SEEDED with the server's answer
+ * rather than invalidated and re-fetched: the fill bar, the totals and the was/now figures
+ * all move together on save, and a refetch would repaint them one render later. The list is
+ * still invalidated, because the line count and the volume it shows have just changed.
+ */
+function useInvoiceWrite<TArgs>(
+  invoiceId: string,
+  fn: (args: TArgs) => Promise<ProformaInvoiceDetail>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (invoice) => {
+      qc.setQueryData([...KEY, 'detail', invoiceId], invoice);
+      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Link a PI uploaded as new to the document it actually revises (AC-E11). */
+export function useMarkProformaInvoiceAsRevision(invoiceId: string) {
+  return useInvoiceWrite<string>(invoiceId, (previousId) =>
+    markProformaInvoiceAsRevisionOf(invoiceId, previousId),
+  );
+}
+
+/**
+ * The edit screen's Save: the number, the container size and the whole line array, together.
+ *
+ * There is deliberately no per-line hook beside it. The screen holds a DRAFT - a struck-
+ * through line is not gone until Save - so a per-line write would have to be replayed in
+ * order, and a refusal halfway through would leave the document half-applied under a screen
+ * still showing the draft.
+ */
+export function useSaveProformaInvoice(invoiceId: string) {
+  return useInvoiceWrite<ProformaInvoiceWrite>(invoiceId, (body) =>
+    saveProformaInvoice(invoiceId, body),
+  );
+}
+
 /** Draft a shipment from one or more selected invoices. Invalidates both the proforma list
  *  (their trail now shows where they went) and the invoice detail (converted_shipments +
  *  per-line shipment_number) for every invoice just converted. The caller navigates to
@@ -82,7 +157,17 @@ export function useBulkDeleteProformaInvoices() {
 export function useConvertProformaInvoicesToDraftShipment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (invoiceIds: string[]) => convertProformaInvoicesToDraftShipment(invoiceIds),
+    mutationFn: (args: {
+      invoiceIds: string[];
+      overrideReason?: string;
+      lineQuantities?: Record<string, number>;
+      targetShipmentId?: string | null;
+    }) =>
+      convertProformaInvoicesToDraftShipment(args.invoiceIds, {
+        lineQuantities: args.lineQuantities,
+        targetShipmentId: args.targetShipmentId,
+        override: args.overrideReason ? { reason: args.overrideReason } : undefined,
+      } as ConvertOptions),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
       result.invoices.forEach((inv) => {

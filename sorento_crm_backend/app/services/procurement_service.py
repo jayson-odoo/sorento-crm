@@ -1220,9 +1220,24 @@ class InboundShipmentService:
         # Delete before insert: the unique index on (shipment, product, supplier) treats
         # NULL as a value, so an insert that reuses a departing row's key would collide if
         # the unit of work flushed the save first.
-        for line in existing:
-            if str(line.id) not in claimed:
-                self.db.delete(line)
+        departing = [line for line in existing if str(line.id) not in claimed]
+        if departing:
+            # The proforma-invoice links pointing at these lines go with them, HERE, in the
+            # same transaction. The FK is ON DELETE SET NULL, which left a phantom behind:
+            # a link naming a shipment but no line on it, so the invoice read as sitting on
+            # a container that no longer holds its goods, refused every further write, and
+            # could never be converted again. One writer for the deletion and the trail it
+            # invalidates, rather than a sweeper that runs later and sometimes.
+            from app.models.scm import ProformaInvoiceShipmentLink
+
+            self.db.query(ProformaInvoiceShipmentLink).filter(
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                    [str(line.id) for line in departing]
+                )
+            ).delete(synchronize_session=False)
+            self.db.flush()
+        for line in departing:
+            self.db.delete(line)
         self.db.flush()
 
         for line, d in updates:
@@ -1355,6 +1370,16 @@ class InboundShipmentService:
             shipment_dict.get("shipment_status")
         )
         shipment_dict["created_by"] = created_by
+        if not (shipment_dict.get("shipment_number") or "").strip():
+            # The create form no longer asks for one: a shipment number is ours to issue,
+            # and asking somebody to invent a unique string before they have typed anything
+            # about the container is a decision the system can make for them. Numbered from
+            # the same rule the proforma-to-packing-list convert uses, so a container drafted
+            # either way is named the same. AFTER the match attempts above, which key off the
+            # number the CALLER stated - numbering first would make every upload a new row.
+            from app.services.scm.proforma_invoice_service import _draft_shipment_number
+
+            shipment_dict["shipment_number"] = _draft_shipment_number(self.db)
         shipment = InboundShipment(**shipment_dict)
         self.db.add(shipment)
         # Flushed before the lines are built, so the header's own auto-stamp has

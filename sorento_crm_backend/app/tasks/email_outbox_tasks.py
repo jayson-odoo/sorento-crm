@@ -60,23 +60,59 @@ def _writeback_notification_delivery(db: Session, row: EmailOutbox, status: str,
         delivery.sent_at = datetime.utcnow()
 
 
-def _attachments_for(row: EmailOutbox) -> Optional[list]:
-    """Fetch the row's attachment, if it declared one.
+#: What each attachment extension is sent as. Anything unlisted goes as a generic binary,
+#: which every mail client offers to save.
+_ATTACHMENT_MIME = {
+    ".pdf": "application/pdf",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
-    A failure to read the object is raised, not swallowed: an email that was supposed to carry
-    a document and silently arrives without one is worse than one that retries. The outbox's
-    existing backoff then applies, which is the behaviour every other send failure already gets.
-    """
-    key = getattr(row, "attachment_storage_key", None)
-    if not key:
-        return None
 
+def _fetch_attachment(provider: Optional[str], key: str, filename: Optional[str]) -> tuple:
     from app.services.storage_router import get_backend
 
-    name = getattr(row, "attachment_filename", None) or key.rsplit("/", 1)[-1]
-    data = get_backend(getattr(row, "attachment_storage_provider", None)).download_file(key)
-    mime = "application/pdf" if name.lower().endswith(".pdf") else "application/octet-stream"
-    return [(name, mime, data)]
+    name = filename or key.rsplit("/", 1)[-1]
+    data = get_backend(provider).download_file(key)
+    ext = name[name.rfind(".") :].lower() if "." in name else ""
+    return name, _ATTACHMENT_MIME.get(ext, "application/octet-stream"), data
+
+
+def _attachments_for(row: EmailOutbox) -> Optional[list]:
+    """Fetch the row's attachments, if it declared any.
+
+    A failure to read an object is raised, not swallowed: an email that was supposed to carry
+    a document and silently arrives without one is worse than one that retries. The outbox's
+    existing backoff then applies, which is the behaviour every other send failure already gets.
+
+    ONE file lives in the row's own columns, and that is every event but one. A container
+    request sends two - the PDF and the supplier's own stock list with the quantity to load
+    filled in (`supplier_notice_service`, F4) - and the second travels as
+    `metadata_json["extra_attachments"]` rather than as a second set of columns nothing else
+    in the system would ever fill.
+    """
+    out: list[tuple] = []
+
+    key = getattr(row, "attachment_storage_key", None)
+    if key:
+        out.append(
+            _fetch_attachment(
+                getattr(row, "attachment_storage_provider", None),
+                key,
+                getattr(row, "attachment_filename", None),
+            )
+        )
+
+    meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    for extra in meta.get("extra_attachments") or []:
+        if not isinstance(extra, dict) or not extra.get("storage_key"):
+            continue
+        out.append(
+            _fetch_attachment(
+                extra.get("storage_provider"), extra["storage_key"], extra.get("filename")
+            )
+        )
+
+    return out or None
 
 
 def _attempt_send(row: EmailOutbox, smtp_config: Optional[dict]) -> Optional[str]:

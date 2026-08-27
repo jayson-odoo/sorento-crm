@@ -9,8 +9,10 @@ import {
   createSpo,
   deleteLoadingPlan,
   deleteSpo,
+  downloadContainerRequestDocument,
   downloadSpoWorksheet,
   getConsolidatedPackingList,
+  getContainerRequestHistory,
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlan,
@@ -20,7 +22,6 @@ import {
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
-  getUnfinishedStock,
   sendContainerRequest,
   updateLoadingPlan,
   type ContainerRequestLine,
@@ -53,15 +54,6 @@ export function useSupplierStock(supplierId: string | null) {
   return useQuery({
     queryKey: [...KEY, 'stock', supplierId],
     queryFn: () => getSupplierStock(supplierId as string),
-    enabled: !!supplierId,
-    refetchOnWindowFocus: false,
-  });
-}
-
-export function useUnfinishedStock(supplierId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'unfinished', supplierId],
-    queryFn: () => getUnfinishedStock(supplierId as string),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
   });
@@ -100,7 +92,6 @@ function useSupplierInvalidator() {
   const qc = useQueryClient();
   return (supplierId: string | null) => {
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock', supplierId] });
-    void qc.invalidateQueries({ queryKey: [...KEY, 'unfinished', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'plans', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock-list-file', supplierId] });
   };
@@ -196,6 +187,27 @@ export function useContainerRequestBuild(
   });
 }
 
+/**
+ * The sales history behind the rows currently ON SCREEN (AC-B8).
+ *
+ * Keyed on the product ids, so paging to the next 25 rows is a new query rather than a
+ * refetch of everything: the sidecar exists precisely so a 120-product supplier does not pay
+ * for 120 products' worth of monthly series to read one page.
+ *
+ * `cold` because a month bucket cannot change while she is looking at it - this is closed
+ * history, not the live sales book.
+ */
+export function useContainerRequestHistory(supplierId: string | null, productIds: string[]) {
+  // Sorted so two pages holding the same products in a different order share one cache entry.
+  const key = [...productIds].sort().join(',');
+  return useQuery({
+    queryKey: [...KEY, 'container-request', 'history', supplierId, key],
+    queryFn: () => getContainerRequestHistory(supplierId as string, productIds),
+    enabled: !!supplierId && productIds.length > 0,
+    ...cold,
+  });
+}
+
 /** Every notice sent to this supplier, either stage - the caller filters by `notice_type`. */
 export function useSupplierNotices(supplierId: string | null) {
   return useQuery({
@@ -221,6 +233,26 @@ export function useSendContainerRequest() {
       void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
       toast.success(`Request sent to ${supplierName}.`);
     },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * The gear menu's two downloads (R23): the same request, as a file, without sending it.
+ *
+ * A mutation rather than a query because it is an act she asks for and because the pending
+ * state disables the menu item - there is nothing to cache, the answer is a file that has
+ * already left for the disk.
+ */
+export function useDownloadContainerRequestDocument(supplierId: string | null) {
+  return useMutation({
+    mutationFn: ({
+      lines,
+      format,
+    }: {
+      lines: ContainerRequestLine[];
+      format: 'xlsx' | 'pdf';
+    }) => downloadContainerRequestDocument(supplierId as string, lines, format),
     onError: (e: Error) => toast.error(e.message),
   });
 }

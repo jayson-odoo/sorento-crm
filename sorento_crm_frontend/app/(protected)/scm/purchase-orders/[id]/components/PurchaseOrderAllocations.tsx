@@ -78,8 +78,12 @@ export function PurchaseOrderAllocations({
                   <table className="w-full min-w-[640px] text-sm">
                     <thead>
                       <tr className="text-2xs uppercase tracking-wide text-muted-foreground">
-                        <th className="py-1 pr-3 text-left font-medium">Order inquiry</th>
-                        <th className="py-1 pr-3 text-left font-medium">Sales order</th>
+                        <th className="py-1 pr-3 text-left font-medium">
+                          Order inquiry / SPO
+                        </th>
+                        <th className="py-1 pr-3 text-left font-medium">
+                          Sales order / packing list
+                        </th>
                         <th className="py-1 pr-3 text-left font-medium">Customer</th>
                         <th className="py-1 pr-3 text-left font-medium">Agent</th>
                         <th className="py-1 pr-3 text-right font-medium">Qty</th>
@@ -92,8 +96,28 @@ export function PurchaseOrderAllocations({
                           key={`${line.line_id}-${index}`}
                           className="border-t border-border/60"
                         >
-                          <td className="py-1.5 pr-3">{placement.inquiry_no || EM_DASH}</td>
-                          <td className="py-1.5 pr-3">{placement.so_number || EM_DASH}</td>
+                          <td className="py-1.5 pr-3">
+                            {placement.kind === 'spo' ? (
+                              // An SPO take, not an inquiry: this quantity is already on a
+                              // container. It reads down the same columns rather than in a
+                              // panel of its own - it is the same question, "who has this".
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <Badge variant="info" appearance="light" size="sm">
+                                  SPO
+                                </Badge>
+                                <span className="font-medium">
+                                  {placement.spo_number || EM_DASH}
+                                </span>
+                              </span>
+                            ) : (
+                              placement.inquiry_no || EM_DASH
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-3">
+                            {placement.kind === 'spo'
+                              ? placement.packing_list || EM_DASH
+                              : placement.so_number || EM_DASH}
+                          </td>
                           <td
                             className="max-w-[240px] truncate py-1.5 pr-3"
                             title={placement.customer || undefined}
@@ -111,7 +135,23 @@ export function PurchaseOrderAllocations({
                           </td>
                           <td className="py-1.5">
                             <span className="flex flex-wrap items-center gap-1.5">
-                              <span>{placement.needed_at || EM_DASH}</span>
+                              <span>
+                                {/* Where it lands AND when. The date used to be a fallback
+                                    for having no warehouse, so on a real take - which
+                                    always has one - it never showed at all (AC-G7). */}
+                                {placement.kind === 'spo'
+                                  ? [
+                                      (placement.warehouses ?? [])
+                                        .map((w) => `${w.warehouse_code} ${fmtInt(w.qty)}`)
+                                        .join(', '),
+                                      placement.arrival_date
+                                        ? `due ${placement.arrival_date}`
+                                        : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' - ') || EM_DASH
+                                  : placement.needed_at || EM_DASH}
+                              </span>
                               {placement.location_differs ? (
                                 // The split instruction, said where the buyer is looking:
                                 // this quantity has to be re-keyed onto a line at the

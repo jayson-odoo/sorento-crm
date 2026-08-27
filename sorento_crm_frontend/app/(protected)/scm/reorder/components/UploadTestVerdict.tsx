@@ -35,6 +35,9 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
   const s = result.summary ?? {};
   const parts = [
     num(s.total_rows) && `Rows: ${num(s.total_rows)}`,
+    // For a channel whose unit is a DOCUMENT rather than a row: one proforma file is
+    // routinely five invoices, and "500 rows" never said how many invoices that is.
+    num(s.document_count) && `Invoices: ${num(s.document_count)}`,
     num(s.would_create) && `Would create: ${num(s.would_create)}`,
     num(s.would_update) && `Would update: ${num(s.would_update)}`,
     // For the channels whose backend does not split create from update: how many of the rows

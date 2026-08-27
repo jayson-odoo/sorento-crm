@@ -1,19 +1,29 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Container, Eye, Upload } from 'lucide-react';
+import { Container, Eye, RefreshCw, Settings, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { useStockListApplied, useSupplierStockListFile } from '../../hooks/useFulfilment';
-import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
-import { StockListUploadDialog } from './StockListUploadDialog';
+import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
+import { EM_DASH, fmtDate } from '../../lib/format';
+import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
+import {
+  PlanContainerDialog,
+  type PlanContainerSelection,
+  type PlanDocumentKind,
+} from './PlanContainerDialog';
 
 /**
  * Ms Tee's screen: what to ask a supplier for on the next container.
@@ -23,6 +33,12 @@ import { ContainerRequestSection } from './ContainerRequestSection';
  * can be derived, since the quantities, the ranking, and what the supplier is already holding
  * unfinished all come out of what is already on file. The only decisions left to her are the
  * supplier, any quantity she wants to override, and Send.
+ *
+ * Those first two picks moved OFF this toolbar and into the Upload popup
+ * (`PlanContainerDialog`, captain 27 Aug): one blue CTA starts the whole thing, and what was
+ * chosen reads back as text, because a row of four controls made "plan a container" look like
+ * four unrelated errands. What is left up here is the state (who, until when) and a gear for
+ * the things done occasionally rather than every visit.
  *
  * The CBM-fit half of this page (container size, packed-stock fill tiles, and the resulting
  * loading plan) was cut on the captain's 20 Aug live-test ruling ("don't need stage 2"). It is
@@ -34,7 +50,7 @@ import { ContainerRequestSection } from './ContainerRequestSection';
 
 export function LoadingPlanView() {
   const [supplierId, setSupplierId] = useState('');
-  // The picked option's own label, alongside the id - server-searched (below), so the
+  // The picked option's own label, alongside the id - server-searched (in the popup), so the
   // screen's title and every downstream string cannot assume the chosen supplier sits in
   // whatever unfiltered first page happens to be cached (S8-followup, same fix as the
   // proforma upload dialog: a supplier past the `/select` endpoint's 100-row cap is otherwise
@@ -44,13 +60,32 @@ export function LoadingPlanView() {
   // open SO need counts regardless of date. Threaded straight to `ContainerRequestSection`, the
   // only place that reads it.
   const [planHorizonDate, setPlanHorizonDate] = useState('');
-  const [uploadOpen, setUploadOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  // Null opens the popup on its first step; a document kind jumps straight to that upload,
+  // for the CTAs that already know which document is being sent.
+  const [planOpenTo, setPlanOpenTo] = useState<PlanDocumentKind | null>(null);
   const [stockListPreviewOpen, setStockListPreviewOpen] = useState(false);
 
   const stockListFile = useSupplierStockListFile(supplierId || null);
   const invalidateSupplier = useStockListApplied();
+  // Same action `RefreshMatchingButton` runs on the queue panel - the panel hides itself when
+  // every code binds, and that is exactly the state somebody is trying to reach after adding
+  // the missing products (R18), so it is also reachable from up here.
+  const rematch = useRematchSupplierCodes();
 
   const supplierName = supplierOption?.label ?? 'this supplier';
+
+  const openPlanDialog = (to: PlanDocumentKind | null) => {
+    setPlanOpenTo(to);
+    setPlanOpen(true);
+  };
+
+  const applyPlanSelection = (selection: PlanContainerSelection) => {
+    setSupplierId(selection.supplierId);
+    setSupplierOption(selection.supplierOption);
+    setPlanHorizonDate(selection.planHorizonDate);
+    if (selection.supplierId) invalidateSupplier(selection.supplierId);
+  };
 
   // The uploaded sheet itself, previewed through the same modal Resource Management uses.
   // `url` is left blank - it is a same-origin attachment id, not a public CDN link, and the
@@ -68,57 +103,68 @@ export function LoadingPlanView() {
     ];
   }, [stockListFile.data]);
 
+  // The one CTA, in both places it has to be reachable from: the toolbar, and the empty
+  // state where it is the only thing to do. Same action, so same wording and same weight.
+  const uploadCta = (testId: string) => (
+    <Button onClick={() => openPlanDialog(null)} data-testid={testId}>
+      <Upload className="size-4" />
+      Upload
+    </Button>
+  );
+
   return (
     <div className="space-y-4">
       <Card className="p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0 grow">
-            <Label htmlFor="loading-plan-supplier" className="text-xs">
-              Supplier
-            </Label>
-            <SearchableSelect
-              id="loading-plan-supplier"
-              value={supplierId}
-              onChange={setSupplierId}
-              onOptionChange={setSupplierOption}
-              // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
-              // caps at 100 rows, so a client-filtered static list silently hid any supplier
-              // past that page. `fetchOptions` re-queries as the user types (debounced by
-              // `SearchableSelect` itself).
-              fetchOptions={(query) => getFulfilmentSuppliers(query)}
-              selectedOption={supplierOption ?? undefined}
-              placeholder="Choose a supplier"
-              className="mt-1 w-full sm:w-80"
-            />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-0.5">
+            <p className="truncate text-sm" data-testid="plan-supplier-text">
+              <span className="text-muted-foreground">Supplier: </span>
+              <span className="font-medium">
+                {supplierId ? supplierName : 'No supplier chosen'}
+              </span>
+            </p>
+            <p className="text-xs" data-testid="plan-horizon-text">
+              <span className="text-muted-foreground">Plan until: </span>
+              <span className="font-medium">
+                {planHorizonDate ? fmtDate(planHorizonDate) : EM_DASH}
+              </span>
+            </p>
           </div>
-          <div>
-            <Label htmlFor="loading-plan-horizon" className="text-xs">
-              Plan until
-            </Label>
-            <Input
-              id="loading-plan-horizon"
-              type="date"
-              className="mt-1 w-40"
-              value={planHorizonDate}
-              onChange={(e) => setPlanHorizonDate(e.target.value)}
-            />
-          </div>
-          <div className="flex shrink-0 gap-2">
-            {stockListFile.data?.attachment_id ? (
-              <Button variant="outline" onClick={() => setStockListPreviewOpen(true)}>
-                <Eye className="size-4" />
-                View uploaded list
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              onClick={() => setUploadOpen(true)}
-              disabled={!supplierId}
-              data-testid="open-stock-upload"
-            >
-              <Upload className="size-4" />
-              Upload stock list
-            </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {uploadCta('open-plan-container')}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="More actions"
+                  disabled={!supplierId}
+                  data-testid="loading-plan-more"
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {stockListFile.data?.attachment_id ? (
+                  <DropdownMenuItem onSelect={() => setStockListPreviewOpen(true)}>
+                    <Eye className="size-4" />
+                    View uploaded list
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  disabled={rematch.isPending}
+                  onSelect={() => rematch.mutate({ supplier_id: supplierId })}
+                  data-testid="refresh-matching-item"
+                >
+                  <RefreshCw className="size-4" />
+                  Refresh matching
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openPlanDialog(null)}>
+                  <Container className="size-4" />
+                  Change supplier / plan until
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </Card>
@@ -129,28 +175,32 @@ export function LoadingPlanView() {
             <Container className="size-5" />
           </span>
           <p className="text-sm font-medium">Choose a supplier to plan a container.</p>
-          <p className="text-2xs text-muted-foreground">
-            The plan is built from their stock list and your open purchase orders with them.
-          </p>
+          {uploadCta('open-plan-container-empty')}
         </Card>
       ) : (
+        <>
+        {/* The queue of codes this supplier's file names and our catalogue does not - the
+            stock behind them is invisible to the plan below until somebody answers them. */}
+        <UnmatchedSupplierCodesPanel supplierId={supplierId} />
         <ContainerRequestSection
           supplierId={supplierId}
           supplierName={supplierName}
           planHorizonDate={planHorizonDate || null}
-          onUploadStockList={() => setUploadOpen(true)}
+          onUploadStockList={() => openPlanDialog('stock-list')}
+          onUploadProforma={() => openPlanDialog('proforma')}
         />
+        </>
       )}
 
-      {supplierId ? (
-        <StockListUploadDialog
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-          supplierId={supplierId}
-          supplierName={supplierName}
-          onApplied={() => invalidateSupplier(supplierId)}
-        />
-      ) : null}
+      <PlanContainerDialog
+        open={planOpen}
+        onOpenChange={setPlanOpen}
+        supplierId={supplierId}
+        supplierOption={supplierOption}
+        planHorizonDate={planHorizonDate}
+        openTo={planOpenTo}
+        onApply={applyPlanSelection}
+      />
 
       <AttachmentPreviewModal
         open={stockListPreviewOpen}

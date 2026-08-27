@@ -71,7 +71,6 @@ export default function BindingsSection({ setId }: { setId: string }) {
                         placeholder="No default"
                         emptyMessage="No options in this set yet."
                         disabled={setDefault.isPending}
-                        triggerClassName="h-9"
                       />
                     </td>
                     <td className="px-3 py-2 text-right">

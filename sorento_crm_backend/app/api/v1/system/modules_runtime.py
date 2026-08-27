@@ -21,6 +21,7 @@ from app.modules.runtime.installer import (
     list_install_events,
     uninstall_module,
 )
+from app.utils.http import content_disposition
 from app.schemas.app_modules import (
     BundleAdminResponse,
     BundleCreateRequest,
@@ -408,5 +409,5 @@ async def export_module(
     return StreamingResponse(
         iter([data]),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )

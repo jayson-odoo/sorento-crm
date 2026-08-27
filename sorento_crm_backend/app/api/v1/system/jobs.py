@@ -17,6 +17,7 @@ from app.models.job import ImportJob, ImportJobRow
 from app.schemas.job import ImportJobResponse, ImportJobRowResponse, JobStatusResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -331,7 +332,7 @@ async def export_job_rows(
         return StreamingResponse(
             rows_csv(),
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except HTTPException:
         raise
