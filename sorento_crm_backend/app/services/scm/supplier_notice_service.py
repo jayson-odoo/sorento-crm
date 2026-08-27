@@ -436,8 +436,37 @@ def _product_catalogue(db: Session, product_ids: list) -> dict[str, dict]:
     }
 
 
+def _set_catalogue(db: Session, set_ids: list) -> dict[str, dict]:
+    """`set_code` / `name` off our product sets, for a line that names a SET (F12, AC-F12.6).
+
+    Company-scoped for the same reason `_product_catalogue` is: without it a caller could
+    name a foreign company's set id and have its code copied into `supplier_notice_lines` and
+    the emailed document.
+    """
+    ids = [str(i) for i in set_ids if i]
+    if not ids:
+        return {}
+    predicate, params = company_sql_predicate(db, "company_id", param_prefix="sc")
+    rows = db.execute(
+        text(
+            "SELECT id, set_code, name FROM product_sets "
+            f"WHERE id = ANY(CAST(:ids AS uuid[])) AND {predicate or 'true'}"
+        ),
+        {"ids": ids, **params},
+    ).mappings().all()
+    return {
+        str(r["id"]): {"item_code": r["set_code"], "product_name": r["name"]}
+        for r in rows
+    }
+
+
 def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
     """The reviewed lines with the catalogue's own words on them, or a 422 naming what is not ours.
+
+    A line names a product OR one of our product SETS (R19). A set line carries NO product
+    id: the supplier sells the whole WC and our catalogue holds only its parts, so the
+    document goes out under the set code, which is the code they wrote in the first place.
+    `supplier_notice_lines.product_id` is nullable, which is what makes that recordable.
 
     B2: a line naming a malformed id ("nope") 500'd `_product_catalogue`'s
     `CAST(:ids AS uuid[])`, and a line naming a well-formed but unknown product 500'd later,
@@ -455,11 +484,29 @@ def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
             "These products do not exist: " + ", ".join(sorted(unknown)),
             detail="product_id",
         )
+
+    requested_sets = {str(ln.get("product_set_id")) for ln in lines if ln.get("product_set_id")}
+    sets = _set_catalogue(db, [sid for sid in requested_sets if is_uuid(sid)])
+    unknown_sets = requested_sets - set(sets)
+    if unknown_sets:
+        raise AppException(
+            422,
+            "These product sets do not exist: " + ", ".join(sorted(unknown_sets)),
+            detail="product_set_id",
+        )
+
+    def _named(ln: dict) -> dict:
+        if ln.get("product_set_id"):
+            return sets.get(str(ln["product_set_id"])) or {}
+        return catalogue.get(str(ln.get("product_id"))) or {}
+
     return [
         {
-            "product_id": ln.get("product_id"),
-            "item_code": (catalogue.get(str(ln.get("product_id"))) or {}).get("item_code"),
-            "product_name": (catalogue.get(str(ln.get("product_id"))) or {}).get("product_name"),
+            # None on a set line: the ask is the whole set, and naming one member on the
+            # record would make the document disagree with the row it came from.
+            "product_id": None if ln.get("product_set_id") else ln.get("product_id"),
+            "item_code": _named(ln).get("item_code"),
+            "product_name": _named(ln).get("product_name"),
             "po_number": None,
             "qty": ln.get("qty"),
             "cbm": None,

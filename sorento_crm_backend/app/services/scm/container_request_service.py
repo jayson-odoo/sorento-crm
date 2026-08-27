@@ -103,12 +103,30 @@ def _supplier(db: Session, supplier_id: str) -> dict:
     return {"supplier_code": row[0], "supplier_name": row[1]}
 
 
-def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str, dict]]:
-    """The supplier's identified products: current stock, aggregated by product id.
+#: What a SET's holdings are filed under, so one dict can carry both kinds of row without
+#: a product id and a set id ever being mistaken for one another (F12, R19).
+_SET_PREFIX = "set:"
 
-    Rows the supplier's own model number could not be matched to a product are real stock
-    but cannot be asked against a sales-order line (that is keyed on our product id), so they
-    are left out here the same way `loading_plan_service` leaves them out of a plan.
+
+def _set_key(set_id: Any) -> str:
+    return f"{_SET_PREFIX}{set_id}"
+
+
+def _set_id_of(key: str) -> Optional[str]:
+    """The set behind a holdings key, or None when the key names a product."""
+    return key[len(_SET_PREFIX):] if key.startswith(_SET_PREFIX) else None
+
+
+def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str, dict]]:
+    """The supplier's identified goods: current stock, aggregated by what each row names.
+
+    Keyed by product id, or by `set:<id>` for a row bound to one of our product SETS (R19) -
+    the supplier sells the whole WC under a code no product carries, and a dict that could
+    only be keyed on a product id had nowhere to put it.
+
+    Rows the supplier's own model number could not be matched to anything are real stock but
+    cannot be asked against a sales-order line (that is keyed on our product id), so they are
+    left out here the same way `loading_plan_service` leaves them out of a plan.
 
     `cbm_per_unit` and `as_of` live on the model per row, not per product - a product could
     in principle be behind more than one of the supplier's own item codes. Both are carried
@@ -121,7 +139,8 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
         db.query(SupplierInventory)
         .filter(
             SupplierInventory.supplier_id == supplier_id,
-            SupplierInventory.product_id.isnot(None),
+            SupplierInventory.product_id.isnot(None)
+            | SupplierInventory.product_set_id.isnot(None),
         )
         .all()
     )
@@ -130,7 +149,7 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
     as_of = max((r.as_of for r in rows if r.as_of is not None), default=None)
     stock: dict[str, dict] = {}
     for r in rows:
-        pid = str(r.product_id)
+        pid = _set_key(r.product_set_id) if r.product_set_id else str(r.product_id)
         cur = stock.setdefault(
             pid,
             {
@@ -206,13 +225,14 @@ def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
         db.query(ProformaInvoiceLine)
         .filter(
             ProformaInvoiceLine.invoice_id == head["id"],
-            ProformaInvoiceLine.product_id.isnot(None),
+            ProformaInvoiceLine.product_id.isnot(None)
+            | ProformaInvoiceLine.product_set_id.isnot(None),
         )
         .all()
     )
     holdings: dict[str, dict] = {}
     for ln in lines:
-        pid = str(ln.product_id)
+        pid = _set_key(ln.product_set_id) if ln.product_set_id else str(ln.product_id)
         cur = holdings.setdefault(pid, {"qty": 0.0, "cbm_per_unit": None})
         cur["qty"] += float(ln.qty or 0)
         if cur["cbm_per_unit"] is None and ln.cbm_per_unit is not None:
@@ -400,6 +420,81 @@ def _holdings(stock: dict[str, dict], proforma: Optional[dict]) -> dict[str, dic
             for pid, v in proforma["holdings"].items()
         }
     return {}
+
+
+def _set_rows(db: Session, holdings: dict[str, dict]) -> dict[str, dict]:
+    """Per SET named by the supplier's statement, what its row needs to say (F12, R19).
+
+    `{holdings key: {product_set_id, set_code, set_name, driver_product_id,
+    driver_quantity}}`. Every FIGURE the row shows is the driver's - the member in the fewest
+    sets - because a set is never stocked, never ordered and never costed; its members are.
+    Shared parts are ignored on purpose: `CWCY605` sits in six sets, so a minimum across
+    members would understate every one of them and a sum would count that cistern six times.
+
+    A set with no members yet is left out entirely rather than shown with nobody's numbers -
+    a row whose every column is a dash is worse than no row, because it reads as stock we
+    cannot see rather than as a set nobody has finished authoring.
+    """
+    keys = {key: _set_id_of(key) for key in holdings}
+    set_ids = [sid for sid in keys.values() if sid]
+    if not set_ids:
+        return {}
+
+    from app.models.product_set import ProductSet
+    from app.services.product_set_service import driver_members
+
+    drivers = driver_members(db, set_ids)
+    named = {
+        str(row.id): row
+        for row in db.query(ProductSet).filter(ProductSet.id.in_(set_ids)).all()
+    }
+
+    out: dict[str, dict] = {}
+    for key, set_id in keys.items():
+        driver = drivers.get(str(set_id)) if set_id else None
+        product_set = named.get(str(set_id)) if set_id else None
+        if driver is None or product_set is None:
+            continue
+        out[key] = {
+            "product_set_id": str(product_set.id),
+            "set_code": product_set.set_code,
+            "set_name": product_set.name,
+            "driver_product_id": str(driver.product_id),
+            "driver_quantity": float(driver.quantity or 1),
+        }
+    return out
+
+
+def _identity(info: dict, entry: Optional[dict]) -> dict:
+    """What the row calls itself: the product's own code, or the SET's with its driver named.
+
+    `product_id` stays the driver's on a set row, deliberately. Every figure on the row is
+    the driver's, the SO drill and the twelve-month history are keyed on it, and a second id
+    to key those off would be a second thing to keep in step. `row_key` is what makes the
+    grid's rows unique - two sets may share a driver - and `driver_item_code` is what the
+    cell prints under the set code so nobody has to guess whose numbers these are.
+    """
+    if entry is None:
+        return {
+            "row_kind": "product",
+            "product_set_id": None,
+            "set_code": None,
+            "set_name": None,
+            "driver_product_id": None,
+            "driver_item_code": None,
+            "driver_product_name": None,
+        }
+    return {
+        "row_kind": "set",
+        "item_code": entry["set_code"],
+        "product_name": entry["set_name"],
+        "product_set_id": entry["product_set_id"],
+        "set_code": entry["set_code"],
+        "set_name": entry["set_name"],
+        "driver_product_id": entry["driver_product_id"],
+        "driver_item_code": info.get("item_code"),
+        "driver_product_name": info.get("product_name"),
+    }
 
 
 def _open_need(
@@ -961,26 +1056,69 @@ def build(
     holdings = _holdings(stock, proforma)
     holding_source = "stock_list" if stock else "proforma" if proforma else "none"
 
-    universe = _linked_products(db, supplier_id) | set(holdings)
+    # A statement naming one of our SETS (R19) becomes ONE row, and every figure on it is
+    # read off the set's DRIVER member. `sets` maps a holdings key to what the row needs to
+    # say: whose numbers these are, and what to call them.
+    sets = _set_rows(db, holdings)
+    #: The driver of every set on this statement. Its own row is suppressed (AC-F12.4): when
+    #: the supplier's statement names the set, the set row IS the ask, and a second row for
+    #: the pedestal would have somebody ordering the same demand twice.
+    driver_ids = {entry["driver_product_id"] for entry in sets.values()}
+
+    product_holdings = {k: v for k, v in holdings.items() if _set_id_of(k) is None}
+    universe = (
+        _linked_products(db, supplier_id) | set(product_holdings) | driver_ids
+    ) - {None}
     need = _open_need(db, universe, horizon=plan_horizon_date)
     project = _project_open_need(db, universe, horizon=plan_horizon_date)
 
-    demand_ids = sorted(pid for pid in universe if pid in need or pid in project)
+    def _owed(pid: Optional[str]) -> bool:
+        return bool(pid) and (pid in need or pid in project)
+
+    demand_ids = sorted(
+        pid for pid in universe if _owed(pid) and pid not in driver_ids
+    )
     # Held but not owed: named by their own statement, carrying real quantity, no open need.
     # A zero-quantity, zero-need row names nothing worth asking about or holding, so it is
     # left out exactly as it always was.
     no_demand_ids = sorted(
         pid
-        for pid in holdings
-        if pid not in need and pid not in project and _is_held(holdings[pid])
+        for pid in product_holdings
+        if not _owed(pid) and pid not in driver_ids and _is_held(product_holdings[pid])
     )
-    catalogue = _product_catalogue(db, demand_ids + no_demand_ids)
-    stock_context = _stock_context(db, demand_ids + no_demand_ids)
+    set_demand_keys = sorted(
+        (key for key, entry in sets.items() if _owed(entry["driver_product_id"])),
+        key=lambda key: sets[key]["set_code"] or "",
+    )
+    set_no_demand_keys = sorted(
+        (
+            key
+            for key, entry in sets.items()
+            if not _owed(entry["driver_product_id"]) and _is_held(holdings[key])
+        ),
+        key=lambda key: sets[key]["set_code"] or "",
+    )
+    # The DRIVERS are catalogued and stock-contexted too, even though they get no row of
+    # their own: every figure a set row shows is theirs, and the SO drill is keyed on the
+    # driver's product id.
+    figure_ids = demand_ids + no_demand_ids + sorted(driver_ids)
+    catalogue = _product_catalogue(db, figure_ids)
+    stock_context = _stock_context(db, figure_ids)
+
+    #: Every row this build will emit, as `(row key, whose figures, the set it names)`. A
+    #: set row's key is its own, never the driver's: two sets are allowed to share a driver,
+    #: and a key collision would silently drop one of them off the grid.
+    demand_entries = [(pid, pid, None) for pid in demand_ids] + [
+        (key, sets[key]["driver_product_id"], sets[key]) for key in set_demand_keys
+    ]
+    no_demand_entries = [(pid, pid, None) for pid in no_demand_ids] + [
+        (key, sets[key]["driver_product_id"], sets[key]) for key in set_no_demand_keys
+    ]
 
     prepared: list[dict] = []
-    if demand_ids:
+    if demand_entries:
         demand_rows = []
-        for pid in demand_ids:
+        for row_key, pid, _entry in demand_entries:
             n = need.get(pid)
             p = project.get(pid)
             project_qty = p["qty"] if p else 0.0
@@ -988,7 +1126,7 @@ def build(
             klass = "project" if project_qty > 0 else "retail" if retail_qty > 0 else "unclassified"
             demand_rows.append(
                 {
-                    "row_key": pid,
+                    "row_key": row_key,
                     "required_date": _earliest_need_by(n, p["needed"] if p else None),
                     "order_date": getattr(n, "oldest_order_date", None) if n else None,
                     # Absent, per the module's own rule: a product row spans every customer
@@ -1002,10 +1140,10 @@ def build(
         factors_by_row = priority.factors_for_demand_rows(db, demand_rows)
         scores = priority.scores_for(factors_by_row)
 
-        for pid in demand_ids:
+        for row_key, pid, entry in demand_entries:
             n = need.get(pid)
             info = catalogue.get(pid, {})
-            held = holdings.get(pid) or _empty_holding()
+            held = holdings.get(row_key) or _empty_holding()
             ctx = stock_context.get(pid) or _empty_context()
             # The two channels, both off the sales-order book since R15, told apart by
             # `demand_class` - the project half net of what CS already placed.
@@ -1021,6 +1159,10 @@ def build(
             prepared.append(
                 {
                     "product_id": pid,
+                    # What the grid keys its rows on. The product id for a product row, the
+                    # set's own key for a set row: two sets are allowed to share a driver,
+                    # and a key collision would silently drop one of them off the grid.
+                    "row_key": row_key,
                     "item_code": info.get("item_code"),
                     "product_name": info.get("product_name"),
                     "open_so_need": open_so_need,
@@ -1040,25 +1182,27 @@ def build(
                     "so_count": (int(getattr(n, "so_count", 0) or 0) if n else 0)
                     + (p["so_count"] if p else 0),
                     **held,
-                    "rank_score": scores[pid],
-                    "rank_factors": [f.as_dict() for f in factors_by_row[pid]],
+                    "rank_score": scores[row_key],
+                    "rank_factors": [f.as_dict() for f in factors_by_row[row_key]],
                     "has_demand": True,
+                    **_identity(info, entry),
                 }
             )
 
-        # Highest score first, ties broken on item code then product id so the order is TOTAL -
+        # Highest score first, ties broken on item code then row key so the order is TOTAL -
         # a non-total rule gives a different order on every refresh.
-        prepared.sort(key=lambda p: (-p["rank_score"], str(p["item_code"] or ""), p["product_id"]))
+        prepared.sort(key=lambda p: (-p["rank_score"], str(p["item_code"] or ""), p["row_key"]))
         for i, p in enumerate(prepared, start=1):
             p["rank"] = i
 
     no_demand_rows = []
-    for pid in no_demand_ids:
+    for row_key, pid, entry in no_demand_entries:
         info = catalogue.get(pid, {})
         ctx = stock_context.get(pid) or _empty_context()
         no_demand_rows.append(
             {
                 "product_id": pid,
+                "row_key": row_key,
                 "item_code": info.get("item_code"),
                 "product_name": info.get("product_name"),
                 "open_so_need": 0.0,
@@ -1069,16 +1213,17 @@ def build(
                 "unclassified_qty": 0.0,
                 "earliest_required_date": None,
                 "so_count": 0,
-                **(holdings.get(pid) or _empty_holding()),
+                **(holdings.get(row_key) or _empty_holding()),
                 "rank": None,
                 "rank_score": None,
                 "rank_factors": [],
                 "has_demand": False,
+                **_identity(info, entry),
             }
         )
     # Ranked rows already carry a total order (see above); rows with nothing to rank sort
     # after them, by item code - the only stable key they have.
-    no_demand_rows.sort(key=lambda p: (str(p["item_code"] or ""), p["product_id"]))
+    no_demand_rows.sort(key=lambda p: (str(p["item_code"] or ""), p["row_key"]))
 
     result = {
         "supplier_id": str(supplier_id),
@@ -1088,7 +1233,15 @@ def build(
         "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
     }
     if include_lines:
-        result["lines"] = _open_lines(db, demand_ids, catalogue, horizon=plan_horizon_date)
+        # The drivers too: the "Open SOs" cell on a set row drills into this list keyed on
+        # the row's `product_id`, which IS the driver's, so leaving them out would open an
+        # empty drawer under a row showing a count.
+        result["lines"] = _open_lines(
+            db,
+            sorted(set(demand_ids) | {sets[key]["driver_product_id"] for key in set_demand_keys}),
+            catalogue,
+            horizon=plan_horizon_date,
+        )
     return result
 
 

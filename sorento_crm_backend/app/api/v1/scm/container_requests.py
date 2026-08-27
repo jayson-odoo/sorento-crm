@@ -13,7 +13,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -52,8 +52,22 @@ class ContainerRequestBuildBody(BaseModel):
 
 
 class ContainerRequestLine(BaseModel):
-    product_id: str
+    """One reviewed line. It names a product OR one of our product sets, never both.
+
+    A set line carries no product id at all (R19): the supplier sells the whole WC under a
+    code our catalogue does not hold, so the ask goes out under the set code and naming one
+    member here would make the document disagree with the row it came from.
+    """
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
     qty: float = Field(..., gt=0)
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "ContainerRequestLine":
+        if bool(self.product_id) == bool(self.product_set_id):
+            raise ValueError("name either a product or a product set on each line")
+        return self
 
 
 class ContainerRequestBody(BaseModel):
