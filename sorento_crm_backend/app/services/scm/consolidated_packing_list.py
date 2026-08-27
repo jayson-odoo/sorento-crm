@@ -7,22 +7,27 @@ that sheet, derived.
 
 Nothing here is typed in. The factory is the supplier the line was uploaded as, the company is
 the product's brand, the volume is what the supplier stated or what our own catalogue measures,
-and the remarks are the difference between what the supplier was asked for and what arrived.
+and the remarks are the supplier's own.
+
+It prints the SHIPMENT and nothing else (R20). It used to compare the container against the
+loading plan each factory was sent and add its own remarks ("Loading plan asked 500, packed
+490") plus a row per model the plan asked for and nobody loaded. Both are gone: this is the
+document the forwarder, the factories and the clearance agent read, and a line on it for goods
+that never went into the container is read as goods that shipped.
+
 Reads only: `build` never writes, and `to_xlsx` is a pure function of what `build` returned.
 """
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from io import BytesIO
-from typing import Any, Optional
+from typing import Optional
 
-from sqlalchemy import Date, cast
 from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Brand, Product
-from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.services.error_handler import AppException
 from app.services.scm.supplier_scope import is_uuid
 
@@ -37,8 +42,6 @@ UNASSIGNED = "Unassigned"
 
 #: Catalogue dimensions are millimetres; volume is cubic metres.
 _MM3_PER_M3 = 1_000_000_000.0
-
-NOT_ON_PLAN = "Not on the loading plan"
 
 
 def _f(v) -> Optional[float]:
@@ -94,51 +97,6 @@ def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
     return row
 
 
-def _latest_notices(
-    db: Session, supplier_ids: set[str], shipment_date: Optional[date] = None
-) -> dict[str, SupplierNotice]:
-    """The notice per supplier this container is most likely to have been packed against.
-
-    A notice is sent to a SUPPLIER, not to a container: nothing on it names the container it
-    will end up in, so which notice a shipment answers can only be inferred. The inference is
-    the date - the latest notice sent on or before the day after this container sailed, which
-    is the last thing the factory could have been working from. Only when there is no such
-    notice (the container predates every notice we hold) does the latest overall stand in,
-    because comparing against a plan sent afterwards is still better than comparing against
-    nothing and saying so.
-
-    One notice row exists PER CHANNEL, so "the latest" is by `created_at` across all of them:
-    an email and a chat sent from the same approval say the same thing, and either is the
-    document the factory was working from.
-    """
-    if not supplier_ids:
-        return {}
-
-    def newest_per_supplier(*extra_filters) -> dict[str, SupplierNotice]:
-        rows = (
-            db.query(SupplierNotice)
-            .filter(SupplierNotice.supplier_id.in_(supplier_ids), *extra_filters)
-            .distinct(SupplierNotice.supplier_id)
-            .order_by(
-                SupplierNotice.supplier_id,
-                SupplierNotice.created_at.desc(),
-                SupplierNotice.id.desc(),
-            )
-            .all()
-        )
-        return {str(row.supplier_id): row for row in rows}
-
-    latest = newest_per_supplier()
-    # A day's grace: a plan approved the morning a container was booked was still the plan
-    # that container was packed to.
-    if shipment_date:
-        cutoff = shipment_date + timedelta(days=1)
-        in_time = newest_per_supplier(cast(SupplierNotice.created_at, Date) <= cutoff)
-    else:
-        in_time = {}
-    return {sid: in_time.get(sid, row) for sid, row in latest.items()}
-
-
 def _as_date(value) -> Optional[date]:
     if isinstance(value, datetime):
         return value.date()
@@ -147,63 +105,6 @@ def _as_date(value) -> Optional[date]:
 
 def _iso(value) -> Optional[str]:
     return value.isoformat() if value is not None else None
-
-
-def _planned(db: Session, notice_ids: set[str]) -> dict[str, dict[str, dict[str, Any]]]:
-    """What each notice asked to be PACKED, per notice, summed by product.
-
-    `produce` lines are excluded: they are stock the factory still has to make, so their
-    absence from a container is the plan working rather than a discrepancy. Item code and
-    name come off the notice line, which copied them on the day it was sent - a product
-    renamed since must not rewrite a document the supplier already holds.
-    """
-    if not notice_ids:
-        return {}
-    rows = (
-        db.query(SupplierNoticeLine)
-        .filter(
-            SupplierNoticeLine.notice_id.in_(notice_ids),
-            SupplierNoticeLine.kind == "pack",
-            SupplierNoticeLine.product_id.isnot(None),
-        )
-        .order_by(SupplierNoticeLine.sort_order)
-        .all()
-    )
-    planned: dict[str, dict[str, dict[str, Any]]] = {}
-    for row in rows:
-        by_product = planned.setdefault(str(row.notice_id), {})
-        entry = by_product.get(str(row.product_id))
-        if entry is None:
-            by_product[str(row.product_id)] = {
-                "product_id": str(row.product_id),
-                "product_code": row.item_code,
-                "product_name": row.product_name,
-                "qty": float(row.qty or 0),
-            }
-        else:
-            entry["qty"] += float(row.qty or 0)
-    return planned
-
-
-def _discrepancies(planned_qty: Optional[float], qty: float, has_plan: bool) -> list[str]:
-    """Where this line differs from what the factory was asked for, in words.
-
-    A factory that was never sent a plan - or was sent one that asked for nothing to be
-    packed - is compared against nothing: marking every one of its lines "Not on the loading
-    plan" would read as a container full of mistakes.
-    """
-    if not has_plan:
-        return []
-    if planned_qty is None:
-        return [NOT_ON_PLAN]
-    if planned_qty == qty:
-        return []
-    diff = abs(planned_qty - qty)
-    direction = "short" if planned_qty > qty else "over"
-    return [
-        f"Loading plan asked {_num(planned_qty)}, packed {_num(qty)} "
-        f"({direction} {_num(diff)})"
-    ]
 
 
 def build(db: Session, shipment_id: str) -> dict:
@@ -233,9 +134,6 @@ def build(db: Session, shipment_id: str) -> dict:
         if supplier_ids
         else {}
     )
-    notices = _latest_notices(db, supplier_ids, _as_date(shipment.shipment_date))
-    planned = _planned(db, {str(n.id) for n in notices.values()})
-
     grouped: dict[Optional[str], list[dict]] = {}
     for line, product, brand in rows:
         brand_code = (brand.brand_code or "").strip() if brand else None
@@ -274,63 +172,19 @@ def build(db: Session, shipment_id: str) -> dict:
                 ),
                 "unit_cost": _f(line.unit_cost),
                 "currency": line.currency,
-                "discrepancies": [],
             }
         )
 
     factories: list[dict] = []
     for supplier_id, lines in grouped.items():
         supplier = suppliers.get(supplier_id) if supplier_id else None
-        notice = notices.get(supplier_id) if supplier_id else None
-        plan_lines = planned.get(str(notice.id), {}) if notice else {}
         lines.sort(key=lambda l: (l["product_code"] or "", l["line_id"]))
-
-        # A notice that asked for nothing to be PACKED (all of its lines are `produce`,
-        # i.e. stock the factory still has to make) is not a pack plan, and comparing a
-        # container against it would mark every line "Not on the loading plan". The notice
-        # is still reported, so the screen can say which document was looked at.
-        has_plan = bool(plan_lines)
-
-        shipped_ids = set()
-        for line in lines:
-            shipped_ids.add(line["product_id"])
-            entry = plan_lines.get(line["product_id"])
-            line["discrepancies"] = _discrepancies(
-                entry["qty"] if entry else None, float(line["qty"]), has_plan
-            )
-
-        not_packed = [
-            {
-                "product_id": entry["product_id"],
-                "product_code": entry["product_code"],
-                "product_name": entry["product_name"],
-                "planned_qty": _qty(entry["qty"]),
-            }
-            for entry in plan_lines.values()
-            if entry["product_id"] not in shipped_ids
-        ]
-
         factories.append(
             {
                 "supplier_id": supplier_id,
                 "supplier_code": supplier.supplier_code if supplier else None,
                 "supplier_name": supplier.supplier_name if supplier else UNASSIGNED,
-                "loading_plan_id": str(notice.loading_plan_id)
-                if notice and notice.loading_plan_id
-                else None,
-                "notice_id": str(notice.id) if notice else None,
-                # Whether that notice actually asked for anything to be PACKED. A
-                # produce-only notice is named but compared against nothing, and without
-                # this flag an empty `discrepancies` on every line is indistinguishable
-                # from a container that matched its plan exactly.
-                "has_pack_plan": has_plan,
-                # When the document this container was compared against was written and
-                # when it left, so a comparison that looks wrong can be traced to the
-                # notice it was made against without opening the database.
-                "notice_created_at": _iso(notice.created_at) if notice else None,
-                "notice_sent_at": _iso(notice.sent_at) if notice else None,
                 "lines": lines,
-                "not_packed": not_packed,
                 "subtotal": _totals(lines),
             }
         )
@@ -428,16 +282,78 @@ _COLUMNS_SPEC = [
     ("R", "LOGO", None),
     ("S", "REMARKS", None),
     ("T", "RMB", None),
-    ("U", "TOTAL RMB", None),
+    # Their spelling, not a typo of ours: the reference workbook heads the column `TOTAL RM`,
+    # and a heading that differs from the file everybody already has is the one thing a
+    # fidelity copy must not do.
+    ("U", "TOTAL RM", None),
     ("V", None, None),
 ]
 
 #: As measured off the source file, so a printed sheet lines up with the ones already filed.
+#: `K` is absent on purpose - the reference sizes every column but that one, and giving it a
+#: width here makes the three SIZE (CM) cells print unevenly.
 _WIDTHS = {
     "A": 18.86, "B": 7.29, "C": 27.86, "D": 45.86, "E": 10.71, "F": 9.0, "G": 8.0,
-    "H": 7.71, "I": 8.57, "J": 7.71, "K": 7.71, "L": 9.57, "M": 10.14, "N": 9.14,
+    "H": 7.71, "I": 8.57, "J": 7.71, "L": 9.57, "M": 10.14, "N": 9.14,
     "O": 8.29, "P": 11.57, "Q": 11.43, "R": 15.14, "S": 29.29, "T": 15.57, "V": 15.57,
 }
+
+#: Type, off the same file. Everything on the sheet is Calibri 12; the subtotals are bold red
+#: and the grand total bold black, which is how a reader tells a block's figures from the
+#: container's at a glance.
+_FONT_NAME = "Calibri"
+_FONT_SIZE = 12
+_RED = "FFFF0000"
+
+#: Row heights, off the same file: a line wraps its description over two or three lines, and a
+#: subtotal is a thin rule between blocks. Row 12 (the delivery warehouse) wraps too.
+_LINE_HEIGHT = 35.1
+_SUBTOTAL_HEIGHT = 15.95
+_HEADER_BLOCK_ROW_HEIGHT = {12: 31.5}
+
+#: Number formats, off the same file. The `[Red]` sections are the reference's own: a negative
+#: volume or weight is a data fault, and it is meant to be visible as one.
+_FMT_2DP = "0.00"
+_FMT_2DP_RED = "0.00;[Red]0.00"
+_FMT_MONEY = "#,##0.00"
+_FMT_MONEY_RED = "#,##0.00;[Red]#,##0.00"
+_FMT_SUBTOTAL_INT = "0_);[Red]\\(0\\)"
+_FMT_SUBTOTAL_2DP = "0.00_);[Red]\\(0.00\\)"
+_FMT_DATE = "[$-14409]dd/mm/yyyy;@"
+
+#: The format each line column prints in. Anything not named here stays General, which is what
+#: the reference does for the text columns.
+_LINE_FORMATS = {
+    "I": _FMT_2DP, "J": _FMT_2DP, "K": _FMT_2DP,
+    "L": _FMT_2DP_RED, "M": _FMT_2DP_RED, "N": _FMT_2DP_RED,
+    "O": _FMT_2DP_RED, "P": _FMT_2DP_RED, "Q": _FMT_2DP_RED,
+    "T": _FMT_2DP, "U": _FMT_MONEY, "V": _FMT_MONEY,
+}
+
+#: What the CONTAINER's own total prints in. The money column differs from a block subtotal's
+#: on purpose - that is what the reference does, and the two totals are meant to look
+#: different from each other.
+_GRAND_TOTAL_FORMATS = {
+    "F": _FMT_SUBTOTAL_INT, "G": _FMT_SUBTOTAL_INT, "H": _FMT_SUBTOTAL_INT,
+    "M": _FMT_SUBTOTAL_2DP, "P": _FMT_SUBTOTAL_2DP, "Q": _FMT_SUBTOTAL_2DP,
+    "U": _FMT_SUBTOTAL_2DP,
+}
+
+#: What a subtotal prints in: whole pieces and cartons, two decimals for volume and weight,
+#: money with its thousands separator.
+_SUBTOTAL_FORMATS = {
+    "F": _FMT_SUBTOTAL_INT, "G": _FMT_SUBTOTAL_INT, "H": _FMT_SUBTOTAL_INT,
+    "M": _FMT_SUBTOTAL_2DP, "P": _FMT_SUBTOTAL_2DP, "Q": _FMT_SUBTOTAL_2DP,
+    "U": _FMT_MONEY, "V": _FMT_MONEY,
+}
+
+#: The sheet's columns, A to V, in order - so a column letter and its 1-based index are one
+#: lookup rather than two spellings that drift.
+_LETTERS = [spec[0] for spec in _COLUMNS_SPEC]
+
+#: The header-block keys that carry a DATE. Written as dates, not as the ISO strings the
+#: payload holds, or Excel treats them as text.
+_HEADER_DATE_KEYS = {"loading_date", "etd", "eta"}
 
 #: The header block above the lines: (row, label, payload key on `header`).
 _HEADER_BLOCK = [
@@ -460,14 +376,13 @@ def _container_label(payload: dict) -> str:
     return payload.get("container_no") or payload.get("shipment_number") or ""
 
 
-def _remarks(line: dict) -> str:
-    """The supplier's own note and the derived difference, in that order.
+def _remarks(line: dict) -> Optional[str]:
+    """The supplier's own note on the line, and only that (R20).
 
-    Kept in one cell because the sheet Ms Tee built by hand had one remarks column, and a
-    second column would be empty on most rows.
+    Our own comparison against the loading plan used to be appended here in the same cell.
+    On the document the factory reads back, that is us writing in their column.
     """
-    parts = [p for p in [line.get("remarks")] + list(line.get("discrepancies") or []) if p]
-    return "; ".join(parts)
+    return line.get("remarks") or None
 
 
 def _blocks(payload: dict) -> list[dict]:
@@ -484,10 +399,6 @@ def _blocks(payload: dict) -> list[dict]:
     out: list[dict] = []
     for factory in payload.get("factories") or []:
         name = factory.get("supplier_name") or UNASSIGNED
-        # What the factory was asked for and never sent goes under its FIRST block,
-        # whichever company that is: a factory that loaded MOCHA goods only still owes what
-        # it did not load, and hanging the list off the SORENTO block would drop it.
-        owed = list(factory.get("not_packed") or [])
         for company in COMPANIES:
             lines = [ln for ln in factory["lines"] if ln.get("company") == company]
             if not lines:
@@ -497,10 +408,8 @@ def _blocks(payload: dict) -> list[dict]:
                     "name": name if company == SORENTO else f"{name} ({company})",
                     "company": company,
                     "lines": lines,
-                    "not_packed": owed,
                 }
             )
-            owed = []
     return out
 
 
@@ -521,40 +430,64 @@ def to_xlsx(payload: dict) -> bytes:
     written as formulas rather than as computed numbers on purpose. The recipient corrects a
     quantity or a carton size in Excel - that is what the sheet is for - and a workbook of
     frozen numbers would keep printing the old totals underneath the corrected line.
+
+    The type, the row heights and the number formats are the reference file's, asserted cell
+    by cell in `tests/test_consolidated_packing_list_fidelity.py`. Where the reference
+    disagrees with itself (`/10^6` against `/1000000`, `=PRODUCT(T,F)` against `=T*F`) one
+    form is used throughout and the choice is recorded in that test.
     """
     import openpyxl
     from openpyxl.styles import Alignment, Font
-    from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
     ws = wb.active or wb.create_sheet()
     ws.title = _SHEET_TITLE
-    bold = Font(bold=True)
     centred = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    def style(row: int, column: int, *, bold: bool = False, red: bool = False, fmt=None):
+        """Every cell the sheet writes goes through here, so nothing is left at Excel's
+        default 11pt in the middle of a 12pt document."""
+        cell = ws.cell(row=row, column=column)
+        cell.font = Font(
+            name=_FONT_NAME, size=_FONT_SIZE, bold=bold, color=_RED if red else None
+        )
+        cell.alignment = centred
+        if fmt:
+            cell.number_format = fmt
+        return cell
+
+    def style_row(row: int, *, bold: bool = False, red: bool = False, formats=None):
+        for index, letter in enumerate(_LETTERS, start=1):
+            style(row, index, bold=bold, red=red, fmt=(formats or {}).get(letter))
 
     header = payload.get("header") or {}
     costs = payload.get("costs") or {}
 
     # ---- the header block ------------------------------------------------- #
     for row, label, key in _HEADER_BLOCK:
-        ws.cell(row=row, column=1, value=label).font = bold
+        style(row, 1).value = label
         value = header.get(key)
         if key == "free_days" and value is not None:
             value = f"{_qty(value)} FREEDAYS"
-        ws.cell(row=row, column=2, value=value)
+        cell = style(row, 2)
+        # A date is written AS a date, in the reference's own format. Written as the ISO
+        # string it arrives as, Excel left-aligns it as text: it cannot be sorted, cannot be
+        # added to, and prints 2026-07-17 on a document everybody else reads dd/mm/yyyy.
+        if key in _HEADER_DATE_KEYS and value:
+            cell.value = _as_date(datetime.fromisoformat(str(value)))
+            cell.number_format = _FMT_DATE
+        else:
+            cell.value = value
+    for row, height in _HEADER_BLOCK_ROW_HEIGHT.items():
+        ws.row_dimensions[row].height = height
 
     # ---- the two-row column header ---------------------------------------- #
     for letter, top, sub in _COLUMNS_SPEC:
+        column = _LETTERS.index(letter) + 1
         if top is not None:
-            cell = ws[f"{letter}{_HEADER_ROW}"]
-            cell.value = top
-            cell.font = bold
-            cell.alignment = centred
+            style(_HEADER_ROW, column, bold=True).value = top
         if sub is not None:
-            cell = ws[f"{letter}{_SUBHEADER_ROW}"]
-            cell.value = sub
-            cell.font = bold
-            cell.alignment = centred
+            style(_SUBHEADER_ROW, column, bold=True).value = sub
         # A column with a row-16 label of its own keeps two cells; everything else is one
         # header merged down over both rows.
         if sub is None and top is not None:
@@ -566,7 +499,6 @@ def to_xlsx(payload: dict) -> bytes:
     row = _FIRST_LINE_ROW
     number = 1
     subtotal_rows: list[tuple[str, int]] = []  # (company, subtotal row)
-    line_rows: list[int] = []
 
     for block in _blocks(payload):
         first_row = row
@@ -580,6 +512,9 @@ def to_xlsx(payload: dict) -> bytes:
             gross = _f_or_none(line.get("gross_weight"))
             price = _f_or_none(line.get("unit_cost"))
             cartons = line.get("cartons")
+
+            style_row(row, formats=_LINE_FORMATS)
+            ws.row_dimensions[row].height = _LINE_HEIGHT
 
             ws.cell(row=row, column=1, value=block["name"])
             ws.cell(row=row, column=2, value=number)
@@ -620,51 +555,41 @@ def to_xlsx(payload: dict) -> bytes:
             if price is not None:
                 ws.cell(row=row, column=21, value=f"=T{row}*F{row}")
 
-            line_rows.append(row)
             number += 1
             row += 1
 
         last_row = row - 1
         # The block's own amount, merged down its rows: it is the figure the factory is paid,
-        # and it sits beside its lines rather than under them.
-        ws.cell(row=first_row, column=22, value=f"=SUM(U{first_row}:U{last_row})").font = bold
+        # and it sits beside its lines rather than under them. Red, like the reference, so it
+        # reads as a total rather than as one more line figure.
+        style(first_row, 22, red=True, fmt=_FMT_MONEY).value = (
+            f"=SUM(U{first_row}:U{last_row})"
+        )
         if last_row > first_row:
             ws.merge_cells(f"V{first_row}:V{last_row}")
 
+        style_row(row, bold=True, red=True, formats=_SUBTOTAL_FORMATS)
+        ws.row_dimensions[row].height = _SUBTOTAL_HEIGHT
         for column in ("F", "G", "H", "M", "P", "Q", "U"):
-            cell = ws[f"{column}{row}"]
-            cell.value = f"=SUM({column}{first_row}:{column}{last_row})"
-            cell.font = bold
-        ws[f"V{row}"].value = f"=V{first_row}"
-        ws[f"V{row}"].font = bold
+            ws[f"{column}{row}"].value = f"=SUM({column}{first_row}:{column}{last_row})"
+        ws[f"V{row}"].value = f"=SUM(V{first_row})"
         subtotal_rows.append((block["company"], row))
         row += 1
 
-        # What the factory was asked for and never sent. Quantities left empty on purpose:
-        # a zero here would be summed above as goods that shipped.
-        for missing in block["not_packed"]:
-            ws.cell(row=row, column=3, value=missing["product_code"])
-            ws.cell(row=row, column=4, value=missing["product_name"])
-            ws.cell(
-                row=row,
-                column=19,
-                value=f"Not packed - loading plan asked {_num(missing['planned_qty'])}",
-            )
-            row += 1
-
     # ---- the rule, then the container's own totals ------------------------- #
-    for column in range(1, 23):
+    style_row(row)
+    for column in range(1, len(_LETTERS) + 1):
         ws.cell(row=row, column=column, value="-")
     row += 1
 
     total_row = row
+    style_row(total_row, bold=True, formats=_GRAND_TOTAL_FORMATS)
     for column in ("F", "G", "H", "M", "P", "Q", "U"):
         cell = ws[f"{column}{total_row}"]
         # Summed off the SUBTOTALS, not off the line range: a plain range would swallow the
         # subtotal rows sitting inside it and count every quantity twice.
         refs = ",".join(f"{column}{r}" for _company, r in subtotal_rows)
         cell.value = f"=SUM({refs})" if refs else 0
-        cell.font = bold
     row += 2
 
     # ---- the split, and what each company owes on it ----------------------- #
@@ -679,16 +604,27 @@ def to_xlsx(payload: dict) -> bytes:
         rows_for = [r for c, r in subtotal_rows if c == company]
         cbm_ref = ",".join(f"M{r}" for r in rows_for)
         amount_ref = ",".join(f"U{r}" for r in rows_for)
-        ws.cell(row=row, column=12, value=company).font = bold
-        ws.cell(row=row, column=13, value=f"=SUM({cbm_ref})" if cbm_ref else 0)
+        style_row(row)
+        style(row, 12).value = company
+        style(row, 13, bold=True, fmt=_FMT_MONEY_RED).value = (
+            f"=SUM({cbm_ref})" if cbm_ref else 0
+        )
         if clearance is not None:
-            ws.cell(row=row, column=14, value=f"=M{row}/M{total_row}*{clearance}")
+            style(row, 14, bold=True, fmt=_FMT_MONEY_RED).value = (
+                f"=M{row}/M{total_row}*{clearance}"
+            )
         if insurance_rate is not None:
-            ws.cell(row=row, column=15, value=f"=U{row}/U{total_row}*{insurance_rate}")
+            style(row, 15, bold=True, fmt=_FMT_MONEY_RED).value = (
+                f"=U{row}/U{total_row}*{insurance_rate}"
+            )
         if freight is not None:
-            ws.cell(row=row, column=16, value=f"=M{row}/M{total_row}*{freight}")
-        ws.cell(row=row, column=20, value=company).font = bold
-        ws.cell(row=row, column=21, value=f"=SUM({amount_ref})" if amount_ref else 0)
+            style(row, 16, bold=True, fmt=_FMT_MONEY_RED).value = (
+                f"=M{row}/M{total_row}*{freight}"
+            )
+        style(row, 20).value = company
+        style(row, 21, bold=True, fmt=_FMT_MONEY_RED).value = (
+            f"=SUM({amount_ref})" if amount_ref else 0
+        )
         company_rows[company] = row
         row += 1
 
@@ -703,12 +639,13 @@ def to_xlsx(payload: dict) -> bytes:
         totalled.append("O")
     if freight is not None:
         totalled.append("P")
+    style_row(row)
     for column in totalled:
-        cell = ws[f"{column}{row}"]
+        cell = style(row, _LETTERS.index(column) + 1, bold=True, fmt=_FMT_MONEY_RED)
         cell.value = "=" + "+".join(f"{column}{r}" for r in split_rows)
-        cell.font = bold
     row += 1
 
+    style_row(row, bold=True)
     for column, label in (
         (13, "CBM"),
         (14, "CLEARANCE"),
@@ -716,7 +653,7 @@ def to_xlsx(payload: dict) -> bytes:
         (16, "CHINA FREIGHT"),
         (21, "TOTAL AMOUNT"),
     ):
-        ws.cell(row=row, column=column, value=label).font = bold
+        ws.cell(row=row, column=column, value=label)
     # The three identifiers a forwarder quotes back at us, in the wording their own
     # paperwork uses.
     ws.cell(row=row, column=3, value=f"订单号:{header.get('forwarder_order_ref') or ''}")
@@ -726,7 +663,8 @@ def to_xlsx(payload: dict) -> bytes:
     for letter, width in _WIDTHS.items():
         ws.column_dimensions[letter].width = width
     # The header block and the column headers stay put while the lines scroll: a container
-    # runs to sixty rows and a factory column nobody can see is a column nobody reads.
+    # runs to sixty rows and a factory column nobody can see is a column nobody reads. The
+    # reference freezes nothing, which is the one place this sheet is deliberately better.
     ws.freeze_panes = f"A{_SUBHEADER_ROW + 1}"
 
     buf = BytesIO()
