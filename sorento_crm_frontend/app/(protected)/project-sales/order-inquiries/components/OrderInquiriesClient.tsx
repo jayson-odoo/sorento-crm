@@ -46,7 +46,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTable,
+} from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -139,7 +145,12 @@ const MATRIX_AXIS_OPTIONS = [
   { value: 'agent', label: 'Agent' },
 ];
 
-const MATRIX_AXES: OrderInquiryMatrixAxis[] = ['product', 'sales_order', 'customer', 'agent'];
+const MATRIX_AXES: OrderInquiryMatrixAxis[] = [
+  'product',
+  'sales_order',
+  'customer',
+  'agent',
+];
 
 function matrixAxisFrom(value: string | null): OrderInquiryMatrixAxis {
   return MATRIX_AXES.includes(value as OrderInquiryMatrixAxis)
@@ -154,9 +165,16 @@ const MATRIX_GRANULARITY_OPTIONS = [
   { value: 'year', label: 'By year' },
 ];
 
-const MATRIX_GRANULARITIES: OrderInquiryMatrixGranularity[] = ['day', 'week', 'month', 'year'];
+const MATRIX_GRANULARITIES: OrderInquiryMatrixGranularity[] = [
+  'day',
+  'week',
+  'month',
+  'year',
+];
 
-function matrixGranularityFrom(value: string | null): OrderInquiryMatrixGranularity {
+function matrixGranularityFrom(
+  value: string | null,
+): OrderInquiryMatrixGranularity {
   return MATRIX_GRANULARITIES.includes(value as OrderInquiryMatrixGranularity)
     ? (value as OrderInquiryMatrixGranularity)
     : 'week';
@@ -178,7 +196,8 @@ const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
  * and the book uploads. CS holds the read and sees the column and the filter; taking an
  * instruction on is purchasing's, and they may not do it for themselves.
  */
-const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
+const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION =
+  'projects.order_inquiries.acknowledge';
 
 /**
  * What the page opens on (R3/AC-D12): the rows nobody has said yes to yet. Purchasing
@@ -223,7 +242,9 @@ export function OrderInquiriesClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const canActOnOrderInquiry = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
+  const canActOnOrderInquiry = useHasPermission(
+    ORDER_INQUIRY_ACTION_PERMISSION,
+  );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const { acknowledge, linkNow } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
@@ -236,8 +257,12 @@ export function OrderInquiriesClient() {
   // kept URL-synced the same way as `view`/`rows`/`granularity` below, so a link to a
   // filtered worklist is shareable. `debounced` starts at the same value as `search` so
   // the deep link filters on first render rather than after a 300ms flash of "every row".
-  const [search, setSearch] = React.useState(() => searchParams.get('query') ?? '');
-  const [debounced, setDebounced] = React.useState(() => searchParams.get('query') ?? '');
+  const [search, setSearch] = React.useState(
+    () => searchParams.get('query') ?? '',
+  );
+  const [debounced, setDebounced] = React.useState(
+    () => searchParams.get('query') ?? '',
+  );
   const [month, setMonth] = React.useState('');
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
@@ -280,7 +305,9 @@ export function OrderInquiriesClient() {
   // Which rows are ticked for the bulk Acknowledge (AC-H2). react-table's own selection
   // state through `buildSelectColumn`, never a hand-rolled Set: the canonical toolbar
   // reads exactly this for its bulk strip.
-  const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  const [rowSelection, setRowSelection] = React.useState<
+    Record<string, boolean>
+  >({});
   // The last upload this page queued, by job id, so the two next steps can be offered when
   // the WORKER is done with it rather than when the request was accepted (AC-H13). Null
   // until somebody uploads a book here.
@@ -290,14 +317,17 @@ export function OrderInquiriesClient() {
   // sent with the summary's own request all the same - only the `kinds` facet inside it
   // drops the card, server-side, which is what keeps the other two cards readable while
   // one is held down (see `listFilters` below).
-  const [kindFilter, setKindFilter] = React.useState<OrderInquiryKind | null>(null);
+  const [kindFilter, setKindFilter] = React.useState<OrderInquiryKind | null>(
+    null,
+  );
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
   // Unlink selected asks first, like every other detach on this page (the ADR's own
   // "confirm before every destructive OR detach action"): it takes the documents off
   // several rows at once, and the quantities go back to demand with nothing to undo it.
-  const [unlinkingSelectedOpen, setUnlinkingSelectedOpen] = React.useState(false);
+  const [unlinkingSelectedOpen, setUnlinkingSelectedOpen] =
+    React.useState(false);
   const [rejectingSelected, setRejectingSelected] = React.useState(false);
   // The ONE ticked row the manual Link dialog is about (R8). Held by id rather than by
   // the row, so a refetch between the press and the dialog cannot hand it a stale copy.
@@ -310,13 +340,16 @@ export function OrderInquiriesClient() {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'delivery_date', desc: false },
   ]);
-  const [matrixAxis, setMatrixAxis] = React.useState<OrderInquiryMatrixAxis>(() =>
-    matrixAxisFrom(searchParams.get('rows')),
+  const [matrixAxis, setMatrixAxis] = React.useState<OrderInquiryMatrixAxis>(
+    () => matrixAxisFrom(searchParams.get('rows')),
   );
-  const [matrixGranularity, setMatrixGranularity] = React.useState<OrderInquiryMatrixGranularity>(
-    () => matrixGranularityFrom(searchParams.get('granularity')),
+  const [matrixGranularity, setMatrixGranularity] =
+    React.useState<OrderInquiryMatrixGranularity>(() =>
+      matrixGranularityFrom(searchParams.get('granularity')),
+    );
+  const [openCell, setOpenCell] = React.useState<OrderInquiryMatrixCell | null>(
+    null,
   );
-  const [openCell, setOpenCell] = React.useState<OrderInquiryMatrixCell | null>(null);
 
   // The queued book, watched through the drawer's own feed, and what it wrote once the
   // worker is done with it (AC-H13). Nothing is offered before `landed`: linking against
@@ -362,7 +395,9 @@ export function OrderInquiriesClient() {
     else next.delete('link_horizon');
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
-    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
   }, [
     view,
     matrixAxis,
@@ -447,7 +482,14 @@ export function OrderInquiriesClient() {
       project_id: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
     }),
-    [debounced, month, raisedDate, supplierFilter, projectFilter, raisedByFilter],
+    [
+      debounced,
+      month,
+      raisedDate,
+      supplierFilter,
+      projectFilter,
+      raisedByFilter,
+    ],
   );
 
   const params = React.useMemo(
@@ -497,9 +539,16 @@ export function OrderInquiriesClient() {
     }),
     [listFilters],
   );
-  const matrixList = useOrderInquiryWorklist(matrixParams, { enabled: view === 'schedule' });
+  const matrixList = useOrderInquiryWorklist(matrixParams, {
+    enabled: view === 'schedule',
+  });
   const matrix = React.useMemo(
-    () => buildOrderInquiryMatrix(matrixList.data?.data ?? [], matrixAxis, matrixGranularity),
+    () =>
+      buildOrderInquiryMatrix(
+        matrixList.data?.data ?? [],
+        matrixAxis,
+        matrixGranularity,
+      ),
     [matrixList.data, matrixAxis, matrixGranularity],
   );
 
@@ -508,14 +557,14 @@ export function OrderInquiriesClient() {
   const months = summary.data?.by_month ?? [];
   const filtered = Boolean(
     debounced ||
-      month ||
-      supplierFilter ||
-      projectFilter ||
-      raisedDate ||
-      raisedByFilter ||
-      linkedFilter ||
-      ackFilter ||
-      kindFilter,
+    month ||
+    supplierFilter ||
+    projectFilter ||
+    raisedDate ||
+    raisedByFilter ||
+    linkedFilter ||
+    ackFilter ||
+    kindFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -530,15 +579,21 @@ export function OrderInquiriesClient() {
     if (month) parts.push(`for delivery ${deliveryMonthLabel(month) ?? month}`);
     if (raisedDate) parts.push(`raised on ${formatDateInMalaysia(raisedDate)}`);
     if (supplierFilter) {
-      const supplier = (summary.data?.suppliers ?? []).find((s) => s.id === supplierFilter);
+      const supplier = (summary.data?.suppliers ?? []).find(
+        (s) => s.id === supplierFilter,
+      );
       if (supplier) parts.push(`from ${supplier.label}`);
     }
     if (projectFilter) {
-      const project = (summary.data?.projects ?? []).find((p) => p.id === projectFilter);
+      const project = (summary.data?.projects ?? []).find(
+        (p) => p.id === projectFilter,
+      );
       if (project) parts.push(`for ${project.label}`);
     }
     if (raisedByFilter) {
-      const person = (summary.data?.raised_by ?? []).find((p) => p.id === raisedByFilter);
+      const person = (summary.data?.raised_by ?? []).find(
+        (p) => p.id === raisedByFilter,
+      );
       if (person) parts.push(`raised by ${person.label}`);
     }
     return parts;
@@ -571,7 +626,9 @@ export function OrderInquiriesClient() {
   // Purchasing's page: the acknowledge grant is what marks purchasing, and CS (action
   // grant only) ticks nothing here.
   const canBulkLink = canAcknowledge && canActOnOrderInquiry;
-  const columns = useOrderInquiryWorklistColumns({ selectable: canAcknowledge });
+  const columns = useOrderInquiryWorklistColumns({
+    selectable: canAcknowledge,
+  });
 
   const table = useReactTable({
     data: rows,
@@ -602,15 +659,21 @@ export function OrderInquiriesClient() {
     columnResizeMode: 'onChange',
   });
 
-  const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
-  const selectedAcknowledgeable = selectedRows.filter((row) => isAcknowledgeable(row));
+  const selectedRows = table
+    .getSelectedRowModel()
+    .rows.map((row) => row.original);
+  const selectedAcknowledgeable = selectedRows.filter((row) =>
+    isAcknowledgeable(row),
+  );
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
-  const selectedRejectable = selectedRows.filter((row) => isBulkRejectable(row));
+  const selectedRejectable = selectedRows.filter((row) =>
+    isBulkRejectable(row),
+  );
   // The manual Link dialog is a ONE-row override (R8), so it is offered at exactly one
   // tick: two ticked rows would leave the page choosing which of them it meant.
   const linkTarget =
@@ -645,7 +708,9 @@ export function OrderInquiriesClient() {
       saveBlobAs(blob, `order-inquiry-${month || 'all-months'}.xlsx`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : 'Failed to export the order inquiry',
+        error instanceof Error
+          ? error.message
+          : 'Failed to export the order inquiry',
       );
     } finally {
       setExporting(false);
@@ -665,7 +730,8 @@ export function OrderInquiriesClient() {
   // take the narrowing off in one press (AC-D12).
   const ackChipLabel = ackFilter
     ? `Confirmed: ${
-        ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)?.label ?? ackFilter
+        ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
+          ?.label ?? ackFilter
       }`
     : null;
 
@@ -691,6 +757,20 @@ export function OrderInquiriesClient() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">Order inquiries</h1>
+          {/* The date every link on this page reaches up to by default: the latest
+              completed reorder plan's own Plan until (`plan_link_horizon`). Stated here
+              because it was only ever readable inside the Auto link dialog (the captain,
+              28 Aug 2026: "show the plan until ... for visibility"). */}
+          <p
+            data-testid="oi-plan-until"
+            className="text-sm text-muted-foreground"
+          >
+            {summary.isPending
+              ? 'Plan until ...'
+              : planHorizon
+                ? `Plan until ${formatDateInMalaysia(planHorizon)}`
+                : 'No Plan until in force'}
+          </p>
         </div>
       </header>
 
@@ -734,7 +814,9 @@ export function OrderInquiriesClient() {
       <OrderInquiryStrip
         totals={facetSegments(summary.data?.kinds)}
         active={kindFilter}
-        onToggle={(kind) => setKindFilter((current) => (current === kind ? null : kind))}
+        onToggle={(kind) =>
+          setKindFilter((current) => (current === kind ? null : kind))
+        }
       />
 
       {/* The book this page queued has been READ (AC-H13) - the worker is done with it,
@@ -747,7 +829,11 @@ export function OrderInquiriesClient() {
             <Upload />
           </AlertIcon>
           <AlertContent>
-            <AlertTitle>{uploadFailed ? 'The book could not be read' : 'The book has been read'}</AlertTitle>
+            <AlertTitle>
+              {uploadFailed
+                ? 'The book could not be read'
+                : 'The book has been read'}
+            </AlertTitle>
             <AlertDescription>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
@@ -794,20 +880,28 @@ export function OrderInquiriesClient() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
-              <Label htmlFor="matrix-rows" className="text-sm text-muted-foreground">
+              <Label
+                htmlFor="matrix-rows"
+                className="text-sm text-muted-foreground"
+              >
                 Rows
               </Label>
               <div className="w-44">
                 <SearchableSelect
                   id="matrix-rows"
                   value={matrixAxis}
-                  onChange={(value) => setMatrixAxis(value as OrderInquiryMatrixAxis)}
+                  onChange={(value) =>
+                    setMatrixAxis(value as OrderInquiryMatrixAxis)
+                  }
                   options={MATRIX_AXIS_OPTIONS}
                 />
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="matrix-granularity" className="text-sm text-muted-foreground">
+              <Label
+                htmlFor="matrix-granularity"
+                className="text-sm text-muted-foreground"
+              >
                 By
               </Label>
               <div className="w-40">
@@ -845,8 +939,13 @@ export function OrderInquiriesClient() {
           ) : matrix.rows.length === 0 ? (
             <Card>
               <CardContent className="px-6 py-10 text-center">
-                <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-                <h3 className="mt-2 text-sm font-semibold">No inquiries in this view</h3>
+                <PackageSearch
+                  className="mx-auto size-6 text-muted-foreground"
+                  aria-hidden
+                />
+                <h3 className="mt-2 text-sm font-semibold">
+                  No inquiries in this view
+                </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                   {filtered
                     ? 'Clear the month and the filters to see everything purchasing has been told to buy.'
@@ -859,8 +958,9 @@ export function OrderInquiriesClient() {
               buckets={matrix.buckets}
               rows={matrix.rows}
               rowHeader={
-                MATRIX_AXIS_OPTIONS.find((option) => option.value === matrixAxis)?.label ??
-                'Product'
+                MATRIX_AXIS_OPTIONS.find(
+                  (option) => option.value === matrixAxis,
+                )?.label ?? 'Product'
               }
               cells={matrix.cells}
               onOpenCell={setOpenCell}
@@ -882,7 +982,11 @@ export function OrderInquiriesClient() {
           recordCount={total}
           isLoading={list.isLoading}
           listingKey="projects.projects.view::order-inquiry-worklist"
-          tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+          tableLayout={{
+            width: 'fixed',
+            columnsResizable: true,
+            columnsVisibility: true,
+          }}
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">
@@ -960,7 +1064,9 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Linked</Label>
+                        <Label className="text-xs text-muted-foreground">
+                          Linked
+                        </Label>
                         <SearchableSelect
                           value={linkedFilter}
                           onChange={setLinkedFilter}
@@ -970,7 +1076,9 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Confirmed</Label>
+                        <Label className="text-xs text-muted-foreground">
+                          Confirmed
+                        </Label>
                         <SearchableSelect
                           value={ackFilter}
                           onChange={setAckFilter}
@@ -980,7 +1088,9 @@ export function OrderInquiriesClient() {
                               option.value === ACK_TO_CONFIRM
                                 ? toConfirmCount
                                 : summary.data?.ack?.[
-                                    option.value as keyof NonNullable<typeof summary.data.ack>
+                                    option.value as keyof NonNullable<
+                                      typeof summary.data.ack
+                                    >
                                   ];
                             return {
                               value: option.value,
@@ -994,53 +1104,70 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Supplier</Label>
+                        <Label className="text-xs text-muted-foreground">
+                          Supplier
+                        </Label>
                         <SearchableSelect
                           value={supplierFilter}
                           onChange={setSupplierFilter}
                           clearable
-                          options={(summary.data?.suppliers ?? []).map((entry) => ({
-                            value: entry.id,
-                            label: entry.label,
-                          }))}
+                          options={(summary.data?.suppliers ?? []).map(
+                            (entry) => ({
+                              value: entry.id,
+                              label: entry.label,
+                            }),
+                          )}
                           placeholder="Every supplier"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Project</Label>
+                        <Label className="text-xs text-muted-foreground">
+                          Project
+                        </Label>
                         <SearchableSelect
                           value={projectFilter}
                           onChange={setProjectFilter}
                           clearable
-                          options={(summary.data?.projects ?? []).map((entry) => ({
-                            value: entry.id,
-                            label: entry.label,
-                          }))}
+                          options={(summary.data?.projects ?? []).map(
+                            (entry) => ({
+                              value: entry.id,
+                              label: entry.label,
+                            }),
+                          )}
                           placeholder="Every project"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">Raised by</Label>
+                        <Label className="text-xs text-muted-foreground">
+                          Raised by
+                        </Label>
                         <SearchableSelect
                           value={raisedByFilter}
                           onChange={setRaisedByFilter}
                           clearable
-                          options={(summary.data?.raised_by ?? []).map((entry) => ({
-                            value: entry.id,
-                            label: entry.label,
-                          }))}
+                          options={(summary.data?.raised_by ?? []).map(
+                            (entry) => ({
+                              value: entry.id,
+                              label: entry.label,
+                            }),
+                          )}
                           placeholder="Everyone"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
+                        <Label
+                          className="text-xs text-muted-foreground"
+                          htmlFor="raised-on"
+                        >
                           Raised on
                         </Label>
                         <Input
                           id="raised-on"
                           type="date"
                           value={raisedDate}
-                          onChange={(event) => setRaisedDate(event.target.value)}
+                          onChange={(event) =>
+                            setRaisedDate(event.target.value)
+                          }
                         />
                       </div>
                       {filtersActiveCount > 0 && (
@@ -1094,13 +1221,15 @@ export function OrderInquiriesClient() {
                           disabledReason: linkTarget
                             ? undefined
                             : 'Tick exactly one row to choose its document by hand.',
-                          onClick: () => setLinkingRowId(linkTarget?.id ?? null),
+                          onClick: () =>
+                            setLinkingRowId(linkTarget?.id ?? null),
                         },
                         {
                           key: 'unlink-selected',
                           label: `Unlink selected (${selectedLinked.length})`,
                           icon: Unlink,
-                          disabled: selectedLinked.length === 0 || unlinkingSelected,
+                          disabled:
+                            selectedLinked.length === 0 || unlinkingSelected,
                           disabledReason:
                             selectedLinked.length === 0
                               ? 'Tick linked rows to unlink.'
@@ -1134,7 +1263,9 @@ export function OrderInquiriesClient() {
                     // other reason, must never read the same as "genuinely nothing to
                     // unplace" - each says its own thing.
                     disabled:
-                      !canActOnOrderInquiry || unplacePreview.isError || unplaceCount === 0,
+                      !canActOnOrderInquiry ||
+                      unplacePreview.isError ||
+                      unplaceCount === 0,
                     disabledReason: !canActOnOrderInquiry
                       ? "You don't have permission to unlink rows"
                       : unplacePreview.isError
@@ -1161,17 +1292,23 @@ export function OrderInquiriesClient() {
                       <DropdownMenuTrigger asChild>
                         <Button type="button" size="sm">
                           Start
-                          <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+                          <ChevronDown
+                            className="size-3.5 opacity-60"
+                            aria-hidden
+                          />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-60">
-                        <DropdownMenuItem onSelect={() => setUploadingBook(true)}>
+                        <DropdownMenuItem
+                          onSelect={() => setUploadingBook(true)}
+                        >
                           <Upload className="size-4" aria-hidden />
                           Upload purchase orders
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           disabled={
-                            selectedAcknowledgeable.length === 0 || acknowledge.isPending
+                            selectedAcknowledgeable.length === 0 ||
+                            acknowledge.isPending
                           }
                           title={
                             selectedAcknowledgeable.length === 0
@@ -1182,7 +1319,9 @@ export function OrderInquiriesClient() {
                             if (selectedAcknowledgeable.length === 0) return;
                             acknowledge.mutate(
                               {
-                                rowIds: selectedAcknowledgeable.map((row) => row.id),
+                                rowIds: selectedAcknowledgeable.map(
+                                  (row) => row.id,
+                                ),
                                 // No horizon of its own (R6): Confirm links the
                                 // remainder of rows somebody has already decided to
                                 // take on, and the plan's own date is the right reach
@@ -1214,7 +1353,9 @@ export function OrderInquiriesClient() {
                     The order inquiry could not be loaded
                   </h2>
                   <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                    {list.error instanceof Error ? list.error.message : 'Try again shortly.'}
+                    {list.error instanceof Error
+                      ? list.error.message
+                      : 'Try again shortly.'}
                   </p>
                 </div>
               ) : (
@@ -1271,7 +1412,10 @@ export function OrderInquiriesClient() {
           onQueued={(queued) => setUploadJobId(queued.job_id)}
         />
       ) : null}
-      <AlertDialog open={unlinkingSelectedOpen} onOpenChange={setUnlinkingSelectedOpen}>
+      <AlertDialog
+        open={unlinkingSelectedOpen}
+        onOpenChange={setUnlinkingSelectedOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Unlink selected</AlertDialogTitle>
@@ -1282,7 +1426,9 @@ export function OrderInquiriesClient() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={unlinkingSelected}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={unlinkingSelected}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();

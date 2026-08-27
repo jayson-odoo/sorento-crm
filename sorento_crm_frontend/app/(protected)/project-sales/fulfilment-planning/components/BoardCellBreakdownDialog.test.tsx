@@ -16,11 +16,20 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 /** Only reached when a location row is expanded - the stock table's own documents panel. */
@@ -33,7 +42,8 @@ const getClassificationEvidence = vi.fn();
 vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
   getPileQueue: (...args: unknown[]) => getPileQueue(...args),
-  getClassificationEvidence: (...args: unknown[]) => getClassificationEvidence(...args),
+  getClassificationEvidence: (...args: unknown[]) =>
+    getClassificationEvidence(...args),
 }));
 
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
@@ -67,7 +77,10 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
   };
 }
 
-function cellOf(lines: BoardDemandLine[], freeStock: Record<string, string> = {}) {
+function cellOf(
+  lines: BoardDemandLine[],
+  freeStock: Record<string, string> = {},
+) {
   return buildBoard(lines, { today: TODAY, freeStock }).cells[0];
 }
 
@@ -134,7 +147,9 @@ function contributionTable(): HTMLElement {
 function footerCells(): string[] {
   const table = contributionTable();
   const foot = table.querySelector('tfoot');
-  return [...(foot?.querySelectorAll('td') ?? [])].map((cell) => cell.textContent ?? '');
+  return [...(foot?.querySelectorAll('td') ?? [])].map(
+    (cell) => cell.textContent ?? '',
+  );
 }
 
 beforeEach(() => {
@@ -158,7 +173,12 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
     renderDialog(
       [
         demand({ line_no: 1, qty: '60' }),
-        demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
+        demand({
+          line_no: 2,
+          qty: '40',
+          so_number: 'SO398322',
+          sales_order_id: 'so-b',
+        }),
       ],
       { 'WESERP10B|BRW-BB': '70' },
     );
@@ -176,7 +196,58 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
     expect(needed).toHaveTextContent('Quantity needed');
     expect(needed).toHaveTextContent('100');
     expect(needed).toHaveTextContent('0 decided');
-    expect(screen.queryByText('100 across 1 line, 0 decided')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('100 across 1 line, 0 decided'),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
+   * The captain, 28 August 2026, reading a cell whose pool rung said "Project hot-selling at
+   * BRW-BB, BRW-IB" only inside the trail popover: "we need to label dealer hot selling /
+   * project hot selling here instead of putting it at the tooltip". The verdict decides
+   * whether the pool is offered at all, so it stands beside the title.
+   */
+  it('states the hot-selling verdict beside the title, off the first line the ladder walked', () => {
+    const cell = cellOf([demand({ qty: '100' })]);
+    cell.contributions[0].item_flags = {
+      dealer_hot_selling: false,
+      dealer_hot_selling_where: [],
+      project_hot_selling: true,
+      project_hot_selling_where: ['BRW-BB', 'BRW-IB'],
+      dealer_classified: true,
+      project_classified: true,
+      discontinued: false,
+      retail_classification_available: true,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    const chips = screen.getByTestId('trail-flags-cell');
+    expect(chips.textContent).toBe('Cold at retailProject hot-selling');
+    expect(
+      screen.getByTestId('trail-flag-cell-project-hot-selling'),
+    ).toHaveAttribute(
+      'title',
+      'Project hot-selling at BRW-BB, BRW-IB. The shared pool may be drawn while its availability stays positive.',
+    );
+  });
+
+  it('shows no verdict beside the title for a line the ladder did not judge', () => {
+    renderDialog([demand()]);
+
+    expect(screen.queryByTestId('trail-flags-cell')).not.toBeInTheDocument();
   });
 });
 
@@ -195,8 +266,11 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
     // real cell that was three lines of nothing around the line that said what to do.
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
 
-    const labels = [...screen.getByTestId('cell-suggestion').querySelectorAll('[data-testid^="suggestion-"]')]
-      .map((node) => node.textContent ?? '');
+    const labels = [
+      ...screen
+        .getByTestId('cell-suggestion')
+        .querySelectorAll('[data-testid^="suggestion-"]'),
+    ].map((node) => node.textContent ?? '');
     expect(labels).toHaveLength(2);
     // Ladder v5's own order (AC-V7): the questions first, Buy last.
     expect(labels[0]).toContain('Use own location');
@@ -224,7 +298,12 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
     renderDialog(
       [
         demand({ line_no: 1, qty: '60' }),
-        demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
+        demand({
+          line_no: 2,
+          qty: '40',
+          so_number: 'SO398322',
+          sales_order_id: 'so-b',
+        }),
       ],
       { 'WESERP10B|BRW-BB': '70' },
     );
@@ -238,7 +317,9 @@ describe('BoardCellBreakdownDialog: the Suggestion card', () => {
     renderDialog([demand({ qty: '100' })]);
 
     expect(screen.queryByTestId('suggestion-shared')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('suggestion-borrow_other')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('suggestion-borrow_other'),
+    ).not.toBeInTheDocument();
     expect(row('buy')).toHaveTextContent('100');
   });
 });
@@ -248,7 +329,9 @@ describe('BoardCellBreakdownDialog: the Product column', () => {
     renderDialog([demand({ line_no: 1 }), demand({ line_no: 2 })]);
 
     const table = contributionTable();
-    expect(within(table).queryByRole('columnheader', { name: 'Product' })).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Product' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -291,7 +374,12 @@ describe('BoardCellBreakdownDialog: the table', () => {
   it('totals the outstanding quantity in a summary row inside the table', () => {
     renderDialog([
       demand({ line_no: 1, qty: '60' }),
-      demand({ line_no: 2, qty: '40', so_number: 'SO398322', sales_order_id: 'so-b' }),
+      demand({
+        line_no: 2,
+        qty: '40',
+        so_number: 'SO398322',
+        sales_order_id: 'so-b',
+      }),
     ]);
 
     const cells = footerCells();
@@ -303,7 +391,9 @@ describe('BoardCellBreakdownDialog: the table', () => {
     renderDialog([demand()]);
 
     expect(screen.getByText(/SO403340/)).toBeInTheDocument();
-    expect(screen.getByText('SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)')).toBeInTheDocument();
+    expect(
+      screen.getByText('SETIA-WOOD INDUSTRIES SDN BHD (PROJECT)'),
+    ).toBeInTheDocument();
     expect(
       screen.getByText('SETIA-WOOD INDUSTRIES/100U DSTH (DIMINA) @ SETIA'),
     ).toBeInTheDocument();
@@ -331,8 +421,20 @@ describe('BoardCellBreakdownDialog: the table', () => {
   it('says when the stock was already committed to earlier demand (13.5)', () => {
     renderDialog(
       [
-        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '100', required_date: '2026-09-04' }),
-        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '100', required_date: '2026-09-02' }),
+        demand({
+          sales_order_id: 'so-a',
+          so_number: 'SO403340',
+          line_no: 1,
+          qty: '100',
+          required_date: '2026-09-04',
+        }),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 2,
+          qty: '100',
+          required_date: '2026-09-02',
+        }),
       ],
       { 'WESERP10B|BRW-BB': '100' },
     );
@@ -348,14 +450,26 @@ describe('BoardCellBreakdownDialog: the table', () => {
    */
   it('shows the EXPANDED line\u2019s own stock position, and says whose it is', async () => {
     const cell = cellOf([
-      demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '24' }),
-      demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '24' }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO403340',
+        line_no: 1,
+        qty: '24',
+      }),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+        line_no: 2,
+        qty: '24',
+      }),
     ]);
     const withPerLine: BoardCell = {
       ...cell,
       // Two lines, two tables. The first row's is the cell's own (the server sends it as
       // `cell.locations` too); the second row's differs in exactly the way the netting does.
-      locations: [{ ...cell.locations[0], location: 'BRW-AM', available_qty: '-15' }],
+      locations: [
+        { ...cell.locations[0], location: 'BRW-AM', available_qty: '-15' },
+      ],
       contributions: cell.contributions.map((entry, index) => ({
         ...entry,
         locations: [
@@ -368,17 +482,27 @@ describe('BoardCellBreakdownDialog: the table', () => {
       })),
     };
     render(
-      <BoardCellBreakdownDialog
-        cell={withPerLine}
-        bucketLabel="31 Aug 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={withPerLine}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
     );
 
     // Nothing expanded: the first contributing line's, which is what `cell.locations` holds.
-    expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain('-15');
+    expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain(
+      '-15',
+    );
     expect(screen.getByTestId('cell-stock-for-line').textContent).toContain(
       `${withPerLine.contributions[0].so_number} line ${withPerLine.contributions[0].line_no}`,
     );
@@ -388,7 +512,9 @@ describe('BoardCellBreakdownDialog: the table', () => {
     fireEvent.click(rows[1]);
 
     await waitFor(() =>
-      expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain('-16'),
+      expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain(
+        '-16',
+      ),
     );
     expect(screen.getByTestId('cell-stock-for-line').textContent).toContain(
       `${withPerLine.contributions[1].so_number} line ${withPerLine.contributions[1].line_no}`,
@@ -403,15 +529,24 @@ describe('BoardCellBreakdownDialog: the table', () => {
 
   it('lists the rows in the order the allocation rule served them', () => {
     renderDialog([
-      demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, required_date: '2026-09-04' }),
-      demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, required_date: '2026-09-02' }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO403340',
+        line_no: 1,
+        required_date: '2026-09-04',
+      }),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+        line_no: 2,
+        required_date: '2026-09-02',
+      }),
     ]);
 
     const rows = contributionTable().querySelectorAll('tbody tr');
     expect(rows[0].textContent).toContain('SO398322');
     expect(rows[1].textContent).toContain('SO403340');
   });
-
 });
 
 /**
@@ -426,22 +561,28 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
   }
 
   function renderCell(cell: BoardCell) {
+    // The header's item-flag chips carry a Proof button (`useQuery`), so a client is needed.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
-      <BoardCellBreakdownDialog
-        cell={cell}
-        bucketLabel="31 Aug 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
     );
   }
 
   /** The cells of one location's row in the stock table, in column order. */
   function stockRow(location: string): string[] {
-    return [...screen.getByTestId(`cell-location-${location}`).querySelectorAll('td')].map(
-      (cell) => cell.textContent ?? '',
-    );
+    return [
+      ...screen.getByTestId(`cell-location-${location}`).querySelectorAll('td'),
+    ].map((cell) => cell.textContent ?? '');
   }
 
   /**
@@ -530,7 +671,9 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
    * (`BoardLineDecisionPanel.test.tsx`). C1: Rank left the table entirely (R8).
    */
   it('carries neither a Delivered column nor a Rank column any more', () => {
-    renderDialog([demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' })]);
+    renderDialog([
+      demand({ qty_ordered: '120', qty_delivered: '20', qty: '100' }),
+    ]);
 
     const table = contributionTable();
     const headers = within(table)
@@ -538,7 +681,9 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       .map((node) => node.textContent ?? '');
     expect(headers.some((header) => header === 'Delivered')).toBe(false);
     expect(headers.some((header) => header === 'Rank')).toBe(false);
-    expect(screen.queryByRole('button', { name: 'Rank' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Rank' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -555,16 +700,24 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
     ).toHaveTextContent('Suggested');
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Amend' }),
+    ).not.toBeInTheDocument();
   });
 
   it('expands the row in place on a click, and collapses it on a second click (C3, C6)', () => {
     renderDialog([demand()]);
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
-    expect(screen.queryByTestId(`line-decision-${key}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`line-decision-${key}`),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByTestId(`line-decision-${key}`)).toBeInTheDocument();
@@ -572,7 +725,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
 
     fireEvent.click(screen.getByText('SO403340'));
-    expect(screen.queryByTestId(`line-decision-${key}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`line-decision-${key}`),
+    ).not.toBeInTheDocument();
   });
 
   it('opening a second row closes the first (C5)', () => {
@@ -587,7 +742,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     expect(screen.getByTestId(`line-decision-${first}`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('SO398322'));
-    expect(screen.queryByTestId(`line-decision-${first}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`line-decision-${first}`),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId(`line-decision-${second}`)).toBeInTheDocument();
   });
 
@@ -606,10 +763,14 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO398322'));
     // The row underneath has NOT switched yet: the prompt is answered first.
     expect(screen.getByTestId(`line-decision-${first}`)).toBeInTheDocument();
-    expect(screen.getByText('Leave this decision unsaved?')).toBeInTheDocument();
+    expect(
+      screen.getByText('Leave this decision unsaved?'),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-    expect(screen.queryByTestId(`line-decision-${first}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`line-decision-${first}`),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -632,7 +793,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByText('Leave this decision unsaved?')).toBeInTheDocument();
+    expect(
+      screen.getByText('Leave this decision unsaved?'),
+    ).toBeInTheDocument();
 
     // Keep editing leaves everything where it was: the dialog open and the row still typed in.
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
@@ -651,7 +814,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText('Leave this decision unsaved?')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Leave this decision unsaved?'),
+    ).not.toBeInTheDocument();
   });
 
   it('approve suggestion, from the row, writes into the draft with no reason and no flag', () => {
@@ -685,7 +850,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
   it('save amendment, from the row, posts the whole composition typed (AC-L5, whole-line)', () => {
     // Wholly from stock (AC-L5): a mix of stock and a Buy on one line is refused by
     // `lineBlockers` and by the confirmation alike.
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    const { onDecide } = renderDialog([demand({ qty: '100' })], {
+      'WESERP10B|BRW-BB': '100',
+    });
 
     fireEvent.click(screen.getByText('SO403340'));
     // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
@@ -694,7 +861,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
-      target: { value: 'The site wants new stock, not what is standing there.' },
+      target: {
+        value: 'The site wants new stock, not what is standing there.',
+      },
     });
     expect(save).toBeEnabled();
     fireEvent.click(save);
@@ -711,9 +880,13 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
   });
 
   it('shows Approved on a row the draft already decided, and reads the pill accordingly', () => {
-    renderDialog([demand()], {}, {
-      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
-    });
+    renderDialog(
+      [demand()],
+      {},
+      {
+        'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
+      },
+    );
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -721,32 +894,44 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
   });
 
   it('a row the draft already decided opens unlocked - no undo step before it can be edited again', () => {
-    renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' }, {
-      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
-    });
+    renderDialog(
+      [demand({ qty: '100' })],
+      { 'WESERP10B|BRW-BB': '40' },
+      {
+        'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
+      },
+    );
 
     fireEvent.click(screen.getByText('SO403340'));
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Save amendment' }),
+    ).toBeInTheDocument();
   });
 
   it('an amended row can be returned to the suggestion by Approve suggestion (no Undo button)', () => {
-    const { onDecide } = renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' }, {
-      'so-a|1|WESERP10B|2026-08-31': {
-        verdict: 'amended',
-        reserve: [],
-        borrow: [],
-        buy_qty: '100',
-        timely_spo_qty: '0',
-        reason: 'Overridden earlier.',
+    const { onDecide } = renderDialog(
+      [demand({ qty: '100' })],
+      { 'WESERP10B|BRW-BB': '100' },
+      {
+        'so-a|1|WESERP10B|2026-08-31': {
+          verdict: 'amended',
+          reserve: [],
+          borrow: [],
+          buy_qty: '100',
+          timely_spo_qty: '0',
+          reason: 'Overridden earlier.',
+        },
       },
-    });
+    );
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
     ).toHaveTextContent('Amended');
-    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Undo' }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
@@ -786,15 +971,25 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
     renderDialog([demand({ qty: '43', decision: frozen })]);
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
-    expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent('Confirmed');
+    expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent(
+      'Confirmed',
+    );
 
     fireEvent.click(screen.getByText('SO403340'));
 
     const panel = screen.getByTestId(`line-decision-${key}`);
-    expect(within(panel).getByRole('button', { name: 'Amend' })).toBeInTheDocument();
-    expect(within(panel).queryByRole('button', { name: 'Approve suggestion' })).not.toBeInTheDocument();
-    expect(within(panel).queryByRole('button', { name: 'Save amendment' })).not.toBeInTheDocument();
-    expect(within(panel).queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(
+      within(panel).getByRole('button', { name: 'Amend' }),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Approve suggestion' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Save amendment' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByRole('button', { name: 'Reject' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -802,7 +997,9 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
   it('offers no verdict at all, and says why', () => {
     renderDialog([demand({ fulfilment_location: null })]);
 
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve' }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText('Needs a location')).toBeInTheDocument();
   });
 
@@ -845,13 +1042,21 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
   it('has no footer, and the corner X still closes', () => {
     const onClose = vi.fn();
     render(
-      <BoardCellBreakdownDialog
-        cell={cellOf([demand()])}
-        bucketLabel="31 Aug 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={onClose}
-      />,
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cellOf([demand()])}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={onClose}
+        />
+      </QueryClientProvider>,
     );
 
     expect(screen.queryByTestId('cell-dialog-footer')).not.toBeInTheDocument();
@@ -869,7 +1074,9 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
     expect(content.className).toContain('flex-col');
     // A fixed max-height on the BODY was the bug: it let the content run past the footer.
     // The height belongs to the dialog, and the body takes what is left.
-    expect(screen.getByTestId('cell-dialog-body').className).toContain('flex-1');
+    expect(screen.getByTestId('cell-dialog-body').className).toContain(
+      'flex-1',
+    );
   });
 });
 
@@ -886,13 +1093,21 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
   function renderServerCell(sources: BoardContribution['sources']) {
     const cell = serverCell(sources);
     render(
-      <BoardCellBreakdownDialog
-        cell={cell}
-        bucketLabel="28 Sep 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="28 Sep 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
     );
     return cell;
   }
@@ -907,7 +1122,8 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         kind: 'timely_spo',
         qty: '15',
         location: 'BRW-BB',
-        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
+        reason:
+          'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
         spo_number: null,
         arrival_date: null,
       },
@@ -927,7 +1143,8 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         kind: 'timely_spo',
         qty: '15',
         location: 'BRW-BB',
-        reason: 'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
+        reason:
+          'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
         spo_number: null,
         arrival_date: null,
       },
@@ -940,14 +1157,84 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
+  /**
+   * Ladder v6 (AC-F1): a line planned as part of an order unit says so behind the info icon,
+   * and the ordinary line says nothing extra.
+   */
+  it('names the order unit the line was planned inside, and only then', async () => {
+    const cell = cellOf([demand({ qty: '10' })], { 'WESERP10B|BRW-BB': '40' });
+    cell.contributions[0].unit_qty = '30';
+    cell.contributions[0].unit_line_count = 2;
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
+      'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
+    );
+  });
+
+  it('says nothing about a unit for a line planned on its own', async () => {
+    const cell = cellOf([demand({ qty: '10' })], { 'WESERP10B|BRW-BB': '40' });
+    cell.contributions[0].unit_qty = '10';
+    cell.contributions[0].unit_line_count = 1;
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await sourceNoteOf(cell.contributions[0].key)).not.toContain(
+      'Planned with',
+    );
+  });
+
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
   it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
     renderServerCell([
-      { kind: 'timely_spo', qty: '10', location: 'BRW-BB', reason: 'Incoming covers 10.' },
-      { kind: 'buy', qty: '5', location: null, reason: 'The residual is bought.' },
+      {
+        kind: 'timely_spo',
+        qty: '10',
+        location: 'BRW-BB',
+        reason: 'Incoming covers 10.',
+      },
+      {
+        kind: 'buy',
+        qty: '5',
+        location: null,
+        reason: 'The residual is bought.',
+      },
     ]);
 
-    expect(screen.getByText('Incoming 10 at BRW-BB · Buy 5')).toBeInTheDocument();
+    expect(
+      screen.getByText('Incoming 10 at BRW-BB · Buy 5'),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
   });
 });
@@ -981,7 +1268,8 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
               qty: '80',
               location: 'BRW-BB',
               warehouse_id: 'wh-BRW-BB',
-              reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
+              reason:
+                'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
             },
           ],
           ...overrides,
@@ -991,14 +1279,20 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
   }
 
   function renderCell(cell: BoardCell) {
+    // The header's item-flag chips carry a Proof button (`useQuery`), so a client is needed.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
-      <BoardCellBreakdownDialog
-        cell={cell}
-        bucketLabel="31 Aug 2026"
-        draft={{}}
-        onDecide={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <QueryClientProvider client={client}>
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
     );
   }
 
@@ -1028,14 +1322,22 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     });
     renderCell(cell);
 
-    expect(await shareNoteOf(cell)).toContain('First in the queue at BRW-BB · 1015 left for this line');
+    expect(await shareNoteOf(cell)).toContain(
+      'First in the queue at BRW-BB · 1015 left for this line',
+    );
   });
 
   it('counts a single line ahead in the singular', async () => {
-    const cell = captainsCell({ so_qty_ahead: '60', lines_ahead: 1, available_to_this_line: '40' });
+    const cell = captainsCell({
+      so_qty_ahead: '60',
+      lines_ahead: 1,
+      available_to_this_line: '40',
+    });
     renderCell(cell);
 
-    expect(await shareNoteOf(cell)).toContain('1 line ahead wanting 60 · 40 left for this line at BRW-BB');
+    expect(await shareNoteOf(cell)).toContain(
+      '1 line ahead wanting 60 · 40 left for this line at BRW-BB',
+    );
   });
 
   /**
@@ -1063,7 +1365,9 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     // A bare site code is the shared pool, whatever the line's own location is.
     expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
     const note = await shareNoteOf(cell);
-    expect(note).toContain('12 lines ahead wanting 1015 · 0 left for this line at BRW-BB');
+    expect(note).toContain(
+      '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
+    );
     // Never a verdict on the reserve: the pool is a second source, so "0 left" does not mean
     // nothing may be reserved.
     expect(note).not.toContain('cannot');
@@ -1089,7 +1393,8 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     };
     renderCell(cell);
 
-    const position = screen.getByTestId('cell-location-BRW-BB').textContent ?? '';
+    const position =
+      screen.getByTestId('cell-location-BRW-BB').textContent ?? '';
     expect(position).toContain('-8013');
     expect(position).not.toContain('627');
     expect(position).not.toContain('left for this line');
@@ -1138,8 +1443,18 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
   it('reads the queue the board fixture built, line by line', async () => {
     const cell = cellOf(
       [
-        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
-        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
+        demand({
+          line_no: 1,
+          so_number: 'SO000001',
+          sales_order_id: 'so-a',
+          qty: '60',
+        }),
+        demand({
+          line_no: 2,
+          so_number: 'SO000002',
+          sales_order_id: 'so-b',
+          qty: '40',
+        }),
       ],
       { 'WESERP10B|BRW-BB': '100' },
     );
@@ -1176,12 +1491,16 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
   }
 
   function selectAll() {
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows on this page' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
   }
 
   it('offers no bulk action until something is selected', () => {
     renderDialog(threeLines());
-    expect(screen.queryByRole('button', { name: 'Approve selected' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve selected' }),
+    ).not.toBeInTheDocument();
   });
 
   it('approves every selected row in one press, and says how many are selected', () => {
@@ -1219,7 +1538,9 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
 
     expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Approve selected' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve selected' }),
+    ).not.toBeInTheDocument();
   });
 
   it('select-all covers exactly the rows of this cell', () => {
@@ -1241,7 +1562,12 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
   it('will not select a line that cannot be decided, and says why on its own checkbox', () => {
     const { onDecide } = renderDialog([
       demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
-      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', fulfilment_location: null }),
+      demand({
+        line_no: 2,
+        so_number: 'SO000002',
+        sales_order_id: 'so-b',
+        fulfilment_location: null,
+      }),
     ]);
 
     selectAll();
@@ -1263,12 +1589,16 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
   it('leaves the per-row decision alone: bulk is an addition, not a replacement', () => {
     const { onDecide } = renderDialog(threeLines());
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select SO000001 line 1' }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select SO000001 line 1' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
 
     // Only the ticked row carries the bulk verdict.
     expect(onDecide).toHaveBeenCalledTimes(1);
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', { verdict: 'approved' });
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
+      verdict: 'approved',
+    });
 
     // Row 2 is untouched: still Suggested, and still expandable and decidable on its own -
     // the bulk verb is an addition, never a replacement for the per-row decision.
@@ -1304,16 +1634,23 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   }
 
   it('asks the four questions in order, and then Buy (AC-V1)', () => {
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    const cell = cellOf([demand({ qty: '100' })], {
+      'WESERP10B|BRW-BB': '100',
+    });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
 
     const button = screen.getByTestId(`trail-info-${key}`);
-    expect(button).toHaveAttribute('aria-label', 'How this decision was reached');
+    expect(button).toHaveAttribute(
+      'aria-label',
+      'How this decision was reached',
+    );
     openTrail(key);
 
     const questions = [
-      ...screen.getByTestId(`trail-${key}`).querySelectorAll('tbody tr[data-step]'),
+      ...screen
+        .getByTestId(`trail-${key}`)
+        .querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
     expect(questions).toEqual([
       'Can we use our location?',
@@ -1327,7 +1664,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('answers each question with a word, a quantity and a place', () => {
     // The whole-line rule: the pool holds exactly what is owed, so it is proposed in full
     // and Buy answers No rather than showing a partial mix.
-    const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    const cell = cellOf([demand({ qty: '100' })], {
+      'WESERP10B|BRW-BB': '100',
+    });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
     const key = cell.contributions[0].key;
     openTrail(key);
@@ -1340,15 +1679,31 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       '100',
       'BRW-BB',
     ]);
-    expect(stepCells(key, 'buy')).toEqual(['5', 'Buy the rest?', 'No', '0', '-']);
+    expect(stepCells(key, 'buy')).toEqual([
+      '5',
+      'Buy the rest?',
+      'No',
+      '0',
+      '-',
+    ]);
   });
 
   it('carries the queue on question 1, and on no other question', () => {
     // The read-only own-location strip is folded into question 1 under ladder v5: it is the
     // one question with a queue, and the one `QueueLink`'s dialog can open.
     const lines = [
-      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a', qty: '60' }),
-      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b', qty: '40' }),
+      demand({
+        line_no: 1,
+        so_number: 'SO000001',
+        sales_order_id: 'so-a',
+        qty: '60',
+      }),
+      demand({
+        line_no: 2,
+        so_number: 'SO000002',
+        sales_order_id: 'so-b',
+        qty: '40',
+      }),
     ];
     const cell = cellOf(lines, { 'WESERP10B|BRW-BB': '70' });
     renderDialog(lines, { 'WESERP10B|BRW-BB': '70' });
@@ -1372,9 +1727,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     openTrail(key);
 
     expect(stepCells(key, 'own')).toContain('No');
-    expect(
-      screen.getByTestId(`trail-why-${key}-own`).textContent,
-    ).toContain('no ownership group');
+    expect(screen.getByTestId(`trail-why-${key}-own`).textContent).toContain(
+      'no ownership group',
+    );
   });
 
   it('says there is no plan at all for a line whose order states no location', () => {
@@ -1396,8 +1751,15 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
    * sentence naming the count and the reason; the rung with a queue also opens the whole thing,
    * because a plain sentence cannot show rank ("why do the orders stand ahead of me?").
    */
-  function rankedCell(lines: BoardDemandLine[], freeStock: Record<string, string> = {}) {
-    return buildBoard(lines, { today: TODAY, freeStock, policy: PREVIEW_POLICY }).cells[0];
+  function rankedCell(
+    lines: BoardDemandLine[],
+    freeStock: Record<string, string> = {},
+  ) {
+    return buildBoard(lines, {
+      today: TODAY,
+      freeStock,
+      policy: PREVIEW_POLICY,
+    }).cells[0];
   }
 
   function renderCell(cell: BoardCell) {
@@ -1455,7 +1817,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
 
     const trail = screen.getByTestId(`trail-${last}`);
     expect(trail.textContent).not.toContain('Ahead of this line');
-    expect(trail.querySelectorAll('[data-testid^="trail-ahead-line-"]')).toHaveLength(0);
+    expect(
+      trail.querySelectorAll('[data-testid^="trail-ahead-line-"]'),
+    ).toHaveLength(0);
     expect(screen.queryByTestId(`trail-ahead-${last}`)).not.toBeInTheDocument();
     expect(screen.getByTestId(`trail-queue-${last}`)).toBeInTheDocument();
   });
@@ -1485,7 +1849,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('says a Borrow was found and left alone, and names the donors', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     const contribution = cell.contributions[0];
-    const borrow = contribution.trail?.find((step) => step.kind === 'cross_group_borrow');
+    const borrow = contribution.trail?.find(
+      (step) => step.kind === 'cross_group_borrow',
+    );
     Object.assign(borrow ?? {}, {
       note: 'MWH-IB 20 · BRW 5',
       why: 'Borrowing is never automatic: a person names the donor and the reason. Use Amend to borrow.',
@@ -1493,15 +1859,29 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    const why = screen.getByTestId(`trail-why-${contribution.key}-cross_group_borrow`);
+    const why = screen.getByTestId(
+      `trail-why-${contribution.key}-cross_group_borrow`,
+    );
     expect(why.textContent).toContain('Use Amend to borrow');
     expect(screen.getByText('MWH-IB 20 · BRW 5')).toBeInTheDocument();
   });
 
   it('leaves the source strip and the share note exactly as they were, and shows no Contested chip', async () => {
     const lines = [
-      demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '100', required_date: '2026-09-04' }),
-      demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '100', required_date: '2026-09-02' }),
+      demand({
+        sales_order_id: 'so-a',
+        so_number: 'SO403340',
+        line_no: 1,
+        qty: '100',
+        required_date: '2026-09-04',
+      }),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+        line_no: 2,
+        qty: '100',
+        required_date: '2026-09-02',
+      }),
     ];
     const freeStock = { 'WESERP10B|BRW-BB': '100' };
     const cell = cellOf(lines, freeStock);
@@ -1511,8 +1891,12 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
     expect(screen.queryByText('Contested')).toBeNull();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
-    expect(await sourceNoteOf(cell.contributions[0].key)).toContain('left for this line');
-    expect(await sourceNoteOf(cell.contributions[1].key)).toContain('left for this line');
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
+      'left for this line',
+    );
+    expect(await sourceNoteOf(cell.contributions[1].key)).toContain(
+      'left for this line',
+    );
   });
 
   /**
@@ -1621,9 +2005,9 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderCell(cell);
     openTrail(contribution.key);
 
-    expect(screen.getByTestId(`trail-flags-${contribution.key}`).textContent).toBe(
-      'Not classified',
-    );
+    expect(
+      screen.getByTestId(`trail-flags-${contribution.key}`).textContent,
+    ).toBe('Not classified');
   });
 
   it('shows no chips at all on a line the ladder never walked', () => {
@@ -1673,13 +2057,27 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       'No',
       '0',
     ]);
-    expect(screen.getByTestId(`trail-why-${contribution.key}-pool`).textContent).toBe(
+    expect(
+      screen.getByTestId(`trail-why-${contribution.key}-pool`).textContent,
+    ).toBe(
       "BRW holds 1 on hand (Available 1 in stock), but BRW's own orders ranked ahead of this line claim 1, so 0 is left.",
     );
     const table = screen.getByTestId(`trail-pool-${contribution.key}`);
-    const headers = [...table.querySelectorAll('th')].map((node) => node.textContent);
-    expect(headers).toEqual(['On hand', 'SO qty', 'SPO qty', 'Available', 'Free', 'Claimed ahead', 'Left']);
-    const values = [...table.querySelectorAll('td')].map((node) => node.textContent);
+    const headers = [...table.querySelectorAll('th')].map(
+      (node) => node.textContent,
+    );
+    expect(headers).toEqual([
+      'On hand',
+      'SO qty',
+      'SPO qty',
+      'Available',
+      'Free',
+      'Claimed ahead',
+      'Left',
+    ]);
+    const values = [...table.querySelectorAll('td')].map(
+      (node) => node.textContent,
+    );
     expect(values).toEqual(['1', '1', '0', '0', '1', '1 (1 line)', '0']);
   });
 
@@ -1725,7 +2123,11 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
   function dialogFor(cell: BoardCell) {
     return (
       <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
       >
         <BoardCellBreakdownDialog
           cell={cell}
@@ -1743,14 +2145,20 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
     // the documents themselves are `StockDocumentsPanel`'s own suite.
     getStockDetail.mockReturnValue(new Promise(() => {}));
 
-    const { rerender } = render(dialogFor(stockedCell('WESERP10B', '2026-08-31')));
+    const { rerender } = render(
+      dialogFor(stockedCell('WESERP10B', '2026-08-31')),
+    );
 
     fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
-    expect(await screen.findByTestId('stock-expansion-BRW-BB')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('stock-expansion-BRW-BB'),
+    ).toBeInTheDocument();
 
     rerender(dialogFor(stockedCell('B2155-NL-BLUE', '2026-09-28')));
 
-    expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('stock-expansion-BRW-BB'),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId('cell-location-BRW-BB')).toBeInTheDocument();
   });
 });
@@ -1792,7 +2200,9 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
 
-    expect(screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33')).toBeInTheDocument();
+    expect(
+      screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33'),
+    ).toBeInTheDocument();
   });
 
   it('says nothing about a queue it is not in', async () => {
@@ -1801,13 +2211,17 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     // still carries its own reasons behind the icon.
     renderDialog([covered()]);
 
-    expect(await sourceNoteOf('so-a|1|WESERP10B|2026-08-31')).not.toContain('left for this line');
+    expect(await sourceNoteOf('so-a|1|WESERP10B|2026-08-31')).not.toContain(
+      'left for this line',
+    );
   });
 
   it('replaces the ladder with the one fact there is: when it was confirmed', () => {
     renderDialog([covered()]);
 
-    fireEvent.click(screen.getByTestId('trail-info-so-a|1|WESERP10B|2026-08-31'));
+    fireEvent.click(
+      screen.getByTestId('trail-info-so-a|1|WESERP10B|2026-08-31'),
+    );
 
     const trail = screen.getByTestId('trail-so-a|1|WESERP10B|2026-08-31');
     expect(trail.textContent).toContain('Confirmed in revision 1');
@@ -1828,17 +2242,21 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   });
 
   it('behaves like any amended row once it has been amended: the pill reads Amended, and it opens unlocked', () => {
-    renderDialog([covered()], {}, {
-      'so-a|1|WESERP10B|2026-08-31': {
-        verdict: 'amended',
-        reserve_qty: '0',
-        timely_spo_qty: '0',
-        reserve: [],
-        borrow: [],
-        buy_qty: '43',
-        reason: 'The other site needs its stock back.',
+    renderDialog(
+      [covered()],
+      {},
+      {
+        'so-a|1|WESERP10B|2026-08-31': {
+          verdict: 'amended',
+          reserve_qty: '0',
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '43',
+          reason: 'The other site needs its stock back.',
+        },
       },
-    });
+    );
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -1846,8 +2264,12 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Save amendment' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Amend' }),
+    ).not.toBeInTheDocument();
   });
 
   it('cannot be swept into a bulk verdict, because Amend is the only verb it has', () => {
@@ -1868,9 +2290,12 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
   });
 
   it('counts the frozen line into the outstanding total, decided or not', () => {
-    renderDialog([covered(), demand({ line_no: 2, qty: '21', sales_order_id: 'so-a' })], {
-      'WESERP10B|BRW-BB': '5',
-    });
+    renderDialog(
+      [covered(), demand({ line_no: 2, qty: '21', sales_order_id: 'so-a' })],
+      {
+        'WESERP10B|BRW-BB': '5',
+      },
+    );
 
     // 43 outstanding on the covered line and 21 on the undecided one. A decision is a claim on
     // stock, not a delivery, so it does not take the line out of what is still outstanding.
@@ -1897,7 +2322,9 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     const headers = within(table)
       .getAllByRole('columnheader')
       .map((node) => node.textContent ?? '');
-    expect(headers.some((header) => header.includes('Order inquiry'))).toBe(true);
+    expect(headers.some((header) => header.includes('Order inquiry'))).toBe(
+      true,
+    );
 
     const row = table.querySelectorAll('tbody tr')[0] as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
@@ -1908,7 +2335,9 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
   it('prints a dash for a line nobody has been told anything about', () => {
     renderDialog([demand({ order_inquiry: null })]);
 
-    const row = contributionTable().querySelectorAll('tbody tr')[0] as HTMLElement;
+    const row = contributionTable().querySelectorAll(
+      'tbody tr',
+    )[0] as HTMLElement;
     expect(within(row).queryByText(/^OI-/)).not.toBeInTheDocument();
     expect(within(row).getAllByText('-').length).toBeGreaterThan(0);
   });
@@ -1935,10 +2364,14 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
         // Stamped `v4`, which is what a confirm writes today. An UNSTAMPED frozen proposal
         // is a suggestion from a ladder that no longer runs, and the card says so - see
         // the test below.
-        proposed: { components: sources.map((part) => ({ ...part, ladder: 'v4' })) },
+        proposed: {
+          components: sources.map((part) => ({ ...part, ladder: 'v4' })),
+        },
       })),
     };
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
       <QueryClientProvider client={client}>
         <BoardCellBreakdownDialog
@@ -1954,7 +2387,13 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
 
   it('calls a pool draw shared stock, and names the pool (AC-A1)', () => {
     renderWithSources([
-      { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+      {
+        kind: 'reserve',
+        rung: 'pool',
+        qty: '71',
+        location: 'BRW',
+        reason: 'The pool covers it.',
+      },
     ]);
 
     const card = screen.getByTestId('cell-suggestion');
@@ -1965,14 +2404,34 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
 
   it('names each location with what is taken from it on a group take (AC-A2)', () => {
     renderWithSources([
-      { kind: 'reserve', rung: 'group_take', qty: '454', location: 'DC1-BB', reason: 'a' },
-      { kind: 'reserve', rung: 'group_take', qty: '267', location: 'MWH-BB', reason: 'b' },
-      { kind: 'reserve', rung: 'group_take', qty: '211', location: 'WH3-BB', reason: 'c' },
+      {
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '454',
+        location: 'DC1-BB',
+        reason: 'a',
+      },
+      {
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '267',
+        location: 'MWH-BB',
+        reason: 'b',
+      },
+      {
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '211',
+        location: 'WH3-BB',
+        reason: 'c',
+      },
     ]);
 
     const card = screen.getByTestId('cell-suggestion');
     expect(card).toHaveTextContent('Use own location');
-    expect(card).toHaveTextContent('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+    expect(card).toHaveTextContent(
+      '454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB',
+    );
   });
 
   it('labels a frozen suggestion that a ladder no longer in use composed', () => {
@@ -1989,7 +2448,9 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
         reason: 'MWH-IB has 30 available in the IB group.',
       },
     ];
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
       <QueryClientProvider client={client}>
         <BoardCellBreakdownDialog
@@ -2028,7 +2489,9 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
       },
     ]);
 
-    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder');
+    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent(
+      'before ladder',
+    );
   });
 
   it('never labels an UNDECIDED line, whatever its suggestion carries (AC-V8)', () => {
@@ -2037,7 +2500,9 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     // key", the server stamped the key on neither the live nor the frozen source, and the
     // label therefore appeared on every line on the board.
     const base = cellOf([demand({ qty: '60' })]);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
       <QueryClientProvider client={client}>
         <BoardCellBreakdownDialog
@@ -2067,7 +2532,9 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
       </QueryClientProvider>,
     );
 
-    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent('before ladder');
+    expect(screen.getByTestId('cell-suggestion')).not.toHaveTextContent(
+      'before ladder',
+    );
   });
 
   it('tells the two borrows apart by rung (AC-A3)', () => {
@@ -2112,7 +2579,9 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
       ...base,
       contributions: base.contributions.map((entry) => ({ ...entry, ...over })),
     };
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
     render(
       <QueryClientProvider client={client}>
         <BoardCellBreakdownDialog
@@ -2136,7 +2605,13 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
       covered: true,
       proposed: {
         components: [
-          { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'nothing free' },
+          {
+            kind: 'buy',
+            rung: 'buy',
+            qty: '71',
+            location: null,
+            reason: 'nothing free',
+          },
         ],
       },
       sources: [],
@@ -2144,8 +2619,18 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
         revision_no: 1,
         timely_spo_qty: '0',
         reserve: [
-          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
-          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
+          {
+            warehouse_id: 'wh-dc1',
+            location: 'DC1-BB',
+            qty: '454',
+            rung: 'group_take',
+          },
+          {
+            warehouse_id: 'wh-mwh',
+            location: 'MWH-BB',
+            qty: '267',
+            rung: 'group_take',
+          },
         ],
         borrow: [],
         buy_qty: '0',
@@ -2159,7 +2644,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
     expect(screen.queryByTestId('suggestion-moves')).not.toBeInTheDocument();
   });
 
-  it('draws no Moves line when everything is already at the line\'s own location', () => {
+  it("draws no Moves line when everything is already at the line's own location", () => {
     renderComposition({
       covered: true,
       proposed: { components: [] },
@@ -2168,7 +2653,12 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
         revision_no: 1,
         timely_spo_qty: '0',
         reserve: [
-          { warehouse_id: 'wh-brw-bb', location: 'BRW-BB', qty: '71', rung: 'group_take' },
+          {
+            warehouse_id: 'wh-brw-bb',
+            location: 'BRW-BB',
+            qty: '71',
+            rung: 'group_take',
+          },
         ],
         borrow: [],
         buy_qty: '0',
@@ -2188,7 +2678,13 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
       // Null, the way the server sends a revision written before the field existed.
       proposed: null,
       sources: [
-        { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+        {
+          kind: 'buy',
+          rung: 'buy',
+          qty: '71',
+          location: null,
+          reason: 'Bought, as confirmed.',
+        },
       ],
       decision: {
         revision_no: 1,
@@ -2208,7 +2704,13 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
     renderComposition({
       proposed: {
         components: [
-          { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'pool' },
+          {
+            kind: 'reserve',
+            rung: 'pool',
+            qty: '71',
+            location: 'BRW',
+            reason: 'pool',
+          },
         ],
       },
     });
@@ -2222,11 +2724,23 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
       covered: true,
       proposed: {
         components: [
-          { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'The pool covers it.' },
+          {
+            kind: 'reserve',
+            rung: 'pool',
+            qty: '71',
+            location: 'BRW',
+            reason: 'The pool covers it.',
+          },
         ],
       },
       sources: [
-        { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+        {
+          kind: 'buy',
+          rung: 'buy',
+          qty: '71',
+          location: null,
+          reason: 'Bought, as confirmed.',
+        },
       ],
       decision: {
         revision_no: 1,
@@ -2256,7 +2770,13 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
       {
         proposed: {
           components: [
-            { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW', reason: 'pool' },
+            {
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '71',
+              location: 'BRW',
+              reason: 'pool',
+            },
           ],
         },
       },

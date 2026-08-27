@@ -21,7 +21,9 @@ import type {
 
 const KEY = 'so-a|22|SRTWB7518|2026-06-29';
 
-function contributionOf(overrides: Partial<BoardContribution> = {}): BoardContribution {
+function contributionOf(
+  overrides: Partial<BoardContribution> = {},
+): BoardContribution {
   return {
     key: KEY,
     sales_order_id: 'so-a',
@@ -48,7 +50,8 @@ function contributionOf(overrides: Partial<BoardContribution> = {}): BoardContri
         qty: '9',
         location: 'BRW-AM',
         warehouse_id: 'wh-BRW-AM',
-        reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+        reason:
+          'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
       },
       {
         kind: 'reserve',
@@ -74,7 +77,12 @@ function contributionOf(overrides: Partial<BoardContribution> = {}): BoardContri
 }
 
 const LOCATIONS: BoardCellLocation[] = [
-  { location: 'BRW-AM', warehouse_id: 'wh-BRW-AM', qty: '0', available_qty: '9' },
+  {
+    location: 'BRW-AM',
+    warehouse_id: 'wh-BRW-AM',
+    qty: '0',
+    available_qty: '9',
+  },
   { location: 'BRW', warehouse_id: 'wh-BRW', qty: '0', available_qty: '16' },
 ];
 
@@ -96,23 +104,19 @@ function renderPanel(
   return { onDecide, onDirtyChange };
 }
 
-describe('BoardLineDecisionPanel: the read-only strip (C4)', () => {
-  it('shows Ordered, Delivered, Outstanding and Incoming off the contribution', () => {
-    renderPanel({ qty_ordered: '24', qty_delivered: '0', qty_outstanding: '24' });
+describe('BoardLineDecisionPanel: no read-only strip', () => {
+  it('does not repeat Ordered, Delivered, Outstanding or Incoming - the row above states them', () => {
+    renderPanel({
+      qty_ordered: '24',
+      qty_delivered: '0',
+      qty_outstanding: '24',
+    });
 
     const panel = screen.getByTestId(`line-decision-${KEY}`);
-    expect(panel).toHaveTextContent('Ordered');
-    expect(panel).toHaveTextContent('Delivered');
-    expect(panel).toHaveTextContent('Outstanding');
-    expect(panel).toHaveTextContent('Incoming by the delivery date');
-    expect(panel).toHaveTextContent('24');
-  });
-
-  it('states an absent figure rather than guessing at one', () => {
-    renderPanel({ qty_ordered: null, qty_delivered: null });
-
-    const panel = screen.getByTestId(`line-decision-${KEY}`);
-    expect(panel).toHaveTextContent('Not stated');
+    expect(panel).not.toHaveTextContent('Ordered');
+    expect(panel).not.toHaveTextContent('Delivered');
+    expect(panel).not.toHaveTextContent('Outstanding');
+    expect(panel).not.toHaveTextContent('Incoming by the delivery date');
   });
 });
 
@@ -143,8 +147,12 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
   it('save amendment posts the composition typed, once it balances and carries a reason', () => {
     const { onDecide } = renderPanel();
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '19' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
@@ -192,27 +200,43 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
   it('shows "N short" once a composition falls under the outstanding quantity', () => {
     renderPanel();
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
 
-    expect(screen.getByTestId(`line-decision-hint-${KEY}`)).toHaveTextContent('4 short');
-    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeDisabled();
+    expect(screen.getByTestId(`line-decision-hint-${KEY}`)).toHaveTextContent(
+      '4 short',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Save amendment' }),
+    ).toBeDisabled();
   });
 
   it('shows "N over" once a composition exceeds it', () => {
     renderPanel();
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '30' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '30' },
+    });
 
-    expect(screen.getByTestId(`line-decision-hint-${KEY}`)).toHaveTextContent('15 over');
+    expect(screen.getByTestId(`line-decision-hint-${KEY}`)).toHaveTextContent(
+      '15 over',
+    );
   });
 
   it('clears the hint once the composition balances again, and enables Save once a reason is typed', () => {
     renderPanel();
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '19' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
 
-    expect(screen.queryByTestId(`line-decision-hint-${KEY}`)).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId(`line-decision-hint-${KEY}`),
+    ).not.toBeInTheDocument();
     const save = screen.getByRole('button', { name: 'Save amendment' });
     expect(save).toBeDisabled();
 
@@ -226,7 +250,9 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
     renderPanel();
 
     // The composition on open IS the suggestion, so Approve needs nothing typed.
-    expect(screen.getByRole('button', { name: 'Approve suggestion' })).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Approve suggestion' }),
+    ).toBeEnabled();
   });
 });
 
@@ -248,7 +274,10 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
 
     expect(onDecide).toHaveBeenCalledWith(
-      expect.objectContaining({ verdict: 'approved', suspected_system_issue: true }),
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: true,
+      }),
     );
   });
 
@@ -256,15 +285,22 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '19' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save amendment' }));
 
     expect(onDecide).toHaveBeenCalledWith(
-      expect.objectContaining({ verdict: 'amended', suspected_system_issue: true }),
+      expect.objectContaining({
+        verdict: 'amended',
+        suspected_system_issue: true,
+      }),
     );
   });
 
@@ -278,7 +314,10 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
 
     expect(onDecide).toHaveBeenCalledWith(
-      expect.objectContaining({ verdict: 'rejected', suspected_system_issue: true }),
+      expect.objectContaining({
+        verdict: 'rejected',
+        suspected_system_issue: true,
+      }),
     );
   });
 
@@ -355,11 +394,17 @@ describe('BoardLineDecisionPanel: Buy on then off restores the composition', () 
       ],
     });
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '9' } });
-    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '9' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '15' },
+    });
 
     fireEvent.click(buySwitch());
-    expect(screen.getAllByText('The whole line is being bought.').length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('The whole line is being bought.').length,
+    ).toBeGreaterThan(0);
 
     fireEvent.click(buySwitch());
 
@@ -391,7 +436,9 @@ describe('BoardLineDecisionPanel: Buy on then off restores the composition', () 
     expect(borrowInput).toHaveValue(15);
 
     fireEvent.click(buySwitch());
-    expect(screen.queryByLabelText('Borrow from MWH-AM')).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('Borrow from MWH-AM'),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(buySwitch());
 
@@ -407,17 +454,28 @@ describe('BoardLineDecisionPanel: Buy on then off restores the composition', () 
  */
 describe('BoardLineDecisionPanel: an unplannable line states why, and offers no verb', () => {
   it('renders the figures and the reason, with no inputs and no buttons', () => {
-    renderPanel({ unplannable: true, fulfilment_location: null, fulfilment_warehouse_id: null });
+    renderPanel({
+      unplannable: true,
+      fulfilment_location: null,
+      fulfilment_warehouse_id: null,
+    });
 
-    expect(screen.getByTestId(`line-decision-blocked-${KEY}`)).toHaveTextContent(
-      'states no fulfilment location',
-    );
-    expect(screen.queryByRole('button', { name: 'Approve suggestion' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save amendment' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId(`line-decision-blocked-${KEY}`),
+    ).toHaveTextContent('states no fulfilment location');
+    expect(
+      screen.queryByRole('button', { name: 'Approve suggestion' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save amendment' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject' }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/^Reserve at/)).not.toBeInTheDocument();
-    // The figures are still worth reading: this is a row, not a wall.
-    expect(screen.getByTestId(`line-decision-${KEY}`)).toHaveTextContent('Outstanding');
+    expect(screen.getByTestId(`line-decision-${KEY}`)).not.toHaveTextContent(
+      'Outstanding',
+    );
   });
 });
 
@@ -440,9 +498,15 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     renderPanel({ covered: true, decision: frozen });
 
     expect(screen.getByRole('button', { name: 'Amend' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Approve suggestion' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save amendment' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve suggestion' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save amendment' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject' }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText('Reserve at BRW-AM')).toBeDisabled();
   });
 
@@ -452,8 +516,12 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Save amendment' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Amend' }),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -475,7 +543,9 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
 
     expect(onDecide).toHaveBeenCalledWith({
@@ -490,7 +560,9 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
         decision={onDecide.mock.calls[0][0] as BoardDecision}
       />,
     );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Approved');
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
+      'Approved',
+    );
   });
 
   /**
@@ -526,7 +598,6 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(15);
   });
 });
-
 
 /**
  * The saved amendment overlays the engine's suggestion on reopen: collapsing an amended row

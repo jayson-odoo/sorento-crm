@@ -329,6 +329,7 @@ class _Row:
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
         "decision", "item_flags", "order_inquiry", "lent_to",
+        "unit_qty", "unit_line_count",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -383,6 +384,12 @@ class _Row:
         # What purchasing has already been TOLD about this line, and how far they got:
         # `{inquiry_no, state}` off the inquiry row covering it, None when there is none.
         self.order_inquiry: Optional[Dict[str, Any]] = None
+        # The PLANNING UNIT this line was composed in (ladder v6): its order's lines for the
+        # same item, location and delivery date, planned as one quantity. Filled by
+        # `_allocate`; a line nobody proposed for (covered, unplannable) keeps the default,
+        # which is itself - it was not planned with anybody.
+        self.unit_qty: Optional[Decimal] = None
+        self.unit_line_count: int = 1
 
     @property
     def covered(self) -> bool:
@@ -1794,14 +1801,31 @@ class FulfilmentBoardService:
                     taken += own_share + timely_share
                     taker = row
 
-        # Pass two: run the ladder per line, in board order, against the running pool balance.
-        pool_left: Dict[str, Decimal] = {}
+        # Pass two: run the ladder in board order, against the running piles - and per
+        # PLANNING UNIT rather than per line (ladder v6). One sales order's lines for the
+        # same item, location and delivery date are one quantity to plan: the captain,
+        # reading SO381895's lines 31 and 32, "this is 1 order as a whole". Another order
+        # asking for the same thing on the same day is a different unit, which is why the
+        # sales order is in the key.
+        entries = [
+            (
+                row.key,
+                facts[row.key],
+                (
+                    row.sales_order_id,
+                    row.product_id,
+                    row.warehouse_id,
+                    row.required_date,
+                ),
+            )
+            for row in proposable
+        ]
+        composed = self.supply.compose_lines(entries, as_of=as_of)
+        units = self.supply.unit_totals(entries)
         borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
         for row in proposable:
             fact = facts[row.key]
-            pool_key = fact.pool_key
-            if pool_key and pool_key not in pool_left:
-                pool_left[pool_key] = fact.pool_free
+            row.unit_qty, row.unit_line_count = units[row.key]
             # A Reserve component names its location by CODE and the confirmation addresses a
             # warehouse by ID, so the pair is captured here where both are in hand.
             row.so_qty_ahead = fact.so_qty_ahead
@@ -1815,18 +1839,15 @@ class FulfilmentBoardService:
                 )
                 if code and warehouse_id
             }
-            # What the shared pool still held when THIS line was reached, captured before the
-            # draw: the trail states what each source held, and reading it back afterwards
-            # would state what was left instead.
-            pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
             # `as_of` is the board's own, never the clock: which side of the ATP reserve
             # window a line falls on has to be the same answer a pinned simulation gives.
             row.outside_reserve_window = self.supply.outside_reserve_window(
                 fact, as_of=as_of
             )
-            components = self.supply.compose_line(
-                fact, pool_free_left=pool_open, as_of=as_of
-            )
+            # What the shared pool still held when this line's UNIT was reached, captured
+            # before the draw: the trail states what each source held, and reading it back
+            # afterwards would state what was left instead.
+            components, pool_open, borrow_open = composed[row.key]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
             # location `warehouse_ids` (own + pool only, above) does not cover.
             for component in components:
@@ -1835,16 +1856,6 @@ class FulfilmentBoardService:
                     warehouse_id = self.supply.warehouse_id_for_code(code)
                     if warehouse_id:
                         row.warehouse_ids[code] = warehouse_id
-            if pool_key and fact.pool_code:
-                drawn = sum(
-                    (
-                        c.qty
-                        for c in components
-                        if c.kind == RESERVE and c.source_location == fact.pool_code
-                    ),
-                    _ZERO,
-                )
-                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
 
             reserved = sum((c.qty for c in components if c.kind == RESERVE), _ZERO)
             incoming = sum((c.qty for c in components if c.kind == TIMELY_SPO), _ZERO)
@@ -1881,7 +1892,9 @@ class FulfilmentBoardService:
             # answer to that is what questions 3 and 4 actually put on the table - read
             # off the trail rather than filtered a second time out of the raw donor list
             # (AC-V4: the note must never offer what the proof has refused).
-            row.trail, offerable = self._trail(row, fact, components, pool_open)
+            row.trail, offerable = self._trail(
+                row, fact, components, pool_open, borrow_open
+            )
             row.sources = [
                 self._source(component, row, offerable) for component in components
             ]
@@ -2089,6 +2102,7 @@ class FulfilmentBoardService:
         fact: Any,
         components: Sequence[Any],
         pool_open: Optional[Decimal],
+        borrow_open: Optional[Mapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
 
@@ -2330,7 +2344,15 @@ class FulfilmentBoardService:
         cross_group_candidates = (
             []
             if outside_window
-            else self.supply.cross_group_borrow_candidates_for(fact, residual=residual)
+            # `borrow_open` is the walk's DONOR LEDGER as this line's unit found it
+            # (`compose_lines`), passed here exactly as `pool_free_left=pool_open` is
+            # passed to question 2. Without it the proof re-read the donor's live free
+            # stock and answered "free stock at DC1-NT, within the limit" beside a Buy
+            # that the same ledger had just forced, having spent that stock on an earlier
+            # delivery date.
+            else self.supply.cross_group_borrow_candidates_for(
+                fact, residual=residual, borrow_left=borrow_open
+            )
         )
         # A line whose location carries NO ownership group has no "outside the group" for
         # this question to walk (`_cross_group_borrow_candidates` refuses it by rule), so
@@ -3863,6 +3885,12 @@ class FulfilmentBoardService:
             "qty_ordered": qty_text(row.qty_ordered or _ZERO),
             "qty_delivered": qty_text(row.qty_delivered or _ZERO),
             "qty_outstanding": qty_text(row.qty),
+            #: The PLANNING UNIT this line was composed in (ladder v6): its own order's
+            #: lines for the same item, location and delivery date, planned as one quantity.
+            #: The line's own quantity and `1` when it was planned alone, which is most
+            #: lines - and every covered or unplannable one, which was not planned here.
+            "unit_qty": qty_text(row.qty if row.unit_qty is None else row.unit_qty),
+            "unit_line_count": row.unit_line_count,
             #: What the engine proposes to meet it with. The three add up to the outstanding
             #: quantity, which is the balance invariant the per-order sheet also keeps.
             "qty_proposed_reserve": qty_text(row.proposed.get(RESERVE, _ZERO)),

@@ -9,7 +9,7 @@ import {
   List,
   PackageSearch,
   Search,
-  Settings2,
+  Settings,
   Undo2,
   X,
 } from 'lucide-react';
@@ -911,7 +911,7 @@ export function FulfilmentBoardPanel({
                 mode="icon"
                 aria-label="Board actions"
               >
-                <Settings2 className="size-4" aria-hidden />
+                <Settings className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

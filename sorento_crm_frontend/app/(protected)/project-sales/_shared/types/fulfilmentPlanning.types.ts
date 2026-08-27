@@ -55,7 +55,11 @@ export type ReconciliationHeaderOutcome =
  * `duplicate` is the core line another Project SO already holds, which is a different
  * problem from `missing`: the line exists, it is just not this sales order's to take.
  */
-export type ReconciliationLineLink = 'linked' | 'missing' | 'ambiguous' | 'duplicate';
+export type ReconciliationLineLink =
+  | 'linked'
+  | 'missing'
+  | 'ambiguous'
+  | 'duplicate';
 
 /**
  * `surplus` is the only kind that has no Project line: it is a core line the AutoCount
@@ -203,7 +207,8 @@ export const FULFILMENT_PLANNING_SORT_FIELDS = [
   'updated_at',
 ] as const;
 
-export type FulfilmentPlanningSortField = (typeof FULFILMENT_PLANNING_SORT_FIELDS)[number];
+export type FulfilmentPlanningSortField =
+  (typeof FULFILMENT_PLANNING_SORT_FIELDS)[number];
 
 export interface FulfilmentPlanningListParams {
   page?: number;
@@ -632,7 +637,12 @@ export interface BoardDateBucket {
  * covers states the composition that was FROZEN for it, and a frozen Borrow is a source like
  * any other. Printing it as anything else would describe a decision nobody took.
  */
-export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
+export type BoardSourceKind =
+  | 'reserve'
+  | 'timely_spo'
+  | 'buy'
+  | 'borrow'
+  | 'unplannable';
 
 /**
  * The five rows of the proof, as INTERNAL KEYS - ladder v5
@@ -1055,6 +1065,13 @@ export interface BoardContribution {
    * ladder did not walk (unplannable, covered): it was judged against nothing.
    */
   item_flags?: BoardItemFlags | null;
+  /**
+   * Ladder v6: the PLANNING UNIT this line was composed inside - every line of its sales
+   * order for the same item, location and delivery date, planned as one quantity and either
+   * covered from stock whole or bought whole. `unit_line_count` 1 is the ordinary line.
+   */
+  unit_qty?: string | null;
+  unit_line_count?: number | null;
   /**
    * Free stock at this row's location ran out before this row was reached, so the default
    * rule gave it to an earlier-dated row and this one is bought instead (13.5). Named because
@@ -1609,7 +1626,6 @@ export interface BoardDecision {
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
 export type BoardDraft = Record<string, BoardDecision>;
-
 
 // ---------------------------------------------------------------------------
 // Stock Status with Detail: what the figures on a location ROW of the cell's stock table are

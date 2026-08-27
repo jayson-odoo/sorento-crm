@@ -15,7 +15,11 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { StatCard } from '@/components/scm/StatCard';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -37,8 +41,11 @@ import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
-import { BoardTrailPopover } from './BoardTrailPopover';
-import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
+import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
+import {
+  UnsavedDecisionPrompt,
+  useDecisionRowExpansion,
+} from './decisionRowExpansion';
 import { CellStockTable } from './CellStockTable';
 import type {
   BoardCell,
@@ -100,6 +107,14 @@ export function BoardCellBreakdownDialog({
   const decided = cell.contributions.filter(
     (entry) => Boolean(draft[entry.key]) || entry.covered,
   ).length;
+  // The item flags are per item; a covered or unplannable line carries null, so the first
+  // line the ladder walked speaks for the cell. A cell holding several products (a pivoted
+  // axis) states none: one item's verdict must not be pinned on another's.
+  const flaggedContribution = cell.contributions.some(
+    (entry) => entry.item_code !== cell.item_code,
+  )
+    ? null
+    : (cell.contributions.find((entry) => entry.item_flags) ?? null);
   /**
    * Does this cell hold more than one product? On the product axis it never does - the cell IS
    * a product - and on a pivoted axis it routinely does.
@@ -117,20 +132,29 @@ export function BoardCellBreakdownDialog({
    * session's draft - and the card is not rendered then: a Decision card reading nothing
    * claims a decision was taken to do nothing.
    */
-  const decision = React.useMemo(() => decisionBreakdown(cell, draft), [cell, draft]);
+  const decision = React.useMemo(
+    () => decisionBreakdown(cell, draft),
+    [cell, draft],
+  );
   /**
    * What has to physically MOVE for that decision, before Approve is pressed (section E).
    *
    * Derived from the same decision the card above renders, so the planner sees the
    * transfers their tick is about to raise rather than discovering them on another page.
    */
-  const moves = React.useMemo(() => movesText(movesOf(cell, draft)), [cell, draft]);
+  const moves = React.useMemo(
+    () => movesText(movesOf(cell, draft)),
+    [cell, draft],
+  );
   /**
    * How much the cell draws from each location, for the Taken column of the table above
    * (AC-B3). The decision when there is one and the suggestion otherwise, which is the same
    * switch the cell's colour bar uses.
    */
-  const taken = React.useMemo(() => takenByLocation(cell, draft), [cell, draft]);
+  const taken = React.useMemo(
+    () => takenByLocation(cell, draft),
+    [cell, draft],
+  );
   /**
    * The lines this drawer is planning, for the documents panel under a location row: their
    * rows are tagged there, so a planner reading twenty other people's documents can see which
@@ -171,13 +195,18 @@ export function BoardCellBreakdownDialog({
       cell.contributions.some(
         (entry) =>
           entry.covered &&
-          (entry.proposed?.components?.some((part) => part.ladder !== LADDER_VERSION) ??
+          (entry.proposed?.components?.some(
+            (part) => part.ladder !== LADDER_VERSION,
+          ) ??
             false),
       ),
     [cell.contributions],
   );
   const suggestionRecorded = React.useMemo(
-    () => cell.contributions.some((entry) => contributionSuggestion(entry) !== null),
+    () =>
+      cell.contributions.some(
+        (entry) => contributionSuggestion(entry) !== null,
+      ),
     [cell.contributions],
   );
   /**
@@ -186,7 +215,8 @@ export function BoardCellBreakdownDialog({
    * keeps, so both readings of the board ask the same question before discarding an edit.
    */
   const expansion = useDecisionRowExpansion();
-  const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } = expansion;
+  const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } =
+    expansion;
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   /**
@@ -200,7 +230,9 @@ export function BoardCellBreakdownDialog({
    * there is.
    */
   const shownContribution = React.useMemo(
-    () => cell.contributions.find((entry) => entry.key === openKey) ?? cell.contributions[0],
+    () =>
+      cell.contributions.find((entry) => entry.key === openKey) ??
+      cell.contributions[0],
     [cell.contributions, openKey],
   );
   const shownLocations = shownContribution?.locations ?? cell.locations;
@@ -239,23 +271,35 @@ export function BoardCellBreakdownDialog({
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
             : 'This line cannot be decided here: its sales order states no fulfilment location.',
-        rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
+        rowLabel: (row) =>
+          `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
       {
         id: 'so_number',
         accessorFn: (row) => row.so_number,
-        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Sales order" column={column} />
+        ),
         cell: ({ row }) => (
           <div className="flex min-w-0 items-start gap-1.5">
             {/* A state indicator, not a control: the WHOLE row toggles the decision panel,
                 the same gesture reorder planning's group rows use. */}
             {row.getIsExpanded() ? (
-              <ChevronDown className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <ChevronDown
+                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
             ) : (
-              <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <ChevronRight
+                className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
             )}
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium" title={row.original.so_number}>
+              <div
+                className="truncate text-sm font-medium"
+                title={row.original.so_number}
+              >
                 {row.original.so_number}
               </div>
               <div className="truncate text-xs text-muted-foreground">
@@ -296,9 +340,14 @@ export function BoardCellBreakdownDialog({
             {
               id: 'item_code',
               accessorFn: (row: BoardContribution) => row.item_code,
-              header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+              header: ({ column }) => (
+                <DataGridColumnHeader title="Product" column={column} />
+              ),
               cell: ({ row }) => (
-                <span className="block truncate text-sm" title={row.original.item_code}>
+                <span
+                  className="block truncate text-sm"
+                  title={row.original.item_code}
+                >
                   {row.original.item_code}
                 </span>
               ),
@@ -311,9 +360,14 @@ export function BoardCellBreakdownDialog({
       {
         id: 'customer_name',
         accessorFn: (row) => row.customer_name ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Customer" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.customer_name ?? ''}>
+          <span
+            className="block truncate text-sm"
+            title={row.original.customer_name ?? ''}
+          >
             {row.original.customer_name || 'Not recorded'}
           </span>
         ),
@@ -326,7 +380,9 @@ export function BoardCellBreakdownDialog({
         // information" beside every line).
         id: 'agent_code',
         accessorFn: (row) => row.agent_code ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Agent" column={column} />
+        ),
         cell: ({ row }) =>
           row.original.agent_code ? (
             <span
@@ -345,9 +401,14 @@ export function BoardCellBreakdownDialog({
       {
         id: 'project_label',
         accessorFn: (row) => row.project_label ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project" column={column} />
+        ),
         cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.project_label ?? ''}>
+          <span
+            className="block truncate text-sm"
+            title={row.original.project_label ?? ''}
+          >
             {row.original.project_label || 'Not named on the order'}
           </span>
         ),
@@ -362,14 +423,18 @@ export function BoardCellBreakdownDialog({
       {
         id: 'qty',
         accessorFn: (row) => outstandingOf(row),
-        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Outstanding" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate text-sm font-medium tabular-nums">
             {outstandingOf(row.original)}
           </span>
         ),
         footer: () => (
-          <span className="tabular-nums">{sumOf(cell.contributions, outstandingOf)}</span>
+          <span className="tabular-nums">
+            {sumOf(cell.contributions, outstandingOf)}
+          </span>
         ),
         size: 85,
         minSize: 70,
@@ -378,7 +443,9 @@ export function BoardCellBreakdownDialog({
       {
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Delivery date" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.required_date
@@ -393,10 +460,15 @@ export function BoardCellBreakdownDialog({
       {
         id: 'fulfilment_location',
         accessorFn: (row) => row.fulfilment_location ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Location" column={column} />
+        ),
         cell: ({ row }) =>
           row.original.fulfilment_location ? (
-            <span className="block truncate text-sm" title={row.original.fulfilment_location}>
+            <span
+              className="block truncate text-sm"
+              title={row.original.fulfilment_location}
+            >
               {row.original.fulfilment_location}
             </span>
           ) : (
@@ -409,7 +481,9 @@ export function BoardCellBreakdownDialog({
       {
         id: 'sources',
         accessorFn: (row) => row.sources.map((source) => source.kind).join(' '),
-        header: ({ column }) => <DataGridColumnHeader title="Sourced from" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Sourced from" column={column} />
+        ),
         cell: ({ row }) => {
           // Merged per label AND location, in the order the ladder drew them. Question 1
           // hands over TWO components at one location whenever part of the group's offer is
@@ -431,8 +505,11 @@ export function BoardCellBreakdownDialog({
           // because the SPO and its date are INSIDE the sentence (deviation 2), so the
           // sentence is the only place the fact exists and it may never be dropped - it moves
           // BEHIND the info icon rather than out of the row.
-          const why = row.original.sources.map((source) => source.reason).join(' ');
+          const why = row.original.sources
+            .map((source) => source.reason)
+            .join(' ');
           const share = shareNote(row.original);
+          const unit = unitNote(row.original);
           return (
             <div className="min-w-0">
               <div className="flex items-start gap-1">
@@ -447,7 +524,7 @@ export function BoardCellBreakdownDialog({
                     rather than a silent `title` nobody hovers or two lines of wrapped text
                     (the captain: "don't explain too much", "put it under the tooltip"). The
                     numbers stay in the row; only the prose moves. */}
-                {(why || share) && (
+                {(why || share || unit) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -468,6 +545,7 @@ export function BoardCellBreakdownDialog({
                     >
                       {why && <p>{why}</p>}
                       {share && <p>{share}</p>}
+                      {unit && <p>{unit}</p>}
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -513,7 +591,9 @@ export function BoardCellBreakdownDialog({
       },
       {
         id: 'decision',
-        header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Decision" column={column} />
+        ),
         // A PILL, AND NOTHING ELSE (C2). The three verbs used to live here, which is why the
         // column was 210px wide and still truncated its own composition: a decision is taken
         // in the expanded row now, where the numbers it is made against are.
@@ -529,7 +609,14 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, cell.locations, draft, multiProduct, onDecide, setDirty],
+    [
+      cell.contributions,
+      cell.locations,
+      draft,
+      multiProduct,
+      onDecide,
+      setDirty,
+    ],
   );
 
   return (
@@ -548,9 +635,18 @@ export function BoardCellBreakdownDialog({
             unreachable without scrolling a region a reader could not see. Half the dialog to
             each is the guarantee - the same class of layout fault the footer once caused. */}
         <DialogHeader className="max-h-[45vh] shrink-0 space-y-2 overflow-y-auto border-b p-4 sm:p-6">
-          <DialogTitle className="min-w-0 break-words">
-            {`${cell.item_code} · ${bucketLabel}`}
-          </DialogTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <DialogTitle className="min-w-0 break-words">
+              {`${cell.item_code} · ${bucketLabel}`}
+            </DialogTitle>
+            {/* Dealer / project hot-selling, beside the title and not only inside the trail
+                popover: it is the fact that decides whether the pool is offered at all, and the
+                captain (28 Aug 2026) wanted it read before the suggestion, not dug for. The
+                flags are per ITEM, so any line the ladder walked states the cell's. */}
+            {flaggedContribution ? (
+              <ItemFlagChips contribution={flaggedContribution} idKey="cell" />
+            ) : null}
+          </div>
           {/* The decision, first and in two small cards: what is being asked for, and what
               the ladder proposes to do about it. The dialog used to open on a sentence and a
               table of lines, and the planner had to read a source strip per row to work out
@@ -576,7 +672,9 @@ export function BoardCellBreakdownDialog({
               testId="cell-suggestion"
               rowTestId="suggestion"
               title={
-                suggestionIsStale ? `Suggestion (before ladder ${LADDER_VERSION})` : 'Suggestion'
+                suggestionIsStale
+                  ? `Suggestion (before ladder ${LADDER_VERSION})`
+                  : 'Suggestion'
               }
               rows={suggestion}
               empty={
@@ -651,14 +749,19 @@ export function BoardCellBreakdownDialog({
             // A covered row is not selectable either: the bulk verbs are Approve and Reject,
             // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
             // which is the very defect the covered state exists to stop.
-            enableRowSelection={(row) => !row.original.unplannable && !row.original.covered}
+            enableRowSelection={(row) =>
+              !row.original.unplannable && !row.original.covered
+            }
             toolbar={
               selectedKeys.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Says exactly how many rows the verbs will act on. With a paginated cell
                       the header ticks this page, and this count is what was ticked - so the
                       strip never implies more than it will do. */}
-                  <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+                  <Badge
+                    variant="secondary"
+                    className="h-8 gap-1 px-2.5 text-sm"
+                  >
                     {`${selectedKeys.length} selected`}
                   </Badge>
                   <Button
@@ -698,7 +801,6 @@ export function BoardCellBreakdownDialog({
             emptyBody="Nothing in the selection is outstanding for this product by this date."
             pageSize={25}
           />
-
         </DialogBody>
 
         <UnsavedDecisionPrompt state={expansion} />
@@ -759,19 +861,26 @@ function CompositionCard({
             {/* The quantity PER LOCATION ("454 from DC1-BB, 267 from MWH-BB"), not a total
                 beside a bare list of codes: the split IS the instruction, and somebody has
                 to key each movement of it. */}
-            <span className="min-w-0 break-words tabular-nums">{rowText(row)}</span>
+            <span className="min-w-0 break-words tabular-nums">
+              {rowText(row)}
+            </span>
             {/* The rule's own sentence, and only when every source on the row gives the same
                 one: a Buy for "nothing free anywhere" and a Buy for "beyond the lead time
                 window" are the same number for opposite reasons, and this card is where that
                 is decided. */}
             {row.note ? (
-              <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+              <span className="w-full text-xs text-muted-foreground">
+                {row.note}
+              </span>
             ) : null}
           </div>
         ))}
       </div>
       {moves ? (
-        <p data-testid={`${rowTestId}-moves`} className="mt-2 border-t border-border pt-1.5 text-xs">
+        <p
+          data-testid={`${rowTestId}-moves`}
+          className="mt-2 border-t border-border pt-1.5 text-xs"
+        >
           <span className="text-muted-foreground">Moves: </span>
           <span className="break-words tabular-nums">{moves}</span>
         </p>
@@ -808,6 +917,21 @@ function present(value: string | null | undefined): boolean {
  * Absent is absent: a line the server sent no share for, and a line whose sales order states no
  * location (it has no pile to be queued at), get no sentence rather than a 0.
  */
+/**
+ * Ladder v6: the line was not planned alone. The captain, 28 August 2026, on SO381895 lines
+ * 31 and 32 (10 borrowed, 20 bought): "this is 1 order as a whole ... for the same delivery
+ * date". Said only when there IS another line in the unit; the ordinary line says nothing.
+ */
+function unitNote(contribution: BoardContribution): string | null {
+  const count = contribution.unit_line_count ?? 1;
+  if (count <= 1 || !present(contribution.unit_qty)) return null;
+  const others = count - 1;
+  const when = contribution.required_date
+    ? ` for ${formatDateInMalaysia(contribution.required_date)}`
+    : '';
+  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all, covered or bought as one.`;
+}
+
 function shareNote(contribution: BoardContribution): string | null {
   if (contribution.unplannable) return null;
   if (!present(contribution.available_to_this_line)) return null;
@@ -817,7 +941,9 @@ function shareNote(contribution: BoardContribution): string | null {
   if (lines === 0) {
     return `First in the queue${at ? ` at ${at}` : ''} · ${left} left for this line`;
   }
-  const wanted = present(contribution.so_qty_ahead) ? contribution.so_qty_ahead : '0';
+  const wanted = present(contribution.so_qty_ahead)
+    ? contribution.so_qty_ahead
+    : '0';
   return `${lines} line${lines === 1 ? '' : 's'} ahead wanting ${wanted} · ${left} left for this line${
     at ? ` at ${at}` : ''
   }`;
@@ -857,7 +983,11 @@ export function sourceLabel(
  */
 /** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
-  if (source.kind === 'borrow' && source.rung === 'group_borrow' && source.donor_so_number) {
+  if (
+    source.kind === 'borrow' &&
+    source.rung === 'group_borrow' &&
+    source.donor_so_number
+  ) {
     const line =
       source.donor_line_no !== null && source.donor_line_no !== undefined
         ? ` line ${source.donor_line_no}`
@@ -865,7 +995,9 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
     return ` from ${source.donor_so_number}${line}`;
   }
   if (!source.location) return '';
-  return source.kind === 'borrow' ? ` from ${source.location}` : ` at ${source.location}`;
+  return source.kind === 'borrow'
+    ? ` from ${source.location}`
+    : ` at ${source.location}`;
 }
 
 /** The outstanding quantity: the server's own name for it when it sends one. */
@@ -878,7 +1010,10 @@ function sumOf(
   pick: (contribution: BoardContribution) => string,
 ): string {
   return fromMinor(
-    contributions.reduce((total, contribution) => total + toMinor(pick(contribution)), 0),
+    contributions.reduce(
+      (total, contribution) => total + toMinor(pick(contribution)),
+      0,
+    ),
   );
 }
 
