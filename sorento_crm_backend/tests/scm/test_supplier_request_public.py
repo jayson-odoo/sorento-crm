@@ -37,11 +37,14 @@ def _no_pdf_no_storage(monkeypatch):
 
 
 def _sent(db, *, email: str | None = None, qty: float = 500) -> tuple[World, str]:
-    """One container request, sent. Returns the world and the email notice's token."""
+    """One container request, sent. Returns the world and the notice's token.
+
+    A send names at least one recipient since R9 (AC-C2), so the supplier gets an address
+    here unless the caller supplied one.
+    """
     w = World(db)
-    if email:
-        w.supplier.email = email
-        db.flush()
+    w.supplier.email = email or f"{MARKER}-{uuid.uuid4().hex[:6]}@example.test"
+    db.flush()
     w.stock("A", packed=120, unfinished=340)
     svc.request_and_notify(
         db,
@@ -53,6 +56,7 @@ def _sent(db, *, email: str | None = None, qty: float = 500) -> tuple[World, str
         .filter(
             SupplierNotice.supplier_id == str(w.supplier.id),
             SupplierNotice.channel == "email",
+            SupplierNotice.public_token_expires_at > datetime.utcnow(),
         )
         .one()
     )
@@ -60,7 +64,7 @@ def _sent(db, *, email: str | None = None, qty: float = 500) -> tuple[World, str
 
 
 def _notices_for_token(db, token: str) -> list[SupplierNotice]:
-    """Both channel rows of the send that token belongs to (R23), email first."""
+    """The row of the send that token belongs to (R9: one send, one row)."""
     return (
         db.query(SupplierNotice)
         .filter(SupplierNotice.public_token == token)
@@ -85,23 +89,20 @@ def test_sending_stamps_a_token_that_expires_in_thirty_days(scm_app):
     assert timedelta(days=29) < life <= timedelta(days=30)
 
 
-def test_one_token_per_send_lands_on_BOTH_channel_rows(scm_app):
-    # AC-C8 / R23 (captain, 27 Aug: "email and chat need to both have link"). The supplier
-    # clicks it in the email, Ms Tee pastes it into WeChat off the chat row - two ways to
-    # deliver ONE credential, so both rows carry the same token and the same expiry.
+def test_one_send_mints_one_token_on_one_row(scm_app):
+    # R9 (supersedes R23's pair of rows): the sender picks a channel, so there is one row and
+    # one credential. The link reads the same whichever way it was delivered, because there
+    # is only one of it.
     app, db, *_ = scm_app
     w, token = _sent(db)
 
     rows = _notices_for_token(db, token)
 
-    assert {n.channel for n in rows} == {"email", "chat"}
-    assert len({n.public_token for n in rows}) == 1
-    assert len({n.public_token_expires_at for n in rows}) == 1
+    assert [n.channel for n in rows] == ["email"]
+    assert rows[0].public_token == token
 
 
-def test_the_page_answers_the_same_whichever_row_the_token_is_read_off(scm_app):
-    # Two rows now match the token, so the resolver must not be free to pick either: the
-    # lines are per-row copies, and a page that changes its mind is a page nobody trusts.
+def test_the_page_answers_the_same_every_time_the_token_is_read(scm_app):
     app, db, *_ = scm_app
     w, token = _sent(db)
 
@@ -292,16 +293,15 @@ def test_with_no_base_url_configured_the_email_simply_has_no_link(scm_app, monke
     assert "None" not in row.body_text
 
 
-def test_the_notice_payload_carries_the_link_on_both_rows(scm_app, monkeypatch):
-    # AC-C8: the Requests sent card offers "Copy link" on EVERY row of the current send, not
-    # on the email row alone - the chat row is the one Ms Tee copies from for WeChat.
+def test_the_notice_payload_carries_the_link(scm_app, monkeypatch):
+    # AC-C8: the Requests sent card offers "Copy link" on the current send's row.
     app, db, *_ = scm_app
     monkeypatch.setattr(svc, "_public_base_url", lambda: "https://crm.example.test")
     w, token = _sent(db)
 
     rows = svc.list_for_supplier(db, str(w.supplier.id))
 
-    assert len(rows) == 2
+    assert len(rows) == 1
     for row in rows:
         assert row["public_url"].endswith(f"/supplier-request/{token}")
         assert "/c/" in row["public_url"]
@@ -327,7 +327,7 @@ def test_an_older_sends_rows_read_retired_rather_than_blank(scm_app, monkeypatch
     old = [n for n in rows if n["id"] in old_ids]
     current = [n for n in rows if n["id"] not in old_ids]
 
-    assert len(old) == 2 and len(current) == 2
+    assert len(old) == 1 and len(current) == 1
     assert all(n["public_url"] is None and n["link_retired"] is True for n in old)
     assert all(n["public_url"] and n["link_retired"] is False for n in current)
 

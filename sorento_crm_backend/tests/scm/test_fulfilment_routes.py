@@ -573,3 +573,47 @@ def test_a_mixed_container_names_every_factory_on_its_lines(scm_app):
         assert r.status_code == 200, r.text
         row = next(x for x in r.json()["data"] if x["shipment_id"] == str(shipment.id))
         assert {s["supplier_id"] for s in row["suppliers"]} == {supplier_a, str(supplier_b.id)}
+
+
+# --------------------------------------------------------------------------- #
+# the chat contact picker (S3, AC-C3)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_chat_contact_picker_answers_over_the_wire(scm_app):
+    # AC-C3. One call powers both halves of the Chat option: who to send to, and whether the
+    # workspace can carry a WeChat message at all.
+    from app.models.access import RespondContact
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    supplier_id, _code = _seed(db)
+    phone = f"+86138{uuid.uuid4().int % 100000000:08d}"
+    db.query(Supplier).filter(Supplier.id == supplier_id).one().phone_number = phone
+    db.add(
+        RespondContact(
+            id=_u(),
+            phone_number=phone,
+            name=f"{MARKER} Factory Wang",
+            respond_io_id=str(uuid.uuid4().int % 10_000_000),
+        )
+    )
+    db.flush()
+
+    r = TestClient(app).get(
+        "/api/v1/scm/supplier-notices/chat-contacts",
+        params={"supplier_id": supplier_id, "query": MARKER},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["data"][0]["name"] == f"{MARKER} Factory Wang"
+    assert body["data"][0]["suggested"] is True
+    assert body["data"][0]["phone"] == phone
+    # Whether Chat can be offered at all is the workspace's own answer (R10), and it is
+    # stated either way: connected, or disabled with the reason. Asserted as the pair rather
+    # than as a fixed value, because the channel is configuration, not test data.
+    if body["wechat_connected"]:
+        assert body["unavailable_reason"] is None
+    else:
+        assert "WeChat" in body["unavailable_reason"]

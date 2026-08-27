@@ -155,6 +155,8 @@ def test_the_send_builds_the_sheet_once_and_hands_it_to_both(scm_app, monkeypatc
         db,
         supplier_id=str(w.supplier.id),
         lines=[{"product_id": str(w.product("A").id), "qty": 500}],
+        # A send names at least one recipient since R9 (AC-C2).
+        recipients=["sheet-once@example.test"],
     )
 
     assert isinstance(seen.get("pdf"), model.SheetModel)
