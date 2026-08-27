@@ -1374,6 +1374,39 @@ def test_apply_placed_offset_relabels_the_water_before_it_redirects_the_pool():
     assert pool_step.get("note") is None  # the redirect-eligible rung is never narrated here
 
 
+def test_apply_placed_offset_narrates_a_v5_trail_whose_water_came_to_a_sibling():
+    """A ladder v5 trail has no `incoming` step - question 1 draws the water, under the key
+    `own` - and question 1's step names the LINE's own location while the water may be
+    coming to a sibling. Matching the code exactly then found nothing, so the step went on
+    claiming 9 the aggregate had just moved onto Buy, which is the exact defect
+    `_annotate_trail_for_offset` was written to stop.
+    """
+    proposal = {
+        "qty_proposed_reserve": "5",
+        "qty_proposed_incoming": "9",
+        "qty_proposed_buy": "0",
+        "sources": [
+            {"kind": "reserve", "qty": "5", "location": "BRW"},
+            {"kind": "timely_spo", "qty": "9", "location": "MWH-SMC"},
+        ],
+        "trail": [
+            {"step": 1, "kind": "own", "location": "BRW-SMC", "taken": "9",
+             "remaining_after": "5", "outcome": "took"},
+            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
+             "remaining_after": "0", "outcome": "took"},
+        ],
+    }
+    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-4")
+
+    assert out["qty_proposed_incoming"] == "0"
+    assert out["qty_proposed_buy"] == "9"
+    assert out["placed_redirect_qty"] == "3"
+    own_step = next(s for s in out["trail"] if s["kind"] == "own")
+    assert "9 already placed on PO-4, kept as the buy" in (own_step["note"] or "")
+    pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
+    assert pool_step.get("note") is None
+
+
 def test_apply_placed_offset_redirects_the_whole_placed_qty_when_there_is_no_water():
     """The other side of the same order: nothing on the water, so nothing is relabelled and
     the pool redirect gets the whole placed quantity - exactly the captain's 21 Aug ruling,

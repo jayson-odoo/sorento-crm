@@ -1254,7 +1254,12 @@ class FulfilmentBoardService:
             out[core_key] = {
                 "inquiry_no": inquiry_no,
                 "state": state,
-                "ack_state": ack_state,
+                # NULL once CS has answered the refusal. The entry is still seeded from the
+                # row - the cell keeps the inquiry number it was last told about - but the
+                # objection's own word is not repeated: with it the grid printed "Rejected
+                # by purchasing: no reason given" on a line somebody had already re-decided,
+                # which is the one reading the captain's 27 August rule exists to stop.
+                "ack_state": None if answered_refusal else ack_state,
                 "rejected_reason": None,
                 "rejected_by_name": None,
             }

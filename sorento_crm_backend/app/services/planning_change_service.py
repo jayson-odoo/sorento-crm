@@ -749,7 +749,15 @@ def _annotate_trail_for_offset(
     a Buy that quietly grew by the same 432 with nothing on screen explaining why. The
     trail's own `taken`/`remaining_after` are left alone: they are a historical, honest
     record of what the ladder actually walked; only a `note` is appended, saying what
-    happened to that quantity AFTER the ladder ran."""
+    happened to that quantity AFTER the ladder ran.
+
+    THE LOCATION MATCH FALLS BACK TO THE KIND (ladder v5). A step carries ONE location -
+    question 1's is the line's own - while the water it drew may be coming to a sibling, so
+    an exact match on the code silently annotated nothing and the step went on claiming a
+    quantity the aggregate no longer credited it with. Matching the code is still tried
+    first, because it is the precise answer when there is one; the kind is what is left when
+    the step and the cut disagree about where, and they are still talking about the same
+    rung."""
     if not cuts or not trail:
         return trail
     out = [dict(step) for step in trail]
@@ -761,7 +769,7 @@ def _annotate_trail_for_offset(
             (idx for idx, c in enumerate(pending) if c[0] == step.get("location")), None
         )
         if match_idx is None:
-            continue
+            match_idx = 0
         _location, qty = pending.pop(match_idx)
         note = _placed_offset_note(qty, po_number)
         existing = step.get("note")
@@ -822,7 +830,12 @@ def _apply_placed_offset(
         incoming -= take
         buy += take
         sources, cuts = _trim_sources_for_offset(sources, "timely_spo", take)
-        trail = _annotate_trail_for_offset(trail, cuts, frozenset({"incoming"}), po_number)
+        # `incoming` is the RETIRED rung 1's step key, kept for a stored proposal written
+        # under it; `own` is where a v5 trail carries the water, because question 1 is what
+        # draws it now. Both, so one function narrates a trail of either shape.
+        trail = _annotate_trail_for_offset(
+            trail, cuts, frozenset({"incoming", "own"}), po_number
+        )
 
     # 2. What is left of the placed quantity, against the pool take. Capped at `reserve`
     #    (never invents cover the ladder did not offer). `reserve` itself is untouched -

@@ -1089,7 +1089,12 @@ export interface BoardLineOrderInquiry {
    * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
    * `rejected`. A different question from `state`, which says where the quantity sits.
    */
-  ack_state?: string;
+  /**
+   * `awaiting` / `acknowledged` / `changed` / `rejected`, or NULL once CS has answered a
+   * refusal: the cell is then about their decision and not about the objection that
+   * prompted it, so there is no acknowledgement state left to report.
+   */
+  ack_state?: string | null;
   /**
    * Why purchasing refused it, and who did. Set only on a rejected row - and that is the
    * row whose LINE is undecided again, so the cell has to say why it came back.

@@ -339,9 +339,7 @@ def test_two_answered_refusals_leave_the_LATEST_inquiry_number_on_the_cell():
     # Answered, so the objection itself is not repeated: no reason, no name.
     assert cell["rejected_reason"] is None
     assert cell["rejected_by_name"] is None
-    # PINNED, and NOT ruled: the seeded entry still carries the refused row's own
-    # `ack_state`, because it is the only row this line has and the entry is copied off it
-    # whole. Every other shape re-seeds from a live row, so this is the one case where the
-    # word survives its answer. Left for the captain, because suppressing it is a decision
-    # about what an answered refusal's cell should SAY, not a defect in this scan.
-    assert cell["ack_state"] == ACK_REJECTED
+    # RULED 27 August 2026: the entry keeps the inquiry NUMBER it was last told about and
+    # loses the objection's own word. With `rejected` still on it the grid printed
+    # "Rejected by purchasing: no reason given" over a line CS had already re-decided.
+    assert cell["ack_state"] is None
