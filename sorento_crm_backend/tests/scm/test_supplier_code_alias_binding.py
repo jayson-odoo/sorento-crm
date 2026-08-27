@@ -499,3 +499,303 @@ def test_a_line_that_matched_exactly_claims_no_ladder_rung():
         assert line["matched"] is True
         assert line["matched_by"] is None
         assert line["match_source"] is None
+
+
+# --------------------------------------------------------------------------------- #
+# Dismissing a code: it leaves the queue and the ladder refuses it (R17)
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_dismissed_code_leaves_the_queue():
+    """"That is not one of ours." The queue is a to-do list, so a code somebody has ruled on
+    stops being asked about - otherwise the same rows are re-read every week."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        orphan = w.supplier_code("NOTHING-LIKE-THIS")
+        stock_svc.apply(
+            db, _stock_workbook([[orphan, "mystery", 5, 0, 0.2, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        assert [r["item_code"] for r in
+                alias_svc.unmatched_for_supplier(db, str(w.supplier.id))] == [orphan]
+
+        out = alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=orphan, actor="Ms Tee"
+        )
+
+        assert out["source"] == "dismissed"
+        assert out["product_id"] is None
+        assert alias_svc.unmatched_for_supplier(db, str(w.supplier.id)) == []
+
+
+def test_dismissing_a_code_unbinds_the_rows_it_was_bound_to():
+    """A dismissal is not a match. A row still pointing at a product would keep offering the
+    item to the plan, which is the opposite of what "not one of ours" means."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC8357-300-RL")
+        code = w.supplier_code("SRTWC8357-RL-300")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+        out = alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        assert out["rebound_stock_rows"] == 1
+        assert [r.product_id for r in _held(db, str(w.supplier.id))] == [None]
+        rows = db.query(SupplierProductCodeAlias).filter(
+            SupplierProductCodeAlias.supplier_id == w.supplier.id
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].source == "dismissed"
+        assert rows[0].product_id is None
+
+
+def test_dismissing_a_code_unbinds_the_proforma_lines_it_bound():
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC286-SH")
+        code = w.supplier_code("SRTWC286-SH-250UF")
+        pi_svc.apply(db, _pi_workbook(code), supplier_id=str(w.supplier.id),
+                     currency="CNY", source_ref="jinbaichuan.xlsx", actor="Ms Tee")
+        alias_svc.create(
+            db, supplier_id=str(w.supplier.id), supplier_code=code,
+            product_id=str(product.id), actor="Ms Tee",
+        )
+        assert [str(l.product_id) for l in _pi_lines(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+        out = alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        assert out["rebound_invoice_lines"] == 1
+        assert [l.product_id for l in _pi_lines(db, str(w.supplier.id))] == [None]
+
+
+def test_the_ladder_refuses_a_dismissed_code():
+    """Rung 0 is what somebody DECIDED, and "none of ours" is a decision. Without this the
+    next upload binds the code again and the dismissal reads as if it never happened."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+    from app.services.scm import supplier_code_matcher
+
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-RL")
+        code = w.supplier_code("SRTWC8357-RL")
+        alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        found = supplier_code_matcher.resolve(db, str(w.supplier.id), [code])
+
+        assert found == {}
+
+
+def test_a_stock_list_re_uploaded_after_a_dismissal_stays_unbound():
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        w.product("SRTWC8357-RL")
+        code = w.supplier_code("SRTWC8357-RL")
+        alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+
+        assert [r.product_id for r in _held(db, str(w.supplier.id))] == [None]
+
+
+def test_a_dismissal_is_listed_with_no_product_so_it_can_be_undone():
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        code = w.supplier_code("NOTHING-LIKE-THIS")
+        alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        listed = alias_svc.list_for_supplier(db, str(w.supplier.id))
+
+        assert len(listed) == 1
+        assert listed[0]["supplier_code"] == code
+        assert listed[0]["source"] == "dismissed"
+        assert listed[0]["product_code"] is None
+        assert listed[0]["product_name"] is None
+
+
+def test_forgetting_a_dismissal_puts_the_code_back_in_the_queue():
+    """Undo, and nothing more: the code is asked about again and the ladder answers it again
+    on the next upload."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        orphan = w.supplier_code("NOTHING-LIKE-THIS")
+        stock_svc.apply(
+            db, _stock_workbook([[orphan, "mystery", 5, 0, 0.2, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        dismissed = alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=orphan, actor="Ms Tee"
+        )
+        assert alias_svc.unmatched_for_supplier(db, str(w.supplier.id)) == []
+
+        alias_svc.delete(db, dismissed["id"])
+
+        assert db.query(SupplierProductCodeAlias).filter(
+            SupplierProductCodeAlias.supplier_id == w.supplier.id
+        ).count() == 0
+        assert [r["item_code"] for r in
+                alias_svc.unmatched_for_supplier(db, str(w.supplier.id))] == [orphan]
+
+
+def test_dismissing_a_code_replaces_the_match_recorded_for_it():
+    """One supplier code carries one ruling. A dismissal beside a match is two rows saying
+    different things, which is the state the identity index exists to forbid."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC286-SH")
+        code = w.supplier_code("SRTWC286-SH-250UF")
+        alias_svc.create(
+            db, supplier_id=str(w.supplier.id), supplier_code=code,
+            product_id=str(product.id), actor="Ms Tee",
+        )
+
+        alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+
+        rows = db.query(SupplierProductCodeAlias).filter(
+            SupplierProductCodeAlias.supplier_id == w.supplier.id
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].source == "dismissed"
+        assert rows[0].matched_by == "dismissed"
+        assert rows[0].product_id is None
+
+
+def test_a_dismissal_carrying_a_product_is_refused_by_the_database():
+    """The check is in the DATABASE because the two columns are one fact: `dismissed` means
+    exactly "no product", and a row that says both is unreadable by every screen."""
+    from sqlalchemy.exc import IntegrityError
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC286-SH")
+
+        db.add(
+            SupplierProductCodeAlias(
+                id=str(uuid.uuid4()), supplier_id=str(w.supplier.id),
+                supplier_code=w.supplier_code("ANYTHING"), product_id=str(product.id),
+                source="dismissed", matched_by="dismissed",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.flush()
+
+
+def test_a_match_with_no_product_is_refused_by_the_database():
+    from sqlalchemy.exc import IntegrityError
+
+    with pg_session() as db:
+        w = World(db)
+
+        db.add(
+            SupplierProductCodeAlias(
+                id=str(uuid.uuid4()), supplier_id=str(w.supplier.id),
+                supplier_code=w.supplier_code("ANYTHING"), product_id=None,
+                source="manual", matched_by="manual",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.flush()
+
+
+def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    code = w.supplier_code("NOTHING-LIKE-THIS")
+    stock_svc.apply(
+        db, _stock_workbook([[code, "mystery", 5, 0, 0.2, None]]),
+        supplier_id=str(w.supplier.id), actor="Ms Tee",
+    )
+    db.commit()
+    client = TestClient(app)
+
+    dismissed = client.post(
+        "/api/v1/scm/supplier-code-aliases/dismiss",
+        json={"supplier_id": str(w.supplier.id), "supplier_code": code},
+    )
+    assert dismissed.status_code == 201, dismissed.text
+    body = dismissed.json()
+    assert body["source"] == "dismissed"
+    assert body["product_id"] is None
+    assert body["supplier_code"] == code
+    assert body["rebound_stock_rows"] == 1
+
+    assert client.get(
+        "/api/v1/scm/supplier-code-aliases/unmatched",
+        params={"supplier_id": str(w.supplier.id)},
+    ).json()["data"] == []
+    listed = client.get(
+        "/api/v1/scm/supplier-code-aliases", params={"supplier_id": str(w.supplier.id)}
+    ).json()["data"]
+    assert [a["source"] for a in listed] == ["dismissed"]
+
+    removed = client.delete(f"/api/v1/scm/supplier-code-aliases/{body['id']}")
+    assert removed.status_code == 200, removed.text
+    assert [
+        r["item_code"]
+        for r in client.get(
+            "/api/v1/scm/supplier-code-aliases/unmatched",
+            params={"supplier_id": str(w.supplier.id)},
+        ).json()["data"]
+    ] == [code]
+
+
+def test_dismissing_without_the_write_permission_is_403(scm_app):
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk, role=None)
+    w = World(db)
+    db.commit()
+
+    r = TestClient(app).post(
+        "/api/v1/scm/supplier-code-aliases/dismiss",
+        json={
+            "supplier_id": str(w.supplier.id),
+            "supplier_code": w.supplier_code("ANYTHING"),
+        },
+    )
+
+    assert r.status_code == 403, r.text

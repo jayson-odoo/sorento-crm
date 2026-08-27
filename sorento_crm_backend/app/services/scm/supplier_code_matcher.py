@@ -11,7 +11,9 @@ bound to nothing on an exact match, and the reasons are four:
 
 A LADDER, first unique hit wins, and an ambiguous rung binds NOTHING:
 
-  0. an alias somebody already recorded for THIS supplier;
+  0. an alias somebody already recorded for THIS supplier - including a DISMISSAL, a row
+     with no product, which is the answer "that code names nothing we hold" and stops the
+     ladder where it stands;
   1. exact `product_code`;
   2. separator-normalised equality (`entity_resolver._norm_sql`, the expression migration 410
      indexes - shared rather than re-spelled, because two spellings of one rule drift);
@@ -186,22 +188,31 @@ def resolve(
     out: dict[str, Match] = {}
 
     # -- rung 0: what somebody already decided ---------------------------------------
-    aliases = {
-        str(row.supplier_code).strip().upper(): str(row.product_id)
-        for row in db.query(SupplierProductCodeAlias)
+    aliases: dict[str, Optional[str]] = {}
+    for row in (
+        db.query(SupplierProductCodeAlias)
         .filter(
             SupplierProductCodeAlias.supplier_id == str(supplier_id),
             SupplierProductCodeAlias.supplier_code.isnot(None),
         )
         .all()
-    }
+    ):
+        aliases[str(row.supplier_code).strip().upper()] = (
+            str(row.product_id) if row.product_id else None
+        )
     unresolved: list[str] = []
     for code in wanted:
-        product_id = aliases.get(code.strip().upper())
-        if product_id:
-            out[code] = Match(product_id, _RUNG_ALIAS)
-        else:
-            unresolved.append(code)
+        key = code.strip().upper()
+        if key in aliases:
+            product_id = aliases[key]
+            # A row with no product is a DISMISSAL (R17): somebody has said this code names
+            # nothing we hold, and that is an answer, so the ladder stops here. Falling
+            # through to the worked-out rungs would bind it on the next upload and the
+            # dismissal would read as if it had never been made.
+            if product_id:
+                out[code] = Match(product_id, _RUNG_ALIAS)
+            continue
+        unresolved.append(code)
     if not unresolved:
         return out
 

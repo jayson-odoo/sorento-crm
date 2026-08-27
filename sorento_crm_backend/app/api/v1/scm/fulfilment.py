@@ -249,6 +249,33 @@ def create_supplier_code_alias(
     return out
 
 
+class SupplierCodeDismiss(BaseModel):
+    supplier_id: str
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+
+
+@router.post("/supplier-code-aliases/dismiss", status_code=status.HTTP_201_CREATED)
+def dismiss_supplier_code(
+    body: SupplierCodeDismiss,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"That code is not one of ours." Takes it out of the queue and UNBINDS the rows already
+    uploaded under it, so nothing goes on being offered to the plan under a code nobody
+    claims. Forget (the DELETE below) puts it back.
+
+    Declared before the `{alias_id}` route so the literal path is not swallowed by the
+    parameter."""
+    out = supplier_code_alias_service.dismiss(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
 @router.delete("/supplier-code-aliases/{alias_id}")
 def delete_supplier_code_alias(
     alias_id: str,

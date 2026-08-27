@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
@@ -28,6 +29,7 @@ from app.services.scm.supplier_code_matcher import resolve
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 _MANUAL = "manual"
+_DISMISSED = "dismissed"
 
 
 def _uuid() -> str:
@@ -68,6 +70,74 @@ def create(
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
     product = _product_or_404(db, product_id)
 
+    written = _record(db, supplier_id, code, str(product.id), _MANUAL, actor)
+    rebound = _rebind(db, supplier_id, code, str(product.id))
+    return {
+        "id": str(written.id),
+        "supplier_code": written.supplier_code,
+        "product_id": str(product.id),
+        "product_code": product.product_code,
+        "source": written.source,
+        "matched_by": written.matched_by,
+        **rebound,
+    }
+
+
+def dismiss(
+    db: Session,
+    *,
+    supplier_id: str,
+    supplier_code: str,
+    actor: Optional[str] = None,
+) -> dict:
+    """"That is not one of ours." A ruling with no product, kept like every other ruling.
+
+    Some codes a supplier sends name nothing our catalogue is ever going to hold - their own
+    accessory, a spare, something they store for somebody else - and the queue of unanswered
+    codes is a to-do list nobody reads once it holds lines that can never be crossed off.
+
+    It UNBINDS rather than binds. A row still pointing at a product would go on offering the
+    item to the loading plan, which is the opposite of what the ruling says, so the stock rows
+    and the invoice lines under this code go back to unmatched in the same transaction.
+
+    Replaces whatever was recorded before, exactly as `create` does: one supplier code carries
+    one ruling, and a dismissal beside a match is two rows saying different things.
+
+    Does not commit.
+    """
+    code = (supplier_code or "").strip()
+    if not code:
+        raise AppException(422, "Name the code the supplier wrote.", detail="supplier_code")
+    if not _is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+
+    written = _record(db, supplier_id, code, None, _DISMISSED, actor)
+    rebound = _rebind(db, supplier_id, code, None)
+    return {
+        "id": str(written.id),
+        "supplier_code": written.supplier_code,
+        "product_id": None,
+        "product_code": None,
+        "source": written.source,
+        "matched_by": written.matched_by,
+        **rebound,
+    }
+
+
+def _record(
+    db: Session,
+    supplier_id: str,
+    code: str,
+    product_id: Optional[str],
+    source: str,
+    actor: Optional[str],
+) -> SupplierProductCodeAlias:
+    """The one ruling on file for this supplier's spelling, written or overwritten.
+
+    Overwrites rather than adds, whichever way the ruling goes: the identity index allows one
+    row per (company, supplier, code), and a person changing their mind is the normal path -
+    it is how a guess gets corrected and how a dismissal gets replaced by a real match.
+    """
     existing = (
         db.query(SupplierProductCodeAlias)
         .filter(
@@ -81,29 +151,19 @@ def create(
             id=_uuid(),
             supplier_id=str(supplier_id),
             supplier_code=code,
-            product_id=str(product.id),
-            source=_MANUAL,
-            matched_by=_MANUAL,
+            product_id=product_id,
+            source=source,
+            matched_by=source,
             created_by=actor,
         )
         db.add(existing)
     else:
-        existing.product_id = str(product.id)
-        existing.source = _MANUAL
-        existing.matched_by = _MANUAL
+        existing.product_id = product_id
+        existing.source = source
+        existing.matched_by = source
         existing.created_by = actor
     db.flush()
-
-    rebound = _rebind(db, supplier_id, code, str(product.id))
-    return {
-        "id": str(existing.id),
-        "supplier_code": existing.supplier_code,
-        "product_id": str(product.id),
-        "product_code": product.product_code,
-        "source": existing.source,
-        "matched_by": existing.matched_by,
-        **rebound,
-    }
+    return existing
 
 
 def delete(db: Session, alias_id: str, *, actor: Optional[str] = None) -> dict:
@@ -140,8 +200,11 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
     rows = (
+        # OUTER, because a dismissal has no product and is still a ruling somebody has to be
+        # able to see and undo. An inner join would hide exactly the rows whose only route
+        # back into the queue is the Forget button beside them.
         db.query(SupplierProductCodeAlias, Product)
-        .join(Product, Product.id == SupplierProductCodeAlias.product_id)
+        .outerjoin(Product, Product.id == SupplierProductCodeAlias.product_id)
         .filter(SupplierProductCodeAlias.supplier_id == str(supplier_id))
         .order_by(SupplierProductCodeAlias.supplier_code)
         .all()
@@ -150,8 +213,8 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         {
             "id": str(alias.id),
             "supplier_code": alias.supplier_code,
-            "product_code": product.product_code,
-            "product_name": product.product_name,
+            "product_code": product.product_code if product else None,
+            "product_name": product.product_name if product else None,
             "source": alias.source,
             "matched_by": alias.matched_by,
             "created_by": alias.created_by,
@@ -168,14 +231,27 @@ def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     counts them and then goes away, and the loading plan is where somebody comes back to
     answer them. The supplier's own words for the item travel with the code, because that is
     what the person matching it has to recognise.
+
+    A code somebody dismissed is NOT here. The queue is a to-do list, and a line that cannot
+    be crossed off is what makes people stop reading one; the ruling stays on file, and
+    Forget puts the code back.
     """
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+    dismissed = (
+        db.query(func.upper(SupplierProductCodeAlias.supplier_code))
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(supplier_id),
+            SupplierProductCodeAlias.source == _DISMISSED,
+        )
+        .scalar_subquery()
+    )
     rows = (
         db.query(SupplierInventory)
         .filter(
             SupplierInventory.supplier_id == str(supplier_id),
             SupplierInventory.product_id.is_(None),
+            func.upper(SupplierInventory.item_code).notin_(dismissed),
         )
         .order_by(SupplierInventory.item_code)
         .all()

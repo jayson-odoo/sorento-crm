@@ -1146,8 +1146,11 @@ class SupplierProductCodeAlias(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
     )
     supplier_code = Column(String(120), nullable=False)
+    #: Nullable because "none of ours" is an answer too (R17, migration 432): a dismissal is
+    #: a row with no product, and it is the only shape that can say the code names something
+    #: our catalogue is never going to hold.
     product_id = Column(
-        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
     )
     source = Column(String(10), nullable=False, server_default=text("'auto'"))
     matched_by = Column(Text, nullable=True)
@@ -1156,7 +1159,14 @@ class SupplierProductCodeAlias(Base, CompanyScopedMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "source IN ('auto', 'manual')", name="ck_scm_supplier_code_alias_source"
+            "source IN ('auto', 'manual', 'dismissed')",
+            name="ck_scm_supplier_code_alias_source",
+        ),
+        # `source` and `product_id` are one fact, so the database says so: dismissed means
+        # exactly "no product", and a row claiming both is unreadable by every screen.
+        CheckConstraint(
+            "(source = 'dismissed') = (product_id IS NULL)",
+            name="ck_scm_supplier_code_alias_dismissed",
         ),
         Index("ix_scm_supplier_code_alias_supplier", "supplier_id"),
         Index("ix_scm_supplier_code_alias_product", "product_id"),
