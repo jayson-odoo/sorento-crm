@@ -252,7 +252,18 @@ Every other case answers exactly what it answered under v4.
 
 The other-group block on SRTSA-SS listed BRW-NTC 130, DC1-NTC 0, MWH-NTC 0, RSW-NTC 0, WH3-NTC 0 under one **NTC group subtotal** whose Available reads **129** - the same figure the trail's sentence quotes. The decision strip read **Use own location · Use shared stock · Borrow other location · Borrow from another order · Buy · Incoming supply** (the last disabled at 0 and 0). SRTSA-SS, undecided, showed a plain **Suggestion** card; SRTWC8605-SC-RL, whose line is Confirmed rev 5, showed **Suggestion (before ladder v5)**. No console errors.
 
-**Review round, 27 Aug** (blocker B1, S2-S8 and the nits): the Buy note is written from what questions 3 and 4 actually offered rather than from a second filter over the raw donor list, so it can no longer offer a borrow the proof has refused; the water rules above are built; the sixth strip card hides at zero; the donor scan is cached; and a cited location the table has already listed no longer drags its whole ownership group in behind it (which is what made a cell with no agent group list every `*-BB` warehouse). Browser evidence for the round is recorded below the table.
+**Review round, 27 Aug** (blocker B1, S2-S8 and the nits): the Buy note is written from what questions 3 and 4 actually offered rather than from a second filter over the raw donor list, so it can no longer offer a borrow the proof has refused; the water rules above are built; the sixth strip card hides at zero; the donor scan is cached; and a cited location the table has already listed no longer drags its whole ownership group in behind it (which is what made a cell with no agent group list every `*-BB` warehouse).
+
+**Browser evidence, review round** (agent-browser, session `scm-uat-v5-fixes`, :3080, 1280x1200, sidebar nav from `/`):
+
+| What | What was read |
+| --- | --- |
+| SO381895, SRTWC8605-SC-RL, line 6 | Question 3: "No other ownership group has anything left: BB nets -3259, IR nets -967", with the donors it SAW named in the row's note (`MWH-BB 140 · DC1-BB 100 · MWH-IR 100 (+1 more)`, none of them cap-refused). The Buy's own sentence: "Nothing free at BRW-IB by the delivery date, so the quantity is bought." and nothing after it. Before B1 it went on to offer those same three donors. |
+| SO415027, decision strip | Five cards, `lg:grid-cols-5`, no Incoming supply card. **Use own location Suggested 43** carries the water with the floor. |
+| SO415027, SRTWCY8840 (10 due 27 Aug, BRW-SMC on hand 1, SPO 40) | Question 1: "Yes 10 - The SMC group nets 1, leaving 11 for this line; it was drawn as 1 from BRW-SMC, 9 on the water to BRW-SMC." Note: "BRW-SMC 1 · BRW-SMC 10 (on the water)". Sources: `reserve 1` + `timely_spo 9`, both rung `group_take`; the Sourced-from strip reads "Own 10 at BRW-SMC" and the location table's Taken reads 10 against BRW-SMC. |
+| No LATE water exists on the live book | Every open SPO line carries a PAST expected date (`spo_supply`'s own "trust the book" note), so on real data every promise is timely for a future-dated line and the "arrives after the required date, not counted" clause has no live cell to appear in. It is pinned instead by `tests/test_ladder_v5_edges.py::test_water_arriving_after_the_required_date_is_named_with_its_date_and_never_drawn`. The captain's suggested cell (SRTWCY7405-PJ at BRW-IB, `SPO-2026/08-0061`) is OVERDUE, which is a different fact: it still lands before the line's date, so it is timely for it. |
+
+No console errors; `errors` empty.
 
 ## 2. Vocabulary (ONE table, used by the board, the SO detail and the cell colour)
 
