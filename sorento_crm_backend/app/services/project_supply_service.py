@@ -3531,18 +3531,58 @@ class ProjectSupplyService:
                     ),
                 }
             )
-        if _dec(entry.timely_spo_qty) > _ZERO:
-            components.append(
-                {
-                    "kind": TIMELY_SPO,
-                    "qty": qty_text(_dec(entry.timely_spo_qty)),
-                    "source_location": fact.own_code,
-                    "source_warehouse_id": (
-                        str(fact.warehouse.id) if fact.warehouse else None
-                    ),
-                    "reason": self._timely_reason(fact),
-                }
-            )
+        # THE WATER, SPREAD OVER THE LOCATIONS QUESTION 1 OFFERED IT AT, in the same draw
+        # order the proposal used and bounded by the same candidate list the recheck above
+        # judged the quantity against. `ConfirmLine` carries one scalar, so the split has to
+        # be derived - from the ladder's own ledger, never from a second reading of it - and
+        # without it a frozen water row named the line's own location whatever sibling the
+        # goods were actually coming to, and carried no rung at all, so the board filed a
+        # confirmed v5 line under "Incoming supply" while its own suggestion filed it under
+        # "Use own location".
+        timely = _dec(entry.timely_spo_qty)
+        if timely > _ZERO:
+            left = timely
+            for candidate in self._group_take_candidates(fact):
+                if left <= _ZERO:
+                    break
+                if not candidate.get("water"):
+                    continue
+                take = min(left, max(_dec(candidate.get("qty")), _ZERO))
+                if take <= _ZERO:
+                    continue
+                location = str(candidate["location"])
+                source = self._warehouse_by_code(location)
+                components.append(
+                    {
+                        "kind": TIMELY_SPO,
+                        "qty": qty_text(take),
+                        "source_location": location,
+                        "source_warehouse_id": str(source.id) if source else None,
+                        "reason": group_water_reason(
+                            location,
+                            take,
+                            fact.group_code,
+                            fact.group_offer if fact.group_code else None,
+                            candidate.get("arrival_date"),
+                        ),
+                        "rung": RUNG_GROUP_TAKE,
+                    }
+                )
+                left -= take
+            if left > _ZERO:
+                # No water on offer for it: an ungrouped line, or a quantity a person
+                # recorded by hand. The retired rung 1's shape, and it reads as one.
+                components.append(
+                    {
+                        "kind": TIMELY_SPO,
+                        "qty": qty_text(left),
+                        "source_location": fact.own_code,
+                        "source_warehouse_id": (
+                            str(fact.warehouse.id) if fact.warehouse else None
+                        ),
+                        "reason": self._timely_reason(fact),
+                    }
+                )
         for item in entry.borrow or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:

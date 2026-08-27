@@ -301,6 +301,24 @@ class BoardDecisionReserve(BaseModel):
     rung: Optional[str] = None
 
 
+class BoardDecisionIncoming(BaseModel):
+    """One SPO share of a frozen decision, in the shape a Reserve row already has.
+
+    `BoardLineDecision.timely_spo_qty` is the TOTAL and is what `ConfirmLine` takes the
+    composition back in; this says WHERE each share was coming to and WHICH question drew
+    it. Under ladder v5 the water is question 1's own answer (`rung: group_take`), so a
+    screen reading only the scalar filed a confirmed water line under "Incoming supply"
+    while its own suggestion filed it under "Use own location".
+    """
+
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    qty: str
+    #: `group_take` on a v5 confirmation, `incoming` on one frozen under the retired rung 1,
+    #: `None` on a revision written before the rung was recorded at all.
+    rung: Optional[str] = None
+
+
 class BoardDecisionBorrow(BaseModel):
     """One donor of a frozen Borrow, in the words `ConfirmBorrowComponent` takes them."""
 
@@ -342,6 +360,9 @@ class BoardLineDecision(BaseModel):
     revision_no: int
     confirmed_at: Optional[datetime] = None
     timely_spo_qty: str = "0"
+    #: The same quantity, split per document location and rung. Empty on a revision frozen
+    #: before it was recorded, where `timely_spo_qty` is all there is.
+    incoming: List[BoardDecisionIncoming] = []
     reserve: List[BoardDecisionReserve] = []
     borrow: List[BoardDecisionBorrow] = []
     buy_qty: str = "0"

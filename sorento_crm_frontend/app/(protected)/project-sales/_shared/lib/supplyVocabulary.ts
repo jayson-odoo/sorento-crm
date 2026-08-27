@@ -560,9 +560,35 @@ export function decisionParts(
   }
   const parts: SupplyPart[] = [];
 
-  const incoming = decision.timely_spo_qty;
-  if (incoming !== undefined && toMinor(incoming) !== 0) {
-    parts.push({ kind: 'timely_spo', rung: 'incoming', qty: incoming });
+  // THE WATER KEEPS THE QUESTION THAT DREW IT. A v5 confirmation records the SPO share per
+  // document location with its rung (`group_take`), so it reads under "Use own location"
+  // exactly as the suggestion beside it does. Hard-coding `incoming` here filed one line
+  // under two kinds and put an amber "these differ" dot on both cards.
+  const incomingRows = (decision as BoardLineDecision).incoming;
+  if (incomingRows && incomingRows.length) {
+    for (const row of incomingRows) {
+      if (toMinor(row.qty) === 0) continue;
+      parts.push({
+        kind: 'timely_spo',
+        rung: row.rung ?? 'incoming',
+        qty: row.qty,
+        location: row.location ?? null,
+      });
+    }
+  } else {
+    // A DRAFT (the Amend dialog posts a scalar) or a revision frozen before the split was
+    // recorded. The line's own sources are the only place the rung can be read from, and on
+    // a covered line they are the frozen composition itself.
+    const incoming = decision.timely_spo_qty;
+    if (incoming !== undefined && toMinor(incoming) !== 0) {
+      const water = contribution.sources.find((source) => source.kind === 'timely_spo');
+      parts.push({
+        kind: 'timely_spo',
+        rung: water?.rung ?? 'incoming',
+        qty: incoming,
+        location: water?.location ?? null,
+      });
+    }
   }
 
   for (const row of (decision.reserve ?? []) as ReserveRow[]) {
@@ -724,6 +750,11 @@ export function takenByLocation(
     const { parts } = contributionParts(contribution, draft[contribution.key] ?? null);
     for (const part of parts) {
       if (part.kind === 'buy' || part.rung === 'buy') continue;
+      // The RETIRED rung 1's incoming, which arrived on somebody else's document at the
+      // line's own location: it took nothing off that row's pile, so a frozen v3/v4
+      // component must not read as though it had. Question 1's water (rung `group_take`)
+      // does come off a listed row's SPO qty, and is counted above.
+      if (part.rung === 'incoming') continue;
       const at = locationOf(part);
       if (!at) continue;
       minor.set(at, (minor.get(at) ?? 0) + toMinor(part.qty));

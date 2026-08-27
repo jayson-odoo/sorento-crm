@@ -640,6 +640,25 @@ def test_the_composition_question_one_offered_confirms_without_complaint():
         assert snapshot["reserve_qty"] == "40"
         assert snapshot["timely_spo_qty"] == "40"
 
+        # And the board reads that water back UNDER QUESTION 1, per document location, so
+        # the decided side of the strip files it exactly where the suggested side does.
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+        covered = _cell(board, product.product_code, BUCKET)["contributions"][0]
+        assert covered["covered"] is True
+        assert covered["decision"]["timely_spo_qty"] == "40"
+        assert covered["decision"]["incoming"] == [
+            {
+                "warehouse_id": str(own.id),
+                "location": own.warehouse_code,
+                "qty": "40",
+                "rung": "group_take",
+            }
+        ]
+        water = next(s for s in covered["sources"] if s["kind"] == "timely_spo")
+        assert (water["rung"], water["location"]) == ("group_take", own.warehouse_code), (
+            "a rebuilt frozen composition keeps the question that drew it"
+        )
+
 
 def test_the_water_is_drawn_at_the_location_it_is_coming_to_not_at_the_lines_own():
     """Review finding S2. The group's SPO used to be summed across every `*-<group>` site

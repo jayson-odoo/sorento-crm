@@ -1388,6 +1388,23 @@ class FulfilmentBoardService:
             "revision_no": decision.revision_no,
             "confirmed_at": decision.confirmed_at,
             "timely_spo_qty": qty_text(total(TIMELY_SPO)),
+            # The water, per component, exactly as the Reserve rows are. `timely_spo_qty`
+            # above is the TOTAL and stays, because that is the single field `ConfirmLine`
+            # takes the composition back in; what it cannot carry is WHERE the water was
+            # coming to and WHICH question drew it. Under ladder v5 that question is 1
+            # (`rung: group_take`), so a screen reading only the scalar filed a confirmed
+            # water line under "Incoming supply" while its own suggestion filed it under
+            # "Use own location" - one line, two kinds, and an amber dot on both cards.
+            "incoming": [
+                {
+                    "warehouse_id": c.get("source_warehouse_id"),
+                    "location": c.get("source_location"),
+                    "qty": qty_text(_dec(c.get("qty"))),
+                    "rung": c.get("rung"),
+                }
+                for c in components
+                if c.get("kind") == TIMELY_SPO
+            ],
             "reserve": [
                 {
                     "warehouse_id": c.get("source_warehouse_id"),
@@ -1964,20 +1981,36 @@ class FulfilmentBoardService:
                 for component in decision.get("reserve") or []
             ),
             *(
-                [
-                    {
-                        "kind": TIMELY_SPO,
-                        "qty": qty_text(incoming),
-                        "location": row.location,
-                        "warehouse_id": row.warehouse_id,
-                        "reason": self._frozen_reason(row, "Incoming supply, as confirmed"),
-                        "spo_number": None,
-                        "arrival_date": None,
-                        "rung": RUNG_INCOMING,
-                    }
-                ]
-                if incoming > _ZERO
-                else []
+                # PER COMPONENT where the decision recorded them (every v5 confirmation),
+                # so the water keeps the question that drew it and the location it was
+                # coming to. The single-row fallback is for a revision frozen before
+                # `incoming` was recorded, where the only facts are the total and the rung
+                # that existed then.
+                {
+                    "kind": TIMELY_SPO,
+                    "qty": component["qty"],
+                    "location": component.get("location"),
+                    "warehouse_id": component.get("warehouse_id"),
+                    "reason": self._frozen_reason(row, "Incoming supply, as confirmed"),
+                    "spo_number": None,
+                    "arrival_date": None,
+                    "rung": component.get("rung") or RUNG_INCOMING,
+                }
+                for component in (
+                    decision.get("incoming")
+                    or (
+                        [
+                            {
+                                "qty": qty_text(incoming),
+                                "location": row.location,
+                                "warehouse_id": row.warehouse_id,
+                                "rung": RUNG_INCOMING,
+                            }
+                        ]
+                        if incoming > _ZERO
+                        else []
+                    )
+                )
             ),
             *(
                 {

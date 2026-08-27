@@ -828,10 +828,28 @@ export interface BoardDecisionBorrow {
  * these words. An UNTOUCHED covered line is never posted from the board: the server carries every
  * covered line the body does not name into the next revision itself, verbatim.
  */
+/**
+ * One SPO share of a frozen decision, in the shape a Reserve row already has.
+ *
+ * `timely_spo_qty` is the TOTAL and is what `ConfirmLine` takes the composition back in; this
+ * says WHERE each share was coming to and WHICH question drew it. Under ladder v5 the water is
+ * question 1's answer (`rung: group_take`), so it reads under "Use own location" exactly as
+ * the suggestion beside it does.
+ */
+export interface BoardDecisionIncoming {
+  warehouse_id?: string | null;
+  location?: string | null;
+  qty: string;
+  /** `group_take` on a v5 confirmation, `incoming` on one frozen under the retired rung 1. */
+  rung?: string | null;
+}
+
 export interface BoardLineDecision {
   revision_no: number;
   confirmed_at?: string | null;
   timely_spo_qty: string;
+  /** The same quantity split per document location and rung. Empty on an older revision. */
+  incoming?: BoardDecisionIncoming[];
   /** Same shape as an amendment's Reserve: addressed by id, labelled by code. */
   reserve: BoardReserveComponent[];
   borrow: BoardDecisionBorrow[];
