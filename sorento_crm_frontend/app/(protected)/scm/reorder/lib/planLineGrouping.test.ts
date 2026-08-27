@@ -287,3 +287,99 @@ describe('supplier/price/MOQ are product facts (captain, 20 Aug ruling): carried
     expect(group.rec.moq).toBeNull();
   });
 });
+
+/**
+ * The per-product basis (`PLAN-scm-reorder-per-product.md`): the run writes ONE row for the
+ * whole product, naming no warehouse, plus per-location disposition rows. The fixture below
+ * is the exact shape `GET .../recommendations?query=SRTWT7408` returned on run
+ * c05363a1 (27 Aug), where the grouped view showed the BRW disposition's own numbers as the
+ * product's plan row.
+ */
+describe('groupPlanLinesByChannel - the product row IS the group row', () => {
+  const productRow = line({
+    id: 'rec-product', product_id: 'p-srt', sku: 'SRTWT7408', type: 'covered',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: 500,
+    order_qty: 7, recommended_qty: 0, net_position: 5758,
+    on_hand: 5495, project_on_hand: 4201, incoming_spo: 0, outstanding_po: 263,
+    outstanding_sales: 7, project_committed: 0, retail_committed: 7, project_need: 0,
+    rank: null,
+  });
+  const brwDisposition = line({
+    id: 'rec-disposition', product_id: 'p-srt', sku: 'SRTWT7408', type: 'disposition',
+    warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    policy_type: 'reorder_level', disposition_action: 'hold',
+    order_qty: 0, recommended_qty: null, on_hand: 1296, outstanding_po: 270,
+    outstanding_sales: 0, project_committed: 0, retail_committed: 0, project_need: 0,
+    rank: null,
+  });
+  const needsLevelRow = line({
+    id: 'rec-b2155', product_id: 'p-b2155', sku: 'B2155-NL-BLUE', type: 'needs_level',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+    order_qty: 0, recommended_qty: null, on_hand: 28828, net_position: 31892,
+    project_committed: 0, retail_committed: 3, rank: null,
+  });
+
+  it('takes the product row whole - never the sum of it and its locations', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.rec.id).toBe('rec-product');
+    // 5,495 + 1,296 would be the same stock counted twice: the product row already spans
+    // every location (AC-R1).
+    expect(group.rec.on_hand).toBe(5495);
+    expect(group.net).toBe(5758);
+    expect(group.order_qty).toBe(7);
+    expect(group.rec.outstanding_po).toBe(263);
+  });
+
+  it('reads the channels off the product row, not off its locations', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.__group.channelQty).toEqual({ project: 0, retail: 7 });
+  });
+
+  it('keeps the product row decidable and drillable - the disposition never stands in', () => {
+    // The defect: with the covered row filtered out, the group was built from the BRW
+    // disposition, which is not purchasable - so the Suggested-qty cell rendered a dash
+    // and the ledger had no trigger to open.
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.status).toBe('covered_by_stock');
+    expect(group.purchasable).toBe(true);
+    expect(group.__group.productLine?.id).toBe('rec-product');
+  });
+
+  it('carries the locations underneath, product row first so its level is the one read', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.__group.members.map((m) => m.id)).toEqual(['rec-product', 'rec-disposition']);
+    expect(group.__group.locationCodes).toEqual(['Butterworth']);
+  });
+
+  it('groups a needs_level product the same way, so the level cell has a row to sit on', () => {
+    const [group] = groupPlanLinesByChannel([needsLevelRow]);
+    expect(group.rec.id).toBe('rec-b2155');
+    expect(group.status).toBe('needs_level');
+    expect(group.purchasable).toBe(true);
+    expect(group.order_qty).toBe(0);
+    expect(group.rec.on_hand).toBe(28828);
+  });
+
+  it('keeps one row per product across the three-row response', () => {
+    const nlProductRow = line({
+      id: 'rec-nl', product_id: 'p-srt-nl', sku: 'SRTWT7408-NL', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+      policy_type: 'reorder_level', order_qty: 0, on_hand: 12, rank: null,
+    });
+    const groups = groupPlanLinesByChannel([productRow, brwDisposition, nlProductRow]);
+    expect(groups.map((g) => g.sku)).toEqual(['SRTWT7408', 'SRTWT7408-NL']);
+  });
+
+  it('still sums a product the run planned per location, with no product row of its own', () => {
+    const a = line({ id: 'x', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w1',
+                     warehouse_code: 'BRW', on_hand: 4, order_qty: 2 });
+    const b = line({ id: 'y', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w2',
+                     warehouse_code: 'MWH', on_hand: 6, order_qty: 3 });
+    const [group] = groupPlanLinesByChannel([a, b]);
+    expect(group.__group.productLine).toBeNull();
+    expect(group.rec.on_hand).toBe(10);
+    expect(group.order_qty).toBe(5);
+  });
+});

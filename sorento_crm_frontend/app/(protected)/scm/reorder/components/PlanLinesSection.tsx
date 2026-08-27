@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { usePlanLines } from '../hooks/usePlanLines';
-import type { PlanLineStatus } from '../lib/planLine';
+import type { PlanLine, PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
 import { lineBreachStatus } from '../lib/orderQtyLedger';
 import { LevelChangesPanel } from './LevelChangesPanel';
@@ -93,11 +93,33 @@ export function PlanLinesSection({
    */
   const visibleLines = useMemo(() => {
     if (statusFilter === 'covered_by_stock') return planLines.lines;
-    return planLines.lines.filter((l) => {
-      if (l.rec.policy_type !== 'reorder_level') return true;
-      if (l.status !== 'covered_by_stock') return true;
-      return lineBreachStatus(l.rec, l.net).breached;
-    });
+    const hidden = new Set(
+      planLines.lines
+        .filter(
+          (l) =>
+            l.rec.policy_type === 'reorder_level' &&
+            l.status === 'covered_by_stock' &&
+            !lineBreachStatus(l.rec, l.net).breached,
+        )
+        .map((l) => l.id),
+    );
+    if (hidden.size === 0) return planLines.lines;
+    // ONE exception: the product's OWN row, while the product is still on the plan for
+    // another reason.
+    //
+    // The level basis plans per PRODUCT, so that covered row IS the product's row - it
+    // holds every location's stock and demand, and the grouped view builds the product row
+    // from it. Dropping it left SRTWT7408's BRW disposition standing in as the plan row:
+    // Suggested qty "-", On hand 1,296 of 5,495, and no ledger to open. A per-location
+    // covered row is hidden exactly as before, and so is a product row whose product has
+    // nothing else on the plan - that item really is not the buyer's business today.
+    const keyOf = (l: PlanLine) => l.product_id ?? `sku:${l.sku}`;
+    const shown = new Set(
+      planLines.lines.filter((l) => !hidden.has(l.id)).map(keyOf),
+    );
+    return planLines.lines.filter(
+      (l) => !hidden.has(l.id) || (l.warehouse_id === null && shown.has(keyOf(l))),
+    );
   }, [planLines.lines, statusFilter]);
 
   // Reported over `visibleLines`, NOT `planLines.lines`: the grid renders `visibleLines`

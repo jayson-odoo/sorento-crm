@@ -126,6 +126,14 @@ export interface PlanChannelGroupMeta {
    *  member of this set. A field that is null WITHOUT being in `conflicts` means no member
    *  carries it at all, a data gap rather than a disagreement (see the file header). */
   conflicts: Set<PlanChannelConflictField>;
+  /**
+   * The product's OWN plan row, when the run wrote one (`productPlanRowOf`).
+   *
+   * Null on a run that only ever planned per location, where the group row is the sum of
+   * its members exactly as it always was. When it is set, the group row IS this line - the
+   * expand panel skips it, because it is the row the reader is already looking at.
+   */
+  productLine: PlanLine | null;
 }
 
 export interface GroupedPlanLine extends PlanLine {
@@ -347,7 +355,74 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
   } as ReorderRecommendation;
 }
 
+/**
+ * The row the engine sized for the WHOLE product, if it wrote one.
+ *
+ * The reorder-level basis plans per PRODUCT (`PLAN-scm-reorder-per-product.md`): one level,
+ * one net across every location, one row - and that row names no warehouse, exactly as a
+ * network-scope buy already does. It is not a member to be summed with the others, it is
+ * the answer; the per-location rows beside it are dispositions, statements about a place.
+ *
+ * Summing it with them double counted the product (its `on_hand` already spans every
+ * location) and, when the covered row was filtered out of the default list, left a BRW
+ * disposition standing in as SRTWT7408's plan row: Suggested qty "-", On hand 1,296 of
+ * 5,495, Project and Retail both 0, and no way to open the ledger.
+ *
+ * A disposition never qualifies (it always names its bin), and MORE than one warehouse-less
+ * row is not a product row but an ambiguity, so both fall back to summing.
+ */
+export function productPlanRowOf(members: PlanLine[]): PlanLine | null {
+  const rows = members.filter(
+    (m) => m.warehouse_id === null && m.rec.warehouse_code == null
+      && m.rec.type !== 'disposition',
+  );
+  return rows.length === 1 ? rows[0] : null;
+}
+
+/**
+ * The group row for a product the run planned as ONE thing: the product's own row, with the
+ * per-location rows carried underneath it.
+ *
+ * Nothing is summed here, on purpose. Every figure the row shows - on hand, net, the
+ * channels, the level, the suggested quantity - is the one the engine froze for the whole
+ * product, so adding a member's own copy of it would count the same stock twice.
+ */
+function buildProductGroupedLine(
+  productLine: PlanLine,
+  members: PlanLine[],
+  channels: PlanChannel[],
+): GroupedPlanLine {
+  const others = members.filter((m) => m.id !== productLine.id);
+  const locationCodes = others.map((m) => m.warehouse);
+  // The product row FIRST: `usePlanLines` reads a group's level suggestion off the first
+  // member that carries one, and the level a per-product plan is decided on is the
+  // product's (`pid:`), never a bin's.
+  const ordered = [productLine, ...others];
+  return {
+    ...productLine,
+    // Grouped mode drops the Location column, so this only ever reaches a title/search:
+    // the locations underneath, not the product row's own empty one.
+    warehouse: locationCodes.length ? locationLabel(locationCodes) : productLine.warehouse,
+    __group: {
+      members: ordered,
+      locationCodes,
+      channels,
+      // The product row's own split - it already spans every location (AC-R1).
+      channelQty: {
+        project: productLine.rec.project_committed ?? null,
+        retail: productLine.rec.retail_committed ?? null,
+      },
+      projectConfirmedQty: productLine.rec.project_need ?? null,
+      // One row cannot disagree with itself about its supplier, price or MoQ.
+      conflicts: new Set<PlanChannelConflictField>(),
+      productLine,
+    },
+  };
+}
+
 function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): GroupedPlanLine {
+  const productLine = productPlanRowOf(members);
+  if (productLine) return buildProductGroupedLine(productLine, members, channels);
   const first = members[0];
   const locationCodes = members.map((m) => m.warehouse);
   const rankOrder = minOrNull(members.map((m) => m.rankOrder));
@@ -442,6 +517,7 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
       channelQty,
       projectConfirmedQty: sumOrNull(members.map((m) => m.rec.project_need)),
       conflicts,
+      productLine: null,
     },
   };
 }
