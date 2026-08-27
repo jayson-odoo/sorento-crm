@@ -752,6 +752,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     enableColumnResizing: true,
   });
 
+  // Every line covered, or nothing packed for one: the chevrons are all disabled, so the
+  // two toolbar buttons have nothing to open. A control that does nothing when pressed
+  // reads as a broken screen, so it says why instead (R22, AC-G5).
+  const nothingToExpand = table.getRowModel().rows.every((r) => !r.getCanExpand());
+
   const poMatrix = useMemo(() => {
     const entries: SpoMatrixEntry<SpoPoTake & { item_code: string | null }>[] = [];
     for (const ln of lines) {
@@ -985,6 +990,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               type="button"
               size="sm"
               variant="ghost"
+              disabled={nothingToExpand}
+              title={nothingToExpand ? 'No line can be split yet' : undefined}
               onClick={() => table.toggleAllRowsExpanded(true)}
             >
               <ChevronsUpDown className="size-4" aria-hidden />
@@ -994,6 +1001,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               type="button"
               size="sm"
               variant="ghost"
+              disabled={nothingToExpand}
+              title={nothingToExpand ? 'No line can be split yet' : undefined}
               onClick={() => table.toggleAllRowsExpanded(false)}
             >
               <ChevronsDownUp className="size-4" aria-hidden />

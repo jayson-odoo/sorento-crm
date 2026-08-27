@@ -879,6 +879,27 @@ describe('R22 - the destinations expand under the row', () => {
     expect(screen.queryByText(/SRTWT9000 - destinations/)).not.toBeInTheDocument();
   });
 
+  it('Expand all and Collapse all say why when no line can be split', async () => {
+    state.suggestion = suggestion({
+      lines: [
+        plannerLine({
+          cannot_convert: true,
+          reason: 'No PO to pull from - raise the PO in AutoCount first.',
+          suggested_qty: 0,
+          po_covered_qty: 0,
+        }),
+      ],
+    });
+    renderTable();
+
+    const expandAll = await screen.findByRole('button', { name: /expand all/i });
+    const collapseAll = screen.getByRole('button', { name: /collapse all/i });
+    expect(expandAll).toBeDisabled();
+    expect(collapseAll).toBeDisabled();
+    expect(expandAll).toHaveAttribute('title', 'No line can be split yet');
+    expect(collapseAll).toHaveAttribute('title', 'No line can be split yet');
+  });
+
   it('a line nothing can be sent for does not expand', async () => {
     state.suggestion = suggestion({
       lines: [
