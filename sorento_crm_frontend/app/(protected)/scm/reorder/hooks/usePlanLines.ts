@@ -571,6 +571,10 @@ export function usePlanLines(runId: string | null, enabled = true) {
     // as a literal on the screen that renders it.
     trendSeriesMonths: trend.data?.series_months ?? 24,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
+    // Whether the lazy fetch has ANSWERED. A product with no purchases and a fetch that
+    // has not run both read as `undefined` from `purchaseTrendFor`, and the ledger's
+    // History block must not print "never purchased" for the second one.
+    purchaseTrendReady: purchaseTrend.isSuccess,
     requestPurchaseTrend,
     hasPhotoFor,
     photoStatus,

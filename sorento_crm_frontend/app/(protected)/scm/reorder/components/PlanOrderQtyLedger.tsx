@@ -1,10 +1,22 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { EM_DASH, fmtDecimal, fmtInt, fmtSigned } from '../../lib/format';
+import {
+  EM_DASH,
+  fmtDate,
+  fmtDecimal,
+  fmtInt,
+  fmtMoney,
+  fmtSigned,
+  fmtSupplierCost,
+} from '../../lib/format';
 import { DrillHeader } from './PlanExplainDrills';
+import { RecentPurchasesTable } from './PlanPurchaseTrendPopover';
+import { useLocationStock, useRecommendationDemand } from '../hooks/useReorderRun';
+import { describePurchaseTrend, type ProductPurchaseTrend } from '../lib/purchaseTrend';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import {
@@ -22,23 +34,30 @@ import {
   daysTerm,
   forecastAddOn,
   forecastQtyCap,
+  ledgerDemandRows,
   levelLine,
   lineBreachStatus,
   roundBuyQty,
+  type LedgerDemandRow,
 } from '../lib/orderQtyLedger';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
 /**
- * The order-qty ledger (S3, UAC B): the same three blocks the design session sketched -
- * THE LINE, COVER BEFORE BUYING, THE BUY - replacing the old order-qty drill behind the
- * "Explain order qty" trigger the Suggested-qty column already opens.
+ * The order-qty ledger, behind the "Explain order qty" trigger on the Suggested-qty column.
  *
- * Blocks two and three read and write the SAME decision state the Decision cell and the
- * Adjust dialog use (`coverForLine` / `poOffset`, S16) - there is no second, parallel model
- * of what a line's buy is made of, and toggling a cover part here commits through `onDecide`
- * exactly as accepting or adjusting does. That is also why there is no separate "Record"
- * button (UAC B4): the toggle IS the edit.
+ * Top to bottom (AC-R8, `PLAN-scm-reorder-per-product.md`): PROJECT DEMAND, RETAIL DEMAND,
+ * NET NOW, THE BUY, HISTORY. Demand comes first because "what is being asked for" is the
+ * first question; history comes last because it is context, not a reason.
+ *
+ * The cover block sits between Net now and The buy on the FORECAST basis only. On the
+ * buyer's own level basis the plan is netted across every location of the product, so the
+ * stock a transfer would move is already inside Net now - offering it as a deduction there
+ * would subtract it twice. Moving it stays a decision on the fulfilment board.
+ *
+ * Where the cover block does render, it reads and writes the SAME decision state the
+ * Decision cell and the Adjust dialog use (`coverForLine` / `poOffset`, S16) - there is no
+ * second model of what a line's buy is made of, and the toggle IS the edit (UAC B4).
  */
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -336,6 +355,115 @@ function AutoDerivation({ line }: { line: PlanLine }) {
   );
 }
 
+/**
+ * The orders behind one channel of a line: SO number, customer, when it is needed, how much
+ * (AC-R8). The project block also states how much of each instruction is already placed, so
+ * a remainder of 20 cannot be mistaken for an order that was always 20.
+ *
+ * A channel with nothing in it says so. Hiding the block would leave the reader to guess
+ * whether there is no project demand or whether the panel failed to load.
+ */
+function DemandBlock({
+  rows,
+  total,
+  isLoading,
+  isError,
+  emptyText,
+  showLinked,
+}: {
+  rows: LedgerDemandRow[];
+  total: number;
+  isLoading: boolean;
+  isError: boolean;
+  emptyText: string;
+  showLinked?: boolean;
+}) {
+  if (isLoading) {
+    return <p className="px-3 py-2 text-xs text-muted-foreground">Loading orders...</p>;
+  }
+  if (isError) {
+    return <p className="px-3 py-2 text-xs text-muted-foreground">Could not load the orders</p>;
+  }
+  if (!rows.length) {
+    return <p className="px-3 py-2 text-xs text-muted-foreground">{emptyText}</p>;
+  }
+  return (
+    <div className="px-3 py-2">
+      <table className="w-full text-2xs">
+        <thead>
+          <tr className="text-muted-foreground/70">
+            <th className="pb-0.5 text-left font-normal">Order</th>
+            <th className="pb-0.5 text-left font-normal">Customer</th>
+            <th className="pb-0.5 text-right font-normal">Needed</th>
+            <th className="pb-0.5 text-right font-normal">Qty</th>
+            {showLinked ? <th className="pb-0.5 text-right font-normal">Linked</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key}>
+              <td className="max-w-24 truncate py-0.5" title={r.soNumber}>
+                {r.soNumber}
+              </td>
+              <td className="max-w-28 truncate py-0.5 text-muted-foreground" title={r.customer}>
+                {r.customer}
+              </td>
+              <td className="py-0.5 text-right tabular-nums text-muted-foreground">
+                {r.deliveryDate ? fmtDate(r.deliveryDate) : 'no date'}
+              </td>
+              <td className="py-0.5 text-right tabular-nums">{fmtInt(r.qty)}</td>
+              {showLinked ? (
+                <td className="py-0.5 text-right tabular-nums text-muted-foreground">
+                  {r.linked === null ? EM_DASH : fmtInt(r.linked)}
+                </td>
+              ) : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {total > rows.length ? (
+        <p className="mt-1 text-2xs text-muted-foreground">
+          {`Showing ${fmtInt(rows.length)} of ${fmtInt(total)} orders`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Where the on-hand figure actually sits (AC-R8).
+ *
+ * The buy is one net across every location, so the total is the number that decides - and
+ * the first question it raises is "where is it". Fetched only once the reader asks, and
+ * LIVE rather than frozen, which is the same reading the grouped Buy view's own expand
+ * panel shows (`useLocationStock`).
+ */
+function LocationStockRows({ productId }: { productId: string | null }) {
+  const { data, isLoading, isError } = useLocationStock(productId, Boolean(productId));
+  if (isLoading) {
+    return <p className="ms-3 text-2xs text-muted-foreground">Loading locations...</p>;
+  }
+  if (isError) {
+    return <p className="ms-3 text-2xs text-muted-foreground">Could not load the locations</p>;
+  }
+  const rows = (data?.locations ?? []).filter((l) => (l.on_hand ?? 0) !== 0);
+  if (!rows.length) {
+    return <p className="ms-3 text-2xs text-muted-foreground">No stock at any location</p>;
+  }
+  return (
+    <div className="ms-3 space-y-0.5">
+      {rows.map((l) => (
+        <div key={l.warehouse_id} className="flex justify-between gap-2 text-2xs">
+          <span className="truncate text-muted-foreground" title={l.warehouse_code ?? undefined}>
+            {l.warehouse_code ?? EM_DASH}
+          </span>
+          <span className="tabular-nums">{fmtInt(l.on_hand)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** THE LINE, manual mode: the level the buyer owns, its source, and (when the backend ever
  *  carries it) when it was set - not the ROP formula, which no longer decides anything on
  *  this basis. */
@@ -361,6 +489,11 @@ export function OrderQtyLedger({
   healthThresholds,
   trend,
   onDecide,
+  runId,
+  purchaseTrend,
+  purchaseWindowMonths = 3,
+  purchaseTrendReady,
+  onNeedPurchaseTrend,
 }: {
   line: PlanLine;
   decision: PlanDecision | undefined;
@@ -374,12 +507,48 @@ export function OrderQtyLedger({
    *  add-on's rising/falling read never disagrees with it. */
   trend?: TrajectoryEntry;
   onDecide: (next: PlanDecision) => void;
+  /** The run this row belongs to. Without it the two demand blocks have nothing to fetch
+   *  and say so - they never invent a list. */
+  runId?: string | null;
+  /** What we have actually purchased, for the History block - the SAME payload the PO
+   *  cell's own popover reads, so the two can never disagree about a product. */
+  purchaseTrend?: ProductPurchaseTrend;
+  purchaseWindowMonths?: number;
+  /** Whether the lazy purchase-trend fetch has answered. Without it "we have never bought
+   *  this" and "we have not looked yet" are the same absent payload. */
+  purchaseTrendReady?: boolean;
+  /** Starts that fetch, the same lazy contract the PO cell's own popover uses: opening
+   *  this card is a reason to load it, mounting the whole grid is not. */
+  onNeedPurchaseTrend?: () => void;
 }) {
   const rec = line.rec;
   const q = line.order_qty_inputs;
   const manual = rec.policy_type === 'reorder_level';
   const needed = Math.ceil(line.order_qty);
   const poQty = poReceipts.reduce((t, r) => t + r.remaining, 0);
+
+  // The orders behind this row, one fetch per channel - the same endpoint and the same
+  // per-channel narrowing the SO cell's own drill uses. Fired when the ledger mounts,
+  // which only happens when the popover is opened.
+  const projectDemand = useRecommendationDemand(
+    runId ?? null, rec.id, Boolean(runId), 'project',
+  );
+  const retailDemand = useRecommendationDemand(
+    runId ?? null, rec.id, Boolean(runId), 'retail',
+  );
+  const projectRows = ledgerDemandRows(projectDemand.data?.lines);
+  const retailRows = ledgerDemandRows(retailDemand.data?.lines);
+  // Where the on-hand total sits. Closed by default: the total is what decides, and ten
+  // locations opened on every row is the fatigue this card is being reordered to end.
+  const [locationsOpen, setLocationsOpen] = useState(false);
+  // The History block needs the run's purchase trend, which is fetched lazily. Asking on
+  // mount means opening the card IS the request - the same thing the PO cell's popover
+  // does, and it happens once per run because react-query caches the answer.
+  useEffect(() => {
+    onNeedPurchaseTrend?.();
+    // Fire once per mount: the callback is a plain setState flip on the caller.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Which cover parts are "on": the committed decision when one exists, the engine's own
   // suggested mixture otherwise - never a third guess (UAC B4).
@@ -544,14 +713,58 @@ export function OrderQtyLedger({
           grown to three blocks, and a 375px screen has no room to spare (S3). */}
       <div className="max-h-[70vh] overflow-y-auto">
         <div className="pb-1">
-          <SectionLabel>The line</SectionLabel>
-          {manual ? <ManualLevelLine rec={rec} /> : <AutoDerivation line={line} />}
+          {/* The forecast basis still derives its own line, and the derivation is what
+              explains the number Net now is measured against. The level basis has no
+              derivation to show - the level IS the line - so it states it beside the net
+              below instead. */}
+          {manual ? null : (
+            <>
+              <SectionLabel>The line</SectionLabel>
+              <AutoDerivation line={line} />
+            </>
+          )}
 
-          <div className="space-y-1 border-t px-3 py-2">
-            <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-              Net now
+          <SectionLabel>Project demand</SectionLabel>
+          <DemandBlock
+            rows={projectRows}
+            total={projectDemand.data?.total ?? projectRows.length}
+            isLoading={projectDemand.isLoading}
+            isError={projectDemand.isError}
+            emptyText={
+              runId ? 'No acknowledged project orders' : 'No project orders to show here'
+            }
+            showLinked
+          />
+
+          <SectionLabel>Retail demand</SectionLabel>
+          <DemandBlock
+            rows={retailRows}
+            total={retailDemand.data?.total ?? retailRows.length}
+            isLoading={retailDemand.isLoading}
+            isError={retailDemand.isError}
+            emptyText={runId ? 'No outstanding retail orders' : 'No retail orders to show here'}
+          />
+
+          <SectionLabel>Net now</SectionLabel>
+          <div className="space-y-1 px-3 py-2">
+            <div className="flex items-baseline justify-between gap-3 text-xs">
+              <button
+                type="button"
+                onClick={() => setLocationsOpen((open) => !open)}
+                aria-expanded={locationsOpen}
+                className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {locationsOpen ? (
+                  <ChevronDown className="size-3" aria-hidden />
+                ) : (
+                  <ChevronRight className="size-3" aria-hidden />
+                )}
+                <span>On hand</span>
+                <span className="text-2xs">by location</span>
+              </button>
+              <span className="tabular-nums text-xs">{fmtInt(rec.on_hand ?? 0)}</span>
             </div>
-            <KVRow label="On hand" value={fmtInt(rec.on_hand ?? 0)} />
+            {locationsOpen ? <LocationStockRows productId={rec.product_id ?? null} /> : null}
             <KVRow label="+ SPO (arriving)" value={fmtInt(rec.incoming_spo ?? 0)} />
             {/* PO is counted here now (21 Aug fix) - the sizing engine nets the open PO
                 book into the same `net` this row was decided against, so a leg reading
@@ -559,12 +772,23 @@ export function OrderQtyLedger({
             {(rec.outstanding_po ?? 0) > 0 ? (
               <KVRow label="+ PO (open)" value={fmtInt(rec.outstanding_po)} />
             ) : null}
-            <KVRow label="- SO (outstanding)" value={fmtInt(rec.outstanding_sales ?? 0)} />
+            {/* The two channels the demand actually came from, when the run froze the
+                split. A row that carries neither (a legacy run) states the one total it
+                does have rather than two figures it never measured. */}
+            {rec.project_committed == null && rec.retail_committed == null ? (
+              <KVRow label="- SO (outstanding)" value={fmtInt(rec.outstanding_sales ?? 0)} />
+            ) : (
+              <>
+                <KVRow label="- Project demand" value={fmtInt(rec.project_committed ?? 0)} />
+                <KVRow label="- Retail demand" value={fmtInt(rec.retail_committed ?? 0)} />
+              </>
+            )}
             <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
               <span>Net</span>
               <span className="tabular-nums">{fmtSigned(line.net)}</span>
             </div>
           </div>
+          {manual ? <ManualLevelLine rec={rec} /> : null}
 
           {showLineStatus ? (
             <>
@@ -595,6 +819,8 @@ export function OrderQtyLedger({
             </div>
           )}
 
+          {manual ? null : (
+            <>
           <SectionLabel>Cover before buying</SectionLabel>
           <div className="space-y-2 px-3 py-2">
             {noCoverAvailable ? (
@@ -654,6 +880,8 @@ export function OrderQtyLedger({
               </p>
             ) : null}
           </div>
+            </>
+          )}
 
           <SectionLabel>The buy</SectionLabel>
           <div className="space-y-2 px-3 py-2">
@@ -689,6 +917,49 @@ export function OrderQtyLedger({
                     {moqGapNote(gap, fmtInt)}
                   </p>
                 ) : null}
+              </>
+            )}
+            {/* Who it comes from, what it costs, and what it draws from the budget - the
+                three facts a buyer needs beside the quantity to place the order (AC-R8).
+                The supplier's price and the cash figure are deliberately different money:
+                the budget is one pot of ringgit. */}
+            <div className="space-y-0.5 border-t pt-1.5 text-2xs text-muted-foreground">
+              <div className="flex justify-between gap-3">
+                <span>Supplier</span>
+                <span
+                  className="truncate text-end"
+                  title={rec.supplier?.supplier_name ?? undefined}
+                >
+                  {rec.supplier?.supplier_name ?? rec.supplier?.supplier_code ?? EM_DASH}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>Price</span>
+                <span className="tabular-nums">
+                  {rec.unit_cost == null ? EM_DASH : fmtSupplierCost(rec.unit_cost, rec.currency)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span>Cash</span>
+                <span className="tabular-nums">
+                  {rec.cash_impact == null ? EM_DASH : fmtMoney(rec.cash_impact)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Last, because it is context rather than a reason: what we have actually
+              bought of this item lately, and from whom (AC-R8). */}
+          <SectionLabel>History</SectionLabel>
+          <div className="space-y-1 px-3 py-2 text-xs">
+            {!purchaseTrend && purchaseTrendReady === false ? (
+              <p className="text-muted-foreground">Loading purchases...</p>
+            ) : (
+              <>
+                <p className="text-muted-foreground">
+                  {describePurchaseTrend(purchaseTrend, purchaseWindowMonths)}
+                </p>
+                <RecentPurchasesTable lines={purchaseTrend?.lines ?? []} />
               </>
             )}
           </div>
