@@ -273,7 +273,7 @@ class ReorderRun(Base, CompanyScopedMixin):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 - chosen budget the "Apply budget" action persists
-    include_market = Column(Boolean, nullable=False, default=False)  # M7 - opt-in market-trend priority factor
+    include_market = Column(Boolean, nullable=False, default=False, server_default="false")  # M7 - opt-in market-trend priority factor
     # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
     # run's netting; NULL (the default) plans every open SO line regardless of need date,
     # unchanged from before this column existed. Stamped once at creation, like
