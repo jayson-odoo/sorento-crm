@@ -78,7 +78,7 @@ export function ContainerRequestHistoryPeakCell({
         </button>
       </PopoverTrigger>
       <PopoverPortal>
-        <PopoverContent className="w-80" align="end">
+        <PopoverContent className="w-[26rem]" align="end">
           <p className="mb-2 text-xs font-medium">{label} ordered qty (SO booked), last 12 months</p>
           <SeriesBars series={series} kind={kind} />
         </PopoverContent>
@@ -126,12 +126,16 @@ function SeriesBars({
           );
         })}
       </div>
-      <div className="mt-1 flex gap-1 text-[10px] text-muted-foreground">
-        {series.months.map((point) => (
-          <span key={point.month} className="min-w-0 flex-1 text-center">
-            {monthLabel(point.month).slice(0, 1)}
-          </span>
-        ))}
+      <div className="mt-1 flex gap-1 text-[10px] leading-tight text-muted-foreground">
+        {series.months.map((point) => {
+          const [mon, yy] = monthLabel(point.month).split(' ');
+          return (
+            <span key={point.month} className="flex min-w-0 flex-1 flex-col items-center">
+              <span>{mon}</span>
+              <span>{yy}</span>
+            </span>
+          );
+        })}
       </div>
       <p className={cn('mt-1 text-xs tabular-nums', paint.text)}>
         {kind === 'project' ? 'Project' : 'Retail'}{' '}
