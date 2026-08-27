@@ -11,9 +11,10 @@ Four promises are pinned here.
 1. Every column in his file resolves (AC-1.1). The six that have nothing to write to are
    deliberately-ignored aliases, which is what makes them stop being reported.
 2. The agent code reaches the write path and lands on the order (AC-6.5).
-3. It is the FOURTH classifier, after the header's own type, the type stated in the file and
-   the customer's market segment - and only when all four miss is the document reported
-   (AC-3.1 / AC-3.2).
+3. It is the THIRD classifier, after the header's own type and the type stated in the file
+   and AHEAD of the customer's market segment (captain, 28 Aug 2026: the sales force is split
+   by channel, a debtor buys through both) - and only when all four miss is the document
+   reported (AC-3.1 / AC-3.2).
 4. An agent nobody holds is created and REPORTED, never guessed at and never a reason to
    refuse the file (AC-6.4 / AC-3.3).
 """
@@ -317,9 +318,30 @@ def test_an_agent_who_sells_retail_classifies_retail(db, seeded):
     assert _row(db, seeded.dealer_so).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_the_market_segment_still_beats_the_agent(db, seeded):
-    """The third source keeps its place. The customer's segment is a fact about the buyer of
-    THIS order; the agent's class is a tendency of the seller."""
+def test_the_agents_class_beats_the_customers_market_segment(db, seeded):
+    """Captain, 28 Aug 2026: the seller decides before the buyer. The sales force is split
+    by channel, so a project agent's order IS project work - while one debtor buys through
+    both channels, so its segment is only a default about the account. This is SO381895:
+    customer master said retail, agent JUSTIN sells project, and the fulfilment board could
+    not see the order."""
+    seg = f"{MARKER}-RETAIL-{uuid.uuid4().hex[:6]}".lower()
+    db.add(MarketSegment(id=_u(), code=seg, name=seg, is_active=True))
+    db.flush()
+    debtor = f"{MARKER}-C-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor,
+                    market_segment_code=seg, is_active=True))
+    db.flush()
+    code = _classified_agent(db, _agent_code("PROJECTSELLER"), PROJECT)
+
+    svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert _row(db, seeded.project_so).demand_class == PROJECT
+
+
+def test_the_customers_market_segment_answers_when_the_agent_carries_no_class(db, seeded):
+    """The segment keeps its place as the LAST word, not no word: an agent nobody has
+    classified contributes nothing, and the buyer's segment then classifies the order
+    instead of the file being refused."""
     seg = f"{MARKER}-PROJECT-{uuid.uuid4().hex[:6]}".lower()
     db.add(MarketSegment(id=_u(), code=seg, name=seg, is_active=True))
     db.flush()
@@ -327,10 +349,12 @@ def test_the_market_segment_still_beats_the_agent(db, seeded):
     db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor,
                     market_segment_code=seg, is_active=True))
     db.flush()
-    code = _classified_agent(db, _agent_code("TRADESELLER"), DEFAULT_DEMAND_CLASS)
+    code = _agent_code("UNCLASSIFIED")
+    agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
 
-    svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
 
+    assert out["ok"]
     assert _row(db, seeded.project_so).demand_class == PROJECT
 
 
