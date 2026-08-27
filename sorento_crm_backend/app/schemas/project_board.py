@@ -473,6 +473,14 @@ class BoardContribution(BaseModel):
     qty_ordered: str = "0"
     qty_delivered: str = "0"
     qty_outstanding: str = "0"
+    #: The PLANNING UNIT this line was composed in (ladder v6): its OWN sales order's lines
+    #: for the same item, the same fulfilment location and the same delivery date are one
+    #: quantity, covered whole from stock or bought whole - never "line 31 borrows and line
+    #: 32 buys". The unit's total, and how many lines it is. The line's own quantity and `1`
+    #: when it was planned alone, which is most lines; the cell's source note says nothing
+    #: extra for those.
+    unit_qty: str = "0"
+    unit_line_count: int = 1
     #: What the engine proposes to meet it with, from the SAME ladder the per-order sheet runs
     #: (own location, then the shared pool under the hot-selling rules, then timely incoming,
     #: then Buy). The three add up to `qty_outstanding`.

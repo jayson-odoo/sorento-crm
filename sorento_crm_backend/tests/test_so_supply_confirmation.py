@@ -2319,11 +2319,20 @@ def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_
     db = world.db
     # 30 in the pool against two lines wanting 20 each: whoever is walked first takes the
     # bigger share, so the order of the walk is visible in the frozen numbers.
+    #
+    # TWO DELIVERY DATES, which is what keeps that true under ladder v6: one order's lines
+    # for the same item, location and date are ONE planning unit now, and a unit has no
+    # internal walk order to be sensitive to - both lines of it would simply buy. A week
+    # apart they are two units, the ledger still passes from the first to the second, and
+    # this test is still about the order the units are walked in.
     _stock(db, world.product, world.pool_wh, on_hand=30)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
-    second = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    second = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="20",
+        required_date=REQUIRED_DATE + timedelta(days=7),
+    )
     line_a = _project_line(db, order, line_no=10, product=world.product, core_line=first)
     line_b = _project_line(db, order, line_no=20, product=world.product, core_line=second)
     db.commit()
