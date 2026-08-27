@@ -551,6 +551,12 @@ class PurchaseOrder(Base, CompanyScopedMixin):
         "PurchaseOrderLine",
         back_populates="purchase_order",
         cascade="all, delete-orphan",
+        # Insertion order, with the id as the tie breaker: lines written in one
+        # transaction share created_at (one now() per transaction), and without
+        # the tie breaker Postgres hands them back in whichever order it likes.
+        # The detail response and its consumers (the CI test that takes
+        # lines[0] as "the open line") need one stable order.
+        order_by="[PurchaseOrderLine.created_at, PurchaseOrderLine.id]",
     )
 
     __table_args__ = (
