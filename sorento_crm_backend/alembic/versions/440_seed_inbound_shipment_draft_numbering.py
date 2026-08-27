@@ -37,7 +37,7 @@ from app.services.numbering_defaults import (
 
 
 revision = "440_pl_draft_numbering"
-down_revision = "438_merge_price_supplier_sets"
+down_revision = "439_decision_suspected_issue"
 branch_labels = None
 depends_on = None
 
