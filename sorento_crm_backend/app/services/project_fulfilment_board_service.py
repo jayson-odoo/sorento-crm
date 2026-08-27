@@ -81,6 +81,7 @@ from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
     RUNG_BUY,
+    RUNG_GROUP_TAKE,
     RUNG_INCOMING,
     TIMELY_SPO,
     date_text,
@@ -2235,7 +2236,7 @@ class FulfilmentBoardService:
                 component.kind == TIMELY_SPO,
             )
             for component in components
-            if getattr(component, "rung", None) == "group_take"
+            if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and component.source_location
         ]
         group_offered = sum((_dec(c.get("qty")) for c in group_take_candidates), _ZERO)

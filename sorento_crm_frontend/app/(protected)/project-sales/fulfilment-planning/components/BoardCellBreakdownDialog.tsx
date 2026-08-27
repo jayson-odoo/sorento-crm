@@ -417,7 +417,12 @@ export function BoardCellBreakdownDialog({
           return (
             <div className="min-w-0">
               <div className="flex items-start gap-1">
-                <span className="min-w-0 flex-1 truncate text-sm tabular-nums">{strip}</span>
+                <span
+                  className="min-w-0 flex-1 truncate text-sm tabular-nums"
+                  title={strip}
+                >
+                  {strip}
+                </span>
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text
