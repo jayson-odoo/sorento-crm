@@ -332,7 +332,12 @@ def test_a_line_that_has_received_goods_cannot_be_dropped(scm_app):
         {"qty_ordered": 4, "qty_received": 4, "line_status": "received"},
     ])
     sku = world.product.product_code
-    kept = _detail(world)["lines"][0]["id"]
+    # Keep the OPEN line by what it is, not by position: both lines share one
+    # created_at (one now() per transaction) and random ids, so lines[0] is the
+    # received line often enough to drop the wrong one and get a legitimate 200.
+    kept = next(
+        ln["id"] for ln in _detail(world)["lines"] if ln["line_status"] != "received"
+    )
 
     with TestClient(world.app) as c:
         res = c.put(

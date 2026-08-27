@@ -15,6 +15,7 @@ existing row, per PRINCIPLES.md and the CI-is-empty lesson in this repo's CLAUDE
 from __future__ import annotations
 
 import itertools
+import os
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
@@ -66,19 +67,31 @@ def _suffix() -> str:
     class of collision cannot recur.
 
     Monotonic within this process, so two calls anywhere in this file's run
-    never repeat. Cross-worker uniqueness needs no extra help: every row this
-    file writes lives inside `_pg_fixture.blank_session`, which rolls back at
-    teardown and, ahead of that, runs on a scratch schema
-    (`zzs_blank_<pid>_<hex>`) private to the xdist worker process
-    (`_pg_fixture.blank_schema_engine`) - two workers' codes cannot collide
-    even if they matched exactly.
+    never repeat. Prefixed with this process's own letters, so two xdist
+    workers never mint the same code either. That matters because the helpers
+    built on it (`_product`, `_warehouse`, ...) are imported by files that run
+    on the REAL schema through `_pg_fixture.pg_session`
+    (`test_partial_decision_demand_invariants`, `test_order_inquiry_place_on_po`,
+    `scm/test_loading_plan`, ...), not this file's private scratch schema. Two
+    workers both holding an uncommitted `ZZT-A` category / product / uom behind
+    a unique index wait on each other, and when they take the rows in a
+    different order Postgres raises `DeadlockDetected` inside `_seed` (CI shard
+    3, `test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand`).
     """
-    n = next(_SUFFIX_SEQ) + 1
+    return f"{_PROCESS_TAG}{_letters(next(_SUFFIX_SEQ) + 1)}"
+
+
+def _letters(n: int) -> str:
+    """Base-26 letters for a positive int: 1 -> A, 26 -> Z, 27 -> AA."""
     letters = []
     while n > 0:
         n, rem = divmod(n - 1, 26)
         letters.append(chr(ord("A") + rem))
     return "".join(reversed(letters))
+
+
+#: Letters unique to this worker process; a digit-free pid so codes stay digit-free.
+_PROCESS_TAG = _letters(os.getpid())
 
 
 def _sorento(db) -> str:
