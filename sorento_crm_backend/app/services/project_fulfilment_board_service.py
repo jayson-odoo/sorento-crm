@@ -1847,7 +1847,7 @@ class FulfilmentBoardService:
             # What the shared pool still held when this line's UNIT was reached, captured
             # before the draw: the trail states what each source held, and reading it back
             # afterwards would state what was left instead.
-            components, pool_open = composed[row.key]
+            components, pool_open, borrow_open = composed[row.key]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
             # location `warehouse_ids` (own + pool only, above) does not cover.
             for component in components:
@@ -1892,7 +1892,9 @@ class FulfilmentBoardService:
             # answer to that is what questions 3 and 4 actually put on the table - read
             # off the trail rather than filtered a second time out of the raw donor list
             # (AC-V4: the note must never offer what the proof has refused).
-            row.trail, offerable = self._trail(row, fact, components, pool_open)
+            row.trail, offerable = self._trail(
+                row, fact, components, pool_open, borrow_open
+            )
             row.sources = [
                 self._source(component, row, offerable) for component in components
             ]
@@ -2100,6 +2102,7 @@ class FulfilmentBoardService:
         fact: Any,
         components: Sequence[Any],
         pool_open: Optional[Decimal],
+        borrow_open: Optional[Mapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
 
@@ -2341,7 +2344,15 @@ class FulfilmentBoardService:
         cross_group_candidates = (
             []
             if outside_window
-            else self.supply.cross_group_borrow_candidates_for(fact, residual=residual)
+            # `borrow_open` is the walk's DONOR LEDGER as this line's unit found it
+            # (`compose_lines`), passed here exactly as `pool_free_left=pool_open` is
+            # passed to question 2. Without it the proof re-read the donor's live free
+            # stock and answered "free stock at DC1-NT, within the limit" beside a Buy
+            # that the same ledger had just forced, having spent that stock on an earlier
+            # delivery date.
+            else self.supply.cross_group_borrow_candidates_for(
+                fact, residual=residual, borrow_left=borrow_open
+            )
         )
         # A line whose location carries NO ownership group has no "outside the group" for
         # this question to walk (`_cross_group_borrow_candidates` refuses it by rule), so

@@ -597,6 +597,26 @@ class _CapacityLedger:
 
 
 @dataclass
+class _UnitCheck:
+    """What the confirmation judges a line's PLANNING UNIT against (ladder v6).
+
+    The proposal is composed for the unit - one order's lines for the same item, location
+    and delivery date are one quantity - so the recheck has to be seeded from the unit too.
+    `_check_line` used to re-derive the group's offer per LINE, and on a group whose net is
+    negative the members' own offers sum to LESS than the unit's: line 31 was proposed 5
+    from its own location and then refused it ("has nothing free for this line now"), so no
+    split of a unit could be confirmed at all.
+
+    ONE instance per unit, shared by its members and drawn down as each is checked: `fact`
+    is the unit fact (`_unit_fact`) the ladder was asked about, and `timely_left` is what is
+    left of the water question 1 offered it, so two members cannot each post the whole of it.
+    """
+
+    fact: _LineFacts
+    timely_left: Decimal
+
+
+@dataclass
 class _FrozenComponent:
     """One component read back off a frozen snapshot, in the shape the payload's own
     components have (`.warehouse_id`, `.qty`, and for a borrow `.source`), so the shortfall
@@ -811,18 +831,35 @@ class ProjectSupplyService:
         facts = self._facts_for(order, lines)
 
         frozen = self._frozen_by_line(decision)
-        # ONE walk over the order's lines, in line order, so the shared piles are drawn down
-        # once and the lines of one delivery date are planned as the single quantity they
-        # are (ladder v6). `lines_of` is already in line order.
+        # ONE walk over the order's UNDECIDED lines, in line order, so the shared piles are
+        # drawn down once and the lines of one delivery date are planned as the single
+        # quantity they are (ladder v6). `lines_of` is already in line order.
+        #
+        # A COVERED line is not in that walk at all - the captain's standing rule that a
+        # decided line is not re-planned, which the board has always kept by leaving such a
+        # row out of `proposable`. It was in this one, so 25 in the pool covered the open
+        # line of 20 on the board and bought it here. Its claim is already a hold in the
+        # facts every other line reads; counting it again in a unit, or against the pool
+        # ledger, is the same quantity twice.
         entries = [
             (str(line.id), facts[str(line.id)], self._unit_key(facts[str(line.id)]))
             for line in lines
+            if frozen.get(str(line.id)) is None
         ]
         composed = self.compose_lines(entries)
         units = self.unit_totals(entries)
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
+            if str(line.id) not in composed:
+                # Covered. It still reads a live proposal, because Amend starts from one,
+                # and that proposal is composed as the line stands ALONE: it competes with
+                # nobody, having already won, and it draws neither shared ledger.
+                alone = self.compose_lines(
+                    [(str(line.id), fact, self._unit_key(fact))]
+                )
+                composed.update(alone)
+                units[str(line.id)] = (max(_dec(fact.open_qty), _ZERO), 1)
             unit_qty, unit_line_count = units[str(line.id)]
             if fact.unplannable_reason:
                 # Nothing to walk the ladder for: no core line, no open quantity, no
@@ -834,7 +871,7 @@ class ProjectSupplyService:
                     )
                 )
                 continue
-            components, _pool_open = composed[str(line.id)]
+            components, _pool_open, _borrow_open = composed[str(line.id)]
             payload_lines.append(
                 self._serialize_line(
                     fact, components, frozen.get(str(line.id)),
@@ -1018,13 +1055,17 @@ class ProjectSupplyService:
         entries: Sequence[Tuple[Any, _LineFacts, Any]],
         *,
         as_of: Optional[date] = None,
-    ) -> Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal]]]:
+    ) -> Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]]:
         """Compose a WHOLE WALK: every entry in the order it is walked, keyed by its caller's
         own key, with the shared piles drawn down once as the walk passes them.
 
         `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
-        `(components, pool_open)` - the composition, and what this line's own site pool held
-        when its unit was reached, which the board's proof states.
+        `(components, pool_open, borrow_open)` - the composition, and what the two shared
+        piles held when its unit was reached: this line's own site pool, and the
+        cross-group donors by warehouse id. The board's proof states both, and it states
+        them from HERE rather than re-reading the live figures, which is how question 3
+        came to say "free stock at DC1-NT, within the limit" beside a Buy the ledger had
+        just forced.
 
         THE UNIT (ladder v6, `PLAN-scm-order-unit-ladder-v6.md`). Entries sharing a
         `unit_key` are ONE quantity to plan: the captain, reading SO381895's lines 31 and 32
@@ -1049,12 +1090,14 @@ class ProjectSupplyService:
         mirror line with no reconciled AutoCount line has no open quantity to promise
         against.
         """
-        out: Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal]]] = {}
+        out: Dict[
+            Any, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]
+        ] = {}
         units: Dict[Any, List[Tuple[Any, _LineFacts]]] = {}
         walk: List[Any] = []
         for key, fact, unit_key in entries:
             if fact.unplannable_reason:
-                out[key] = ((), None)
+                out[key] = ((), None, {})
                 continue
             if unit_key not in units:
                 units[unit_key] = []
@@ -1065,22 +1108,28 @@ class ProjectSupplyService:
         # product id -> warehouse id -> what is still borrowable there in this walk.
         borrow_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
-            members = sorted(
-                units[unit_key],
-                key=lambda member: (
-                    member[1].line_no is None,
-                    member[1].line_no or 0,
-                    str(member[0]),
-                ),
-            )
-            unit_fact = self._unit_fact(members)
+            arrived = units[unit_key]
+            members = self._members_in_line_order(arrived)
+            # The unit fact is the FIRST-ARRIVING member's, not the lowest-numbered one:
+            # `pool_free` and the rest are a reading taken at the moment the walk reached
+            # this unit, and the walk reached it when its first member came up. Line order
+            # decides only how the answer is split back (`_split_unit`).
+            unit_fact = self._unit_fact(arrived)
             pool_key = unit_fact.pool_key
             if pool_key and pool_key not in pool_left:
                 pool_left[pool_key] = unit_fact.pool_free
             # Captured BEFORE the draw: the proof states what each pile held when this unit
             # was reached, and reading it back afterwards would state what was left instead.
             pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
-            donors = borrow_left.setdefault(unit_fact.product_id or "", {})
+            # A fact with no product cannot borrow at all (`_cross_group_borrow_candidates`
+            # refuses it by rule), so it keeps no ledger either - one bucket keyed by the
+            # empty string would pool every such line's donors together.
+            donors = (
+                borrow_left.setdefault(unit_fact.product_id, {})
+                if unit_fact.product_id
+                else None
+            )
+            borrow_open = dict(donors) if donors is not None else {}
             components = self.compose_line(
                 unit_fact,
                 pool_free_left=pool_open,
@@ -1098,14 +1147,45 @@ class ProjectSupplyService:
                     _ZERO,
                 )
                 pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
-            self._draw_donors(donors, unit_fact, components)
+            if donors is not None:
+                self._draw_donors(donors, unit_fact, components)
 
             if len(members) == 1:
-                out[members[0][0]] = (components, pool_open)
+                out[members[0][0]] = (components, pool_open, borrow_open)
                 continue
             for key, split in self._split_unit(members, components).items():
-                out[key] = (split, pool_open)
+                out[key] = (split, pool_open, borrow_open)
         return out
+
+    def _members_in_line_order(
+        self, members: Sequence[Tuple[Any, _LineFacts]]
+    ) -> List[Tuple[Any, _LineFacts]]:
+        """A unit's members in LINE order, which is how its composition is split back.
+
+        A member with no line number is a fact somebody built without one, and there should
+        be none: the sheet reads it off the mirror and the board off `_line_numbers`, which
+        numbers every row it returns. It is LOGGED rather than raised - a board read is not
+        worth failing over a numbering gap - and the fallback is the caller's own key, which
+        is stable but is an address rather than a line number, so the log is what says the
+        split order was guessed.
+        """
+        unnumbered = [key for key, fact in members if fact.line_no is None]
+        if unnumbered and len(members) > 1:
+            logger.warning(
+                "Planning unit split without line numbers on %d of %d members (%s); "
+                "falling back to the caller's key, which is an address, not a line order.",
+                len(unnumbered),
+                len(members),
+                ", ".join(str(key) for key in unnumbered[:3]),
+            )
+        return sorted(
+            members,
+            key=lambda member: (
+                member[1].line_no is None,
+                member[1].line_no or 0,
+                str(member[0]),
+            ),
+        )
 
     @staticmethod
     def unit_totals(
@@ -1151,6 +1231,39 @@ class ProjectSupplyService:
             fact.required_date,
         )
 
+    def _unit_checks(
+        self,
+        lines: Sequence[ProjectSalesOrderLine],
+        facts: Dict[str, _LineFacts],
+        *,
+        covered: Optional[Set[str]] = None,
+    ) -> Dict[str, "_UnitCheck"]:
+        """The unit each line of ONE ORDER was proposed in, keyed by mirror line id.
+
+        The confirmation's own view of `compose_lines`' grouping, built from the same
+        `_unit_key` and the same `_unit_fact`, so what the recheck seeds its ledgers from
+        and what the ladder was asked about cannot come apart - which is exactly what made a
+        proposal unconfirmable. ONE `_UnitCheck` per unit, shared by its members.
+
+        `covered` names the lines a decision still holds and nobody is replacing: out of
+        every unit, because they are out of the walk that proposed for the others.
+        """
+        skip = covered or set()
+        units: Dict[Any, List[Tuple[Any, _LineFacts]]] = {}
+        for line in lines:
+            key = str(line.id)
+            fact = facts.get(key)
+            if fact is None or key in skip or fact.unplannable_reason:
+                continue
+            units.setdefault(self._unit_key(fact), []).append((key, fact))
+        out: Dict[str, "_UnitCheck"] = {}
+        for members in units.values():
+            unit_fact = self._unit_fact(members)
+            check = _UnitCheck(fact=unit_fact, timely_left=unit_fact.timely_qty)
+            for key, _fact in members:
+                out[str(key)] = check
+        return out
+
     def _unit_fact(self, members: Sequence[Tuple[Any, _LineFacts]]) -> _LineFacts:
         """The one line the engine is asked about for a unit of several.
 
@@ -1159,17 +1272,18 @@ class ProjectSupplyService:
         applied to the quantity actually being planned, so a group that can cover 30 offers
         30 to the unit rather than 10 to one line and 20 to another out of the same pile.
 
-        `timely_qty` is deliberately NOT recomputed here. It is the water share question 1
-        offers, and `compose_line` never reads it - `_group_take_candidates` derives the
-        water from `group_offer` itself, on whatever fact it is handed - so the netting
-        block's own recomputation is about the fact the SHEET and the confirmation read, not
-        about this throwaway one.
+        `timely_qty` is recomputed with it, exactly as `_apply_group_nets` does for a line:
+        the water share is what question 1 offers, and question 1 now offers the unit's
+        number. The composition itself does not need it (`_group_take_candidates` derives
+        the water from `group_offer` on whatever fact it is handed), but the CONFIRMATION
+        does - it caps a posted Timely SPO against this figure, and a unit fact carrying the
+        first member's share would refuse the split it had just proposed.
         """
         first = members[0][1]
         if len(members) == 1:
             return first
         total = sum((max(_dec(fact.open_qty), _ZERO) for _key, fact in members), _ZERO)
-        return dataclass_replace(
+        unit = dataclass_replace(
             first,
             open_qty=total,
             group_offer=(
@@ -1178,6 +1292,16 @@ class ProjectSupplyService:
                 else first.group_offer
             ),
         )
+        if unit.group_code:
+            unit.timely_qty = sum(
+                (
+                    _dec(candidate.get("qty"))
+                    for candidate in self._group_take_candidates(unit)
+                    if candidate.get("water")
+                ),
+                _ZERO,
+            )
+        return unit
 
     def _split_unit(
         self,
@@ -1253,11 +1377,21 @@ class ProjectSupplyService:
         return self._group_take_candidates(fact)
 
     def cross_group_borrow_candidates_for(
-        self, fact: _LineFacts, *, residual: Decimal
+        self,
+        fact: _LineFacts,
+        *,
+        residual: Decimal,
+        borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
         """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4, already
-        cap-filtered against `residual`), public for the board's trail."""
-        return self._cross_group_borrow_candidates(fact, residual=residual)
+        cap-filtered against `residual`), public for the board's trail.
+
+        `borrow_left` is the walk's donor ledger as this line's unit found it, and the trail
+        states it for the same reason it states `pool_free_left`: the proof has to be the
+        answer the engine actually got, not a fresh read of a pile the walk has spent."""
+        return self._cross_group_borrow_candidates(
+            fact, residual=residual, borrow_left=borrow_left
+        )
 
     def warehouse_id_for_code(self, code: Optional[str]) -> Optional[str]:
         """A warehouse CODE resolved to its id (addressing only), for a caller that only
@@ -2638,6 +2772,19 @@ class ProjectSupplyService:
         # (S7: every pool AND every group-take sibling, not only this line's own pool).
         capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
+        # The PLANNING UNIT each line was proposed in (ladder v6), so the recheck seeds its
+        # ledgers from the same quantity the ladder was asked about. Grouped exactly as
+        # `_proposals_for` groups - the whole order, minus the lines an active revision
+        # still holds and this payload is not replacing, which are carried untouched.
+        units = self._unit_checks(
+            lines,
+            facts,
+            covered={
+                line_id
+                for line_id in self._frozen_by_line(self.active_decision(str(order.id)))
+                if line_id not in named
+            },
+        )
 
         for entry in payload_lines:
             line = by_id.get(str(entry.project_line_id))
@@ -2663,7 +2810,14 @@ class ProjectSupplyService:
             fact = facts[str(line.id)]
             checked.append((line, entry, fact))
             self._check_line(
-                entry, fact, capacity_left, borrow_left, stale, invalid, carried_holds
+                entry,
+                fact,
+                units.get(str(line.id)) or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
+                capacity_left,
+                borrow_left,
+                stale,
+                invalid,
+                carried_holds,
             )
 
         # A line the payload does not name is NOT a failure any more (13.4). It is
@@ -2709,6 +2863,9 @@ class ProjectSupplyService:
         return self._write_decision(
             order,
             checked,
+            # Every line's facts, so the frozen proposal is composed over the ORDER (the
+            # walk the sheet ran) rather than over the lines this payload happens to name.
+            facts=facts,
             carried=carried,
             actor_user_id=actor_user_id,
             # Part 3 (AC-P3-5): the lines a planning change is applying, whose order
@@ -2830,13 +2987,23 @@ class ProjectSupplyService:
         self,
         entry: Any,
         fact: _LineFacts,
+        unit: "_UnitCheck",
         capacity_left: "_CapacityLedger",
         borrow_left: "_BorrowLedger",
         stale: List[Dict[str, Any]],
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
     ) -> None:
-        """Recheck one line against authoritative facts (PLAN 3.1 steps 3 to 5)."""
+        """Recheck one line against authoritative facts (PLAN 3.1 steps 3 to 5).
+
+        `unit` is the PLANNING UNIT this line was proposed in (ladder v6) - itself, for the
+        ordinary line planned alone. Everything about the LINE is judged from `fact`: its
+        open quantity, its balance, the whole-line rule. Everything about what the LADDER
+        OFFERED is judged from the unit, because that is the quantity the ladder was asked
+        about: the group's offer is `max(group net + the unit's demand, 0)`, and on a group
+        in deficit the members' own offers sum to less than the unit's, so a per-line
+        rederivation refuses the very split it proposed.
+        """
         line = fact.line
         subject = {"line_no": line.line_no, "item_code": fact.item_code}
 
@@ -2864,12 +3031,18 @@ class ProjectSupplyService:
             refuse(invalid, "A component quantity is negative.")
             return
 
-        if timely > fact.timely_qty:
+        # Against the UNIT's water, drawn down as its members are checked: question 1 offers
+        # the unit one water share and the split can hand the whole of it to one line, whose
+        # own line-level share is smaller. Identical to the old per-line test on a line
+        # planned alone, which is most of them.
+        if timely > unit.timely_left:
             refuse(
                 stale,
-                f"Timely SPO cover is now {qty_text(fact.timely_qty)}, not "
+                f"Timely SPO cover is now {qty_text(unit.timely_left)}, not "
                 f"{qty_text(timely)}.",
             )
+        else:
+            unit.timely_left -= timely
 
         # Ladder v3 (section 1b rungs 2 and 3): a Reserve may name any location of this
         # line's ownership GROUP - its own included - or any active site pool. The same
@@ -2881,13 +3054,17 @@ class ProjectSupplyService:
         # shared across every line of this confirmation - not read live per line - so a
         # second line asking the same pool or the same group-take sibling sees what the
         # first line of this confirmation already took, not the live figure again.
-        pools = self._pool_chain(fact, own_pool_free_left=None)
+        #
+        # LADDER V6: seeded from the UNIT's fact, which is the quantity the ladder walked
+        # these rungs with. The ledger is shared across the whole confirmation, so the unit's
+        # members draw the same seeded balance down between them in payload order.
+        pools = self._pool_chain(unit.fact, own_pool_free_left=None)
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
-            is_dealer_hot_selling=fact.is_dealer_hot_selling,
+            is_dealer_hot_selling=unit.fact.is_dealer_hot_selling,
             pools=pools,
-            pools_net=fact.pools_net,
+            pools_net=unit.fact.pools_net,
         ):
             source = self._warehouse_by_code(location)
             if source is None:
@@ -2896,7 +3073,7 @@ class ProjectSupplyService:
             capacity[location] = capacity_left.capacity(
                 fact.product_id, str(source.id), live_qty
             )
-        for candidate in self._group_take_candidates(fact):
+        for candidate in self._group_take_candidates(unit.fact):
             # The FLOOR half only. A `water` candidate is incoming supply, judged against
             # `fact.timely_qty` above; seeding Reserve capacity with it would let a hold be
             # written against goods that are not on a floor for anybody to pick.
@@ -3496,44 +3673,58 @@ class ProjectSupplyService:
 
     def _proposals_for(
         self,
+        order: ProjectSalesOrder,
         checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
         *,
+        facts: Dict[str, _LineFacts],
+        covered: Optional[Set[str]] = None,
         as_of: Optional[date] = None,
     ) -> Dict[str, Tuple[Component, ...]]:
         """The engine's composition for each line being confirmed, keyed by mirror line id.
 
-        The SAME walk `proposal_for` runs, own-site pool ledger included: two lines of one
-        order drawing the same pool cannot each be proposed the whole of it, or the frozen
-        proposal would claim a pool position that never existed. A line the ladder cannot
-        walk at all (no core line, no open quantity, no location) proposes an empty tuple,
-        which is a different answer from an absent key.
+        THE SAME WALK `proposal_for` RUNS, over the whole ORDER and not over the lines the
+        payload happens to name. The two shared ledgers and the planning UNIT are both
+        properties of the walk, so a walk of one line composes that line as though it stood
+        alone: confirming line 32 of a unit of 30 froze "Reserve 20 from the pool" beside it
+        while the sheet had shown a Buy, and the snapshot is supposed to record what the
+        planner was shown. A line the ladder cannot walk at all (no core line, no open
+        quantity, no location) proposes an empty tuple, which is a different answer from an
+        absent key.
 
-        IN LINE ORDER, not payload order, and that is load-bearing: the pool ledger above is
-        drawn down in the order this loop walks, so the same lines posted in two orders would
-        otherwise freeze two different proposals for the same board. `proposal_for` walks
-        `lines_of`, which is line order, so this is also what makes the frozen proposal equal
-        to the one the planner was actually shown.
+        `covered` names the lines an active revision still holds and this confirmation is
+        NOT replacing - the carried ones. They are out of the walk for the same reason they
+        are out of the board's: a decided line is not re-planned, and its claim is already a
+        hold in the facts rather than a place in a queue.
+
+        IN LINE ORDER, not payload order, and that is load-bearing: the ledgers are drawn
+        down in the order the walk goes, so the same lines posted in two orders would
+        otherwise freeze two different proposals for the same board. `lines_of` is line
+        order, which is what `proposal_for` walks too.
 
         `as_of` is the day the planner was deciding on, so the frozen suggestion is the one
         they saw rather than one recomputed against a later calendar. Defaults to today, in
         `compose_line`, which is what every caller sends.
         """
+        skip = covered or set()
         composed = self.compose_lines(
             [
-                (str(line.id), fact, self._unit_key(fact))
-                for line, _entry, fact in sorted(
-                    checked, key=lambda entry: (entry[0].line_no or 0, str(entry[0].id))
-                )
+                (str(line.id), facts[str(line.id)], self._unit_key(facts[str(line.id)]))
+                for line in self.lines_of(str(order.id))
+                if str(line.id) in facts and str(line.id) not in skip
             ],
             as_of=as_of,
         )
-        return {key: components for key, (components, _pool_open) in composed.items()}
+        return {
+            str(line.id): composed.get(str(line.id), ((), None, {}))[0]
+            for line, _entry, _fact in checked
+        }
 
     def _write_decision(
         self,
         order: ProjectSalesOrder,
         checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
         *,
+        facts: Dict[str, _LineFacts],
         carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
         as_of: Optional[date] = None,
@@ -3555,7 +3746,17 @@ class ProjectSupplyService:
         # What the ENGINE would have said about each named line, read once, here (AC-D1).
         # Beside the decision rather than instead of it: a line the planner amended is the
         # whole reason the board can ask "suggested what, decided what".
-        proposals = self._proposals_for(checked, as_of=as_of)
+        #
+        # Walked over the whole ORDER, minus the lines being carried: those keep the
+        # composition they were decided with and are not re-planned, and everything else is
+        # in the same walk the sheet ran, so the frozen suggestion is the one on screen.
+        proposals = self._proposals_for(
+            order,
+            checked,
+            facts=facts,
+            covered={str(entry.line.id) for entry in carried},
+            as_of=as_of,
+        )
         # The named lines as decided now, then the carried ones exactly as they were
         # frozen (`confirm`): the same dicts, not a re-serialisation of them.
         snapshots = [
