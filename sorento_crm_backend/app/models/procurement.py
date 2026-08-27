@@ -121,7 +121,7 @@ class InboundShipment(Base, CompanyScopedMixin):
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
-    synced_to_excel = Column(Boolean, default=False, nullable=False)
+    synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
 
     # ---- Container status (clearance and delivery) --------------------------
@@ -316,7 +316,7 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # system derives, which are computed at read time and never stored.
     remarks = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    synced_to_excel = Column(Boolean, default=False, nullable=False)
+    synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     spo_allocated_quantity = Column(Integer, default=0, nullable=False)
@@ -408,7 +408,7 @@ class SPOAllocation(Base, CompanyScopedMixin):
         ),
         nullable=True,
     )
-    synced_to_excel = Column(Boolean, default=False, nullable=False)
+    synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     # --- the document the line belongs to (migration 420) ----------------------------
@@ -554,7 +554,7 @@ class PickingLine(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     source_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     destination_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
-    synced_to_excel = Column(Boolean, default=False, nullable=False)
+    synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
