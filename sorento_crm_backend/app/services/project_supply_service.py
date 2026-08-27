@@ -824,13 +824,54 @@ class ProjectSupplyService:
 
         Reads live facts, challenges an active revision that no longer matches them, and
         proposes a composition per line with the reason beside every quantity.
+
+        TWO readings of the stock, when the order has a covered line, because there are two
+        different questions on the page and they net that line's hold differently:
+
+        * the WALK, which proposes for the undecided lines. A covered line's hold is stock
+          on the floor with somebody's name on it, so it is netted out, exactly as the board
+          and `confirm` net it;
+        * the covered line's OWN proposal, which is what "Compose again" starts from. There
+          its hold is un-netted, because an amendment replaces it: a line holding 10 has to
+          read as the Reserve it is holding, not as the Buy its own hold makes of it.
+
+        One extra fact read, and only for an order that has a covered line at all.
         """
         lines = self.lines_of(str(order.id))
         self.challenge_if_drifted(order, lines=lines)
         decision = self.active_decision(str(order.id))
-        facts = self._facts_for(order, lines)
-
         frozen = self._frozen_by_line(decision)
+        covered_ids = {
+            str(line.id) for line in lines if frozen.get(str(line.id)) is not None
+        }
+        planned_ids = {str(line.id) for line in lines} - covered_ids
+
+        # A COVERED line's own live proposal, composed FIRST and against facts that un-net
+        # ITS hold (`replacing`), because that composition is what "Compose again" starts
+        # the planner from: a line holding 10 at a sibling has to read as a Reserve of 10,
+        # not as the Buy its own hold would make of it. First, because `_facts_for` replaces
+        # the request's stock caches and everything below - the walk, the donor lists, the
+        # availability printed beside each line - has to read the ones for the walk.
+        covered_alone: Dict[
+            str, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]
+        ] = {}
+        if covered_ids:
+            amend_facts = self._facts_for(order, lines, replacing=covered_ids)
+            for line_id in covered_ids:
+                fact = amend_facts[line_id]
+                covered_alone.update(
+                    self.compose_lines([(line_id, fact, self._unit_key(fact))])
+                )
+
+        # THE WALK's own facts: the lines being proposed for are the UNCOVERED ones, so
+        # those are the holds that are un-netted, and a covered line's hold stays where it
+        # is. `replacing=None` reads "every line of the order", which was true while the
+        # sheet proposed for all of them and became a defect the moment it stopped: 25 at a
+        # sibling holding 10 for a covered line was offered to the open one as 25, which is
+        # a Reserve neither the board (it nets the hold) nor `confirm` (it un-nets only the
+        # lines being replaced) would agree to.
+        facts = self._facts_for(order, lines, replacing=planned_ids)
+
         # ONE walk over the order's UNDECIDED lines, in line order, so the shared piles are
         # drawn down once and the lines of one delivery date are planned as the single
         # quantity they are (ladder v6). `lines_of` is already in line order.
@@ -844,21 +885,16 @@ class ProjectSupplyService:
         entries = [
             (str(line.id), facts[str(line.id)], self._unit_key(facts[str(line.id)]))
             for line in lines
-            if frozen.get(str(line.id)) is None
+            if str(line.id) in planned_ids
         ]
         composed = self.compose_lines(entries)
+        composed.update(covered_alone)
         units = self.unit_totals(entries)
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
-            if str(line.id) not in composed:
-                # Covered. It still reads a live proposal, because Amend starts from one,
-                # and that proposal is composed as the line stands ALONE: it competes with
-                # nobody, having already won, and it draws neither shared ledger.
-                alone = self.compose_lines(
-                    [(str(line.id), fact, self._unit_key(fact))]
-                )
-                composed.update(alone)
+            if str(line.id) in covered_ids:
+                # Composed above, on its own: it competes with nobody, having already won.
                 units[str(line.id)] = (max(_dec(fact.open_qty), _ZERO), 1)
             unit_qty, unit_line_count = units[str(line.id)]
             if fact.unplannable_reason:
@@ -1293,6 +1329,11 @@ class ProjectSupplyService:
             ),
         )
         if unit.group_code:
+            # Both halves, exactly as `_apply_group_nets` stamps them on a line: what the
+            # group has arriving in time before its own backlog is served, and this unit's
+            # share of it. A screen reading the unnetted figure off this fact must see the
+            # same "110 arrives, and none of it is free" sentence it sees off a line's.
+            unit.timely_qty_before_group_net = first.timely_qty_before_group_net
             unit.timely_qty = sum(
                 (
                     _dec(candidate.get("qty"))
@@ -2772,19 +2813,21 @@ class ProjectSupplyService:
         # (S7: every pool AND every group-take sibling, not only this line's own pool).
         capacity_left = _CapacityLedger()
         borrow_left: _BorrowLedger = _BorrowLedger()
+        # THE COVERED SET, computed once and read twice: by the recheck below (which unit
+        # each line was proposed in) and by the frozen proposal in `_write_decision`. It is
+        # what an active revision still holds, less the lines this payload REPLACES and less
+        # the lines it RELEASES - an uncovered line is being let go by this same transaction,
+        # so it is undecided demand again and belongs in the walk and in the unit. Built from
+        # two different subtractions, the freeze planned a unit the recheck then refused.
+        covered_ids = {
+            line_id
+            for line_id in self._frozen_by_line(self.active_decision(str(order.id)))
+            if line_id not in named and line_id not in set(uncover_line_ids)
+        }
         # The PLANNING UNIT each line was proposed in (ladder v6), so the recheck seeds its
         # ledgers from the same quantity the ladder was asked about. Grouped exactly as
-        # `_proposals_for` groups - the whole order, minus the lines an active revision
-        # still holds and this payload is not replacing, which are carried untouched.
-        units = self._unit_checks(
-            lines,
-            facts,
-            covered={
-                line_id
-                for line_id in self._frozen_by_line(self.active_decision(str(order.id)))
-                if line_id not in named
-            },
-        )
+        # `_proposals_for` groups.
+        units = self._unit_checks(lines, facts, covered=covered_ids)
 
         for entry in payload_lines:
             line = by_id.get(str(entry.project_line_id))
@@ -2812,7 +2855,11 @@ class ProjectSupplyService:
             self._check_line(
                 entry,
                 fact,
-                units.get(str(line.id)) or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
+                # A unit of its own for a line `_unit_checks` skipped, which is a line with
+                # no reconciled AutoCount line: `_check_line` refuses it on its next
+                # statement, and reaching that refusal matters more than the seed does.
+                units.get(str(line.id))
+                or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
                 capacity_left,
                 borrow_left,
                 stale,
@@ -2863,9 +2910,12 @@ class ProjectSupplyService:
         return self._write_decision(
             order,
             checked,
-            # Every line's facts, so the frozen proposal is composed over the ORDER (the
-            # walk the sheet ran) rather than over the lines this payload happens to name.
+            # The order's lines and every line's facts, so the frozen proposal is composed
+            # over the ORDER (the walk the sheet ran) rather than over the lines this
+            # payload happens to name - and read here rather than queried again below.
+            lines=lines,
             facts=facts,
+            covered=covered_ids,
             carried=carried,
             actor_user_id=actor_user_id,
             # Part 3 (AC-P3-5): the lines a planning change is applying, whose order
@@ -3673,7 +3723,7 @@ class ProjectSupplyService:
 
     def _proposals_for(
         self,
-        order: ProjectSalesOrder,
+        lines: Sequence[ProjectSalesOrderLine],
         checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
         *,
         facts: Dict[str, _LineFacts],
@@ -3691,10 +3741,13 @@ class ProjectSupplyService:
         quantity, no location) proposes an empty tuple, which is a different answer from an
         absent key.
 
-        `covered` names the lines an active revision still holds and this confirmation is
-        NOT replacing - the carried ones. They are out of the walk for the same reason they
-        are out of the board's: a decided line is not re-planned, and its claim is already a
-        hold in the facts rather than a place in a queue.
+        `lines` is the order's own lines, in line order, handed over by the caller that
+        already read them; `covered` names the lines an active revision still holds and this
+        confirmation is neither replacing nor releasing - the carried ones. They are out of
+        the walk for the same reason they are out of the board's: a decided line is not
+        re-planned, and its claim is already a hold in the facts rather than a place in a
+        queue. ONE set, shared with the recheck (`confirm`), or the two disagree about which
+        lines were planned together.
 
         IN LINE ORDER, not payload order, and that is load-bearing: the ledgers are drawn
         down in the order the walk goes, so the same lines posted in two orders would
@@ -3709,7 +3762,7 @@ class ProjectSupplyService:
         composed = self.compose_lines(
             [
                 (str(line.id), facts[str(line.id)], self._unit_key(facts[str(line.id)]))
-                for line in self.lines_of(str(order.id))
+                for line in lines
                 if str(line.id) in facts and str(line.id) not in skip
             ],
             as_of=as_of,
@@ -3724,7 +3777,9 @@ class ProjectSupplyService:
         order: ProjectSalesOrder,
         checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
         *,
+        lines: Sequence[ProjectSalesOrderLine],
         facts: Dict[str, _LineFacts],
+        covered: Optional[Set[str]] = None,
         carried: Sequence[_CarriedLine] = (),
         actor_user_id: str,
         as_of: Optional[date] = None,
@@ -3751,10 +3806,12 @@ class ProjectSupplyService:
         # composition they were decided with and are not re-planned, and everything else is
         # in the same walk the sheet ran, so the frozen suggestion is the one on screen.
         proposals = self._proposals_for(
-            order,
+            lines,
             checked,
             facts=facts,
-            covered={str(entry.line.id) for entry in carried},
+            covered=covered if covered is not None else {
+                str(entry.line.id) for entry in carried
+            },
             as_of=as_of,
         )
         # The named lines as decided now, then the carried ones exactly as they were

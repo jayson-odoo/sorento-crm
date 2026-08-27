@@ -117,7 +117,7 @@ def _frozen(db, order):
     lines = service.lines_of(str(order.id))
     facts = service._facts_for(order, lines)
     proposals = service._proposals_for(
-        order, [(line, None, facts[str(line.id)]) for line in lines], facts=facts
+        lines, [(line, None, facts[str(line.id)]) for line in lines], facts=facts
     )
     return {line.line_no: proposals[str(line.id)] for line in lines}
 
@@ -554,7 +554,20 @@ def _payload_line(line):
             for c in components
             if c["kind"] == "reserve"
         ],
-        "borrow": [],
+        # A Borrow the ladder proposed is posted back like every other component. The
+        # engine only ever composes the cross-group rung, so the source is the location;
+        # a group borrow is a person's pick and never arrives here from a proposal.
+        "borrow": [
+            {
+                "source": "other_location",
+                "warehouse_id": c["source_warehouse_id"],
+                "qty": c["qty"],
+                "reason": c["reason"],
+                "donor_core_line_id": c.get("donor_core_line_id"),
+            }
+            for c in components
+            if c["kind"] == "borrow"
+        ],
         "buy_qty": qty_text(
             sum(
                 (Decimal(c["qty"]) for c in components if c["kind"] == "buy"),
@@ -608,7 +621,13 @@ def test_a_unit_split_across_two_lines_confirms_exactly_as_proposed():
             db, company_id, eling, order,
             [_payload_line(lines[31]), _payload_line(lines[32])],
         )
+        own_code, pool_code = own.warehouse_code, pool.warehouse_code
 
+    assert _stated_sheet(lines[31]) == [
+        ("reserve", "5", own_code, "group_take"),
+        ("reserve", "5", pool_code, "pool"),
+    ]
+    assert _stated_sheet(lines[32]) == [("reserve", "20", pool_code, "pool")]
     assert response.status_code == 200, response.text
     assert response.json()["revision_no"] == 1
 
@@ -688,33 +707,53 @@ def test_confirming_one_line_of_a_unit_freezes_the_proposal_the_sheet_showed():
 # ------------------------------------------------------------- covered lines (S3)
 
 
-def _cover(db, order, line, actor, *, components):
-    """An ACTIVE revision covering one line of the order, as a confirmation leaves it."""
+def _cover(db, order, line, actor, *, components, hold=None):
+    """An ACTIVE revision covering one line of the order, as a confirmation leaves it.
+
+    `hold` is `(warehouse, qty)`: the allocation row a Reserve actually writes. Without one
+    the decision covers the line but holds no stock, which is a decision that cannot show
+    whether the lines around it are being offered stock it is standing on.
+    """
     from datetime import datetime
 
-    from app.models.project_so import SOSupplyDecision
+    from app.models.project_so import SOLineAllocation, SOSupplyDecision
 
-    db.add(
-        SOSupplyDecision(
-            id=_uid(),
-            company_id=order.company_id,
-            project_sales_order_id=order.id,
-            revision_no=1,
-            state="active",
-            line_snapshots=[
-                {
-                    "project_line_id": str(line.id),
-                    "core_line_id": str(line.core_sales_order_line_id),
-                    "line_no": line.line_no,
-                    "open_qty": qty_text(line.qty),
-                    "components": components,
-                }
-            ],
-            confirmed_by=actor,
-            confirmed_at=datetime.utcnow(),
-        )
+    decision = SOSupplyDecision(
+        id=_uid(),
+        company_id=order.company_id,
+        project_sales_order_id=order.id,
+        revision_no=1,
+        state="active",
+        line_snapshots=[
+            {
+                "project_line_id": str(line.id),
+                "core_line_id": str(line.core_sales_order_line_id),
+                "line_no": line.line_no,
+                "open_qty": qty_text(line.qty),
+                "components": components,
+            }
+        ],
+        confirmed_by=actor,
+        confirmed_at=datetime.utcnow(),
     )
+    db.add(decision)
+    db.flush()
+    if hold is not None:
+        warehouse, qty = hold
+        db.add(
+            SOLineAllocation(
+                id=_uid(),
+                company_id=order.company_id,
+                so_line_id=line.id,
+                source_type="own",
+                warehouse_id=warehouse.id,
+                qty=Decimal(str(qty)),
+                decision_id=decision.id,
+                confirmed_at=datetime.utcnow(),
+            )
+        )
     db.commit()
+    return decision
 
 
 def test_a_covered_line_is_out_of_the_unit_on_the_sheet_as_it_is_on_the_board():
@@ -789,3 +828,107 @@ def test_the_proof_never_offers_a_donor_the_walk_has_already_spent():
     assert donor.warehouse_code not in buy["reason"], (
         "and the Buy must not send a planner to a donor with nothing left"
     )
+
+
+def test_a_covered_siblings_hold_is_not_offered_again_to_the_open_line():
+    """B-new. Taking the covered line out of the WALK is not the same as taking it out of
+    the FACTS: its hold is still on the floor.
+
+    `proposal_for` read the order with `replacing=None`, which un-nets every line's hold on
+    the grounds that the sheet proposes for all of them. Once the covered line stopped being
+    proposed for, that reading was simply wrong: 25 at the sibling with 10 of them held by
+    the covered line is 15, and the sheet offered the open line all 25 - a Reserve the board
+    never showed and the confirmation refuses, because `confirm` nets the hold (the line it
+    replaces is the named one, not its sibling).
+
+    The group nets 15 here (25 on a floor, 30 owed, 20 on the water), so the honest answer
+    is 15 off the floor and 5 off the water, which is what all three surfaces now say.
+    """
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        sibling, _sibling_pool = sites["MWH"]
+        _stock(db, product, sibling, on_hand=25)
+        _spo_line(db, product, own, qty=20, arrives=REQUIRED_DATE - timedelta(days=5))
+        db.commit()
+
+        core_so, order, mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "20", own, REQUIRED_DATE),
+            ],
+        )
+        _cover(
+            db, order, mirrors[0], eling,
+            components=[
+                {
+                    "kind": "reserve",
+                    "qty": "10",
+                    "source_location": sibling.warehouse_code,
+                    "source_warehouse_id": str(sibling.id),
+                    "rung": "group_take",
+                }
+            ],
+            hold=(sibling, 10),
+        )
+        sheet = _sheet(db, order)
+        board = _board(db, core_so, as_of=date.today())
+        response = _confirm(db, company_id, eling, order, [_payload_line(sheet[32])])
+        own_code, sibling_code = own.warehouse_code, sibling.warehouse_code
+
+    assert _stated_sheet(sheet[32]) == [
+        ("reserve", "15", sibling_code, "group_take"),
+        ("timely_spo", "5", own_code, "group_take"),
+    ]
+    assert _stated_board(board[32]) == _stated_sheet(sheet[32])
+    assert response.status_code == 200, response.text
+
+
+def test_an_uncovered_line_is_in_the_unit_the_recheck_judges_against():
+    """S-a. One covered set, for the freeze walk and for the recheck.
+
+    A line named in `uncover_line_ids` is being RELEASED by this same transaction: it is not
+    carried, so the frozen proposal composes it, and it therefore has to be in the unit the
+    recheck seeds its ledgers from as well. Built from two sets, the freeze planned a unit of
+    30 while the recheck judged line 31 as a unit of 20 - whose own group offer is 0 - and
+    refused the 5 the proposal had just given it.
+    """
+    from app.schemas.project_supply import ConfirmSupplyBody
+
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        _stock(db, product, own, on_hand=5)
+        _stock(db, product, pool, on_hand=25)
+
+        _core_so, order, mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "20", own, REQUIRED_DATE),
+                (32, "10", own, REQUIRED_DATE),
+            ],
+        )
+        _cover(db, order, mirrors[1], eling, components=[])
+        service = ProjectSupplyService(db)
+        result = service.confirm(
+            service.get_order(str(order.id)),
+            ConfirmSupplyBody(
+                lines=[
+                    {
+                        "project_line_id": str(mirrors[0].id),
+                        "reserve": [
+                            {"warehouse_id": str(own.id), "qty": "5"},
+                            {"warehouse_id": str(pool.id), "qty": "15"},
+                        ],
+                    }
+                ]
+            ),
+            actor_user_id=eling,
+            uncover_line_ids=[str(mirrors[1].id)],
+        )
+        db.commit()
+
+    assert result["revision_no"] == 2
