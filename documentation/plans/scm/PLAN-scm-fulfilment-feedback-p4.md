@@ -1,6 +1,6 @@
 # PLAN: SCM fulfilment feedback, part 4 (loading plan list, supplier document fidelity, PI Start, packing list fixes, SPO planner redesign)
 
-**Status:** BUILDING. S6, S5 and S7 part 1 (the expanded row) built on slot B (branch `feat/scm-fulfilment-feedback-p4-b`, 2026-08-28).
+**Status:** BUILDING. S1, S2, S3 (slot A), S4, S5, S6, S7 (slots B and C) all built and integrated onto `feat/scm-fulfilment-feedback-p4` (2026-08-28). Migration chain 440 -> 441 -> 442, one head.
 **Lane:** worktree `.claude/worktrees/scm-fulfilment-p4`, branch `feat/scm-fulfilment-feedback-p4` off `origin/main` `741469185` (#353). No stack slot yet (:3000/:8000 = inline-decisions lane, :3050 = oi-draft, :3060 = reorder revamp).
 **UAC:** `scm-fulfilment-feedback-p4-acceptance-criteria.md`. **Review artifact:** `mockups/fulfilment-feedback-p4-plan.html` (lavish).
 **Predecessor:** `PLAN-scm-fulfilment-feedback.md` (part 3, MERGED #347). R1-R25 there stand unless a ruling below names one.
@@ -80,6 +80,17 @@ The cause is a ruling, not a gap: migration `420_spo_docs_in_allocations` (capta
 
 Taken instead: `_stock_context` is UNTOUCHED, and the drill's `spo` kind reads `spo_allocations` with `on_order_v`'s own predicate narrowed to site pools, so the dialog foots to the cell (AC-B5 holds for all three kinds). The trigger for moving it is named rather than guessed: **when the SPO upload lane files SPO documents on `purchase_orders` with an identity to select on, `container_request_drill._spo_rows` swaps its FROM clause and `_stock_context.incoming_spo` follows it in the same change.** Until then the captain's A1 would return an empty dialog under a non-zero number.
 
+**R8b. Two figures did not foot to the dialogs behind them; both are now the SAME predicate (28 Aug, integration).**
+Found by walking every kind against `_stock_context` on the dev copy of the live book:
+
+| Cell | Was | Cause | Now |
+| --- | --- | --- | --- |
+| **On hand** | cell counted CLOSED warehouses, the lightbox did not | `_stock_context` had no `w.is_active`; `_pool_warehouses` and `location_stock_service.location_stock_for_product` both have one | `w.is_active` added to `_stock_context`. Whole book: 17,356 units across 2,348 products sat in closed POOL locations (SPARE/P, REWORK, STAGING, PARTS, JB SHOWR, SHOWROOM), and every one of them was netted off an ask. Sample cell/lightbox pairs after: 37/37, 11178/11178, 211/211, 204/204, 16/16 (before: 387, 11484, 439, 414, 147). Browser: SRTWB241 reads 286 in the cell and 286 in the lightbox. |
+| **SPO** | cell counted allocations with no shipment yet, the dialog dropped them | `_spo_rows` INNER JOINed `inbound_shipments` and tested `sa.receipt_status <> 'received'`, which is NULL (not true) on an unstamped row; `scm.on_order_v` LEFT JOINs and keeps `s.id IS NULL`, with the COALESCE forms | The view's WHERE, clause for clause, plus `w.is_active`. Whole book: 140 of 4,348 products disagreed, the dialog summing 689 of the 20,532 units on order; after, 0 disagree and 20,532 == 20,532. Browser: SRTWB241 reads 117 in the cell and 117 in the dialog, on one "Not shipped" row. |
+
+A closed location leaves `on_hand_group` too: it is neither a site pool nor a project bin.
+
+
 ## 3. Send to supplier: channel, recipients, opens
 
 ### What exists
@@ -102,6 +113,12 @@ Taken instead: `_stock_context` is UNTOUCHED, and the drill's `spo` kind reads `
 - **Deviation: the xlsx does NOT travel as a chat media attachment.** The link is in the message and both files hang off it. With no WeChat channel connected there is no way to establish whether it accepts file attachments, and a send that fails on the attachment after the text landed would read as a failed request. *Trigger:* when a WeChat channel is connected, check whether it carries `file` attachments and, if it does, send the xlsx after the text with the composer's own `upload_chat_attachment` + `send_chat_attachment_for` (in-window only - out of window a template is the only deliverable message).
 
 **R11. Opens are tracked on the notice.** `GET /api/v1/public/supplier-request/{token}` stamps the notice(s) carrying that token: `opened_at` (first), `last_opened_at`, `open_count += 1`. That is a write on a GET by design (it is the tracking); it never blocks the page (best-effort, own short transaction). Surfaced: list column Opened, the Requests sent card ("Opened 3 times, last 27/08 15:10" or "Not opened yet"), and the plan status stays `sent` (no `opened` status: a status is a decision, an open is an event). Document downloads through the token count as opens too (same handler family).
+
+*S3 frontend built 28 Aug (slot A), on C's backend:*
+- The send dialog is `scm/loading-plan/components/SendRequestDialog.tsx`; the bare `ConfirmActionDialog` is gone. Channel radio, email chips (add / remove / inline validation, Send disabled at zero), a server-searched `SearchableSelect` over `/supplier-notices/chat-contacts` disabled with the workspace's `unavailable_reason`, an optional note, and the footer line "PDF + XLSX attached · link included · the previous link is retired".
+- Refusals print IN the dialog against the field that can fix them: the eight codes map to sentences, an unknown code falls back to the server's own message, and the send hook no longer toasts (a toast says the reason where it cannot be acted on). `codedError` moved from `proformaInvoiceService` into `lib/api-client` beside `extractApiError` rather than being copied a second time.
+- `supplier_email` rides on the plan record (one join column on the list, one lookup on the record) so the dialog does not fetch a supplier it was already handed.
+- `loading_plan_service` dropped its own latest-notice reader for `supplier_notice_service.latest_notice_for_plans`, which gained `opened_at`. The list's Opened column and the Requests sent card now read the real opens through one reader, so they cannot disagree about which send is current. `fmtOpens` in `scm/lib/format.ts` writes the sentence once.
 
 ## 4. The supplier document is THEIR sheet
 
