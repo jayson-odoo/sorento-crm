@@ -12,9 +12,10 @@ import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
  * can now answer. Re-uploading the same file to make them catch up is a ceremony, not a
  * decision, so it is one button.
  *
- * Lives on the queue panel, where the consequence is read, AND on the toolbar, because the
- * queue hides itself when it is empty and that is exactly the state somebody is trying to
- * change after adding the missing products.
+ * Lives on the queue panel, where the consequence is read. The queue hides itself when it is
+ * empty and that is exactly the state somebody is trying to reach after adding the missing
+ * products, so the loading-plan toolbar offers the same action from its gear menu - calling
+ * the hook directly, since a menu item is not a button.
  */
 export function RefreshMatchingButton({
   supplierId,

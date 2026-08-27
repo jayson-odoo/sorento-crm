@@ -4,7 +4,7 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 
 ## A0. Dropdowns (global)
 
-- AC-A0.1 `SearchableSelect` / `SearchableMultiSelect` render the selected option in full: "CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD" is readable on the loading plan supplier picker at 1280px; at 375px it wraps to two lines, never an ellipsis.
+- AC-A0.1 `SearchableSelect` / `SearchableMultiSelect` render the selected option in full: "CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD" is readable on the loading plan's Upload popup supplier picker at 1280px; at 375px it wraps to two lines, never an ellipsis.
 - AC-A0.2 Menu items wrap long text; the menu is never narrower than the trigger.
 - AC-A0.3 Guard test: no `truncate` class on the selected-label element of either component.
 
@@ -22,6 +22,7 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 - AC-A2.3 Clicking the product opens the row popover: Quantity needed box, Suggestion box, location table (BRW / MWH / WH3 / DC1 / RSW + one muted group-locations row), Ordered 12 months box (two series), Incoming-for-reference box, contributing SO lines earliest first.
 - AC-A2.4 Legend and colours match the fulfilment board: pool stock emerald, SPO violet, ask rose.
 - AC-A2.5 Usable at 375px and 1280px: the grid scrolls inside its container, the popover becomes a full-height sheet on mobile.
+- AC-A2.6 Loading plan toolbar (captain, 27 Aug): ONE primary blue CTA "Upload". It opens a popup whose first step asks Supplier (`SearchableSelect`, server-searched, required), Plan until (date, optional, clearable) and Document (Stock list / Proforma invoice, Stock list by default), with Continue (to that document's existing upload dialog, supplier fixed) and "Plan without a file" (applies the two picks and closes). Continue and "Plan without a file" are disabled until a supplier is chosen. The page itself shows Supplier and Plan until as read-only text ("No supplier chosen" and "-" before anything is picked, the supplier name and dd/mm/yyyy after), never as inputs. A gear button (`Settings` icon, outline, `aria-label="More actions"`, disabled until a supplier is chosen) holds the secondary actions: "View uploaded list" (only when a stock-list attachment exists), "Refresh matching", "Change supplier / plan until" (re-opens the popup on step 1). The request section's own empty-state CTAs open the popup straight on the matching document's upload. At 375px the text block sits above the buttons and the popup's fields stack.
 
 ## B. The numbers on the row
 

@@ -3,12 +3,15 @@
  *
  * The CBM-fit half of this page (container size, packed-stock tiles, the loading plan table)
  * was cut on the captain's 20 Aug live-test ruling ("don't need stage 2") - see
- * LoadingPlanView.tsx's own docstring. What is left to assert here is the supplier picker
- * itself: nothing is shown before a supplier is chosen, choosing one renders the request
- * section, the "View uploaded list" control only appears once a stock-list file exists, and
- * both upload routes (stock list, proforma invoice) wait on a supplier being chosen.
- * Everything the request section itself does (the deferred-line reasoning, the ranked table,
- * sending to the supplier) is covered in ContainerRequestSection.test.tsx.
+ * LoadingPlanView.tsx's own docstring. What is left to assert here is the toolbar the
+ * captain's 27 Aug ruling reshaped: ONE Upload CTA opens the popup that owns supplier, plan
+ * until and document; what was chosen reads back as text; and the occasional actions (view
+ * the uploaded sheet, re-run matching, change the picks) sit behind the gear, which has
+ * nothing to act on until a supplier exists.
+ *
+ * The popup's own two steps are covered in PlanContainerDialog.test.tsx, and everything the
+ * request section does (the deferred-line reasoning, the ranked table, sending to the
+ * supplier) in ContainerRequestSection.test.tsx.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -37,11 +40,31 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
-// The supplier picker is server-searched now (S8-followup, same fix as the proforma upload
+// The gear menu, flattened: Radix opens on pointerdown through a portal, and what this suite
+// asks of it is which items it offers, not how it animates. Same stub as
+// PurchaseOrdersList.test.tsx uses for the same reason.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: any) => <>{children}</>,
+  DropdownMenuContent: ({ children }: any) => <div data-testid="menu-content">{children}</div>,
+  DropdownMenuItem: ({ children, onSelect, disabled, ...rest }: any) => (
+    <button type="button" onClick={onSelect} disabled={disabled} {...rest}>
+      {children}
+    </button>
+  ),
+  DropdownMenuLabel: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuSeparator: () => <hr />,
+  DropdownMenuGroup: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuPortal: ({ children }: any) => <>{children}</>,
+}));
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+// The supplier picker is server-searched (S8-followup, same fix as the proforma upload
 // dialog): `SearchableSelect` calls `fetchOptions('', 0)` on open, so the real component is
 // kept (not stubbed) and only `getFulfilmentSuppliers` is overridden here - `importOriginal`
-// keeps every other export real, since `StockListUploadDialog` / `ContainerRequestSection`
-// import other functions off this same module and neither is exercised by this suite.
+// keeps every other export real, since the upload dialogs import other functions off this
+// same module.
 const getFulfilmentSuppliers = vi.fn(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async (_query?: string) => [{ value: 'sup-1', label: 'Foshan Ceramics' }],
@@ -63,12 +86,42 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useStockListApplied: () => vi.fn(),
 }));
 
-// The request section renders inside this view too. Its own behaviour is covered in
-// ContainerRequestSection.test.tsx; here it only has to prove it mounted for the chosen
-// supplier, so this stub keeps the suite from also depending on that component's own hooks.
-// The proforma dialog is the other way to answer "what do they hold" (Q2), opened from this
-// toolbar. Its own behaviour is covered in ProformaUploadDialog.test.tsx; here it only has to
-// prove it opened for the supplier already chosen on this screen.
+const rematch = vi.fn();
+vi.mock('../../hooks/useSupplierCodeAliases', () => ({
+  useRematchSupplierCodes: () => ({ mutate: rematch, isPending: false }),
+}));
+
+// The queue panel and the request section both render inside this view for a chosen
+// supplier. Each has its own suite; here they only have to prove they mounted, and the
+// section's empty-state CTAs have to prove they reach the right upload.
+vi.mock('./UnmatchedSupplierCodesPanel', () => ({
+  UnmatchedSupplierCodesPanel: () => <div data-testid="unmatched-panel" />,
+}));
+
+vi.mock('./ContainerRequestSection', () => ({
+  ContainerRequestSection: ({
+    supplierName,
+    onUploadStockList,
+    onUploadProforma,
+  }: {
+    supplierName: string;
+    onUploadStockList: () => void;
+    onUploadProforma?: () => void;
+  }) => (
+    <div data-testid="container-request-section">
+      Request section for {supplierName}
+      <button type="button" onClick={onUploadStockList} data-testid="section-upload-stock">
+        Upload stock list
+      </button>
+      <button type="button" onClick={onUploadProforma} data-testid="section-upload-proforma">
+        Upload proforma invoice
+      </button>
+    </div>
+  ),
+}));
+
+// Step 2 of the popup. Both are covered by their own suites; here each only has to prove it
+// was reached for the supplier chosen on step 1.
 vi.mock('../../proforma-invoices/components/ProformaUploadDialog', () => ({
   ProformaUploadDialog: ({
     open,
@@ -86,10 +139,17 @@ vi.mock('../../proforma-invoices/components/ProformaUploadDialog', () => ({
     ) : null,
 }));
 
-vi.mock('./ContainerRequestSection', () => ({
-  ContainerRequestSection: ({ supplierName }: { supplierName: string }) => (
-    <div data-testid="container-request-section">Request section for {supplierName}</div>
-  ),
+vi.mock('./StockListUploadDialog', () => ({
+  StockListUploadDialog: ({
+    open,
+    supplierName,
+  }: {
+    open: boolean;
+    supplierName: string;
+  }) =>
+    open ? (
+      <div data-testid="stock-upload-dialog">Stock list upload for {supplierName}</div>
+    ) : null,
 }));
 
 import { LoadingPlanView } from './LoadingPlanView';
@@ -103,16 +163,27 @@ function renderView() {
   );
 }
 
-/** The supplier select is a combobox; pick the only option in it. */
-async function chooseSupplier() {
+/** The supplier select is a combobox inside the popup; pick the only option in it. */
+async function chooseSupplierInDialog() {
   const trigger = screen.getByRole('combobox', { name: /Supplier/i });
   fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
   fireEvent.click(trigger);
   fireEvent.click(await screen.findByText('Foshan Ceramics'));
 }
 
+/** The whole journey onto the page: Upload, pick the supplier, plan without a file. */
+async function planForFoshan(horizon?: string) {
+  fireEvent.click(screen.getByTestId('open-plan-container'));
+  await chooseSupplierInDialog();
+  if (horizon) {
+    fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: horizon } });
+  }
+  fireEvent.click(screen.getByTestId('plan-without-file'));
+}
+
 beforeEach(() => {
   getFulfilmentSuppliers.mockClear();
+  rematch.mockClear();
   state.stockListFile = undefined;
 });
 
@@ -124,79 +195,117 @@ describe('LoadingPlanView - before a supplier is chosen', () => {
     expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
   });
 
-  it('has no view-uploaded-list control since no supplier is chosen yet', () => {
+  it('reads back that nothing is being planned yet', () => {
     renderView();
 
-    expect(screen.queryByRole('button', { name: /view uploaded list/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId('plan-supplier-text')).toHaveTextContent('No supplier chosen');
+    expect(screen.getByTestId('plan-horizon-text')).toHaveTextContent('Plan until: -');
+  });
+
+  it('offers the same Upload CTA from the empty state', () => {
+    renderView();
+
+    expect(screen.getByTestId('open-plan-container-empty')).toBeEnabled();
+  });
+
+  it('has nothing behind the gear until there is a supplier to act on', () => {
+    renderView();
+
+    expect(screen.getByTestId('loading-plan-more')).toBeDisabled();
   });
 });
 
-describe('LoadingPlanView - a supplier is chosen', () => {
-  it('renders the request section for the chosen supplier', async () => {
+describe('LoadingPlanView - the Upload popup', () => {
+  it('opens on the supplier + plan until step', async () => {
     renderView();
-    await chooseSupplier();
+    expect(screen.queryByRole('combobox', { name: /Supplier/i })).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByTestId('open-plan-container'));
+
+    expect(await screen.findByText('Plan a container')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeInTheDocument();
+  });
+
+  it('plans without a file once the supplier and the date are picked', async () => {
+    renderView();
+    await planForFoshan('2026-09-30');
+
+    // The picks are the page's now, and they read back as text rather than as inputs.
+    expect(screen.getByTestId('plan-supplier-text')).toHaveTextContent(
+      'Supplier: Foshan Ceramics',
+    );
+    expect(screen.getByTestId('plan-horizon-text')).toHaveTextContent('30/09/2026');
     expect(await screen.findByTestId('container-request-section')).toBeInTheDocument();
     expect(screen.getByText('Request section for Foshan Ceramics')).toBeInTheDocument();
   });
 
-  it('hides the view-uploaded-list control until a stock list has been uploaded', async () => {
+  it('opens the stock-list upload straight from the request section, for that supplier', async () => {
     renderView();
-    await chooseSupplier();
+    await planForFoshan();
 
-    await screen.findByTestId('container-request-section');
+    fireEvent.click(await screen.findByTestId('section-upload-stock'));
+
+    expect(await screen.findByTestId('stock-upload-dialog')).toHaveTextContent(
+      'Stock list upload for Foshan Ceramics',
+    );
+  });
+
+  it('opens the proforma upload straight from the request section, for that supplier', async () => {
+    renderView();
+    await planForFoshan();
+
+    fireEvent.click(await screen.findByTestId('section-upload-proforma'));
+
+    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
+      'Proforma upload for Foshan Ceramics',
+    );
+  });
+});
+
+describe('LoadingPlanView - the gear menu', () => {
+  it('holds the occasional actions once a supplier is chosen', async () => {
+    renderView();
+    await planForFoshan();
+
+    expect(screen.getByTestId('loading-plan-more')).toBeEnabled();
+    expect(screen.getByRole('button', { name: /refresh matching/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /change supplier \/ plan until/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides View uploaded list until a stock-list file exists', async () => {
+    renderView();
+    await planForFoshan();
+
     expect(screen.queryByRole('button', { name: /view uploaded list/i })).not.toBeInTheDocument();
   });
 
   it('offers to view the uploaded list once a stock-list file exists', async () => {
     state.stockListFile = { attachment_id: 'att-1', filename: 'foshan-stock.xlsx' };
     renderView();
-    await chooseSupplier();
+    await planForFoshan();
 
-    expect(
-      await screen.findByRole('button', { name: /view uploaded list/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /view uploaded list/i })).toBeInTheDocument();
   });
 
-  it('enables the upload-stock-list toolbar button once a supplier is chosen', async () => {
+  it('re-runs the code matching for the chosen supplier', async () => {
     renderView();
-    expect(screen.getByTestId('open-stock-upload')).toBeDisabled();
+    await planForFoshan();
 
-    await chooseSupplier();
-
-    expect(screen.getByTestId('open-stock-upload')).toBeEnabled();
-  });
-
-  it('enables the upload-proforma toolbar button once a supplier is chosen', async () => {
-    renderView();
-    // Whose invoice it is has no answer yet, so there is nothing to file it against.
-    expect(screen.getByTestId('open-proforma-upload')).toBeDisabled();
-
-    await chooseSupplier();
-
-    expect(screen.getByTestId('open-proforma-upload')).toBeEnabled();
-  });
-
-  it('offers Refresh matching from the toolbar, where the queue may be empty', async () => {
-    renderView();
-    // The queue panel hides itself when every code binds, so the toolbar is the only place
+    // The queue panel hides itself when every code binds, so the gear is the only place
     // this is reachable in exactly the state somebody is trying to reach (R18).
-    expect(screen.getByTestId('refresh-matching')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /refresh matching/i }));
 
-    await chooseSupplier();
-
-    expect(screen.getByTestId('refresh-matching')).toBeEnabled();
+    expect(rematch).toHaveBeenCalledWith({ supplier_id: 'sup-1' });
   });
 
-  it('opens the proforma upload against the supplier already chosen here', async () => {
+  it('re-opens the popup on its first step to change the picks', async () => {
     renderView();
-    await chooseSupplier();
+    await planForFoshan();
 
-    expect(screen.queryByTestId('proforma-upload-dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('open-proforma-upload'));
+    fireEvent.click(screen.getByRole('button', { name: /change supplier \/ plan until/i }));
 
-    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
-      'Proforma upload for Foshan Ceramics',
-    );
+    expect(await screen.findByText('Plan a container')).toBeInTheDocument();
   });
 });
