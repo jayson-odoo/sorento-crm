@@ -150,9 +150,9 @@ function titleCase(v: string): string {
  *  somebody keyed a 2020 order by hand. Mirrors the purchase-order side's `import`. */
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry sheet',
-  // The same words the list uses for the same row - the upload carries the whole book, not
-  // only what is still owed.
-  upload: 'Sales order upload',
+  // The same word the list's Source column uses for the same row. It is read under a
+  // "Source" label on the record of one sales order, so "Sales order upload" restated both.
+  upload: 'Upload',
   history: 'Absorbed history',
   manual: 'Manual',
 };

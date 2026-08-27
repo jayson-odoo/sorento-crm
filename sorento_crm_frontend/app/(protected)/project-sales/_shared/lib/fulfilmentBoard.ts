@@ -222,14 +222,22 @@ export function commitPreviewFor(
  * the board commits through the same per-order confirmation the sheet does rather than growing
  * a second write path (13.4: the board is a LENS).
  *
+ * ONE CONFIRM, AND SILENCE MEANS THE SUGGESTION (R11, the captain 27 Aug). A planner who has
+ * read the board and changed nothing has agreed with it; making them press Approve on every
+ * untouched line first was a second gesture that said exactly what the first one already
+ * said, and Approve all existed only to undo the cost of it. So an untouched, plannable line
+ * is confirmed as the engine proposed it, and the only way to keep a line out is to REJECT
+ * it, which is a decision with a reason attached.
+ *
  * What is NOT named is the point. A line the body omits is left UNDECIDED and keeps flowing to
- * reorder planning, which is the captain's own reason for wanting partial confirmation. So:
+ * reorder planning. So:
  *
  * - a REJECTED line is omitted. The planner refused the proposal; committing it anyway would
  *     be the opposite of what they said, and there is no "commit nothing for this line" verb;
  * - a line with no `project_line_id` is omitted rather than posted with a null, because the
  *     endpoint keys on it and a null would fail the whole confirmation for the others;
- * - an unplannable line is never decided in the first place (AC-FP16), so it never arrives.
+ * - an UNPLANNABLE line is omitted: its sales order states no fulfilment location (AC-FP16),
+ *     so there is no warehouse to reserve at and the server would refuse the whole order.
  *
  * An AMENDMENT moves the difference into Buy. The quantity a planner takes off a Reserve does
  * not evaporate: it is still owed, and somebody still has to buy it.
@@ -275,30 +283,37 @@ export interface UnpostableLine {
 
 /**
  * ONE line of the body, or the reason it cannot be one, or null when nothing is to be posted
- * for it at all (undecided, rejected, or covered and untouched - none of which is a loss).
+ * for it at all (rejected, unplannable, or covered and untouched - none of which is a loss).
  *
  * The single place the rule lives, so the body, the notice that names what the body left out
  * and the count on the button cannot disagree about which lines those are.
+ *
+ * `decision` UNDEFINED means the planner left the line alone, which under R11 is agreement:
+ * the engine's own composition is posted for it, exactly as an explicit Approve would.
  */
 function lineFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
 ): ConfirmLine | UnpostableReason | null {
+  // NO LOCATION ON THE SALES ORDER: there is no warehouse to reserve at, and the server
+  // refuses the whole order over one such line. It was never reachable while a line had to
+  // be ticked first (the row offers no verb); silence-means-yes makes it reachable.
+  if (contribution.unplannable) return null;
   // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
   // nothing to derive - the board proposes nothing for a covered line, and inventing one
   // would overwrite a person's composition with the engine's opinion of it.
   if (contribution.covered && !isAmendment(decision)) return null;
-  if (!decision || decision.verdict === 'rejected') return null;
+  if (decision?.verdict === 'rejected') return null;
 
   const discontinued = Boolean(contribution.item_flags?.discontinued);
-  const buyReason = decision.buy_reason?.trim() || undefined;
+  const buyReason = decision?.buy_reason?.trim() || undefined;
 
   // AN AMENDMENT COMPOSED IN THE EDITOR IS POSTED AS COMPOSED. Every warehouse and every
   // donor was chosen by a person against the balance in front of them, so there is nothing
   // left to derive - and the derivation is what used to lose them: a line the engine met
   // entirely from Buy has no Reserve source to read a warehouse off, so an amendment moving
   // it into a Reserve was dropped from the body while the row still read "Amended".
-  if (decision.verdict === 'amended' && decision.reserve) {
+  if (decision?.verdict === 'amended' && decision.reserve) {
     const buy = toMinor(decision.buy_qty ?? '0');
     if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
     if (!contribution.project_line_id) return 'no_mirror';
@@ -345,7 +360,7 @@ function lineFor(
     sumSources(contribution, 'reserve'),
   );
   const reserveQty =
-    decision.verdict === 'amended' && decision.reserve_qty !== undefined
+    decision?.verdict === 'amended' && decision.reserve_qty !== undefined
       ? toMinor(decision.reserve_qty)
       : proposedReserve;
   // Whatever the Reserve and the incoming stock do not cover is bought. Derived rather than
@@ -353,7 +368,7 @@ function lineFor(
   // On an unchanged proposal the server's own Buy stands; an amendment moves the quantity
   // the planner took off the Reserve into it, because that quantity is still owed.
   const buy =
-    decision.verdict === 'amended' || contribution.qty_proposed_buy === undefined ||
+    decision?.verdict === 'amended' || contribution.qty_proposed_buy === undefined ||
     contribution.qty_proposed_buy === null
       ? Math.max(owed - incoming - reserveQty, 0)
       : toMinor(contribution.qty_proposed_buy);
@@ -378,7 +393,7 @@ function lineFor(
     buy_qty: fromMinor(buy),
     buy_reason: buyReason,
     // Present only on the legacy single-number amendment, which is still an override.
-    amend_reason: decision.verdict === 'amended' ? decision.reason : undefined,
+    amend_reason: decision?.verdict === 'amended' ? decision.reason : undefined,
   };
 }
 

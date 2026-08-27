@@ -861,6 +861,14 @@ export interface BoardLineDecision {
   /** The frozen Buy was an ORDER BACK, and the document CS cited for it (part 2 4b). */
   order_back?: boolean;
   cited_document?: string | null;
+  /**
+   * The planner flagged this decision as one the numbers behind it look wrong for (R10).
+   *
+   * Echoed back on the frozen decision so the warning stays on the pill after a reload: a
+   * flag that only existed in the session's draft would say the doubt had been answered the
+   * moment the page was refreshed.
+   */
+  suspected_system_issue?: boolean;
 }
 
 /**
@@ -1565,6 +1573,16 @@ export interface BoardDecision {
    * the form says, and a document we do not hold is recorded rather than refused.
    */
   cited_document?: string | null;
+  /**
+   * "This might be a system problem, flag it for investigation" (R10).
+   *
+   * A SECOND answer, beside the verdict rather than instead of it: a planner who amends a
+   * line because the availability beside it reads wrong is telling us two different things,
+   * and a decision that only recorded the amendment lost the one worth chasing. It travels
+   * with whichever verdict was given - approved, amended or rejected - and the confirmation
+   * stores it beside `amend_reason` and counts it in the result.
+   */
+  suspected_system_issue?: boolean;
 }
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
@@ -1832,6 +1850,13 @@ export interface ConfirmManyOrderResult {
   inquiry_rows_created?: number | null;
   lines_decided?: number | null;
   lines_undecided?: number | null;
+  /**
+   * The movements this order's confirmation raised, the same figure the single-order
+   * `ConfirmResult` already carries. Optional because a server that predates the field
+   * sends neither, and the board's toast then reports 0 rather than inventing a count.
+   */
+  transfers_written?: number | null;
+  transfers_failed?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

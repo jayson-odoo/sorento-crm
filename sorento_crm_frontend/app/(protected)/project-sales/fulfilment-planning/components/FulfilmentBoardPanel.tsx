@@ -1,15 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
-  CheckCheck,
   LayoutGrid,
   List,
   PackageSearch,
   Search,
+  Settings2,
   Undo2,
   X,
 } from 'lucide-react';
@@ -32,7 +32,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -40,11 +46,9 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
-  useReconciliationMutations,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
-import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
 import {
   annotationsByCell,
   preMarkedKeys,
@@ -53,31 +57,25 @@ import {
 import {
   boardAxis,
   bucketLabelText,
-  commitPreviewFor,
   orderByProductRows,
   rowMatchesSearch,
   confirmLinesFor,
-  plannedLineCount,
   shiftedDayWindow,
-  standingsFor,
   unpostableDecidedFor,
-  type ContributionOwners,
   type UnpostableLine,
   type UnpostableReason,
 } from '../../_shared/lib/fulfilmentBoard';
 import type {
   BoardCell,
-  BoardCommitPreview,
   BoardContribution,
   BoardDecision,
   BoardDraft,
   BoardGranularity,
-  BoardOrderStanding,
   BoardRowAxis,
   ConfirmManyOrderResult,
-  SupplyFailingLine,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
+import { BoardTransfersPanel } from './BoardTransfersPanel';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { DecisionStrip } from './DecisionStrip';
@@ -297,219 +295,18 @@ export function FulfilmentBoardPanel({
     });
   }, []);
 
-  const { confirm } = useReconciliationMutations();
   const { adopt } = useFulfilmentPlanningMutations();
-  /** Which order is in flight, and what the server refused, per order. */
-  const [confirming, setConfirming] = React.useState<string | null>(null);
-  const [refusals, setRefusals] = React.useState<Record<string, SupplyFailingLine[]>>({});
 
-  /**
-   * Commit one order's decided lines through the existing per-order confirmation.
-   *
-   * The board writes nothing of its own (13.4): this is the SAME endpoint the sheet posts to,
-   * so there is one write path and one set of invariants. Partial by construction - a line the
-   * body does not name and no active revision covers is left undecided and keeps flowing to
-   * reorder planning. The body names ONLY what was decided or amended on this screen; a line
-   * the active revision already covers is carried into the new revision by the server, so the
-   * board never re-posts it (a day window could not even see all of them, and a re-post was
-   * re-judged against live facts).
-   *
-   * On success the confirmed keys leave the draft, because they are in the database now and a
-   * draft that still claimed them would offer to confirm them twice. On a REFUSAL the draft is
-   * untouched: the planner composed that, the server rejected it, and making them do it again
-   * is the one outcome that would teach them not to use the board.
-   */
-  const confirmOrder = React.useCallback(
-    async (standing: BoardOrderStanding) => {
-      if (!board.data) return;
-      setConfirming(standing.sales_order_id);
-      setRefusals((current) => ({ ...current, [standing.sales_order_id]: [] }));
+  // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
+  // Commit section under the matrix, each with its own busy flag and its own refusal list.
+  // A planner reading a board of nine orders had nine buttons to press to say one thing, and
+  // the refusals were three screens below the rows that caused them. There is ONE Confirm
+  // now, in the header bar, and it posts every order in one call.
 
-      let psoId = standing.project_sales_order_id ?? null;
-      let contributions = board.data.contributions;
-
-      try {
-        // ADOPT FIRST when there is no planning record. Deciding lines and pressing Confirm is
-        // the whole act as far as the planner is concerned, and refusing at the last step after
-        // they have composed nine orders is the dead end this exists to remove. Adoption is
-        // idempotent, so a second press or a second user lands on the same record.
-        if (!psoId) {
-          let adopted;
-          try {
-            adopted = await adopt.mutateAsync(standing.sales_order_id);
-          } catch (error) {
-            setRefusals((current) => ({
-              ...current,
-              [standing.sales_order_id]: [
-                {
-                  reason: `Could not start planning this sales order: ${
-                    error instanceof Error ? error.message : 'the request was refused.'
-                  }`,
-                },
-              ],
-            }));
-            return;
-          }
-          psoId = adopted.project_sales_order_id;
-          // The board MUST be re-read before the body is built: `project_line_id` is null on
-          // every contribution until the mirror lines exist, so anything built a moment ago
-          // names nothing. The ids are asked for, never guessed.
-          const fresh = await board.refetch();
-          if (!fresh.data) {
-            setRefusals((current) => ({
-              ...current,
-              [standing.sales_order_id]: [
-                { reason: 'Planning started, but the board could not be re-read. Try again.' },
-              ],
-            }));
-            return;
-          }
-          contributions = fresh.data.contributions;
-        }
-
-        const lines = confirmLinesFor(contributions, standing.sales_order_id, draft);
-        if (lines.length === 0) {
-          setRefusals((current) => ({
-            ...current,
-            [standing.sales_order_id]: [
-              { reason: 'None of the decided lines could be confirmed against this order yet.' },
-            ],
-          }));
-          return;
-        }
-
-        // With a batch on screen, the SAME press applies it (AC-P3-4): the lines below are
-        // the batch rows' own compositions, the batch reads applied with actor and time, and
-        // exactly one revision is written. A second press is refused by the server rather
-        // than writing a second revision, so nothing here has to guard against it.
-        await confirm.mutateAsync({
-          psoId: psoId as string,
-          body: batchId ? { lines, batch_id: batchId } : { lines },
-        });
-        if (batchId) await changeBatch.refetch();
-        const committed = new Set(lines.map((line) => line.project_line_id));
-        setDraft((current) => {
-          const next = { ...current };
-          for (const contribution of contributions) {
-            if (
-              contribution.project_line_id &&
-              committed.has(contribution.project_line_id) &&
-              next[contribution.key]
-            ) {
-              delete next[contribution.key];
-            }
-          }
-          return next;
-        });
-      } catch (error) {
-        if (error instanceof ConfirmSupplyError && error.failingLines.length > 0) {
-          setRefusals((current) => ({
-            ...current,
-            [standing.sales_order_id]: error.failingLines,
-          }));
-        } else {
-          // The mutation already toasted the message; this is the fallback for a refusal that
-          // named no line, so the row still says something happened.
-          setRefusals((current) => ({
-            ...current,
-            [standing.sales_order_id]: [
-              { reason: error instanceof Error ? error.message : 'The confirmation was refused.' },
-            ],
-          }));
-        }
-      } finally {
-        setConfirming(null);
-      }
-    },
-    [board, confirm, adopt, draft, batchId, changeBatch],
-  );
-
-  /**
-   * Which order each contribution key belongs to, ACCUMULATED across every board shown.
-   *
-   * A verdict is only ever given on a cell that was on screen, so every draft key passes
-   * through here once. Rebuilding this from the current board instead would drop a verdict the
-   * moment its cell left the day window, and the counter would fall as the planner scrolled.
-   * The key is stored, never parsed: the server owns its format (deviation 5).
-   */
-  const ledger = React.useRef<{ owners: ContributionOwners; covered: Set<string> }>({
-    owners: new Map(),
-    // The lines an ACTIVE decision already covers, which are decided in the DATABASE rather
-    // than in the draft. Kept beside `owners` because the order card counts both, and REMOVED
-    // again when a board says a line it once covered is no longer covered - a revision can be
-    // superseded or challenged, and a "decided" that only ever accumulates would go on
-    // claiming a decision that has been retired.
-    covered: new Set(),
-  });
-  /**
-   * The ledger brought up to date with THIS board, once per board rather than on every render:
-   * folding a board in is idempotent, so a repeated pass changes nothing, but a pass on every
-   * render was work in the render body that a memo keyed on the board does not need to be.
-   */
-  const ownership = React.useMemo(() => {
-    const { owners, covered } = ledger.current;
-    for (const contribution of board.data?.contributions ?? []) {
-      owners.set(contribution.key, contribution.sales_order_id);
-      if (contribution.covered) covered.add(contribution.key);
-      else covered.delete(contribution.key);
-    }
-    return { owners, covered, board: board.data };
-  }, [board.data]);
-
-  /**
-   * The standings are the SERVER's, off `board.orders`, which counts every row of the
-   * selection. Only the verdicts are ours.
-   *
-   * Counting them from `cells` was a live defect: at day granularity the cells are a 30-day
-   * window, so a forty-line order read "3 of 3 lines decided" and the Confirm beside it
-   * promised to leave nothing behind.
-   */
-  const standings = React.useMemo<BoardOrderStanding[]>(() => {
-    if (!ownership.board) return [];
-    return standingsFor(ownership.board.orders, ownership.owners, draft, ownership.covered);
-  }, [ownership, draft]);
-
-  /**
-   * What each order's Confirm would actually post, and what it would leave.
-   *
-   * `committing` is the length of the BODY, not the count of verdicts: a decided line whose
-   * sales order has no mirror for it yet cannot be posted, and a button promising to confirm it
-   * would be describing something the body deliberately omits.
-   */
-  const previews = React.useMemo<Record<string, BoardCommitPreview>>(() => {
-    if (!board.data) return {};
-    const contributions = board.data.contributions;
-    return Object.fromEntries(
-      standings.map((standing) => [
-        standing.sales_order_id,
-        commitPreviewFor(
-          standing,
-          // On an adopted order the body is the truth; on one that has not been adopted the
-          // body cannot exist yet, so the verdicts are, and the press adopts before building.
-          standing.project_sales_order_id
-            ? confirmLinesFor(contributions, standing.sales_order_id, draft).length
-            : plannedLineCount(contributions, standing.sales_order_id, draft),
-        ),
-      ]),
-    );
-  }, [standings, board.data, draft]);
-
-  /** Decided lines this confirmation cannot carry, per order, named on the rail with why. */
-  const unpostable = React.useMemo<Record<string, UnpostableLine[]>>(() => {
-    if (!board.data) return {};
-    const contributions = board.data.contributions;
-    return Object.fromEntries(
-      standings.map((standing) => [
-        standing.sales_order_id,
-        unpostableDecidedFor(
-          contributions,
-          standing.sales_order_id,
-          draft,
-          Boolean(standing.project_sales_order_id),
-        ),
-      ]),
-    );
-  }, [standings, board.data, draft]);
+  // NO PER-ORDER LEDGER. It accumulated which order each contribution key belonged to across
+  // every day window the planner had scrolled through, so the per-order "N of M lines decided"
+  // counter would not fall as they moved. That counter went with the Commit section (R13), and
+  // the one counter left is summed over the whole selection, unwindowed, from `contributions`.
 
   /**
    * Every contributing line of the WHOLE selection, unwindowed - the same population "Approve
@@ -568,87 +365,70 @@ export function FulfilmentBoardPanel({
   );
 
   /**
-   * Approve all (D3): every UNDECIDED, approvable proposal becomes `approved` in the draft.
+   * What one press of Confirm would do: "N to confirm · M rejected" (D1/D3).
    *
-   * "Approvable" skips exactly what a single Approve press already refuses to touch: a line
-   * whose sales order states no location (`unplannable`, AC-FP16), and a line an active
-   * decision already covers and the planner has not amended (`covered` with no draft entry -
-   * approving a decision already taken would be a no-op that reads as new work). A line that
-   * ALREADY carries a verdict - approved, amended or rejected - is left exactly as the planner
-   * left it: Approve all fills in the blanks, it does not overwrite a decision.
+   * Counted over exactly the population `confirmLinesFor` posts, so the sentence beside the
+   * button and what the button does can never disagree. NO APPROVE ALL (R11): silence on a
+   * plannable line is agreement, so there is nothing left for it to fill in, and the counter
+   * has no "undecided" to report. A REJECTED line is a decision that commits nothing, which
+   * is why it is counted apart rather than simply subtracted in silence.
+   *
+   * A line an active decision already COVERS and nobody has amended is not counted: the
+   * server carries it into the next revision itself, so this press does not confirm it.
    */
-  const approveAll = React.useCallback(() => {
-    setDraft((current) => {
-      const next = { ...current };
-      for (const contribution of allContributions) {
-        if (contribution.unplannable || contribution.covered) continue;
-        if (next[contribution.key]) continue;
-        next[contribution.key] = { verdict: 'approved' };
-      }
-      return next;
-    });
-  }, [allContributions]);
-
-  /**
-   * "N approved · M undecided" (D3): counted over the SAME approvable population `approveAll`
-   * fills, so the toolbar sentence and what a press of the button would do never disagree.
-   * `approved` counts every non-rejected verdict - approved AND amended - because both are
-   * decisions "Confirm all approved" is about to write; a rejection is a decision too, but it
-   * commits nothing, so it is neither approved nor undecided here.
-   */
-  const approvalSummary = React.useMemo(() => {
-    let approved = 0;
-    let undecided = 0;
+  const confirmSummary = React.useMemo(() => {
+    let toConfirm = 0;
+    let rejected = 0;
     const orderIds = new Set<string>();
     for (const contribution of allContributions) {
-      if (contribution.unplannable || contribution.covered) continue;
+      if (contribution.unplannable) continue;
       const decision = draft[contribution.key];
-      if (decision && decision.verdict !== 'rejected') {
-        approved += 1;
-        orderIds.add(contribution.sales_order_id);
-      } else if (!decision) {
-        undecided += 1;
+      if (decision?.verdict === 'rejected') {
+        rejected += 1;
+        continue;
       }
+      if (contribution.covered && decision?.verdict !== 'amended') continue;
+      toConfirm += 1;
+      orderIds.add(contribution.sales_order_id);
     }
-    return { approved, undecided, orderCount: orderIds.size };
+    return { toConfirm, rejected, orderCount: orderIds.size };
   }, [allContributions, draft]);
 
   /**
-   * Why an order's Confirm is off, when it is (AC-P3-4).
+   * Decided lines this confirmation cannot carry, across the WHOLE board, each with why.
    *
-   * PER ORDER, not per batch. One upload moves many orders and Confirm is pressed once per
-   * order, so a batch-wide block turned the first press into a wall in front of every other
-   * order on the same board - each of which still had a change nobody had decided. An order
-   * is blocked once ITS OWN rows read applied; the whole board is blocked only once the
-   * batch itself does, which is the last press.
+   * It used to sit inside the per-order commit card that R13 removed. Named rather than
+   * dropped in silence: the fix is somewhere else (another screen, or the row's own editor),
+   * so a planner told nothing would have no way to find out they had not committed it.
+   */
+  const unpostable = React.useMemo<UnpostableLine[]>(() => {
+    if (!board.data) return [];
+    const contributions = board.data.contributions;
+    return board.data.orders.flatMap((order) =>
+      unpostableDecidedFor(
+        contributions,
+        order.sales_order_id,
+        draft,
+        Boolean(order.project_sales_order_id),
+      ),
+    );
+  }, [board.data, draft]);
+
+  /**
+   * Why Confirm is off, when it is (AC-P3-4).
    *
-   * Stated rather than left as a dead button, and the server refuses the same two cases, so
-   * the screen and the write cannot disagree.
+   * BOARD-WIDE now that there is one Confirm. It was per order while every order had its own
+   * button; with one press applying the whole batch, the only question left is whether that
+   * batch has already been applied. Stated rather than left as a dead button, and the server
+   * refuses the same case, so the screen and the write cannot disagree.
    */
   const batchApplied = changeBatch.data?.applied_at ?? null;
-  const appliedSoNumbers = React.useMemo(() => {
-    const out = new Set<string>();
-    for (const order of changeBatchData?.orders ?? []) {
-      if (order.rows.length > 0 && order.rows.every((row) => row.applied_state === 'applied')) {
-        out.add(order.so_number);
-      }
-    }
-    return out;
-  }, [changeBatchData]);
-  const confirmBlockedFor = React.useCallback(
-    (soNumber: string): string | null => {
-      if (batchApplied) {
-        return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
-          changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
-        }.`;
-      }
-      if (appliedSoNumbers.has(soNumber)) {
-        return 'This planning change was already applied to this sales order.';
-      }
-      return null;
-    },
-    [batchApplied, changeBatch.data?.applied_by_name, appliedSoNumbers],
-  );
+  const confirmBlockedReason = React.useMemo<string | null>(() => {
+    if (!batchApplied) return null;
+    return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
+      changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
+    }.`;
+  }, [batchApplied, changeBatch.data?.applied_by_name]);
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -656,12 +436,14 @@ export function FulfilmentBoardPanel({
   const [batchResults, setBatchResults] = React.useState<ConfirmManyOrderResult[] | null>(null);
 
   /**
-   * "Confirm all approved" (D3): one call, grouped per order, each order writing in its OWN
-   * transaction server-side (`confirm_many`) - so one order's refusal never takes the others
-   * down. Any order in the batch that has not been adopted yet is adopted first, exactly the
-   * step `confirmOrder` already takes for a single order; the board is re-read once afterwards
-   * so the fresh mirror lines can be named in the payload (adoption fills `project_line_id`,
-   * which is null until then).
+   * CONFIRM (R11): one call, grouped per order, each order writing in its OWN transaction
+   * server-side (`confirm_many`) - so one order's refusal never takes the others down. Any
+   * order that has not been adopted yet is adopted first; the board is re-read once
+   * afterwards so the fresh mirror lines can be named in the payload (adoption fills
+   * `project_line_id`, which is null until then).
+   *
+   * The population is `confirmLinesFor`'s own, which is the point of the ruling: a plannable
+   * line nobody rejected is confirmed as suggested, whether or not the planner touched it.
    */
   const runConfirmAll = React.useCallback(async () => {
     if (!board.data) return;
@@ -675,9 +457,12 @@ export function FulfilmentBoardPanel({
       const wantedOrders = new Set(
         contributions
           .filter((contribution) => {
+            if (contribution.unplannable) return false;
             const decision = draft[contribution.key];
-            if (!decision || decision.verdict === 'rejected') return false;
-            if (contribution.covered && decision.verdict !== 'amended') return false;
+            if (decision?.verdict === 'rejected') return false;
+            // Covered and untouched: the server carries it, so this press has nothing to
+            // post for it and its order is not put in the batch on its account alone.
+            if (contribution.covered && decision?.verdict !== 'amended') return false;
             return true;
           })
           .map((contribution) => contribution.sales_order_id),
@@ -719,6 +504,23 @@ export function FulfilmentBoardPanel({
 
       const result = await confirmMany.mutateAsync({ orders });
       setBatchResults(result.results);
+
+      // What the press produced, in the three numbers a planner is about to act on (D3):
+      // the promises made, the movements somebody now has to approve (the panel below lists
+      // them), and the rows purchasing has been handed.
+      const ok = result.results.filter((entry) => entry.ok);
+      const linesConfirmed = orders
+        .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
+        .reduce((total, order) => total + order.lines.length, 0);
+      const transfers = ok.reduce((total, entry) => total + (entry.transfers_written ?? 0), 0);
+      const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
+      if (ok.length > 0) {
+        toast.success(
+          `${linesConfirmed} line${linesConfirmed === 1 ? '' : 's'} confirmed · ` +
+            `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
+            `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}`,
+        );
+      }
 
       const committedPsoIds = new Set(
         result.results.filter((entry) => entry.ok).map((entry) => entry.pso_id),
@@ -1008,67 +810,103 @@ export function FulfilmentBoardPanel({
               List
             </Button>
           </div>
-          {/* Last in the row and `ghost`: going back is secondary to the control that decides
-              what the board shows, and an outline button beside the select out-shouted it.
-              It says SALES ORDERS because that is where it goes: a board is opened from the
-              sales-order list now, and a button naming the worklist promised the wrong screen
-              to everybody who had not come from it. */}
-          <Button type="button" variant="ghost" size="sm" onClick={onBack}>
-            <ArrowLeft className="size-4" aria-hidden />
-            Back to sales orders
-          </Button>
+          {/* NO "Back to sales orders" HERE. It lives under the gear on the bar below (R12):
+              this row is the controls that decide what the board SHOWS, and a way off the
+              screen sitting among them competed with them for the same glance. */}
         </div>
       </div>
 
-      {/* Approve all + Confirm all approved (D3). Its own row, above the grid/list, so it is
-          visible whichever view is on screen - the captain's ask was "a list view of the
-          board so Approve all can be seen from an overview", and the button that DOES the
-          approving has to be reachable from both. */}
+      {/* THE ONE ACTION BAR (D1). Its own row above the grid/list so it is visible whichever
+          view is on screen. What it says on the left is what the button on the right will
+          do, counted over the same population, and the order is fixed: the gear (the rare
+          things) then Confirm, last on the right, where a primary action belongs. */}
       {board.data && board.data.cells.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-sm text-muted-foreground tabular-nums">
-            {`${approvalSummary.approved} approved · ${approvalSummary.undecided} undecided`}
+        <div
+          data-testid="board-action-bar"
+          className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span
+            data-testid="board-confirm-summary"
+            className="text-sm text-muted-foreground tabular-nums"
+          >
+            {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
           </span>
           <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  mode="icon"
+                  aria-label="Board actions"
+                >
+                  <Settings2 className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {/* Every decision taken on this board since it was opened, or since the
+                    last confirm, goes back to the suggestion. Nothing on the server moves -
+                    the draft is the only thing cleared. */}
+                <DropdownMenuItem
+                  disabled={Object.keys(draft).length === 0}
+                  onSelect={
+                    Object.keys(draft).length === 0 ? undefined : () => setDraft({})
+                  }
+                >
+                  <Undo2 className="size-4" aria-hidden />
+                  Undo all
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={onBack}>
+                  <ArrowLeft className="size-4" aria-hidden />
+                  Back to sales orders
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               size="sm"
-              variant="outline"
-              disabled={approvalSummary.undecided === 0}
-              onClick={approveAll}
-            >
-              <CheckCheck className="size-4" aria-hidden />
-              Approve all
-            </Button>
-            {/* The other direction (the captain, 27 Aug): every decision taken on this
-                board since it was opened, or since the last confirm, goes back to undecided.
-                Nothing on the server moves - the draft is the only thing cleared. */}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={Object.keys(draft).length === 0}
-              onClick={() => setDraft({})}
-            >
-              <Undo2 className="size-4" aria-hidden />
-              Undo all
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={approvalSummary.approved === 0 || confirmingAll}
+              data-testid="board-confirm"
+              disabled={
+                confirmSummary.toConfirm === 0 || confirmingAll || Boolean(confirmBlockedReason)
+              }
+              title={confirmBlockedReason ?? undefined}
               onClick={() => setConfirmAllOpen(true)}
             >
-              Confirm all approved
+              {`Confirm (${confirmSummary.toConfirm})`}
             </Button>
           </div>
         </div>
       )}
 
+      {/* Why Confirm is off, when it is - stated, never a dead button. */}
+      {confirmBlockedReason ? (
+        <p data-testid="confirm-blocked" className="text-sm text-muted-foreground break-words">
+          {confirmBlockedReason}
+        </p>
+      ) : null}
+
+      {/* A line the planner decided that this confirmation cannot carry. Named, with why,
+          because dropping it silently would tell them they committed something they did not,
+          and the fix is somewhere else. One sentence per reason, so the count on the button
+          and this notice always describe the same lines. */}
+      {UNPOSTABLE_REASONS.map((reason) => {
+        const lines = unpostable.filter((entry) => entry.reason === reason);
+        if (lines.length === 0) return null;
+        return (
+          <p key={reason} className="text-sm text-amber-700 break-words">
+            {unpostableNotice(reason, lines)}
+          </p>
+        );
+      })}
+
       {batchResults && (
-        <div className="space-y-1 rounded-lg border border-border px-3 py-2.5">
+        <div
+          data-testid="board-confirm-results"
+          className="space-y-1 rounded-lg border border-border px-3 py-2.5"
+        >
           <p className="text-sm font-medium">
-            {`Confirm all: ${batchResults.filter((r) => r.ok).length} of ${batchResults.length} orders confirmed`}
+            {`${batchResults.filter((r) => r.ok).length} of ${batchResults.length} orders confirmed`}
           </p>
           <ul className="space-y-1">
             {batchResults.map((result) => {
@@ -1076,14 +914,32 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.pso_id;
+              // A refusal names the LINES it refused, not just the order: the fix is on one
+              // row, and "SO404352: refused" sends a planner to read thirty of them.
+              const failing = result.failing_lines ?? [];
               return (
-                <li
-                  key={result.pso_id}
-                  className={`text-sm break-words ${result.ok ? 'text-emerald-700' : 'text-destructive'}`}
-                >
-                  {result.ok
-                    ? `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
-                    : `${label}: ${result.error ?? 'refused'}`}
+                <li key={result.pso_id} className="space-y-0.5">
+                  <span
+                    className={`block text-sm break-words ${result.ok ? 'text-emerald-700' : 'text-destructive'}`}
+                  >
+                    {result.ok
+                      ? `${label}: confirmed as revision ${result.decision_revision} (${result.inquiry_rows_created ?? 0} purchase row${(result.inquiry_rows_created ?? 0) === 1 ? '' : 's'} handed over)`
+                      : `${label}: ${result.error ?? 'refused'}`}
+                  </span>
+                  {failing.length > 0 && (
+                    <ul className="space-y-0.5 rounded-md bg-destructive/5 px-2 py-1.5">
+                      {failing.map((line, index) => (
+                        <li
+                          key={`${line.line_no ?? 'order'}-${line.item_code ?? ''}-${index}`}
+                          className="text-sm text-destructive break-words"
+                        >
+                          {line.line_no
+                            ? `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`
+                            : line.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               );
             })}
@@ -1183,6 +1039,18 @@ export function FulfilmentBoardPanel({
             }
           />
 
+          {/* The movements this board's confirmations raised, ABOVE the matrix (R13). They
+              used to be reachable only from the transfers screen, so the promise was made
+              here and the movement it implied was approved by somebody who had not seen the
+              order it was for. */}
+          <BoardTransfersPanel
+            soNumbers={soNumbers}
+            justConfirmed={batchResults !== null}
+            inquiryRows={(batchResults ?? [])
+              .filter((result) => result.ok)
+              .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
+          />
+
           {view === 'list' ? (
             /* D2: one row per contributing line across every cell of the WHOLE selection, not
                the pivoted/windowed rows the grid shows - the point is an overview, so the row
@@ -1228,45 +1096,11 @@ export function FulfilmentBoardPanel({
             </>
           )}
 
-          <Card>
-            <CardHeader className="block">
-              <h3 className="text-sm font-semibold">Commit</h3>
-              {/* One hint, not a paragraph: what a press does and where the Buy rows go. The
-                  destination is a link because the cross-project Order Inquiries page is where
-                  purchasing picks up an adopted order's rows. */}
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                One confirmation per sales order; confirmed Buy rows go to{' '}
-                <Link
-                  href="/project-sales/order-inquiries"
-                  className="text-primary hover:underline"
-                >
-                  Order Inquiries
-                </Link>
-                ; a Use BRW or Borrow other location becomes a{' '}
-                <Link
-                  href="/inventory-management/stock-transfers"
-                  className="text-primary hover:underline"
-                >
-                  stock transfer
-                </Link>
-                .
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {standings.map((standing) => (
-                <OrderCommitRow
-                  key={standing.sales_order_id}
-                  standing={standing}
-                  preview={previews[standing.sales_order_id]}
-                  busy={confirming === standing.sales_order_id}
-                  refused={refusals[standing.sales_order_id] ?? []}
-                  unpostable={unpostable[standing.sales_order_id] ?? []}
-                  blockedReason={confirmBlockedFor(standing.so_number)}
-                  onConfirm={() => void confirmOrder(standing)}
-                />
-              ))}
-            </CardContent>
-          </Card>
+          {/* NO COMMIT SECTION (R13). It was one card per sales order carrying a Confirm,
+              a "N of M lines decided" counter and a paragraph explaining where Buy rows and
+              stock transfers go. The counter is the bar at the top, the Confirm is the one
+              button beside it, and the two destinations are a panel of real transfers above
+              and a link under it - facts rather than a description of them. */}
         </>
       )}
 
@@ -1286,7 +1120,11 @@ export function FulfilmentBoardPanel({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {`Confirm ${approvalSummary.approved} decisions across ${approvalSummary.orderCount} orders?`}
+              {`Confirm ${confirmSummary.toConfirm} line${
+                confirmSummary.toConfirm === 1 ? '' : 's'
+              } across ${confirmSummary.orderCount} order${
+                confirmSummary.orderCount === 1 ? '' : 's'
+              }?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
               Each order writes on its own; one order refusing does not stop the rest.
@@ -1298,129 +1136,6 @@ export function FulfilmentBoardPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-/**
- * One selected order's standing and its Confirm.
- *
- * The disabled Confirm always states its reason. A button that is off without saying why is
- * what makes a screen feel broken, and here the reason is the honest shape of the design: the
- * board decides by cell, the database commits by order, and until every line of an order has a
- * verdict there is nothing to commit.
- */
-function OrderCommitRow({
-  standing,
-  preview,
-  busy,
-  refused,
-  unpostable,
-  blockedReason,
-  onConfirm,
-}: {
-  standing: BoardOrderStanding;
-  preview?: BoardCommitPreview;
-  busy: boolean;
-  /** The lines the server would not take, kept beside the order that owns them. */
-  refused: SupplyFailingLine[];
-  /** Decided lines this confirmation must omit, each with the reason it cannot carry it. */
-  unpostable: UnpostableLine[];
-  /** Why this Confirm is off, when it is - stated, never a dead button. */
-  blockedReason?: string | null;
-  onConfirm: () => void;
-}) {
-  const committing = preview?.committing ?? 0;
-  const leaving = preview?.leaving_undecided ?? 0;
-  const blocked = preview?.blocked ?? 0;
-  return (
-    <div
-      data-testid={`commit-row-${standing.so_number}`}
-      className="space-y-2 rounded-lg border border-border px-3 py-2.5"
-    >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium tabular-nums">{standing.so_number}</div>
-          <div
-            className="truncate text-sm text-muted-foreground"
-            title={standing.customer_name ?? ''}
-          >
-            {standing.customer_name || 'Customer not recorded'}
-          </div>
-        </div>
-        <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
-          <span className="text-sm tabular-nums">
-            {`${standing.decided_count} of ${standing.line_count} lines decided`}
-          </span>
-          {/* What this press would actually do, stated before it is pressed. The counter above
-              is information; this is the consequence. */}
-          <span className="min-w-0 text-sm text-muted-foreground break-words">
-            {committing === 0
-                ? standing.decided_count > 0
-                  // Everything decided on this order is already confirmed. Saying "nothing
-                  // decided yet" beside "2 of 23 lines decided" contradicts the line above it.
-                  ? 'Nothing new to confirm on this order.'
-                  : 'Nothing decided yet on this order.'
-                : leaving === 0
-                  ? `Confirms all ${committing}.`
-                : `Confirms ${committing}, leaves ${leaving} undecided for reorder planning${
-                    blocked > 0
-                      ? ` (${blocked} of them need a location on the sales order)`
-                      : ''
-                  }.`}
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            disabled={committing === 0 || busy || Boolean(blockedReason)}
-            onClick={onConfirm}
-          >
-            {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
-                The count only appears once it means something. */}
-            {committing > 0 && leaving > 0
-              ? `Confirm ${committing} line${committing === 1 ? '' : 's'}`
-              : 'Confirm this order'}
-          </Button>
-        </div>
-      </div>
-
-      {blockedReason ? (
-        <p data-testid="commit-blocked" className="text-sm text-muted-foreground break-words">
-          {blockedReason}
-        </p>
-      ) : null}
-
-      {/* A line the planner decided that this confirmation cannot carry. Named, with why,
-          because dropping it silently would tell them they committed something they did not -
-          and the fix is somewhere else (another screen, or the editor), so they would have no
-          way to find out. One sentence per reason, so the count on the button and this notice
-          always describe the same lines. */}
-      {UNPOSTABLE_REASONS.map((reason) => {
-        const lines = unpostable.filter((entry) => entry.reason === reason);
-        if (lines.length === 0) return null;
-        return (
-          <p key={reason} className="text-sm text-amber-700 break-words">
-            {unpostableNotice(reason, lines)}
-          </p>
-        );
-      })}
-
-      {/* A refusal names the lines it refused and why, beside the work that produced them. The
-          draft is untouched, so the planner fixes and presses again rather than starting over. */}
-      {refused.length > 0 && (
-        <ul className="space-y-0.5 rounded-md bg-destructive/5 px-2 py-1.5">
-          {refused.map((line, index) => (
-            <li
-              key={`${line.line_no ?? 'order'}-${line.item_code ?? ''}-${index}`}
-              className="text-sm text-destructive break-words"
-            >
-              {line.line_no
-                ? `Line ${line.line_no}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`
-                : line.reason}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

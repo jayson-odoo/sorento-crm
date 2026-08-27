@@ -2,15 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, Pencil, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { ColumnDef } from '@tanstack/react-table';
-import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ColumnDef, ExpandedState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { amendSummary } from '../../_shared/lib/boardAmend';
-import { BoardAmendDialog } from './BoardAmendDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   COLOURS,
@@ -23,13 +21,11 @@ import {
   describe as describeSupply,
   segmentsOf,
 } from '../../_shared/lib/supplyVocabulary';
-import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
-
-const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
-  approved: 'approved',
-  amended: 'approved',
-  rejected: 'rejected',
-};
+import type {
+  BoardContribution,
+  BoardDecision,
+  BoardDraft,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
  * The board as a LIST, not a grid: one row per contributing line across every cell (D2,
@@ -53,7 +49,19 @@ export function FulfilmentBoardListView({
   onDecide: (key: string, decision: BoardDecision | null) => void;
   isLoading?: boolean;
 }) {
-  const [amending, setAmending] = React.useState<BoardContribution | null>(null);
+  /**
+   * Which row is open, ONE at a time - the same rule the cell breakdown follows, and the
+   * same panel inside it. The list used to carry Approve / Amend / Reject buttons in its
+   * Verdict column and open the amend MODAL over the board; a decision is taken in the row
+   * on both readings now, or the two would teach different gestures for one act.
+   */
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
+  const toggleRow = React.useCallback((key: string) => {
+    setExpanded((current) => {
+      const held = typeof current === 'boolean' ? {} : current;
+      return held[key] ? {} : { [key]: true };
+    });
+  }, []);
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
@@ -66,12 +74,26 @@ export function FulfilmentBoardListView({
           const body = (
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-1.5">
+                {/* A state indicator, not a control: the whole row opens the decision. */}
+                {row.getIsExpanded() ? (
+                  <ChevronDown
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                ) : (
+                  <ChevronRight
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                )}
                 <span className="truncate text-sm font-medium tabular-nums">
                   {contribution.so_number}
                 </span>
                 {/* The same tick the grid puts on a fully-decided cell, here per row: one
                     row IS one contribution, so it is decided or it is not. */}
-                <BoardDecidedMarker revisions={decidedRevisions([contribution])} />
+                <BoardDecidedMarker
+                  revisions={decidedRevisions([contribution])}
+                />
               </div>
               <div className="truncate text-xs text-muted-foreground">
                 {`Line ${contribution.line_no}`}
@@ -92,6 +114,21 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
+        meta: {
+          // The SAME editor the cell breakdown expands, so a decision reads and is taken
+          // identically whichever way the planner came at the line. The per-location
+          // Available is not stated here: the list spans every cell of the selection, so
+          // there is no one stock position to quote, and a figure off the wrong cell would
+          // be worse than none.
+          expandedContent: (contribution: BoardContribution) => (
+            <BoardLineDecisionPanel
+              contribution={contribution}
+              decision={draft[contribution.key] ?? null}
+              locations={[]}
+              onDecide={(next) => onDecide(contribution.key, next)}
+            />
+          ),
+        },
       },
       {
         id: 'agent',
@@ -131,7 +168,10 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => row.item_code,
         header: 'Product',
         cell: ({ row }) => (
-          <span className="block truncate tabular-nums" title={row.original.item_code}>
+          <span
+            className="block truncate tabular-nums"
+            title={row.original.item_code}
+          >
             {row.original.item_code}
           </span>
         ),
@@ -178,7 +218,9 @@ export function FulfilmentBoardListView({
           if (contribution.unplannable) {
             // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
             // and the reason is the one thing worth saying in its place.
-            return <span className="text-muted-foreground">Needs a location</span>;
+            return (
+              <span className="text-muted-foreground">Needs a location</span>
+            );
           }
           const parts = contributionSuggestion(contribution);
           if (!parts) {
@@ -189,7 +231,11 @@ export function FulfilmentBoardListView({
           return (
             <div className="min-w-0 space-y-1">
               <span className="block truncate" title={text}>
-                {text || <span className="text-muted-foreground">Nothing proposed</span>}
+                {text || (
+                  <span className="text-muted-foreground">
+                    Nothing proposed
+                  </span>
+                )}
               </span>
               {/* Faded: a suggestion is not a decision. */}
               <SupplyBar
@@ -247,7 +293,9 @@ export function FulfilmentBoardListView({
           row.original.covered || row.original.unplannable ? (
             <span className="text-muted-foreground">-</span>
           ) : (
-            <span className="tabular-nums">{row.original.rank_score.toFixed(2)}</span>
+            <span className="tabular-nums">
+              {row.original.rank_score.toFixed(2)}
+            </span>
           ),
         size: 80,
         minSize: 70,
@@ -256,105 +304,16 @@ export function FulfilmentBoardListView({
         id: 'verdict',
         accessorFn: () => '',
         header: 'Verdict',
-        cell: ({ row }) => {
-          const contribution = row.original;
-          const decision = draft[contribution.key] ?? null;
-
-          if (contribution.unplannable) {
-            return (
-              <span
-                className="block truncate text-sm text-destructive"
-                title="This line cannot be decided here: its sales order states no fulfilment location."
-              >
-                Needs a location
-              </span>
-            );
-          }
-
-          if (!decision && contribution.covered && contribution.decision) {
-            return (
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <span
-                  className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass('closed')}`}
-                >
-                  {`Confirmed rev ${contribution.decision.revision_no}`}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setAmending(contribution)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                  Amend
-                </Button>
-              </div>
-            );
-          }
-
-          if (decision) {
-            return (
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <span
-                  className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(VERDICT_PALETTE[decision.verdict])}`}
-                  title={decision.reason ?? ''}
-                >
-                  {decision.verdict === 'approved'
-                    ? 'Approved'
-                    : decision.verdict === 'amended'
-                      ? amendSummary(decision, contribution.fulfilment_location)
-                      : 'Rejected'}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onDecide(contribution.key, null)}
-                >
-                  Undo
-                </Button>
-              </div>
-            );
-          }
-
-          return (
-            <div className="flex flex-wrap items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onDecide(contribution.key, { verdict: 'approved' })}
-              >
-                <Check className="size-4" aria-hidden />
-                Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setAmending(contribution)}
-              >
-                <Pencil className="size-4" aria-hidden />
-                Amend
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  onDecide(contribution.key, {
-                    verdict: 'rejected',
-                    reason: 'Rejected on the planning board.',
-                  })
-                }
-              >
-                <X className="size-4" aria-hidden />
-                Reject
-              </Button>
-            </div>
-          );
-        },
-        size: 260,
-        minSize: 220,
+        // A PILL, and nothing else. The three verbs are in the expanded row, where the
+        // numbers the decision is made against are.
+        cell: ({ row }) => (
+          <BoardDecisionPill
+            contribution={row.original}
+            decision={draft[row.original.key] ?? null}
+          />
+        ),
+        size: 160,
+        minSize: 120,
         enableResizing: false,
       },
     ],
@@ -362,34 +321,24 @@ export function FulfilmentBoardListView({
   );
 
   return (
-    <>
-      <PanelDataGrid
-        title="Every contributing line"
-        columns={columns}
-        rows={contributions}
-        getRowId={(row) => row.key}
-        listingKey="projects.projects.view::project-fulfilment-board-list-v1"
-        isLoading={isLoading}
-        emptyTitle="Nothing is outstanding on this board"
-        searchPlaceholder="Search sales order, customer, agent or product"
-        searchOf={(row) =>
-          [row.so_number, row.customer_name, row.agent_code, row.item_code]
-            .filter(Boolean)
-            .join(' ')
-        }
-        pageSize={25}
-      />
-
-      {amending && (
-        <BoardAmendDialog
-          contribution={amending}
-          onCancel={() => setAmending(null)}
-          onSave={(decision) => {
-            onDecide(amending.key, decision);
-            setAmending(null);
-          }}
-        />
-      )}
-    </>
+    <PanelDataGrid
+      title="Every contributing line"
+      columns={columns}
+      rows={contributions}
+      getRowId={(row) => row.key}
+      listingKey="projects.projects.view::project-fulfilment-board-list-v1"
+      isLoading={isLoading}
+      emptyTitle="Nothing is outstanding on this board"
+      searchPlaceholder="Search sales order, customer, agent or product"
+      searchOf={(row) =>
+        [row.so_number, row.customer_name, row.agent_code, row.item_code]
+          .filter(Boolean)
+          .join(' ')
+      }
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      onRowClick={(row) => toggleRow(row.key)}
+      pageSize={25}
+    />
   );
 }
