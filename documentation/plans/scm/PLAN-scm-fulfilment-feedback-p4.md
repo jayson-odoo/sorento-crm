@@ -1,6 +1,6 @@
 # PLAN: SCM fulfilment feedback, part 4 (loading plan list, supplier document fidelity, PI Start, packing list fixes, SPO planner redesign)
 
-**Status:** GRILLED round 2 (2026-08-27 late), Q1-Q7 ruled (section 11), awaiting GO. Nothing built.
+**Status:** BUILDING. S6 and S5 built on slot B (branch `feat/scm-fulfilment-feedback-p4-b`, 2026-08-28).
 **Lane:** worktree `.claude/worktrees/scm-fulfilment-p4`, branch `feat/scm-fulfilment-feedback-p4` off `origin/main` `741469185` (#353). No stack slot yet (:3000/:8000 = inline-decisions lane, :3050 = oi-draft, :3060 = reorder revamp).
 **UAC:** `scm-fulfilment-feedback-p4-acceptance-criteria.md`. **Review artifact:** `mockups/fulfilment-feedback-p4-plan.html` (lavish).
 **Predecessor:** `PLAN-scm-fulfilment-feedback.md` (part 3, MERGED #347). R1-R25 there stand unless a ruling below names one.
@@ -96,7 +96,24 @@ Captain (27 Aug, artifact): these dialogs follow reorder planning's lightboxes (
 
 **R14. One CTA "Start" with two items, Delete under a gear on its left.** Toolbar right cluster: **[gear] [Start ▾]**. Start menu: "Upload proforma invoice" (opens the two-step upload, R24) and "Convert N to packing list" (disabled with reason "Select invoices first" until rows are ticked; N = ticked count). Gear (`aria-label="More actions"`): "Export" (selection-gated, today's client export) and "Delete N" (destructive, `AlertDialog`, disabled without selection). The selection strip keeps "N selected · Clear" only; the bulk buttons "Convert N to draft shipment" and "Delete N" leave it. The words "draft shipment" disappear from this screen (toasts read "Packing list PL-2608-003 created with 12 lines").
 
+**BUILT 28 Aug (slot B).** The right cluster is `primaryAction` on `DataGridListToolbar`, which
+gained one prop shape it did not have: `primaryAction` may now be a render function receiving
+`{ openExport }` (the same escape hatch `bulkActionsSlot` already had), so the page's gear opens
+the toolbar's OWN selected-rows export dialog rather than a second copy of it. The list passes
+`exportConfig={false}` and `bulkActions={[]}`. `proformaBulkActions.ts` is deleted.
+
 **R15. Convert from the list proceeds directly.** No dialog: every ticked current, un-converted invoice places what it has left into ONE NEW draft packing list; result = toast + navigate to the packing list (skipped invoices named in the toast, as today). The only interruption is capacity: a 409 `over_capacity` opens the existing `OverCapacityDialog` ("This will not fit", reason required, "Convert anyway"). `ConvertToPackingListDialog` is removed from the list; the PI DETAIL keeps its Convert with the per-line quantity editor, because a partial placement (Q9 split) is a deliberate act made on one invoice. **"Add to existing draft" is dropped everywhere** (captain, Q6): `target_shipment_id` leaves the convert request, `useDraftShipments` and the target select go; a PI always opens a new draft.
+
+**BUILT 28 Aug (slot B).** `target_shipment_id`, `_target_shipment`, `_ADDABLE_SHIPMENT_STATUSES`,
+`_shipment_volume`, `draft_shipments` and `GET /proforma-invoices/draft-shipments` are gone
+(nothing else called them), the capacity gate judges an empty box, and the line writer no longer
+merges into a container's existing lines. `ConvertToPackingListDialog` stays as the PI DETAIL's
+line-quantity editor, minus the target select.
+
+**Found while building, NOT fixed here (S6's territory):** migration 440 seeds the
+`inbound_shipment_draft` numbering rule for the companies that existed when it ran, so a company
+created afterwards has no series and its first convert is refused with `numbering_rule_missing`.
+The route suite seeds its own company's rule to get past it; a real new company would 500.
 
 ## 6. Packing list fixes
 
