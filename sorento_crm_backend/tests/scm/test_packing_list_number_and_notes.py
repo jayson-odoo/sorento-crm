@@ -6,8 +6,9 @@ a sentence nobody typed. Every test here is expected to be red until those two l
 
   * R16 / AC-F1 - the number comes from the `inbound_shipment_draft` rule, `PL-YYMM-NNN`,
     monthly. Two conversions in one month increment; `/new` without a number draws from the
-    same series; with NO rule the convert is refused with `numbering_rule_missing` rather
-    than inventing a number nobody can quote back.
+    same series; a company that holds no rule yet (created after migration 440 ran) gets one
+    on the spot rather than a 500, while a rule DISABLED in Setup is still refused with
+    `numbering_rule_missing`. Nothing invents a number nobody can quote back.
   * R17 / AC-F2, AC-F3 - conversion writes nothing to `notes`; an over-capacity override
     records its reason as a Timeline entry (an `audit_logs` row on the container).
 
@@ -158,11 +159,42 @@ def test_a_container_created_without_a_number_draws_from_the_same_series():
         assert shipment.shipment_number == f"{_expected_prefix()}001"
 
 
-def test_a_convert_with_no_numbering_rule_is_refused_rather_than_invented():
-    """The random hex is gone: a number nobody can quote back is not a document reference."""
+def test_a_company_with_no_series_yet_gets_one_rather_than_a_500():
+    """Migration 440 ran once; a company created after it holds no rule of its own.
+
+    The convert used to be refused with `numbering_rule_missing` - a 500 on a screen where
+    the operator had done nothing wrong. The series is created on the spot instead, from the
+    same definition the migration seeds, and the first packing list is `PL-YYMM-001`.
+    """
     with pg_session() as db:
         _seed_container_sizes(db)
         _clear_numbering(db)
+        w = World(db)
+        invoices = _apply_preloading(db, w)
+
+        first = svc.convert_to_draft_shipment(db, [str(invoices[4].id)])
+        second = svc.convert_to_draft_shipment(
+            db,
+            [str(invoices[0].id)],
+            override_capacity=True,
+            override_reason="Second container booked",
+        )
+
+        assert _number(db, first["shipment_id"]) == f"{_expected_prefix()}001"
+        assert _number(db, second["shipment_id"]) == f"{_expected_prefix()}002"
+
+
+def test_a_disabled_rule_is_still_refused_rather_than_worked_around():
+    """A rule turned off in Setup is a decision, not an absence: creating a second one behind
+    the admin's back would quietly undo it. The refusal is kept for exactly this case."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        _seed_numbering(db)
+        db.execute(
+            text("update document_numbering_rules set enabled = false where doc_type = :d"),
+            {"d": _migration_440().DOC_TYPE},
+        )
+        db.flush()
         w = World(db)
         invoice = _apply_preloading(db, w)[4]
 

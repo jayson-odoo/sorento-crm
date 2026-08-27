@@ -42,6 +42,10 @@ from app.services.audit_service import log_audit
 from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.numbering_defaults import (
+    INBOUND_SHIPMENT_DRAFT_DOC_TYPE,
+    seed_inbound_shipment_draft_rule,
+)
 from app.services.numbering_service import NumberingService
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
@@ -82,14 +86,15 @@ _DRAFT_SHIPMENT_STATUS = "draft"
 
 #: `NumberingService` doc_type for a draft packing list's own series - kept distinct from a
 #: real container's number (usually the container number itself, or `PRELOAD-...`) so the two
-#: can never collide. The rule behind it is `PL-{YYMM}-{NNN}`, seeded by migration 440.
+#: can never collide. The rule behind it is `PL-{YYMM}-{NNN}`, defined once in
+#: `app.services.numbering_defaults` and seeded from there by migration 440, by
+#: `bootstrap_env`, and by `_draft_shipment_number` for a company that has no series yet.
 #:
-#: There is NO fallback. It used to invent `SHIP-DRAFT-<hex8>` when the rule was missing, and
-#: because the rule had never been seeded that random suffix was what every converted packing
-#: list was actually called: two of them sort in no order, neither can be read down a phone,
-#: and nobody can tell which came first. A missing rule is a configuration fault to be fixed
-#: in Setup, so it is reported as one.
-_DRAFT_NUMBER_DOC_TYPE = "inbound_shipment_draft"
+#: There is NO random fallback. It used to invent `SHIP-DRAFT-<hex8>` when the rule was
+#: missing, and because the rule had never been seeded that random suffix was what every
+#: converted packing list was actually called: two of them sort in no order, neither can be
+#: read down a phone, and nobody can tell which came first.
+_DRAFT_NUMBER_DOC_TYPE = INBOUND_SHIPMENT_DRAFT_DOC_TYPE
 
 #: Where an invoice's goods have got to. `split` is a real state, not a rounding of
 #: `converted`: one invoice legitimately sits in two containers (Q9), and until every line
@@ -982,11 +987,25 @@ def _draft_shipment_number(db: Session) -> str:
     number printed on a document two companies share is not a series (migration 327). An
     ambiguous scope resolves to `None`, which draws from whatever rule exists rather than
     refusing a conversion over a scope question.
+
+    A company with no series of its own gets one HERE, in the caller's transaction, from the
+    same definition migration 440 seeds: 440 ran once, over the companies that existed at that
+    instant, so a company created afterwards had no rule and its first convert was refused with
+    `numbering_rule_missing` - a 500 on a screen where the operator had done nothing wrong. The
+    refusal is kept for the case it actually describes: a rule that EXISTS and still cannot
+    number (disabled in Setup), which is a decision somebody made and not an absence to fill in.
     """
     company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
-    number = NumberingService(db).get_next_number(
-        _DRAFT_NUMBER_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
-    )
+
+    def _next() -> Optional[str]:
+        return NumberingService(db).get_next_number(
+            _DRAFT_NUMBER_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
+        )
+
+    number = _next()
+    if not number:
+        seed_inbound_shipment_draft_rule(db, company_id=company_id)
+        number = _next()
     if not number:
         raise AppException(
             500,

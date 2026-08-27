@@ -12,6 +12,7 @@ environment this suite must not depend on (see test_coverage_routes.py, same pat
 from __future__ import annotations
 
 import uuid
+from datetime import date as _date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -60,37 +61,9 @@ def _grant(db, uid: str, slug: str) -> None:
     db.flush()
 
 
-def _seed_packing_list_numbering(db) -> None:
-    """The `inbound_shipment_draft` series for THIS suite's own company.
-
-    `as_company_user` creates the company from nothing, and migration 440 seeded the rule
-    only for the companies that existed when it ran - so a convert here would have no
-    series to draw from and be refused (R16, `numbering_rule_missing`).
-    """
-    from app.models.numbering import DocumentNumberingRule
-    from app.services.company_scope import get_company_scope
-
-    company_id = next(iter(get_company_scope(db) or []), None)
-    db.add(
-        DocumentNumberingRule(
-            id=_u(),
-            company_id=company_id,
-            doc_type="inbound_shipment_draft",
-            enabled=True,
-            prefix_template="PL-{yy}{month:02d}-",
-            number_digits=3,
-            next_value=1,
-            start_value=1,
-            reset_policy="monthly",
-        )
-    )
-    db.flush()
-
-
 def _client(scm_app, *, upload: bool = False, view: bool = False) -> tuple:
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk, role=None)
-    _seed_packing_list_numbering(db)
     uid = app.dependency_overrides[gcu]()["id"]
     if upload:
         _grant(db, uid, UPLOAD_PERMISSION)
@@ -585,6 +558,36 @@ def test_converting_part_of_a_line_and_then_the_rest(scm_app):
     finished = client.get(f"{URL}/{detail['id']}").json()
     assert finished["placement"] == "converted"
     assert finished["remaining_qty"] == 0
+
+
+def test_a_company_created_after_the_seed_still_numbers_its_packing_lists(scm_app):
+    """R16 / AC-F1 - this suite's company is made from nothing, so migration 440 never
+    seeded it a series. The convert used to be refused with `numbering_rule_missing`; the
+    series is created for the writing company on the spot instead, and the numbers run.
+    """
+    client, db = _client(scm_app, upload=True, view=True)
+    _grant(db, client.app.dependency_overrides[scm_app[2]]()["id"], "scm.reorder.run")
+    detail, _ = _applied_invoice(client, db)
+    matched = [ln["id"] for ln in detail["lines"] if ln["matched"]]
+
+    first = client.post(
+        f"{URL}/convert-to-draft-shipment",
+        json={
+            "proforma_invoice_ids": [detail["id"]],
+            "line_quantities": {lid: 1 for lid in matched},
+        },
+    )
+    second = client.post(
+        f"{URL}/convert-to-draft-shipment",
+        json={"proforma_invoice_ids": [detail["id"]]},
+    )
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    today = _date.today()
+    prefix = f"PL-{today.year % 100:02d}{today.month:02d}-"
+    assert first.json()["shipment_number"] == f"{prefix}001"
+    assert second.json()["shipment_number"] == f"{prefix}002"
 
 
 def test_a_body_still_naming_a_target_packing_list_gets_a_new_one(scm_app):

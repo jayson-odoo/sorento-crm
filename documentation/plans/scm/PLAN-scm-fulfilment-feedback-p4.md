@@ -110,14 +110,15 @@ the toolbar's OWN selected-rows export dialog rather than a second copy of it. T
 merges into a container's existing lines. `ConvertToPackingListDialog` stays as the PI DETAIL's
 line-quantity editor, minus the target select.
 
-**Found while building, NOT fixed here (S6's territory):** migration 440 seeds the
+**Found while building, FIXED 28 Aug under R16:** migration 440 seeds the
 `inbound_shipment_draft` numbering rule for the companies that existed when it ran, so a company
-created afterwards has no series and its first convert is refused with `numbering_rule_missing`.
-The route suite seeds its own company's rule to get past it; a real new company would 500.
+created afterwards had no series and its first convert was refused with `numbering_rule_missing`.
+`_draft_shipment_number` now creates that company's series on the spot from the shared definition;
+the route suite's own seeding workaround is deleted.
 
 ## 6. Packing list fixes
 
-**R16. The draft number comes from a numbering rule, never a random hex.** `SHIP-DRAFT-46949e1c` is the fallback at `proforma_invoice_service.py:972-976` firing because no `document_numbering_rule` row exists for `inbound_shipment_draft`. Migration `440_seed_inbound_shipment_draft_numbering` (revision id `440_pl_draft_numbering`, on `438_merge_price_supplier_sets`) seeds `PL-{YYMM}-{NNN}` (monthly, one rule per company like 327's quotation rule, which is what 279's rules became); the random fallback is deleted, the service raises `AppException(code="numbering_rule_missing")` instead. BUILT 28 Aug: this is the FIRST migration on the lane (S6 ran first), so S1 and S3 chain 441 / 442 onto it. The seed is replayed by `scripts/bootstrap_env` and by an `after_create` hook in `tests/conftest.py`, because `create_all` builds the table and never the row. `create_shipment` without a number uses the same rule (AC-F3.3 stands). The user renames the shipment number to the container number when the container is known (Details tab, editable, unchanged).
+**R16. The draft number comes from a numbering rule, never a random hex.** `SHIP-DRAFT-46949e1c` is the fallback at `proforma_invoice_service.py:972-976` firing because no `document_numbering_rule` row exists for `inbound_shipment_draft`. Migration `440_seed_inbound_shipment_draft_numbering` (revision id `440_pl_draft_numbering`, on `438_merge_price_supplier_sets`) seeds `PL-{YYMM}-{NNN}` (monthly, one rule per company like 327's quotation rule, which is what 279's rules became); the random fallback is deleted, the service raises `AppException(code="numbering_rule_missing")` instead. BUILT 28 Aug: this is the FIRST migration on the lane (S6 ran first), so S1 and S3 chain 441 / 442 onto it. The rule's definition lives in `app/services/numbering_defaults.py`, and the migration, `scripts/bootstrap_env`, the `after_create` hook in `tests/conftest.py` and the service all seed from that one copy (`create_all` builds the table and never the row); a company created AFTER 440 ran has its series created on the spot by `_draft_shipment_number`, in the caller's transaction, so `numbering_rule_missing` is kept only for a rule that exists and still cannot number (disabled in Setup). `create_shipment` without a number uses the same rule (AC-F3.3 stands). The user renames the shipment number to the container number when the container is known (Details tab, editable, unchanged).
 
 **R17. Conversion writes no notes.** `_draft_notes` ("Draft from proforma invoice(s): ...") is deleted; provenance lives on the Proforma invoices tab (AC-F3.2) and the Timeline. An over-capacity override keeps its reason: it becomes the Timeline entry "Converted over capacity: <figures>. Reason: <text>" (audit log row on the shipment, `__audit_track__` exists), not a notes string. `notes` stays the user's own field.
 

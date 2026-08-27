@@ -65,7 +65,7 @@ Every AC is checked in a real browser on the dev server (agent-browser, sidebar 
 
 ## F. Packing list (S6)
 
-- **AC-F1** A packing list created by convert or by `/new` without a number reads `PL-YYMM-NNN` (`PL-2608-001`, next `PL-2608-002`); the number stays editable on Details. Migration 440 seeds the rule (and `bootstrap_env` + the test `after_create` hook replay it); pytest asserts two conversions in one month increment and the random-hex path no longer exists (service raises `numbering_rule_missing` when the rule is absent).
+- **AC-F1** A packing list created by convert or by `/new` without a number reads `PL-YYMM-NNN` (`PL-2608-001`, next `PL-2608-002`); the number stays editable on Details. Migration 440 seeds the rule from the shared definition in `app/services/numbering_defaults.py` (`bootstrap_env` + the test `after_create` hook replay it), and a company created after that migration ran has its series created on the spot by the convert rather than a 500; pytest asserts two conversions in one month increment, a company with no rule numbering `PL-YYMM-001` then `-002`, and that the random-hex path no longer exists (the service raises `numbering_rule_missing` only for a rule that exists and is disabled).
 - **AC-F2** A converted packing list's Notes field is empty; the Proforma invoices tab and the Timeline carry the provenance.
 - **AC-F3** An over-capacity conversion writes a Timeline entry "Converted over capacity: <figures>. Reason: <text>"; Notes stays empty.
 - **AC-F4** Every supplier select on packing-list screens (Details, `/new`, per-line factory) and the PI detail shows the supplier NAME only; typing a supplier code still finds it.
