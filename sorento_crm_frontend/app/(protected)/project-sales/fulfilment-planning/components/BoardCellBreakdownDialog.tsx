@@ -2,17 +2,7 @@
 
 import * as React from 'react';
 import { Check, ChevronDown, ChevronRight, Info, X } from 'lucide-react';
-import { ColumnDef, ExpandedState, RowSelectionState } from '@tanstack/react-table';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -48,6 +38,7 @@ import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover } from './BoardTrailPopover';
+import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { CellStockTable } from './CellStockTable';
 import type {
   BoardCell,
@@ -191,44 +182,28 @@ export function BoardCellBreakdownDialog({
   );
   /**
    * Which row is open, ONE at a time (C3/C5): two open editors is two half-decisions, and a
-   * screen of them is a scroll rather than a comparison.
+   * screen of them is a scroll rather than a comparison. The SAME state the List view
+   * keeps, so both readings of the board ask the same question before discarding an edit.
    */
-  const [expanded, setExpanded] = React.useState<ExpandedState>({});
-  /** Whether the open row holds an edit nobody has saved, reported by the panel itself. */
-  const [dirty, setDirty] = React.useState(false);
-  /** The row the planner asked for while the open one still held unsaved work. */
-  const [pending, setPending] = React.useState<string | null>(null);
+  const expansion = useDecisionRowExpansion();
+  const { expanded, setExpanded, openKey, setDirty, requestRow } = expansion;
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
-  const openKey = React.useMemo(() => {
-    if (typeof expanded === 'boolean') return null;
-    return Object.keys(expanded).find((key) => expanded[key]) ?? null;
-  }, [expanded]);
-
   /**
-   * Open a row, closing whatever was open.
+   * The line whose STOCK POSITION the table above is showing (R1/B1).
    *
-   * Never over an unsaved edit without asking: the planner composed it, and a row that
-   * silently swallowed a half-typed amendment is the one thing that would teach them to
-   * stop using the panel.
+   * Every figure in that table is netted of ONE line's own quantity, because the ladder's
+   * offer is `max(group net + that line's open quantity, 0)`; a cell holding two lines has
+   * two answers, and a table averaging them would contradict both suggestions. So it follows
+   * the row the planner opened, and falls back to the first contribution - which is the
+   * server's own `cell.locations` and, on the overwhelming majority of cells, the only line
+   * there is.
    */
-  const openRow = React.useCallback((key: string | null) => {
-    setDirty(false);
-    setExpanded(key ? { [key]: true } : {});
-  }, []);
-
-  const requestRow = React.useCallback(
-    (key: string) => {
-      const next = openKey === key ? null : key;
-      if (dirty) {
-        // `''` means "close the open row"; a key means "open that one instead".
-        setPending(next ?? '');
-        return;
-      }
-      openRow(next);
-    },
-    [dirty, openKey, openRow],
+  const shownContribution = React.useMemo(
+    () => cell.contributions.find((entry) => entry.key === openKey) ?? cell.contributions[0],
+    [cell.contributions, openKey],
   );
+  const shownLocations = shownContribution?.locations ?? cell.locations;
 
   const selectedKeys = React.useMemo(
     () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
@@ -304,7 +279,7 @@ export function BoardCellBreakdownDialog({
             <BoardLineDecisionPanel
               contribution={contribution}
               decision={draft[contribution.key] ?? null}
-              locations={cell.locations}
+              locations={contribution.locations ?? cell.locations}
               onDecide={(next) => onDecide(contribution.key, next)}
               onDirtyChange={setDirty}
             />
@@ -554,7 +529,7 @@ export function BoardCellBreakdownDialog({
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, cell.locations, draft, multiProduct, onDecide],
+    [cell.contributions, cell.locations, draft, multiProduct, onDecide, setDirty],
   );
 
   return (
@@ -636,11 +611,16 @@ export function BoardCellBreakdownDialog({
               previous cell's documents under the new cell's row. */}
           <CellStockTable
             key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
-            locations={cell.locations}
+            locations={shownLocations}
             itemCode={cell.item_code}
             groupNote={cell.location_group_note}
             taken={taken}
             lineIds={askingLineIds}
+            forLine={
+              cell.contributions.length > 1 && shownContribution
+                ? `${shownContribution.so_number} line ${shownContribution.line_no}`
+                : undefined
+            }
           />
         </DialogHeader>
 
@@ -717,33 +697,7 @@ export function BoardCellBreakdownDialog({
 
         </DialogBody>
 
-        {/* Confirm before an edit is thrown away, the same rule every destructive action on
-            this product follows. `AlertDialog`, never `confirm()`. */}
-        <AlertDialog
-          open={pending !== null}
-          onOpenChange={(next) => !next && setPending(null)}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Leave this decision unsaved?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The composition you typed on this line has not been saved. Closing the row
-                discards it.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep editing</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => {
-                  openRow(pending ? pending : null);
-                  setPending(null);
-                }}
-              >
-                Discard
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <UnsavedDecisionPrompt state={expansion} />
       </DialogContent>
     </Dialog>
   );

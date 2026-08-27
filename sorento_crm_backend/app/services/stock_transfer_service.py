@@ -3,11 +3,13 @@
 
 Two halves, in one file because they are one idea:
 
-* `write_for_decision` / `cancel_open_for_decision` - what a supply confirmation implies.
-  Every decided reserve or borrow drawn from a warehouse that is NOT the line's own
+* `reconcile_for_decision` (with `write_for_decision` under it) - what a supply confirmation
+  implies. Every decided reserve or borrow drawn from a warehouse that is NOT the line's own
   location is a physical movement somebody has to make, so it is written down as one. A
   same-location component moves nothing and writes nothing; incoming supply is not stock we
-  hold and writes nothing.
+  hold and writes nothing. A reconfirm RECONCILES the open rows against the new revision
+  rather than sweeping them, so an approval a person already gave survives a press about
+  another line (R16).
 * `StockTransferService` - the page. Read, approve, mark moved, cancel, bulk approve.
   **Nothing closes automatically**: `moved` is a person saying they keyed it into AutoCount,
   and our stock figures follow on the next upload (the ruling).
@@ -166,45 +168,144 @@ def kind_for_component(component: Dict[str, Any], own_location: Optional[str]) -
     return TRANSFER_KIND_BORROW
 
 
-def cancel_open_for_order(
-    db: Session, order_id: str, *, keep_decision_id: str, reason: str
-) -> int:
-    """Call off every open transfer this sales order still has, bar the ones the
-    revision being written owns.
+def reconcile_for_decision(
+    db: Session,
+    order: ProjectSalesOrder,
+    decision: SOSupplyDecision,
+    snapshots: Sequence[Dict[str, Any]],
+    *,
+    warehouse_id_for_code,
+) -> Tuple[List[StockTransfer], List[StockTransfer]]:
+    """Bring this order's OPEN transfers into line with the revision being written (R16).
 
-    Keyed on the ORDER rather than on the revision it is superseding, because the
-    revision chain is not a reliable broom: `_write_transfers` is best-effort, so a
-    confirmation whose transfer write failed leaves rev 1's rows open while rev 2 becomes
-    the one that is superseded next, and cancelling `previous.id` alone would strand them
-    open forever against a revision nobody is holding. Every open row on the order that
-    does not belong to the revision being written is, by definition, a movement no live
-    decision is asking for.
+    Returns `(written, kept)`.
 
-    Open means `proposed` or `approved`. A `moved` row is left exactly where it is: the
-    stock has physically moved, and rewriting the record of it because the plan changed
+    It used to cancel every open row of the order and write the whole composition fresh. That
+    was safe while Confirm was pressed per order, and it is a daily loss of work now that one
+    press on the board reconfirms every line of every order on it: the evidence run amended a
+    single line of a 37-line order and watched 25 movements re-proposed under new numbers,
+    with every approval a planner had already given thrown away. An approval is a person
+    saying "yes, carry that" - it is not ours to discard because an unrelated line moved.
+
+    So each open row is compared with what the new revision implies, keyed on
+    `(so_line_id, product_id, from_warehouse_id, to_warehouse_id, kind)` - the five facts that
+    make two rows the same instruction to a warehouse:
+
+    * SAME instruction, SAME quantity: KEPT. Its state, its number and its approver stay, and
+      it is re-pointed at the revision that now asks for it, so the page reads it as live.
+    * GREW: the existing row stands and a second one is written for the difference. The first
+      one may already be approved, and an approval is for a stated quantity - editing that
+      number under the person who gave it would be putting words in their mouth.
+    * SHRANK: cancelled and re-proposed at the new quantity. There is no honest way to
+      part-cancel one instruction, and the warehouse must not be left holding the larger one.
+    * VANISHED (or the row belongs to no wanted movement at all): cancelled.
+
+    Keyed on the ORDER rather than on the revision being superseded, for the reason the sweep
+    was: `_write_transfers` is best-effort, so a confirmation whose write failed leaves an
+    older revision's rows open, and matching on `previous.id` alone would strand them.
+
+    `moved` rows are never touched and still net out of what is proposed: stock that has
+    physically moved is history, and rewriting the record of it because the plan changed
     would be a lie about a warehouse's morning.
     """
-    rows = (
+    wanted = _wanted_movements(
+        db, order, decision, snapshots, warehouse_id_for_code=warehouse_id_for_code
+    )
+    kept = _keep_or_cancel(db, order, decision, wanted)
+    written = write_for_decision(db, order, decision, wanted)
+    return written, kept
+
+
+def _wanted_movements(
+    db: Session,
+    order: ProjectSalesOrder,
+    decision: SOSupplyDecision,
+    snapshots: Sequence[Dict[str, Any]],
+    *,
+    warehouse_id_for_code,
+) -> Dict[Tuple[str, str, str, str, str], Decimal]:
+    """What this revision asks a warehouse to carry, per instruction, less what has moved.
+
+    Summed per key rather than left per component: two components of one composition that
+    name the same movement are ONE instruction, and two rows would have a warehouse carry the
+    same stock twice.
+
+    **Netted of what has already physically moved.** Without it, a line carried forward
+    through an unrelated reconfirm - or the same composition reconfirmed after the stock was
+    carried across - proposed the identical movement a second time. A LARGER quantity after a
+    move still raises a row, for the difference alone.
+    """
+    wanted: Dict[Tuple[str, str, str, str, str], Decimal] = {}
+    for movement in _movements(snapshots, warehouse_id_for_code):
+        key = (*movement["key"], movement["kind"])
+        wanted[key] = wanted.get(key, _ZERO) + movement["qty"]
+    moved_left = moved_qty_by_key(db, str(order.id), exclude_decision_id=str(decision.id))
+    for key in list(wanted):
+        already = moved_left.get(key[:4], _ZERO)
+        if already <= _ZERO:
+            continue
+        taken = min(already, wanted[key])
+        moved_left[key[:4]] = already - taken
+        wanted[key] -= taken
+    return {key: qty for key, qty in wanted.items() if qty > _ZERO}
+
+
+def _keep_or_cancel(
+    db: Session,
+    order: ProjectSalesOrder,
+    decision: SOSupplyDecision,
+    wanted: Dict[Tuple[str, str, str, str, str], Decimal],
+) -> List[StockTransfer]:
+    """Keep the open rows this revision still asks for, cancel the rest.
+
+    Mutates `wanted`: a movement an open row already covers in full is removed from it, and
+    one that grew is reduced to the difference, so the writer that runs next raises rows for
+    exactly what is not already on somebody's list.
+    """
+    open_rows = (
         db.query(StockTransfer)
         .filter(
-            StockTransfer.project_sales_order_id == order_id,
+            StockTransfer.project_sales_order_id == order.id,
             StockTransfer.state.in_(TRANSFER_OPEN_STATES),
-            # A row whose decision is NULL is an orphan and is swept too; `!=` alone would
-            # skip it, because SQL compares NULL to nothing.
-            or_(
-                StockTransfer.supply_decision_id.is_(None),
-                StockTransfer.supply_decision_id != keep_decision_id,
-            ),
         )
+        .order_by(StockTransfer.transfer_no)
         .all()
     )
+    by_key: Dict[Tuple[str, str, str, str, str], List[StockTransfer]] = {}
+    for row in open_rows:
+        key = (
+            str(row.so_line_id or ""),
+            str(row.product_id or ""),
+            str(row.from_warehouse_id or ""),
+            str(row.to_warehouse_id or ""),
+            str(row.kind or ""),
+        )
+        by_key.setdefault(key, []).append(row)
+
     now = datetime.utcnow()
-    for row in rows:
-        row.state = TRANSFER_CANCELLED
-        row.cancelled_reason = reason
-        row.cancelled_at = now
-        row.updated_at = now
-    return len(rows)
+    kept: List[StockTransfer] = []
+    for key, rows in by_key.items():
+        want = wanted.get(key, _ZERO)
+        have = sum((_dec(row.qty) for row in rows), _ZERO)
+        if want > _ZERO and want >= have:
+            for row in rows:
+                # Re-pointed at the revision that now asks for it: the row's own state, its
+                # number and its approver are untouched.
+                row.supply_decision_id = decision.id
+                row.updated_at = now
+                kept.append(row)
+            remainder = want - have
+            if remainder > _ZERO:
+                wanted[key] = remainder
+            else:
+                wanted.pop(key, None)
+            continue
+        for row in rows:
+            row.state = TRANSFER_CANCELLED
+            row.cancelled_reason = f"Superseded by revision {decision.revision_no}"
+            row.cancelled_at = now
+            row.updated_at = now
+    return kept
 
 
 def moved_qty_by_key(
@@ -253,36 +354,23 @@ def write_for_decision(
     db: Session,
     order: ProjectSalesOrder,
     decision: SOSupplyDecision,
-    snapshots: Sequence[Dict[str, Any]],
-    *,
-    warehouse_id_for_code,
+    wanted: Dict[Tuple[str, str, str, str, str], Decimal],
 ) -> List[StockTransfer]:
-    """One `proposed` transfer per decided component that has to physically move.
+    """One `proposed` transfer per movement nobody is already holding a row for.
 
-    Read off the frozen SNAPSHOTS rather than off the payload, so a line the confirmation
-    named and a line it merely carried forward are written by one loop: the carried line's
-    components are the previous revision's frozen dicts, in the same shape, and its
-    transfers were cancelled with that revision, so it needs fresh ones or the movement it
-    still implies would silently disappear on an unrelated reconfirm.
+    `wanted` is `reconcile_for_decision`'s own map - what this revision implies, less what
+    has physically moved, less what an open row already covers - so this half is only the
+    minting: it decides nothing about what should exist.
 
-    Written for a reserve and for a borrow. NOT for a Buy (nothing is held anywhere yet)
-    and NOT for incoming supply (it arrives at the line's own location on a document
-    somebody else already raised). NOT for a component whose source IS the line's own
-    location, which is the whole point: that stock is already where it has to be.
-
-    **And NOT for a quantity that has already physically moved.** The rule the writer runs
-    on: for each component, net out what is already `moved` for the same
-    `(so_line_id, product_id, from_warehouse_id, to_warehouse_id)` on earlier revisions of
-    this order, and write a row only for the remainder above zero. Without it, a line
-    carried forward through an unrelated reconfirm - or the same composition reconfirmed
-    after the stock was carried across - proposed the identical movement a second time, and
-    a warehouse would have moved it twice. A LARGER quantity after a move still raises a
-    row, for the difference alone.
+    Rows are written for a reserve and for a borrow. NOT for a Buy (nothing is held anywhere
+    yet), NOT for incoming supply (it arrives at the line's own location on a document
+    somebody else already raised), and NOT for a component whose source IS the line's own
+    location, which is the whole point: that stock is already where it has to be. Those three
+    are `_movements`' rules, applied before this is reached.
     """
     written: List[StockTransfer] = []
-    # Consumed as the components are walked, so two components of one confirmation that are
-    # the same instruction cannot each claim the whole moved quantity.
-    moved_left = moved_qty_by_key(db, str(order.id), exclude_decision_id=str(decision.id))
+    if not wanted:
+        return written
     # The whole block of numbers is minted HERE rather than left to the model's
     # `before_insert` stamp, and the stamp leaves an already-set number alone. One flush
     # inserting several rows of the same mapper runs every listener BEFORE any of them
@@ -290,26 +378,22 @@ def write_for_decision(
     # plus one and collided on `uq_project_stock_transfer_no` - measured, not imagined.
     counter = int(next_transfer_no(db, order.company_id)[len(TRANSFER_NO_PREFIX):])
     now = datetime.utcnow()
-    for movement in _movements(snapshots, warehouse_id_for_code):
-        qty = movement["qty"]
-        already = moved_left.get(movement["key"], _ZERO)
-        if already > _ZERO:
-            taken = min(already, qty)
-            moved_left[movement["key"]] = already - taken
-            qty -= taken
-            if qty <= _ZERO:
-                continue
+    for (so_line_id, product_id, from_warehouse_id, to_warehouse_id, kind), qty in (
+        wanted.items()
+    ):
+        if qty <= _ZERO:
+            continue
         transfer = StockTransfer(
             company_id=order.company_id,
             transfer_no=f"{TRANSFER_NO_PREFIX}{counter:0{TRANSFER_NO_DIGITS}d}",
-            so_line_id=movement["so_line_id"],
+            so_line_id=so_line_id or None,
             project_sales_order_id=order.id,
             supply_decision_id=decision.id,
-            product_id=movement["product_id"],
-            from_warehouse_id=movement["from_warehouse_id"],
-            to_warehouse_id=movement["to_warehouse_id"],
+            product_id=product_id,
+            from_warehouse_id=from_warehouse_id,
+            to_warehouse_id=to_warehouse_id,
             qty=qty,
-            kind=movement["kind"],
+            kind=kind,
             state=TRANSFER_PROPOSED,
             proposed_at=now,
         )

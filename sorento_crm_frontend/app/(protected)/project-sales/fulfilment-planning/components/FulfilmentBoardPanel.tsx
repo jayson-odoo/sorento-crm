@@ -432,6 +432,24 @@ export function FulfilmentBoardPanel({
    * refuses the same case, so the screen and the write cannot disagree.
    */
   const batchApplied = changeBatch.data?.applied_at ?? null;
+  /**
+   * The sales orders whose OWN batch rows have all been applied already.
+   *
+   * One upload moves many orders and the batch itself only reads applied once the last of
+   * them is written, so an order that has already had its change applied would otherwise be
+   * posted a second time by the next press - writing another revision of a change that is
+   * already in the plan. It is left out of the body and said so in the result, rather than
+   * blocking the whole board: the other orders on it still have a change nobody has decided.
+   */
+  const appliedSoNumbers = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const order of changeBatchData?.orders ?? []) {
+      if (order.rows.length > 0 && order.rows.every((row) => row.applied_state === 'applied')) {
+        out.add(order.so_number);
+      }
+    }
+    return out;
+  }, [changeBatchData]);
   const confirmBlockedReason = React.useMemo<string | null>(() => {
     if (!batchApplied) return null;
     return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
@@ -441,6 +459,12 @@ export function FulfilmentBoardPanel({
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
+  /**
+   * Undo all throws away every decision taken since the board was opened, and there is no way
+   * back to them: it is destructive in the only sense a client draft can be, so it is
+   * confirmed with the count first, like every other destructive verb in this product.
+   */
+  const [undoAllOpen, setUndoAllOpen] = React.useState(false);
   const [confirmingAll, setConfirmingAll] = React.useState(false);
   const [batchResults, setBatchResults] = React.useState<ConfirmManyOrderResult[] | null>(null);
 
@@ -503,13 +527,31 @@ export function FulfilmentBoardPanel({
       );
 
       const orders: { pso_id: string; lines: ReturnType<typeof confirmLinesFor> }[] = [];
+      // An order whose planning change is already applied is NOT sent again (AC-P3-4). It is
+      // reported instead, in the same place a server refusal is reported, so a press that
+      // deliberately skipped it does not read as a press that did nothing.
+      const skipped: ConfirmManyOrderResult[] = [];
       for (const salesOrderId of wantedOrders) {
         const psoId = psoIdBySalesOrder.get(salesOrderId);
         if (!psoId) continue;
+        const soNumber = liveBoard.orders.find(
+          (order) => order.sales_order_id === salesOrderId,
+        )?.so_number;
+        if (soNumber && appliedSoNumbers.has(soNumber)) {
+          skipped.push({
+            pso_id: psoId,
+            ok: false,
+            error: 'This planning change was already applied to this sales order.',
+          } as ConfirmManyOrderResult);
+          continue;
+        }
         const lines = confirmLinesFor(contributions, salesOrderId, draft);
         if (lines.length > 0) orders.push({ pso_id: psoId, lines });
       }
-      if (orders.length === 0) return;
+      if (orders.length === 0) {
+        if (skipped.length > 0) setBatchResults(skipped);
+        return;
+      }
 
       // The batch the board was opened on travels with the press (AC-P3-4). Without it a
       // Confirm on a `?batch=` board writes an ordinary revision and leaves the planning
@@ -518,7 +560,7 @@ export function FulfilmentBoardPanel({
       const result = await confirmMany.mutateAsync(
         batchId ? { orders, batch_id: batchId } : { orders },
       );
-      setBatchResults(result.results);
+      setBatchResults([...skipped, ...result.results]);
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -528,11 +570,16 @@ export function FulfilmentBoardPanel({
         .filter((order) => ok.some((entry) => entry.pso_id === order.pso_id))
         .reduce((total, order) => total + order.lines.length, 0);
       const transfers = ok.reduce((total, entry) => total + (entry.transfers_written ?? 0), 0);
+      // What was already on a warehouse's list and stayed there (R16). Said only when there
+      // IS one: on a first confirmation it is always zero, and a zero in the sentence would
+      // be a number the reader has to decide to ignore.
+      const kept = ok.reduce((total, entry) => total + (entry.transfers_kept ?? 0), 0);
       const inquiries = ok.reduce((total, entry) => total + (entry.inquiry_rows_created ?? 0), 0);
       if (ok.length > 0) {
         toast.success(
           `${linesConfirmed} line${linesConfirmed === 1 ? '' : 's'} confirmed · ` +
             `${transfers} transfer${transfers === 1 ? '' : 's'} proposed · ` +
+            (kept > 0 ? `${kept} kept · ` : '') +
             `${inquiries} inquiry row${inquiries === 1 ? '' : 's'}`,
         );
       }
@@ -564,7 +611,7 @@ export function FulfilmentBoardPanel({
     } finally {
       setConfirmingAll(false);
     }
-  }, [board, allContributions, draft, adopt, confirmMany, batchId]);
+  }, [board, allContributions, draft, adopt, confirmMany, batchId, appliedSoNumbers]);
 
   /**
    * The rows on screen, and the rows the selection holds.
@@ -874,7 +921,7 @@ export function FulfilmentBoardPanel({
               <DropdownMenuItem
                 disabled={Object.keys(draft).length === 0}
                 onSelect={
-                  Object.keys(draft).length === 0 ? undefined : () => setDraft({})
+                  Object.keys(draft).length === 0 ? undefined : () => setUndoAllOpen(true)
                 }
               >
                 <Undo2 className="size-4" aria-hidden />
@@ -914,14 +961,14 @@ export function FulfilmentBoardPanel({
           because dropping it silently would tell them they committed something they did not,
           and the fix is somewhere else. One sentence per reason, so the count on the button
           and this notice always describe the same lines. */}
-      {UNPOSTABLE_REASONS.map((reason) => {
+      {UNPOSTABLE_REASONS.flatMap((reason) => {
         const lines = unpostable.filter((entry) => entry.reason === reason);
-        if (lines.length === 0) return null;
-        return (
-          <p key={reason} className="text-sm text-amber-700 break-words">
-            {unpostableNotice(reason, lines)}
+        if (lines.length === 0) return [];
+        return unpostableNotices(reason, lines).map((sentence, index) => (
+          <p key={`${reason}-${index}`} className="text-sm text-amber-700 break-words">
+            {sentence}
           </p>
-        );
+        ));
       })}
 
       {batchResults && (
@@ -1160,6 +1207,33 @@ export function FulfilmentBoardPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Undo all discards work nobody can get back. Same rule, same component. */}
+      <AlertDialog open={undoAllOpen} onOpenChange={setUndoAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Discard ${Object.keys(draft).length} draft decision${
+                Object.keys(draft).length === 1 ? '' : 's'
+              }?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Every line goes back to the suggestion. Nothing already confirmed changes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep them</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setDraft({});
+                setUndoAllOpen(false);
+              }}
+            >
+              Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1170,18 +1244,69 @@ const UNPOSTABLE_REASONS: UnpostableReason[] = [
   'buy_reason_missing',
 ];
 
-/** The sentence naming the lines this confirmation leaves out for one reason, and the fix. */
-function unpostableNotice(reason: UnpostableReason, lines: UnpostableLine[]): string {
-  const named = lines
-    .map((entry) => `${entry.contribution.item_code} line ${entry.contribution.line_no}`)
-    .join(', ');
-  const one = lines.length === 1;
-  const them = one ? 'it' : 'them';
-  if (reason === 'no_mirror') {
-    return `${named} ${one ? 'is' : 'are'} not on the planning record yet, so this confirmation leaves ${them} out. Re-sync the sales order to add ${them}.`;
+/** How many names a sentence carries before it stops being a sentence and becomes a wall. */
+const NAMED_CAP = 5;
+
+/** What each reason IS, in the words the untouched-line count uses, for one line and for many. */
+const UNPOSTABLE_SHORT: Record<UnpostableReason, [string, string]> = {
+  no_mirror: ['is not on the planning record yet', 'are not on the planning record yet'],
+  no_reserve_warehouse: [
+    'reserves at a warehouse the board cannot address',
+    'reserve at a warehouse the board cannot address',
+  ],
+  buy_reason_missing: [
+    'buys a discontinued product with no reason given',
+    'buy a discontinued product with no reason given',
+  ],
+};
+
+/**
+ * The sentences naming what this confirmation leaves out for one reason, and the fix.
+ *
+ * TWO POPULATIONS, because they need different words (R11). A line the planner composed is
+ * NAMED - they are looking for the one they just worked on - capped at five names, since a
+ * list longer than that is scrolled past rather than read. Lines nobody touched are confirmed
+ * as suggested and can be left out for the same reasons, and there can be hundreds of them, so
+ * they are COUNTED and the reader is told where to go and decide them.
+ */
+export function unpostableNotices(
+  reason: UnpostableReason,
+  lines: UnpostableLine[],
+): string[] {
+  const out: string[] = [];
+  const touched = lines.filter((entry) => entry.touched);
+  const untouched = lines.length - touched.length;
+
+  if (touched.length > 0) {
+    const names = touched
+      .slice(0, NAMED_CAP)
+      .map((entry) => `${entry.contribution.item_code} line ${entry.contribution.line_no}`)
+      .join(', ');
+    const rest = touched.length - Math.min(touched.length, NAMED_CAP);
+    const named = rest > 0 ? `${names} and ${rest} more` : names;
+    const one = touched.length === 1;
+    const them = one ? 'it' : 'them';
+    if (reason === 'no_mirror') {
+      out.push(
+        `${named} ${one ? 'is' : 'are'} not on the planning record yet, so this confirmation leaves ${them} out. Re-sync the sales order to add ${them}.`,
+      );
+    } else if (reason === 'no_reserve_warehouse') {
+      out.push(
+        `${named} ${one ? 'reserves' : 'reserve'} at a warehouse the board cannot address, so this confirmation leaves ${them} out. Amend ${them} to place the Reserve.`,
+      );
+    } else {
+      out.push(
+        `${named} ${one ? 'buys' : 'buy'} a discontinued product with no reason given, so this confirmation leaves ${them} out. Amend ${them} to give one.`,
+      );
+    }
   }
-  if (reason === 'no_reserve_warehouse') {
-    return `${named} ${one ? 'reserves' : 'reserve'} at a warehouse the board cannot address, so this confirmation leaves ${them} out. Amend ${them} to place the Reserve.`;
+
+  if (untouched > 0) {
+    const one = untouched === 1;
+    out.push(
+      `${untouched} untouched line${one ? '' : 's'} ${UNPOSTABLE_SHORT[reason][one ? 0 : 1]}; open ${one ? 'it' : 'them'} to decide.`,
+    );
   }
-  return `${named} ${one ? 'buys' : 'buy'} a discontinued product with no reason given, so this confirmation leaves ${them} out. Amend ${them} to give one.`;
+
+  return out;
 }

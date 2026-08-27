@@ -423,6 +423,13 @@ class BoardProposed(BaseModel):
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
+    #: THIS LINE's own location table (R1): the same rows the cell carries, netted of this
+    #: line's own quantity and no other's, so the subtotal IS the offer the ladder made it
+    #: (`max(group net + this line's open qty, 0)`) and the decision panel's "N available"
+    #: beside each Reserve input is that line's figure. A cell holding two lines has two
+    #: tables, and the drawer shows whichever line is expanded. Empty for a line whose bucket
+    #: is outside the day window, which builds no cell.
+    locations: List["BoardCellLocation"] = []
     #: Stable draft key, and part of the contract because the frontend rebuilds it:
     #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}`. Addressing only.
     key: str
@@ -831,6 +838,11 @@ class BoardIncoming(BaseModel):
     spo_number: Optional[str] = None
     arrival_date: Optional[date] = None
     qty: str
+
+
+# `BoardContribution` names `BoardCellLocation` above the class that defines it (a line's own
+# table is a fact about the line), so the reference is resolved here, once both exist.
+BoardContribution.model_rebuild()
 
 
 class BoardCell(BaseModel):

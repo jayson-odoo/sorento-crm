@@ -459,6 +459,10 @@ class FulfilmentBoardService:
         self._po_open: Dict[Tuple[str, str], Decimal] = {}
         # PROJECT line ids `build()` was asked to preview as uncovered (`exclude_covered_line_ids`).
         self._exclude_covered_line_ids: set = set()
+        # Row key -> that CONTRIBUTION's own location table (R1/B1). Built cell by cell and
+        # read again when the top-level contribution list is assembled, so the List view and
+        # the cell's drawer quote one line the same figures.
+        self._locations_by_row: Dict[str, List[Dict[str, Any]]] = {}
 
     # ----------------------------------------------------------------- public
 
@@ -489,6 +493,7 @@ class FulfilmentBoardService:
         self._exclude_covered_line_ids = {
             str(i) for i in (exclude_covered_line_ids or [])
         }
+        self._locations_by_row = {}
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -3285,17 +3290,6 @@ class FulfilmentBoardService:
         by_location: Dict[Optional[str], List[_Row]] = defaultdict(list)
         for row in members:
             by_location[row.location].append(row)
-        # THIS CELL'S OWN open demand, per warehouse, netted back out of every figure below
-        # (R1). It is what makes the table's Available the same number the ladder obeyed: a
-        # line does not compete with itself for stock.
-        own_demand = self._own_demand(members)
-        locations = sorted(
-            (
-                self._location(location, rows, where=WHERE_OWN, own_demand=own_demand)
-                for location, rows in by_location.items()
-            ),
-            key=lambda entry: (-Decimal(entry["qty_demand"]), entry["location"] or ""),
-        )
         # The rest of the agents' ownership group, appended after the locations this cell's own
         # lines named. "Can I fulfil this" is a question about the whole group - BRW-BB alone
         # answers a narrower one - and the line's own location leads because it is the one the
@@ -3308,11 +3302,20 @@ class FulfilmentBoardService:
             )
             if group and group in self._group_warehouses
         })
-        locations.extend(
-            self._group_locations(members, locations, group_codes, own_demand=own_demand)
-        )
-        locations.extend(self._pool_locations(members, locations, own_demand=own_demand))
-        locations.extend(self._cited_locations(members, locations, own_demand=own_demand))
+        # ONE TABLE PER CONTRIBUTING LINE (R1, B1). The netting used to come out of the whole
+        # CELL, and on a cell holding two 24s at a location with 10 on hand the table printed
+        # Available 9 while the ladder offered each line nothing: `_group_offer` is
+        # `max(group net + THIS line's own quantity, 0)`, never plus the cell's. So the asking
+        # line is the unit - the drawer, the decision panel's "N available" and the suggestion
+        # then answer one question with one number.
+        for row in members:
+            self._locations_by_row[row.key] = self._locations_for(
+                members, by_location, group_codes, own_demand=self._own_demand(row)
+            )
+        # The cell's own table is the FIRST contributing line's, which is the highest ranked
+        # (members are sorted) and, on the overwhelming majority of cells, the only one. The
+        # drawer switches it to whichever line the planner expands.
+        locations = self._locations_by_row.get(members[0].key, []) if members else []
         return {
             "item_code": item_code,
             "bucket_key": bucket_key,
@@ -3341,13 +3344,41 @@ class FulfilmentBoardService:
             "past_count": sum(1 for row in members if row.is_past),
         }
 
+    def _locations_for(
+        self,
+        members: Sequence[_Row],
+        by_location: Mapping[Optional[str], List[_Row]],
+        group_codes: Sequence[str],
+        *,
+        own_demand: Mapping[Tuple[str, str], Decimal],
+    ) -> List[Dict[str, Any]]:
+        """The whole location table, as ONE asking line sees it.
+
+        `own_demand` is that line's own open quantity, and the only thing that changes
+        between two lines of the same cell: the demand each row states, and the stock behind
+        it, are the cell's own facts either way.
+        """
+        locations = sorted(
+            (
+                self._location(location, rows, where=WHERE_OWN, own_demand=own_demand)
+                for location, rows in by_location.items()
+            ),
+            key=lambda entry: (-Decimal(entry["qty_demand"]), entry["location"] or ""),
+        )
+        locations.extend(
+            self._group_locations(members, locations, group_codes, own_demand=own_demand)
+        )
+        locations.extend(self._pool_locations(members, locations, own_demand=own_demand))
+        locations.extend(self._cited_locations(members, locations, own_demand=own_demand))
+        return locations
+
     def _group_locations(
         self,
         members: Sequence[_Row],
         already: Sequence[Dict[str, Any]],
         group_codes: Sequence[str],
         *,
-        own_demand: Mapping[str, Decimal],
+        own_demand: Mapping[Tuple[str, str], Decimal],
     ) -> List[Dict[str, Any]]:
         """The group's OTHER warehouses: no demand of this cell sits there, stock does.
 
@@ -3383,7 +3414,7 @@ class FulfilmentBoardService:
         members: Sequence[_Row],
         already: Sequence[Dict[str, Any]],
         *,
-        own_demand: Mapping[str, Decimal],
+        own_demand: Mapping[Tuple[str, str], Decimal],
     ) -> List[Dict[str, Any]]:
         """EVERY active site pool, this line's own site first (AC-B1).
 
@@ -3447,7 +3478,7 @@ class FulfilmentBoardService:
         members: Sequence[_Row],
         already: Sequence[Dict[str, Any]],
         *,
-        own_demand: Mapping[str, Decimal],
+        own_demand: Mapping[Tuple[str, str], Decimal],
     ) -> List[Dict[str, Any]]:
         """Every location a PROPOSAL on this cell actually names, and is not listed yet.
 
@@ -3518,22 +3549,25 @@ class FulfilmentBoardService:
         return out
 
     @staticmethod
-    def _own_demand(members: Sequence[_Row]) -> Dict[str, Decimal]:
-        """This cell's own open quantity per warehouse id (R1).
+    def _own_demand(row: _Row) -> Dict[Tuple[str, str], Decimal]:
+        """THE ASKING LINE's own open quantity, at its own (product, location) (R1).
 
-        Netted back out of the SO qty every row of the cell's table prints, so the table
-        answers "what is here for me" rather than "what is here for everybody, me
-        included". A cell holding several lines nets ALL of them: they are the demand this
-        drawer was opened to plan, and which of them is served first is the queue's
-        question, not this table's.
+        Netted back out of the SO qty its table prints, so the table answers "what is here
+        for me" rather than "what is here for everybody, me included".
+
+        ONE LINE, never the cell: the engine's offer is `max(group net + this line's open
+        quantity, 0)`, so a cell holding two 24s would otherwise print an Available its own
+        suggestion contradicts (10 on hand, 49 owed there: the table said 9, each line was
+        offered 0).
+
+        Keyed by (product, warehouse), never by warehouse alone: two products share the item
+        code `B2155-NL-BLUE` on the live book and land in ONE cell, and their demand is not
+        each other's - netting by location would take the second product's lines out of the
+        first product's SO qty and print stock nobody has.
         """
-        out: Dict[str, Decimal] = {}
-        for row in members:
-            if not row.warehouse_id:
-                continue
-            key = str(row.warehouse_id)
-            out[key] = out.get(key, _ZERO) + _dec(row.qty)
-        return out
+        if not row.warehouse_id or not row.product_id:
+            return {}
+        return {(str(row.product_id), str(row.warehouse_id)): _dec(row.qty)}
 
     def _location(
         self,
@@ -3543,7 +3577,7 @@ class FulfilmentBoardService:
         product_id: Optional[str] = None,
         warehouse_id: Optional[str] = None,
         where: str = WHERE_OWN,
-        own_demand: Mapping[str, Decimal],
+        own_demand: Mapping[Tuple[str, str], Decimal],
     ) -> Dict[str, Any]:
         """One (product, location) line of the cell: its demand here, and what is there.
 
@@ -3562,12 +3596,13 @@ class FulfilmentBoardService:
         zero: there is no location whose stock could be counted, and a zero would read as
         "that location is empty".
 
-        `own_demand` is what THIS CELL owes at each warehouse, and it comes back out of the
-        SO qty (R1, 27 August 2026). The drawer used to count the asking line's own 24 as
-        demand competing with itself and printed Available -15 beside a suggestion of "use
-        own location, 9" - one set of facts under two definitions. SO qty is now the OTHER
-        open lines at the location, full stop, so the table and the ladder answer the same
-        question. `qty_owed_all_orders` still states the whole book's pressure, unchanged.
+        `own_demand` is what THE ASKING LINE owes at its own (product, warehouse), and it
+        comes back out of the SO qty (R1, 27 August 2026). The drawer used to count that
+        line's own 24 as demand competing with itself and printed Available -15 beside a
+        suggestion of "use own location, 9" - one set of facts under two definitions. SO qty
+        is now the OTHER open lines at the location, full stop, so the table and the ladder
+        answer the same question. `qty_owed_all_orders` still states the whole book's
+        pressure, unchanged.
         """
         first = rows[0] if rows else None
         if first is not None:
@@ -3604,7 +3639,11 @@ class FulfilmentBoardService:
         # (R1). Floored at zero rather than allowed negative - the cell can owe more here than
         # the pressure read counted (a line whose order is not `open` is in the drawer and not
         # in the pressure), and a negative SO qty would print as stock nobody has.
-        mine = _dec(own_demand.get(str(warehouse_id), _ZERO)) if stated else _ZERO
+        mine = (
+            _dec(own_demand.get((str(product_id), str(warehouse_id)), _ZERO))
+            if stated
+            else _ZERO
+        )
         owed = None if pressure is None else max(pressure - mine, _ZERO)
         incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if counted else None
         # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
@@ -3711,7 +3750,7 @@ class FulfilmentBoardService:
         where: str,
         stated: bool,
         *,
-        own_demand: Mapping[str, Decimal],
+        own_demand: Mapping[Tuple[str, str], Decimal],
     ) -> Dict[str, Optional[str]]:
         """`net` / `net_of` for one row of the cell table (ladder v4, section 1d).
 
@@ -3726,8 +3765,8 @@ class FulfilmentBoardService:
         ladder drew on, so the subtotal a planner checks and the number the engine obeyed
         cannot come apart.
 
-        THIS CELL'S OWN quantity comes back out of the set, exactly as it does per row
-        (R1): the ladder's offer is `max(group net + this line's own quantity, 0)`, so the
+        THE ASKING LINE's own quantity comes back out of the set, exactly as it does per
+        row (R1): the ladder's offer is `max(group net + that line's quantity, 0)`, so the
         subtotal the table prints IS that offer - unclamped, because "-2" is the fact that
         explains why nothing was offered and "0" is not. It stays a figure over the WHOLE
         set, silent members included, which is why it is read from `netting()` rather than
@@ -3739,7 +3778,9 @@ class FulfilmentBoardService:
         if where == WHERE_SITE_POOL or netting.is_pool(warehouse_id):
             position = netting.pools_net(product_id)
             return {
-                "net": qty_text(position.net + self._mine_in(position, own_demand)),
+                "net": qty_text(
+                    position.net + self._mine_in(position, own_demand, product_id)
+                ),
                 "net_of": "pools",
             }
         group = netting.group_of(warehouse_id)
@@ -3747,16 +3788,26 @@ class FulfilmentBoardService:
             return {"net": None, "net_of": None}
         position = netting.group_net(product_id, group)
         return {
-            "net": qty_text(position.net + self._mine_in(position, own_demand)),
+            "net": qty_text(
+                position.net + self._mine_in(position, own_demand, product_id)
+            ),
             "net_of": group,
         }
 
     @staticmethod
-    def _mine_in(position: Any, own_demand: Mapping[str, Decimal]) -> Decimal:
-        """What this cell owes at the locations of one netted set."""
+    def _mine_in(
+        position: Any,
+        own_demand: Mapping[Tuple[str, str], Decimal],
+        product_id: str,
+    ) -> Decimal:
+        """What the asking line owes at the locations of one netted set.
+
+        Of THIS product: a set is netted per product, and a sibling product behind the same
+        item code owes against its own pile, not against this one.
+        """
         return sum(
             (
-                _dec(own_demand.get(str(entry.warehouse_id), _ZERO))
+                _dec(own_demand.get((str(product_id), str(entry.warehouse_id)), _ZERO))
                 for entry in position.by_location
             ),
             _ZERO,
@@ -3768,6 +3819,12 @@ class FulfilmentBoardService:
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
+            #: THIS LINE's own location table (R1/B1): the same rows the cell's drawer shows,
+            #: netted of this line's own quantity and no other's, so the "N available" beside
+            #: a Reserve input is the figure the ladder offered this line. Empty for a line
+            #: whose bucket is outside the day window - no cell was built for it, and a table
+            #: computed off a pile nobody drew from would be inventing an answer.
+            "locations": self._locations_by_row.get(row.key, []),
             "key": row.key,
             "sales_order_id": row.sales_order_id,
             #: The CORE sales-order line, which is what the pile queue is addressed by

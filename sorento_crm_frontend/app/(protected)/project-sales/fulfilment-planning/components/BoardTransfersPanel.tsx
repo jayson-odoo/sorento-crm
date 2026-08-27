@@ -4,6 +4,16 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { Check } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -22,6 +32,15 @@ import {
 
 /** What the transfers page gates its own state changes on. */
 const EDIT_PERMISSION = 'inventory.stock_transfers.edit';
+/** And what it gates the READ on. Without it there is no list to show and none to ask for. */
+const VIEW_PERMISSION = 'inventory.stock_transfers.view';
+
+/** The movement one row states, in the transfers page's own words. */
+function movementOf(transfer: StockTransfer): string {
+  return `${transfer.qty} ${transfer.item_code ?? ''} ${transfer.from_location ?? '?'} to ${
+    transfer.to_location ?? '?'
+  }`.trim();
+}
 
 /**
  * The movements this board's confirmations raised, ON this board (PLAN section 3.D4).
@@ -59,13 +78,28 @@ export function BoardTransfersPanel({
   inquiryRows?: number;
 }) {
   const canEdit = useHasPermission(EDIT_PERMISSION);
-  const { data, isLoading, error } = useBoardTransfers(soNumbers);
+  // Not merely a hidden panel: the QUERY is off too (D9). A user with no read grant would
+  // otherwise fire a request that comes back 403 on every board they open.
+  const canView = useHasPermission(VIEW_PERMISSION);
+  const { data, isLoading, error } = useBoardTransfers(soNumbers, canView);
   const { approve, approveAll } = useBoardTransferMutations();
+  /**
+   * The approval waiting on its confirmation - one row, or every proposed row.
+   *
+   * Approving a transfer commits somebody to physically moving stock between warehouses, so
+   * it is confirmed first, with the SAME words the transfers page uses (the movement itself,
+   * under the document number): one act, one sentence, wherever it is pressed from.
+   */
+  const [pending, setPending] = React.useState<StockTransfer | 'all' | null>(null);
 
   const rows = React.useMemo<StockTransfer[]>(() => data?.data ?? [], [data]);
-  const proposedIds = React.useMemo(
-    () => rows.filter((row) => row.state === 'proposed').map((row) => row.id),
+  const proposedRows = React.useMemo(
+    () => rows.filter((row) => row.state === 'proposed'),
     [rows],
+  );
+  const proposedIds = React.useMemo(
+    () => proposedRows.map((row) => row.id),
+    [proposedRows],
   );
 
   const columns = React.useMemo<ColumnDef<StockTransfer>[]>(
@@ -236,7 +270,7 @@ export function BoardTransfersPanel({
                 disabled={approve.isPending || approveAll.isPending}
                 onClick={(event) => {
                   event.stopPropagation();
-                  approve.mutate(row.original.id);
+                  setPending(row.original);
                 }}
               >
                 <Check className="size-4" aria-hidden />
@@ -253,6 +287,9 @@ export function BoardTransfersPanel({
     [canEdit, approve, approveAll.isPending],
   );
 
+  // No read grant, no panel (D9). Nothing about the movements is stated - not an empty
+  // card, not an error - because none of it is this user's to see.
+  if (!canView) return null;
   // Nothing raised and nothing pressed: no card. See the `justConfirmed` prop.
   if (!isLoading && !error && rows.length === 0 && !justConfirmed) return null;
 
@@ -274,7 +311,7 @@ export function BoardTransfersPanel({
               type="button"
               size="sm"
               disabled={approveAll.isPending || approve.isPending}
-              onClick={() => approveAll.mutate(proposedIds)}
+              onClick={() => setPending('all')}
             >
               <Check className="size-4" aria-hidden />
               {`Approve all proposed (${proposedIds.length})`}
@@ -296,6 +333,45 @@ export function BoardTransfersPanel({
           </Link>
         </p>
       ) : null}
+
+      {/* Confirm before the movement is committed to, in the transfers page's own words
+          (`StockTransferActions`). `AlertDialog`, never `confirm()`. */}
+      <AlertDialog open={pending !== null} onOpenChange={(next) => !next && setPending(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pending === 'all'
+                ? `Approve ${proposedIds.length} proposed transfer${
+                    proposedIds.length === 1 ? '' : 's'
+                  }?`
+                : `Approve ${pending?.transfer_no ?? ''}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending === 'all'
+                ? proposedRows.map(movementOf).join(' · ')
+                : pending
+                  ? movementOf(pending)
+                  : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={approve.isPending || approveAll.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={approve.isPending || approveAll.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (pending === 'all') approveAll.mutate(proposedIds);
+                else if (pending) approve.mutate(pending.id);
+                setPending(null);
+              }}
+            >
+              Approve
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

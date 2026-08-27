@@ -3,12 +3,13 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { ColumnDef, ExpandedState } from '@tanstack/react-table';
+import { ColumnDef } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
+import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   COLOURS,
@@ -50,18 +51,14 @@ export function FulfilmentBoardListView({
   isLoading?: boolean;
 }) {
   /**
-   * Which row is open, ONE at a time - the same rule the cell breakdown follows, and the
-   * same panel inside it. The list used to carry Approve / Amend / Reject buttons in its
-   * Verdict column and open the amend MODAL over the board; a decision is taken in the row
-   * on both readings now, or the two would teach different gestures for one act.
+   * Which row is open, ONE at a time - the same STATE the cell breakdown keeps, and the same
+   * panel inside it. The list used to carry Approve / Amend / Reject buttons in its Verdict
+   * column and open the amend MODAL over the board; a decision is taken in the row on both
+   * readings now, or the two would teach different gestures for one act - including the
+   * question asked before an unsaved composition is thrown away (C5).
    */
-  const [expanded, setExpanded] = React.useState<ExpandedState>({});
-  const toggleRow = React.useCallback((key: string) => {
-    setExpanded((current) => {
-      const held = typeof current === 'boolean' ? {} : current;
-      return held[key] ? {} : { [key]: true };
-    });
-  }, []);
+  const expansion = useDecisionRowExpansion();
+  const { expanded, setExpanded, setDirty, requestRow } = expansion;
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
@@ -116,16 +113,17 @@ export function FulfilmentBoardListView({
         minSize: 120,
         meta: {
           // The SAME editor the cell breakdown expands, so a decision reads and is taken
-          // identically whichever way the planner came at the line. The per-location
-          // Available is not stated here: the list spans every cell of the selection, so
-          // there is no one stock position to quote, and a figure off the wrong cell would
-          // be worse than none.
+          // identically whichever way the planner came at the line - the per-location
+          // Available included (C4). The figures ride on the CONTRIBUTION, netted of this
+          // line's own quantity, so the list does not have to know which cell the line sits
+          // in to quote the right pile.
           expandedContent: (contribution: BoardContribution) => (
             <BoardLineDecisionPanel
               contribution={contribution}
               decision={draft[contribution.key] ?? null}
-              locations={[]}
+              locations={contribution.locations ?? []}
               onDecide={(next) => onDecide(contribution.key, next)}
+              onDirtyChange={setDirty}
             />
           ),
         },
@@ -317,10 +315,11 @@ export function FulfilmentBoardListView({
         enableResizing: false,
       },
     ],
-    [draft, onDecide],
+    [draft, onDecide, setDirty],
   );
 
   return (
+    <>
     <PanelDataGrid
       title="Every contributing line"
       columns={columns}
@@ -337,8 +336,10 @@ export function FulfilmentBoardListView({
       }
       expanded={expanded}
       onExpandedChange={setExpanded}
-      onRowClick={(row) => toggleRow(row.key)}
+      onRowClick={(row) => requestRow(row.key)}
       pageSize={25}
     />
+    <UnsavedDecisionPrompt state={expansion} />
+    </>
   );
 }

@@ -16,13 +16,16 @@ export const BOARD_TRANSFERS_KEY = 'board-stock-transfers';
  *
  * Keyed on the SORTED numbers so two boards naming the same orders in a different order
  * share one cache entry rather than fetching the same list twice.
+ *
+ * `enabled` carries the caller's `inventory.stock_transfers.view` grant (D9): a user who may
+ * not read the transfers is not shown them, and must not be made to ask for them either.
  */
-export function useBoardTransfers(soNumbers: string[]) {
+export function useBoardTransfers(soNumbers: string[], enabled = true) {
   const key = [...soNumbers].sort();
   return useQuery({
     queryKey: [BOARD_TRANSFERS_KEY, key],
     queryFn: () => listBoardTransfers(key),
-    enabled: key.length > 0,
+    enabled: enabled && key.length > 0,
     placeholderData: (previous) => previous,
   });
 }

@@ -356,6 +356,11 @@ class ConfirmResult(BaseModel):
     #: a movement nobody makes - so the count reaches the screen rather than a server log.
     transfers_written: int = 0
     transfers_failed: int = 0
+    #: And how many open movements this revision KEPT rather than re-raising (R16): the same
+    #: instruction at the same quantity survives a reconfirm with its state and its approval
+    #: intact. Counted apart from `transfers_written`, which is only rows actually created,
+    #: so "nothing new had to move" is not read as "nothing moved".
+    transfers_kept: int = 0
     #: How many of this revision's lines the planner flagged as a suspected system problem
     #: (R10). Reported rather than logged: the flag is a request to look at something, and a
     #: request nobody is told about is a request nobody answers.
@@ -435,6 +440,8 @@ class ConfirmManyOrderResult(BaseModel):
     #: lines confirmed, T transfers proposed", and T comes from here.
     transfers_written: Optional[int] = None
     transfers_failed: Optional[int] = None
+    #: The open movements this order's confirmation kept as they were (R16).
+    transfers_kept: Optional[int] = None
     #: The lines flagged as a suspected system problem, summed the same way (R10).
     suspected_issues: Optional[int] = None
     error: Optional[str] = None

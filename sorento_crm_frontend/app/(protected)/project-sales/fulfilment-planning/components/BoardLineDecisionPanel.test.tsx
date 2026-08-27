@@ -15,6 +15,7 @@ import type {
   BoardCellLocation,
   BoardContribution,
   BoardDecision,
+  BoardLineDecision,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const KEY = 'so-a|22|SRTWB7518|2026-06-29';
@@ -134,7 +135,7 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'approved',
-      suspected_system_issue: undefined,
+      suspected_system_issue: false,
     });
   });
 
@@ -176,7 +177,7 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'rejected',
       reason: 'The customer cancelled this line.',
-      suspected_system_issue: undefined,
+      suspected_system_issue: false,
     });
   });
 });
@@ -280,6 +281,31 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     );
   });
 
+  it('unticking on a covered line clears the flag, in the draft AND on screen', () => {
+    const frozen: BoardLineDecision = {
+      revision_no: 1,
+      confirmed_at: '2026-08-18T02:00:00',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' }],
+      borrow: [],
+      buy_qty: '15',
+      suspected_system_issue: true,
+    };
+    const { onDecide } = renderPanel({ covered: true, decision: frozen });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    expect(checkbox()).toBeChecked();
+    fireEvent.click(checkbox());
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+
+    // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
+    // rather than falling through to the frozen `true` and contradicting the body.
+    expect(onDecide).toHaveBeenCalledWith({
+      verdict: 'approved',
+      suspected_system_issue: false,
+    });
+  });
+
   it('shows the checkbox already ticked when the frozen decision carried the flag (persisted after reload)', () => {
     renderPanel({
       covered: true,
@@ -299,12 +325,108 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
 });
 
 /**
+ * The Buy switch is a DETOUR, not a demolition: a planner trying it has not thrown away the
+ * composition they typed, and the panel's own note promises the rows are still theirs when
+ * they switch it back.
+ */
+describe('BoardLineDecisionPanel: Buy on then off restores the composition', () => {
+  function buySwitch() {
+    return screen.getByRole('switch', { name: 'Buy the whole line' });
+  }
+
+  it('puts back the reserve quantities, the borrow and its reason', () => {
+    renderPanel({
+      borrow_candidates: [
+        {
+          source: 'other_location',
+          warehouse_code: 'MWH-AM',
+          warehouse_id: 'wh-MWH-AM',
+          donor_project_ref: null,
+          donor_project_id: null,
+          free_qty: '15',
+          donor_impact: {
+            free_before: '15',
+            free_after_full_borrow: '0',
+            committed_qty: '0',
+          },
+          same_agent: true,
+        },
+      ],
+    });
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), { target: { value: '15' } });
+
+    fireEvent.click(buySwitch());
+    expect(screen.getAllByText('The whole line is being bought.').length).toBeGreaterThan(0);
+
+    fireEvent.click(buySwitch());
+
+    expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(9);
+    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(15);
+  });
+
+  it('keeps a borrow row and the reason typed against it', () => {
+    renderPanel({
+      sources: [
+        {
+          kind: 'reserve',
+          qty: '9',
+          location: 'BRW-AM',
+          warehouse_id: 'wh-BRW-AM',
+          reason: 'Free unclaimed stock at BRW-AM covers this much.',
+        },
+        {
+          kind: 'borrow',
+          qty: '15',
+          location: 'MWH-AM',
+          warehouse_id: 'wh-MWH-AM',
+          reason: 'Borrowed from the group.',
+        },
+      ],
+    });
+
+    const borrowInput = screen.getByLabelText('Borrow from MWH-AM');
+    expect(borrowInput).toHaveValue(15);
+
+    fireEvent.click(buySwitch());
+    expect(screen.queryByLabelText('Borrow from MWH-AM')).not.toBeInTheDocument();
+
+    fireEvent.click(buySwitch());
+
+    expect(screen.getByLabelText('Borrow from MWH-AM')).toHaveValue(15);
+    expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(9);
+  });
+});
+
+/**
+ * A line whose sales order names no fulfilment location cannot be decided here at all: the
+ * confirmation leaves it out (`lineFor` returns null), so an editable panel over it would let
+ * a planner compose something the press silently drops.
+ */
+describe('BoardLineDecisionPanel: an unplannable line states why, and offers no verb', () => {
+  it('renders the figures and the reason, with no inputs and no buttons', () => {
+    renderPanel({ unplannable: true, fulfilment_location: null, fulfilment_warehouse_id: null });
+
+    expect(screen.getByTestId(`line-decision-blocked-${KEY}`)).toHaveTextContent(
+      'states no fulfilment location',
+    );
+    expect(screen.queryByRole('button', { name: 'Approve suggestion' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save amendment' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Reserve at/)).not.toBeInTheDocument();
+    // The figures are still worth reading: this is a row, not a wall.
+    expect(screen.getByTestId(`line-decision-${KEY}`)).toHaveTextContent('Outstanding');
+  });
+});
+
+/**
  * C11: a line an active decision already covers opens locked, with Amend the only way in - the
  * database already holds a decision, and an editable form over it invites an edit nobody has
  * asked to make.
  */
 describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', () => {
-  const frozen: BoardDecision = {
+  const frozen: BoardLineDecision = {
     revision_no: 1,
     confirmed_at: '2026-08-18T02:00:00',
     timely_spo_qty: '0',

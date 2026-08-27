@@ -60,6 +60,8 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => false,
 }));
 vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
+  // The real key, because the confirm hook invalidates it by name (D6).
+  BOARD_TRANSFERS_KEY: 'board-stock-transfers',
   useBoardTransfers: () => ({ data: { data: [] }, isLoading: false, error: undefined }),
   useBoardTransferMutations: () => ({
     approve: { mutate: vi.fn(), isPending: false },

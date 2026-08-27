@@ -252,12 +252,21 @@ def test_two_lines_of_one_confirmation_cannot_each_be_sold_the_same_pile(api):
     )
 
     assert response.status_code == 409, response.text
-    conflict = response.json()["reserve_conflict"]
+    body = response.json()
+    conflict = body["reserve_conflict"]
     assert conflict["line"] == 20
     # The sibling that took first is named, by its own order and line number.
     assert conflict["held_by"] == [
         {"so_number": core_so.so_number, "line_no": 10, "qty": "6"}
     ]
+    # And the SENTENCE says "line 10 of this order", not the order's own number: a planner
+    # reading their own document number back at them has to go and check whether some other
+    # copy of it is holding stock, when the competitor is on the screen in front of them.
+    assert body["message"] == (
+        f"{world.own_wh.warehouse_code}: 10 on hand, 6 already reserved by "
+        "line 10 of this order, you asked 6"
+    )
+    assert core_so.so_number not in body["message"]
     assert (
         db.query(SOSupplyDecision)
         .filter(SOSupplyDecision.project_sales_order_id == order.id)

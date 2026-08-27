@@ -142,7 +142,7 @@ describe('FulfilmentBoardListView', () => {
     await waitFor(() =>
       expect(onDecide).toHaveBeenCalledWith('so-1:line-10', {
         verdict: 'approved',
-        suspected_system_issue: undefined,
+        suspected_system_issue: false,
       }),
     );
   });
@@ -168,6 +168,73 @@ describe('FulfilmentBoardListView', () => {
     expect(
       await screen.findByTestId('decision-pill-so-1:line-10'),
     ).toHaveTextContent('Approved');
+  });
+
+  it('quotes THIS line\u2019s own Available beside the Reserve input (C4)', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          fulfilment_location: 'BRW-AM',
+          fulfilment_warehouse_id: 'wh-am',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '9',
+              location: 'BRW-AM',
+              warehouse_id: 'wh-am',
+              reason: 'Own group.',
+            },
+            { kind: 'buy', qty: '34', reason: 'The rest is bought.' },
+          ],
+          // The figures ride on the contribution, netted of this line's own quantity: the
+          // list spans every cell, so there is no cell to read them off.
+          locations: [
+            {
+              location: 'BRW-AM',
+              warehouse_id: 'wh-am',
+              product_id: 'prod-1',
+              qty: '43',
+              qty_demand: '43',
+              available_qty: '9',
+            },
+          ],
+        }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getByText('JEREMY'));
+
+    expect(await screen.findByText('9 available')).toBeInTheDocument();
+  });
+
+  it('asks before it closes a row holding an unsaved edit (C5)', async () => {
+    renderView({
+      contributions: [
+        contribution(),
+        contribution({ key: 'so-1:line-20', line_no: 20, so_number: 'SO397451' }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getAllByText('JEREMY')[0]);
+    // An edit nobody has saved: the reason box on the open panel.
+    fireEvent.change(screen.getByPlaceholderText('In your own words'), {
+      target: { value: 'The group is short' },
+    });
+
+    fireEvent.click(screen.getAllByText('JEREMY')[1]);
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Leave this decision unsaved?',
+    );
+    // Kept open until the question is answered.
+    expect(screen.getByText('The group is short')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+    );
   });
 
   it('marks an unplannable line rather than offering it a verdict', async () => {

@@ -78,6 +78,7 @@ export function CellStockTable({
   groupNote,
   taken,
   lineIds,
+  forLine,
 }: {
   locations: BoardCellLocation[];
   /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
@@ -103,6 +104,15 @@ export function CellStockTable({
    * rows are tagged there. The table itself does not read them.
    */
   lineIds?: string[];
+  /**
+   * WHOSE position this is, when the cell holds more than one line (R1).
+   *
+   * Every figure below is netted of one line's own quantity - a line does not compete with
+   * itself - so on a cell of several lines the table is one of several true answers, and
+   * which one it is has to be said. Undefined on a cell of one line, where there is nothing
+   * to distinguish.
+   */
+  forLine?: string;
 }) {
   const drawn = taken ?? EMPTY_TAKEN;
   /**
@@ -145,6 +155,11 @@ export function CellStockTable({
 
   return (
     <div className="space-y-1">
+    {forLine ? (
+      <p data-testid="cell-stock-for-line" className="text-xs text-muted-foreground">
+        {`Available for ${forLine}`}
+      </p>
+    ) : null}
     <div
       data-testid="cell-stock-table"
       className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"

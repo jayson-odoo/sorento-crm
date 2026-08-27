@@ -279,6 +279,14 @@ export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reaso
 export interface UnpostableLine {
   contribution: BoardContribution;
   reason: UnpostableReason;
+  /**
+   * Whether the planner decided this line themselves, or left it alone.
+   *
+   * Under R11 silence is agreement, so the population this walks is EVERY plannable line, not
+   * only the ticked ones - and a notice naming three hundred untouched lines one by one is a
+   * wall nobody reads. A touched line is named; the rest are counted.
+   */
+  touched: boolean;
 }
 
 /**
@@ -493,8 +501,13 @@ function reserveWarehouses(
 }
 
 /**
- * The lines a planner DECIDED that this confirmation cannot carry, and why, so the screen can
- * say so and the count on the button agrees with the notice beside it.
+ * The lines this confirmation cannot carry, and why, so the screen can say so and the count on
+ * the button agrees with the notice beside it.
+ *
+ * EVERY PLANNABLE LINE, not only the decided ones (R11): an untouched line is confirmed as the
+ * engine proposed it, so it can be left out for exactly the same three reasons, and while this
+ * only walked the draft those went out in silence. The caller says which is which - a line the
+ * planner composed is named, and the untouched ones are counted per reason.
  *
  * Adoption mirrored the order's open lines at the time it ran, so a later upload can add a core
  * line with no mirror: its order stays confirmable and that one contribution has no
@@ -524,7 +537,11 @@ export function unpostableDecidedFor(
     const built = lineFor(contribution, draft[contribution.key]);
     if (typeof built !== 'string') continue;
     if (built === 'no_mirror' && !isAdopted) continue;
-    unpostable.push({ contribution, reason: built });
+    unpostable.push({
+      contribution,
+      reason: built,
+      touched: Boolean(draft[contribution.key]),
+    });
   }
   return unpostable;
 }

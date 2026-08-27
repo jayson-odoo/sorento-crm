@@ -557,6 +557,11 @@ export interface ConfirmResult {
    */
   transfers_written?: number | null;
   transfers_failed?: number | null;
+  /**
+   * And how many open movements it KEPT rather than re-raising (R16): the same instruction
+   * at the same quantity survives a reconfirm with its state and its approval intact.
+   */
+  transfers_kept?: number | null;
   /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
 }
@@ -884,6 +889,16 @@ export interface BoardLineDecision {
  * be supplied from").
  */
 export interface BoardContribution {
+  /**
+   * THIS LINE's own stock position, location by location (R1).
+   *
+   * The same rows the cell carries, netted of this line's own quantity and no other's, so
+   * the group subtotal IS the offer the ladder made it (`max(group net + this line's open
+   * qty, 0)`) and the "N available" beside each Reserve input is this line's figure. A cell
+   * holding two lines carries two tables. Absent on a line whose bucket is outside the day
+   * window, which builds no cell.
+   */
+  locations?: BoardCellLocation[];
   /** Stable key for the draft. Addressing only, never rendered. */
   key: string;
   sales_order_id: string;
@@ -1866,6 +1881,8 @@ export interface ConfirmManyOrderResult {
    */
   transfers_written?: number | null;
   transfers_failed?: number | null;
+  /** The open movements this order's confirmation kept as they were (R16). */
+  transfers_kept?: number | null;
   /** The lines this order's planner flagged as a suspected system problem (R10). */
   suspected_issues?: number | null;
   error?: string | null;
