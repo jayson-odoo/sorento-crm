@@ -12,7 +12,13 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MOCK_WORKLIST_ROWS,
@@ -29,15 +35,23 @@ let granted = new Set([
 ]);
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => granted.has(slug),
-  useHasAnyPermission: (slugs: string[]) => slugs.some((slug) => granted.has(slug)),
-  usePermissions: () => ({ permissions: [...granted], permissionSet: granted, isLoading: false }),
+  useHasAnyPermission: (slugs: string[]) =>
+    slugs.some((slug) => granted.has(slug)),
+  usePermissions: () => ({
+    permissions: [...granted],
+    permissionSet: granted,
+    isLoading: false,
+  }),
 }));
 
 const routerReplace = vi.fn();
 let currentSearchParams = new URLSearchParams('');
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => routerReplace(...args) }),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: (...args: unknown[]) => routerReplace(...args),
+  }),
   usePathname: () => '/project-sales/order-inquiries',
   useSearchParams: () => currentSearchParams,
 }));
@@ -45,7 +59,10 @@ vi.mock('next/navigation', () => ({
 // Under jsdom nothing answers the preferences fetch, so the grid renders skeletons for
 // ever and no row is assertable.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 const listOrderInquiryWorklist = vi.fn();
@@ -62,20 +79,29 @@ const getOrderInquiryUploadJob = vi.fn();
 const unplaceOrderInquiryRow = vi.fn();
 
 vi.mock('../../_shared/services/orderInquiryService', () => ({
-  listOrderInquiryWorklist: (...args: unknown[]) => listOrderInquiryWorklist(...args),
+  listOrderInquiryWorklist: (...args: unknown[]) =>
+    listOrderInquiryWorklist(...args),
   getOrderInquiryWorklistSummary: (...args: unknown[]) =>
     getOrderInquiryWorklistSummary(...args),
   downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
     downloadOrderInquiryWorklistXlsx(...args),
-  autoPlaceOrderInquiryRows: (...args: unknown[]) => autoPlaceOrderInquiryRows(...args),
+  autoPlaceOrderInquiryRows: (...args: unknown[]) =>
+    autoPlaceOrderInquiryRows(...args),
   getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
-  unplaceAllOrderInquiryRows: (...args: unknown[]) => unplaceAllOrderInquiryRows(...args),
-  acknowledgeOrderInquiryRows: (...args: unknown[]) => acknowledgeOrderInquiryRows(...args),
-  rejectOrderInquiryRows: (...args: unknown[]) => rejectOrderInquiryRows(...args),
-  linkNowOrderInquiryRows: (...args: unknown[]) => linkNowOrderInquiryRows(...args),
-  getOrderInquiryPoCandidates: (...args: unknown[]) => getOrderInquiryPoCandidates(...args),
-  getOrderInquiryUploadJob: (...args: unknown[]) => getOrderInquiryUploadJob(...args),
-  unplaceOrderInquiryRow: (...args: unknown[]) => unplaceOrderInquiryRow(...args),
+  unplaceAllOrderInquiryRows: (...args: unknown[]) =>
+    unplaceAllOrderInquiryRows(...args),
+  acknowledgeOrderInquiryRows: (...args: unknown[]) =>
+    acknowledgeOrderInquiryRows(...args),
+  rejectOrderInquiryRows: (...args: unknown[]) =>
+    rejectOrderInquiryRows(...args),
+  linkNowOrderInquiryRows: (...args: unknown[]) =>
+    linkNowOrderInquiryRows(...args),
+  getOrderInquiryPoCandidates: (...args: unknown[]) =>
+    getOrderInquiryPoCandidates(...args),
+  getOrderInquiryUploadJob: (...args: unknown[]) =>
+    getOrderInquiryUploadJob(...args),
+  unplaceOrderInquiryRow: (...args: unknown[]) =>
+    unplaceOrderInquiryRow(...args),
 }));
 
 // The upload dialog is its own suite's subject (`OutstandingUploadDialog` under
@@ -85,11 +111,17 @@ vi.mock('../../../scm/reorder/components/OutstandingUploadDialog', () => ({
   OutstandingUploadDialog: ({
     onQueued,
   }: {
-    onQueued?: (queued: { job_id: string; id: string; message: string }) => void;
+    onQueued?: (queued: {
+      job_id: string;
+      id: string;
+      message: string;
+    }) => void;
   }) => (
     <button
       type="button"
-      onClick={() => onQueued?.({ job_id: 'job-1', id: 'job-row-1', message: 'queued' })}
+      onClick={() =>
+        onQueued?.({ job_id: 'job-1', id: 'job-row-1', message: 'queued' })
+      }
     >
       Upload (stub)
     </button>
@@ -97,7 +129,11 @@ vi.mock('../../../scm/reorder/components/OutstandingUploadDialog', () => ({
 }));
 
 // The drawer's feed is what says whether the worker is done with that job (AC-H13).
-let uploadSessions: { session_id: string; import_job_id: string | null; status: string }[] = [];
+let uploadSessions: {
+  session_id: string;
+  import_job_id: string | null;
+  status: string;
+}[] = [];
 vi.mock('@/components/upload-activity/useUploadActivity', () => ({
   useUploadActivity: () => ({
     sessions: uploadSessions,
@@ -115,7 +151,9 @@ vi.mock('../../_shared/services/fileDownload', () => ({
   filenameFromContentDisposition: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
@@ -154,7 +192,10 @@ function envelope(rows: OrderInquiryWorklistRow[]) {
 
 function renderClient() {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
   });
   return render(
     <QueryClientProvider client={client}>
@@ -205,7 +246,11 @@ beforeEach(() => {
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
   downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
-  getUnplaceAllPreview.mockResolvedValue({ count: 0, product_code: null, product_name: null });
+  getUnplaceAllPreview.mockResolvedValue({
+    count: 0,
+    product_code: null,
+    product_name: null,
+  });
   getOrderInquiryPoCandidates.mockResolvedValue([]);
 });
 
@@ -220,11 +265,13 @@ describe('OrderInquiriesClient: reading the page', () => {
     expect(screen.getByText('202601-S0015')).toBeInTheDocument();
   });
 
-  it('reads the columns in the sheet\'s own order, renamed (AC-D15)', async () => {
+  it("reads the columns in the sheet's own order, renamed (AC-D15)", async () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent ?? '');
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((cell) => cell.textContent ?? '');
     const order = [
       'SO date',
       'S/O no',
@@ -246,7 +293,9 @@ describe('OrderInquiriesClient: reading the page', () => {
     ];
     let cursor = -1;
     for (const title of order) {
-      const at = headers.findIndex((text, index) => index > cursor && text.includes(title));
+      const at = headers.findIndex(
+        (text, index) => index > cursor && text.includes(title),
+      );
       expect(at, `${title} out of order`).toBeGreaterThan(cursor);
       cursor = at;
     }
@@ -268,18 +317,21 @@ describe('OrderInquiriesClient: reading the page', () => {
     });
     renderClient();
 
-    expect(await screen.findByText('Nothing has been raised yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /open fulfilment planning/i })).toHaveAttribute(
-      'href',
-      '/project-sales/fulfilment-planning',
-    );
+    expect(
+      await screen.findByText('Nothing has been raised yet'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /open fulfilment planning/i }),
+    ).toHaveAttribute('href', '/project-sales/fulfilment-planning');
   });
 
   it('says the failure out loud rather than showing an empty table', async () => {
     listOrderInquiryWorklist.mockRejectedValue(new Error('Backend is down'));
     renderClient();
 
-    expect(await screen.findByText('The order inquiry could not be loaded')).toBeInTheDocument();
+    expect(
+      await screen.findByText('The order inquiry could not be loaded'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Backend is down')).toBeInTheDocument();
   });
 
@@ -288,7 +340,9 @@ describe('OrderInquiriesClient: reading the page', () => {
     const { container } = renderClient();
 
     await waitFor(() =>
-      expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0),
+      expect(
+        container.querySelectorAll('[data-slot="skeleton"]').length,
+      ).toBeGreaterThan(0),
     );
   });
 
@@ -312,10 +366,9 @@ describe('OrderInquiriesClient: reading the page', () => {
   it('links an adopted row to the core sales order and a project row to its own', async () => {
     renderClient();
 
-    expect(await screen.findByRole('link', { name: 'SO385126' })).toHaveAttribute(
-      'href',
-      '/scm/sales-orders/so-385126',
-    );
+    expect(
+      await screen.findByRole('link', { name: 'SO385126' }),
+    ).toHaveAttribute('href', '/scm/sales-orders/so-385126');
     expect(screen.getByRole('link', { name: 'SO363150' })).toHaveAttribute(
       'href',
       '/project-sales/proj-9/sales-orders/pso-3',
@@ -325,7 +378,9 @@ describe('OrderInquiriesClient: reading the page', () => {
   it('prints the location it was stamped with, and nothing when it has none', async () => {
     renderClient();
 
-    const donor = (await screen.findByText('SO385126')).closest('tr') as HTMLElement;
+    const donor = (await screen.findByText('SO385126')).closest(
+      'tr',
+    ) as HTMLElement;
     expect(within(donor).getByText('BRW-BB')).toBeInTheDocument();
 
     const unlocated = screen.getByText('SO386461').closest('tr') as HTMLElement;
@@ -356,7 +411,11 @@ describe('AC-D12: the page opens on Confirmed = To confirm', () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filter: Confirmed: To confirm' }));
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Clear filter: Confirmed: To confirm',
+      }),
+    );
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenLastCalledWith(
@@ -388,7 +447,13 @@ describe('AC-D12: the page opens on Confirmed = To confirm', () => {
   it('the Confirmed filter offers To confirm first, with its own count', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
-      ack: { awaiting: 3, acknowledged: 1, changed: 1, rejected: 0, to_confirm: 4 },
+      ack: {
+        awaiting: 3,
+        acknowledged: 1,
+        changed: 1,
+        rejected: 0,
+        to_confirm: 4,
+      },
     });
     renderClient();
     await screen.findByText('SO385126');
@@ -430,8 +495,12 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     await screen.findByText('SO385126');
 
     openStartMenu();
-    expect(screen.getByRole('menuitem', { name: 'Upload purchase orders' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Confirm selected \(0\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /Confirm selected \(0\)/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /history/i })).toBeNull();
   });
 
@@ -439,11 +508,15 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     renderClient();
     await screen.findByText('SO385126');
 
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    );
     openActionsMenu();
     let item = screen.getByRole('menuitem', { name: 'Link selected (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: 'Escape',
+    });
 
     // A second tick drops it back to disabled - the manual dialog is a ONE-row override.
     fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
@@ -460,9 +533,13 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     renderClient();
     await screen.findByText('SO385126');
 
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    );
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Link selected (1)' }),
+    );
 
     expect(await screen.findByText('Link to a document')).toBeInTheDocument();
     expect(getOrderInquiryPoCandidates).toHaveBeenCalledWith('row-2');
@@ -473,13 +550,16 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     await screen.findByText('SO385126');
 
     // row-2 is unlinked (raised, linked_qty 0); ticking it never enables Unlink.
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
-    openActionsMenu();
-    expect(screen.getByRole('menuitem', { name: 'Unlink selected (0)' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
     );
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Unlink selected (0)' }),
+    ).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: 'Escape',
+    });
 
     // row-5 IS linked (placed) - ticking it enables the count.
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
@@ -504,12 +584,18 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     await screen.findByText('SO385126');
 
     openStartMenu();
-    const empty = screen.getByRole('menuitem', { name: /Confirm selected \(0\)/ });
+    const empty = screen.getByRole('menuitem', {
+      name: /Confirm selected \(0\)/,
+    });
     expect(empty).toHaveAttribute('aria-disabled', 'true');
     expect(empty).toHaveAttribute('title', 'Tick the rows you are taking on.');
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: 'Escape',
+    });
 
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    );
     openStartMenu();
     expect(
       screen.getByRole('menuitem', { name: 'Confirm selected (1)' }),
@@ -525,7 +611,9 @@ describe('Unlink selected asks first', () => {
     // row-5 is `placed`, so it is the one Unlink selected counts.
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+    );
 
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
     expect(unplaceOrderInquiryRow).not.toHaveBeenCalled();
@@ -538,11 +626,15 @@ describe('Unlink selected asks first', () => {
 
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+    );
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Unlink' }));
 
-    await waitFor(() => expect(unplaceOrderInquiryRow).toHaveBeenCalledWith('row-5'));
+    await waitFor(() =>
+      expect(unplaceOrderInquiryRow).toHaveBeenCalledWith('row-5'),
+    );
   });
 
   it('changes nothing when the confirmation is cancelled', async () => {
@@ -551,7 +643,9 @@ describe('Unlink selected asks first', () => {
 
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Unlink selected (1)' }),
+    );
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
@@ -562,33 +656,54 @@ describe('Unlink selected asks first', () => {
 
 describe('AC-D5: Confirm selected', () => {
   it('sends exactly the ticked row ids, with no horizon of its own (R6)', async () => {
-    acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 1, links: 1 });
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 2,
+      linked_rows: 1,
+      links: 1,
+    });
     renderClient();
     await screen.findByText('SO385126');
 
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    );
     fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
     openStartMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Confirm selected (2)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Confirm selected (2)' }),
+    );
 
     await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3'], undefined),
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(
+        ['row-2', 'row-3'],
+        undefined,
+      ),
     );
   });
 
   it('clears the tick marks once the press succeeds', async () => {
-    acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 1, linked_rows: 0, links: 0 });
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+    });
     renderClient();
     await screen.findByText('SO385126');
 
-    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    );
     openStartMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Confirm selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Confirm selected (1)' }),
+    );
 
     // Wait for the press to land (and the Radix menu to finish closing) before reopening
     // it once - reopening it repeatedly inside the poll races the menu's own animation.
     await waitFor(() => expect(acknowledgeOrderInquiryRows).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument(),
+    );
     openStartMenu();
     expect(
       await screen.findByRole('menuitem', { name: /Confirm selected \(0\)/ }),
@@ -600,8 +715,12 @@ describe('AC-D5: Confirm selected', () => {
     await screen.findByText('SO385126');
 
     // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent.
-    expect(screen.getByLabelText('Select SRTWB5400 on SO385126')).toBeDisabled();
-    expect(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461')).toBeEnabled();
+    expect(
+      screen.getByLabelText('Select SRTWB5400 on SO385126'),
+    ).toBeDisabled();
+    expect(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    ).toBeEnabled();
   });
 });
 
@@ -612,7 +731,9 @@ describe('AC-D6: Reject selected', () => {
 
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reject selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Reject selected (1)' }),
+    );
 
     expect(await screen.findByText('Reject 1 row?')).toBeInTheDocument();
   });
@@ -623,16 +744,52 @@ describe('AC-D6: Reject selected', () => {
 
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Reject selected (1)' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Reject selected (1)' }),
+    );
     fireEvent.click(await screen.findByRole('button', { name: 'Reject row' }));
 
-    expect(screen.getByText('A reason is required to reject.')).toBeInTheDocument();
+    expect(
+      screen.getByText('A reason is required to reject.'),
+    ).toBeInTheDocument();
     expect(rejectOrderInquiryRows).not.toHaveBeenCalled();
   });
 });
 
+describe('The plan horizon is stated in the header', () => {
+  it('reads Plan until off the latest completed reorder plan', async () => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      link_up_to_default: '2026-12-31',
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('oi-plan-until')).toHaveTextContent(
+        'Plan until 31/12/2026',
+      ),
+    );
+  });
+
+  it('says so when no plan is in force', async () => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      link_up_to_default: null,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('oi-plan-until')).toHaveTextContent(
+        'No reorder plan in force',
+      ),
+    );
+  });
+});
+
 describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
-  it('seeds the dialog with the plan\'s own coverage date', async () => {
+  it("seeds the dialog with the plan's own coverage date", async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       link_up_to_default: '2026-12-31',
@@ -643,22 +800,30 @@ describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
     openActionsMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: /Auto link all/ }));
 
-    expect(await screen.findByText('Purchase order cut off')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Purchase order cut off'),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect((screen.getByTestId('auto-link-cut-off') as HTMLInputElement).value).toBe(
-        '2026-12-31',
-      ),
+      expect(
+        (screen.getByTestId('auto-link-cut-off') as HTMLInputElement).value,
+      ).toBe('2026-12-31'),
     );
   });
 
   it('runs the cascade on confirm', async () => {
-    autoPlaceOrderInquiryRows.mockResolvedValue({ placed_rows: 4, allocations: 5, products_touched: 3 });
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 4,
+      allocations: 5,
+      products_touched: 3,
+    });
     renderClient();
     await screen.findByText('SO385126');
 
     openActionsMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: /Auto link all/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto link all' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Auto link all' }),
+    );
 
     await waitFor(() => expect(autoPlaceOrderInquiryRows).toHaveBeenCalled());
   });
@@ -666,32 +831,49 @@ describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
 
 describe('AC-H13: the uploaded book, offered from the Start menu', () => {
   it('offers nothing while the worker is still reading the book', async () => {
-    uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'processing' }];
+    uploadSessions = [
+      { session_id: 'job-1', import_job_id: 'job-1', status: 'processing' },
+    ];
     renderClient();
     await screen.findByText('SO385126');
 
     openStartMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Upload purchase orders' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
-    await waitFor(() => expect(getOrderInquiryUploadJob).not.toHaveBeenCalled());
+    await waitFor(() =>
+      expect(getOrderInquiryUploadJob).not.toHaveBeenCalled(),
+    );
     expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
   });
 
   it('once the job lands, Link now carries the products it wrote', async () => {
-    uploadSessions = [{ session_id: 'job-1', import_job_id: 'job-1', status: 'linked' }];
-    linkNowOrderInquiryRows.mockResolvedValue({ placed_rows: 2, allocations: 3 });
+    uploadSessions = [
+      { session_id: 'job-1', import_job_id: 'job-1', status: 'linked' },
+    ];
+    linkNowOrderInquiryRows.mockResolvedValue({
+      placed_rows: 2,
+      allocations: 3,
+    });
     renderClient();
     await screen.findByText('SO385126');
 
     openStartMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Upload purchase orders' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
-    expect(await screen.findByRole('button', { name: 'Link now' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Link now' }),
+    ).toBeInTheDocument();
     // The job's own scope (products/documents) is a separate query behind `landed`; wait
     // for it to answer before pressing, or the press captures an empty product list.
-    await waitFor(() => expect(getOrderInquiryUploadJob).toHaveBeenCalledWith('job-1'));
+    await waitFor(() =>
+      expect(getOrderInquiryUploadJob).toHaveBeenCalledWith('job-1'),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Link now' }));
 
     await waitFor(() =>
@@ -715,15 +897,23 @@ describe('AC-D8: a CS user (no acknowledge grant) sees the column, not the actio
     expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
 
     openActionsMenu();
-    expect(screen.queryByRole('menuitem', { name: /Reject selected/ })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /Link selected/ })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /Unlink selected/ })).toBeNull();
+    expect(
+      screen.queryByRole('menuitem', { name: /Reject selected/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('menuitem', { name: /Link selected/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('menuitem', { name: /Unlink selected/ }),
+    ).toBeNull();
     // Auto link all and Unlink all/Export are still theirs - they read Found/Not found
     // and un-draft nothing that was confirmed.
-    expect(screen.getByRole('menuitem', { name: /Auto link all/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /Auto link all/ }),
+    ).toBeInTheDocument();
   });
 
-  it('no row checkbox is offered at all - CS never ticks purchasing\'s to-do list', async () => {
+  it("no row checkbox is offered at all - CS never ticks purchasing's to-do list", async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -761,21 +951,31 @@ describe('the schedule view (unaffected by the draft-links rework)', () => {
     currentSearchParams = new URLSearchParams('view=schedule');
     renderClient();
 
-    expect(await screen.findByText('No inquiries in this view')).toBeInTheDocument();
+    expect(
+      await screen.findByText('No inquiries in this view'),
+    ).toBeInTheDocument();
   });
 });
 
 describe('Unlink all (S2/S3/N1, carried over unchanged from the handshake plan)', () => {
   it('names every linked row when no filter narrows the scope', async () => {
-    getUnplaceAllPreview.mockResolvedValue({ count: 5, product_code: null, product_name: null });
+    getUnplaceAllPreview.mockResolvedValue({
+      count: 5,
+      product_code: null,
+      product_name: null,
+    });
     renderClient();
     await screen.findByText('SO385126');
 
     openActionsMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Unlink all/ }));
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: /Unlink all/ }),
+    );
 
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog.textContent).toContain('5 linked rows across the whole company');
+    expect(dialog.textContent).toContain(
+      '5 linked rows across the whole company',
+    );
   });
 
   it('distinguishes "no permission" from "genuinely nothing to unplace" (N1)', async () => {
@@ -786,7 +986,10 @@ describe('Unlink all (S2/S3/N1, carried over unchanged from the handshake plan)'
     openActionsMenu();
     const item = await screen.findByRole('menuitem', { name: /Unlink all/ });
     expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item).toHaveAttribute('title', "You don't have permission to unlink rows");
+    expect(item).toHaveAttribute(
+      'title',
+      "You don't have permission to unlink rows",
+    );
     expect(getUnplaceAllPreview).not.toHaveBeenCalled();
   });
 });
@@ -802,7 +1005,9 @@ describe('exports the set the screen is showing, not the whole book', () => {
     );
 
     openActionsMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: /export excel/i }),
+    );
 
     await waitFor(() =>
       expect(downloadOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
