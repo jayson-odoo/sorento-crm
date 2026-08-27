@@ -1157,6 +1157,64 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
+  /**
+   * Ladder v6 (AC-F1): a line planned as part of an order unit says so behind the info icon,
+   * and the ordinary line says nothing extra.
+   */
+  it('names the order unit the line was planned inside, and only then', async () => {
+    const cell = cellOf([demand({ qty: '10' })], { 'WESERP10B|BRW-BB': '40' });
+    cell.contributions[0].unit_qty = '30';
+    cell.contributions[0].unit_line_count = 2;
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
+      'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
+    );
+  });
+
+  it('says nothing about a unit for a line planned on its own', async () => {
+    const cell = cellOf([demand({ qty: '10' })], { 'WESERP10B|BRW-BB': '40' });
+    cell.contributions[0].unit_qty = '10';
+    cell.contributions[0].unit_line_count = 1;
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await sourceNoteOf(cell.contributions[0].key)).not.toContain(
+      'Planned with',
+    );
+  });
+
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
   it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
     renderServerCell([

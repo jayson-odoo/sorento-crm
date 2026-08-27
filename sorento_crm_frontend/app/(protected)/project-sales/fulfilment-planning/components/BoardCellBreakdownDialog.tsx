@@ -509,6 +509,7 @@ export function BoardCellBreakdownDialog({
             .map((source) => source.reason)
             .join(' ');
           const share = shareNote(row.original);
+          const unit = unitNote(row.original);
           return (
             <div className="min-w-0">
               <div className="flex items-start gap-1">
@@ -523,7 +524,7 @@ export function BoardCellBreakdownDialog({
                     rather than a silent `title` nobody hovers or two lines of wrapped text
                     (the captain: "don't explain too much", "put it under the tooltip"). The
                     numbers stay in the row; only the prose moves. */}
-                {(why || share) && (
+                {(why || share || unit) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -544,6 +545,7 @@ export function BoardCellBreakdownDialog({
                     >
                       {why && <p>{why}</p>}
                       {share && <p>{share}</p>}
+                      {unit && <p>{unit}</p>}
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -915,6 +917,21 @@ function present(value: string | null | undefined): boolean {
  * Absent is absent: a line the server sent no share for, and a line whose sales order states no
  * location (it has no pile to be queued at), get no sentence rather than a 0.
  */
+/**
+ * Ladder v6: the line was not planned alone. The captain, 28 August 2026, on SO381895 lines
+ * 31 and 32 (10 borrowed, 20 bought): "this is 1 order as a whole ... for the same delivery
+ * date". Said only when there IS another line in the unit; the ordinary line says nothing.
+ */
+function unitNote(contribution: BoardContribution): string | null {
+  const count = contribution.unit_line_count ?? 1;
+  if (count <= 1 || !present(contribution.unit_qty)) return null;
+  const others = count - 1;
+  const when = contribution.required_date
+    ? ` for ${formatDateInMalaysia(contribution.required_date)}`
+    : '';
+  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all, covered or bought as one.`;
+}
+
 function shareNote(contribution: BoardContribution): string | null {
   if (contribution.unplannable) return null;
   if (!present(contribution.available_to_this_line)) return null;
