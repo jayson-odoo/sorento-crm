@@ -279,3 +279,87 @@ confirming an exact match before and after; the plan to diagnose that failure
 against a clean checkout was dropped rather than risked twice. Logged here so the
 next agent does not reach for `git stash` in a lane holding uncommitted work across
 both halves of the monorepo.
+
+## 11. Live walk, SO414013 (tester, 28 Aug, browser evidence, servers rebooted this session)
+
+Section 10 could not walk AC-D1/AC-D3/AC-D5 fresh because the sanctioned fixture
+(SO381895) had nothing left outstanding. This round used a different order the
+captain pre-checked on the dev copy: SO414013 (one open line, SRTKT72SS x2, product
+carries three open PO lines and five open `spo_allocations` rows, two of them at the
+BRW pool). Lane rebuilt from scratch this session - backend `:8050` and frontend
+`:3050` were both down at the start, no double-boot, no port collisions, no server
+kills observed once up. Session `scm-oi-draft-walk`, 1280 then 375.
+
+**Step 1 - board Confirm.** Sidebar Supply Chain > Project Demand > Fulfilment
+Planning, searched `SO414013`, "Start planning" (`POST
+/project-sales/fulfilment-planning/adopt`, adopts the core SO into a
+`projects.sales_orders` mirror, `status=adopted`). Opened line 1: the engine's own
+proposal was already Buy (`2 open = 0 incoming + 0 reserve + 0 borrow + 2 buy`) - no
+switch needed, nothing on the pool at BRW to reserve or borrow from. Confirm Project
+SO -> "Confirm SO414013?" dialog ("All 1 line are confirmed together. The composition
+is frozen and the Buy residual goes to purchasing.") -> Confirm the sales order.
+`POST /project-sales/sales-orders/{id}/confirm`, body
+`{"lines":[{"project_line_id":"8e14bc2d-...","timely_spo_qty":"0","reserve":[],"borrow":[],"buy_qty":"2","buy_reason":null}]}`,
+response `{"revision_no":1,"confirmed_at":"2026-08-27T16:38:41.41...","review_state":"confirmed","inquiry_rows_created":1,"exceptions":[],"lines_decided":1,"lines_undecided":0,"transfers_written":0,"transfers_failed":0}`.
+Screenshot `oi-walk-0-board-before-confirm.png` / `oi-walk-0b-board-composition.png`
+(kept locally, not committed - the four AC screenshots below are the required set).
+
+**Step 2 - Order Inquiries default view, AC-D1.** Sidebar Project Demand > Order
+Inquiries landed on `?ack=to_confirm` (AC-D12 default chip, confirmed live). Searched
+`SO414013`: one row, OI-000015, SRTKT72SS x2, Outstanding PO/SPO reads a dashed
+circle ("Draft, confirm to allocate") then `2 of 2`, then `SPO SPO-2026/08-0012 BRW
+2` - the SPO picked first over the product's three open PO lines, per R5, and the
+pool warehouse code (`BRW`) rather than a line label, per item 5 / AC-D16. Remaining
+column reads `0` (2 of 2 taken). Screenshot `oi-walk-1-draft.png`.
+
+**Step 3 - lightbox, AC-D3 half.** Clicked `SPO-2026/08-0012`: dialog opened (not a
+popover), lines table for all ten open lines on the document (SKU / allocated /
+received / remaining / location), "Allocated to" table: `OI-000015 / SO414013 /
+SRTKT72SS / 2 / Proposed`. Screenshot `oi-walk-2-lightbox-proposed.png`.
+
+**Step 4 - Confirm selected, AC-D5.** Closed the lightbox, checked the row
+(`agent-browser check`, not `click` - the checkbox cell is inside a
+`clickable[onclick]` row and a plain click on the ref did not toggle it), Start >
+"Confirm selected (1)" enabled once ticked. `POST
+/project-sales/order-inquiries/acknowledge` body `{"row_ids":["f5ac0f12-..."]}`,
+response `{"acknowledged":1,"linked_rows":0,"links":0,"after_horizon":0,"link_up_to":null,"link_horizon":"none"}`
+- `linked_rows: 0` because the row was already fully linked from the raise-time
+cascade, so Confirm's own cascade had no remainder to fill (exactly the "an unlinked
+remainder is linked in the same press" clause with zero remainder). The default
+`ack=to_confirm` filter removed the row from the list on refetch (correct: it is no
+longer to-confirm); cleared the filter chip to `ack=all` and re-found the same row:
+Outstanding PO/SPO now reads a green check ("Confirmed") in front of the SAME
+document (`SPO-2026/08-0012 BRW 2`, unmoved), Confirmed column reads "Confirmed
+Jayson Personal 28/08/2026, 12:42 am". Screenshot `oi-walk-3-confirmed.png`.
+Re-opened the lightbox: "Allocated to" standing flipped from Proposed to
+**Confirmed**, same row, same document (screenshot kept locally, not committed).
+
+**Step 5 - 375.** `set viewport 375 812` on the same `?ack=all&query=SO414013`
+list: cards, search, Actions/Start stack under each other with no clipping;
+`document.documentElement.scrollWidth` measured 375 against `window.innerWidth` 375
+- no page-level horizontal scroll. Screenshot `oi-walk-4-375.png`.
+
+**Step 6 - console/errors.** `errors` (uncaught) was empty for the whole walk. One
+pre-existing `console` `[error]` recurred on the FULFILMENT PLANNING board only (not
+Order Inquiries): a React duplicate-key warning, `SPO-2026/08-0012-2026-07-27`,
+because the board's "Incoming by the delivery date" panel keys its list by
+`spo_number-date` and this SPO has two open lines (qty 226 and 150) sharing the same
+`expected_date`. Pre-existing, out of this plan's scope (the board's decision UI
+belongs to `PLAN-scm-planning-inline-decisions.md`, section 8 "Out of scope"), noted
+here rather than fixed.
+
+**DB side effects on SO414013** (`psql`, dev copy):
+
+| Table | Row | Effect |
+| --- | --- | --- |
+| `projects.sales_orders` | `876d8e19-...` | new mirror, `status=adopted`, `so_id` -> the core `public.sales_orders.id`, one mirror line (`8e14bc2d-...`) pointing at the core line |
+| `projects.order_inquiries` | `e74e9126-...` (`OI-000015`) | new, `state=actioned` |
+| `projects.order_inquiry_rows` | `f5ac0f12-...` | new, `verb=ORDER`, `qty=2`, `spo_ref=SPO-2026/08-0012`; `ack_state` went `awaiting` (raise, 16:38:41.04) -> `acknowledged` (Confirm, 16:42:01.93) |
+| `projects.order_inquiry_links` | `fbbd4568-...` | written at RAISE time (16:38:41.90, `auto=true`), before Confirm ever ran - the draft link IS the raise-time cascade's write, confirmed by the row's later stamp only, no link-table write on Confirm itself |
+| `spo_allocations` | `8a137619-...` (`SPO-2026/08-0012` line 6, BRW, qty 226) | unchanged (`quantity_received=0`, `line_status=open`) - a draft/confirmed OI link marks a claim on the quantity, it does not touch the receipt columns |
+| `scm.order_link_claim` | `ee4502be-...` | new, `source=order_inquiry`, created at raise time alongside the link |
+
+Result: AC-D1, AC-D3 (Proposed half) and AC-D5 walked fresh end to end on a real,
+previously-untouched order; AC-D3's "second row is offered the rest" half and every
+other AC stay on pytest/vitest per section 10 (not re-walked this round - out of
+this session's scope, which was these three ACs only).
