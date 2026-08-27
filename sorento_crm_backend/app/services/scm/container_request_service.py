@@ -773,7 +773,12 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
-    where = ["np.product_id::text = ANY(:pids)"]
+    # ACTIVE locations only, the same cut `_pool_warehouses` and the On hand lightbox
+    # (`location_stock_service.location_stock_for_product`) already make. Without it the cell
+    # counted the eleven closed warehouses the lightbox does not list, so the figure the
+    # buyer clicked and the total she landed on disagreed - and worse, stock in a closed
+    # location silently cancelled part of the ask (AC-B3: the total IS the cell).
+    where = ["np.product_id::text = ANY(:pids)", "w.is_active"]
     if prod_scope:
         where.append(prod_scope)
     if wh_scope:

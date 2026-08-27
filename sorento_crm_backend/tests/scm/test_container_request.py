@@ -134,19 +134,22 @@ def _row(rows: list[dict], key: str, w: World) -> dict:
     return next(r for r in rows if r["item_code"] == code)
 
 
-def _warehouse(db, *, segment: str | None = None) -> Warehouse:
+def _warehouse(db, *, segment: str | None = None, is_active: bool = True) -> Warehouse:
     """A location. `segment='project'` makes it a GROUP location - stock there is spoken for.
 
     The pool predicate is `COALESCE(segment, 'dealer') <> 'project'`, the reorder engine's own
     (`reorder_run_service`), so a warehouse with no segment stated is a site pool: a location
     nobody has classified is not assumed to be a project bin.
+
+    `is_active=False` is a CLOSED location - eleven of them exist in the live book, and they
+    are not a site anyone can ask stock from.
     """
     wh = Warehouse(
         id=str(uuid.uuid4()),
         warehouse_code=f"{MARKER}-WH-{uuid.uuid4().hex[:8]}",
         warehouse_name=f"{MARKER} warehouse",
         segment=segment,
-        is_active=True,
+        is_active=is_active,
     )
     db.add(wh)
     db.flush()
@@ -504,6 +507,35 @@ def test_build_on_hand_counts_site_pools_only_and_reports_group_stock_beside_it(
     assert row["on_hand"] == 200
     assert row["on_hand_group"] == 50
     assert row["suggested_qty"] == 300  # 500 - 200, the group 50 is NOT netted
+
+
+def test_build_counts_active_locations_only(scm_app):
+    # AC-B3. The On hand lightbox lists ACTIVE locations only
+    # (`location_stock_service.location_stock_for_product`, and `_pool_warehouses` for the
+    # zero rows), so a cell counting closed ones could not equal the total the reader lands
+    # on. Worse than a cosmetic gap: 17,356 units sit in closed pool locations on the live
+    # book (SPARE/P, REWORK, STAGING, PARTS, SHOWROOM...), and every one of them was
+    # cancelling part of an ask for stock nobody can ship.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    closed = _warehouse(db, is_active=False)
+    _on_hand(db, w, "A", pool, 200)
+    _on_hand(db, w, "A", closed, 60)
+
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["on_hand"] == 200
+    # Not muted into the group figure either: a closed location is neither a pool nor a bin.
+    assert row["on_hand_group"] == 0
+    assert closed.warehouse_code not in {s["warehouse_code"] for s in row["sites"]}
+    assert closed.warehouse_code not in row["group_locations"]["warehouse_codes"]
+    assert row["suggested_qty"] == 300  # 500 - 200, the closed 60 is NOT netted
 
 
 def test_build_spo_counts_site_pools_only(scm_app):
