@@ -1551,3 +1551,109 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
     ).toHaveLength(4);
   });
 });
+
+/**
+ * The per-product basis on the Product view (`PLAN-scm-reorder-per-product.md`, AC-R8).
+ *
+ * The fixture is the exact shape `GET .../recommendations?query=SRTWT7408` returned on run
+ * c05363a1 (27 Aug): one product row naming no warehouse, one BRW disposition, one row for
+ * the neighbouring code - plus B2155-NL-BLUE's needs_level product row.
+ */
+describe('PlanLinesGrid - the product row is the plan row on a per-product run', () => {
+  const productRow = line({
+    id: 'rec-product', product_id: 'p-srt', sku: 'SRTWT7408', type: 'covered',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: 500,
+    order_qty: 7, recommended_qty: 0, net_position: 5758,
+    on_hand: 5495, project_on_hand: 4201, incoming_spo: 0, outstanding_po: 263,
+    outstanding_sales: 7, project_committed: 0, retail_committed: 7, project_need: 0,
+    covered_committed: 7, covered_available: 5758, rank: null,
+  });
+  const brwDisposition = line({
+    id: 'rec-disposition', product_id: 'p-srt', sku: 'SRTWT7408', type: 'disposition',
+    warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    policy_type: 'reorder_level', disposition_action: 'hold',
+    order_qty: 0, recommended_qty: null, on_hand: 1296, outstanding_po: 270,
+    outstanding_sales: 0, project_committed: 0, retail_committed: 0, rank: null,
+  });
+  const needsLevelRow = line({
+    id: 'rec-b2155', product_id: 'p-b2155', sku: 'B2155-NL-BLUE', type: 'needs_level',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+    order_qty: 0, recommended_qty: null, on_hand: 28828, net_position: 31892,
+    project_committed: 0, retail_committed: 3, rank: null,
+  });
+
+  function renderProductGrid(lines: PlanLine[], levelFor?: (l: PlanLine) => unknown) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PlanLinesGrid
+          lines={lines}
+          decisions={{}}
+          onDecide={vi.fn()}
+          onClear={vi.fn()}
+          groupByChannel
+          runId="run-1"
+          levelFor={levelFor as never}
+          staleAfterDays={180}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('shows the product row figures, not the BRW disposition standing in for them', () => {
+    renderProductGrid([productRow, brwDisposition]);
+    const row = screen.getByText('SRTWT7408').closest('tr') as HTMLElement;
+    expect(within(row).getByText('5,495')).toBeInTheDocument();
+    expect(within(row).queryByText('1,296')).not.toBeInTheDocument();
+    expect(within(row).getByText('263')).toBeInTheDocument();
+    expect(within(row).queryByText('270')).not.toBeInTheDocument();
+  });
+
+  it('suggests 0 on a covered row - never the rounded "buy anyway" offer, never a dash', () => {
+    renderProductGrid([productRow, brwDisposition]);
+    const row = screen.getByText('SRTWT7408').closest('tr') as HTMLElement;
+    const suggested = within(row).getByLabelText('Explain order qty for SRTWT7408')
+      .parentElement?.parentElement as HTMLElement;
+    expect(suggested.textContent).toContain('0');
+    expect(suggested.textContent).not.toContain('7');
+  });
+
+  it('keeps the Explain order qty trigger, so the ledger can open on the product row', () => {
+    renderProductGrid([productRow, brwDisposition]);
+    expect(
+      screen.getByLabelText('Explain order qty for SRTWT7408'),
+    ).toBeInTheDocument();
+  });
+
+  it('expands to the locations underneath, without repeating the product row itself', () => {
+    renderProductGrid([productRow, brwDisposition]);
+    fireEvent.click(screen.getByText('SRTWT7408'));
+    expect(screen.getByText('Butterworth')).toBeInTheDocument();
+    // The product row names no warehouse, so it would read "Network" inside the panel -
+    // a second copy of the row the reader is already looking at.
+    expect(screen.queryByText('Network')).not.toBeInTheDocument();
+  });
+
+  it('a needs_level product row carries its level cell and a 0, never a dash', () => {
+    const suggestion = {
+      product_id: 'p-b2155', warehouse_id: null, product_code: 'B2155-NL-BLUE',
+      product_name: 'B2155', warehouse_code: null, warehouse_name: null,
+      current_level: null, suggested_level: 12, suggested_at: null, amended_level: null,
+      amended_at: null, amended_by: null, master_reorder_quantity: null,
+      suggested_quantity: 12,
+      basis: { months: [], months_studied: 3, total_qty: 36, avg_monthly: 6,
+               cover_months: 2, raw_level: 12, moq: null, order_multiple: null,
+               trend: null, no_movement: false },
+    };
+    renderProductGrid([needsLevelRow], (l) =>
+      l.product_id === 'p-b2155' ? suggestion : undefined,
+    );
+    const row = screen.getByText('B2155-NL-BLUE').closest('tr') as HTMLElement;
+    expect(within(row).getByLabelText('Level suggestion')).toBeInTheDocument();
+    expect(
+      within(row).getByLabelText('Explain order qty for B2155-NL-BLUE'),
+    ).toBeInTheDocument();
+  });
+});

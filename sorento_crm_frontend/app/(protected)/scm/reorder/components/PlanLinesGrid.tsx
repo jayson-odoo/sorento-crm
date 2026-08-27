@@ -315,8 +315,11 @@ function GroupMembersPanel({
   runId: string | null;
   onOpenMember: (rec: ReorderRecommendation) => void;
 }) {
-  const active = group.members.filter(memberHasActivity);
-  const visible = active.length > 0 ? active : group.members;
+  // The product's own row is the row above this panel, so it is not repeated inside it.
+  // What belongs here is where the item actually sits: the per-location rows.
+  const locations = group.members.filter((m) => m.id !== group.productLine?.id);
+  const active = locations.filter(memberHasActivity);
+  const visible = active.length > 0 ? active : locations;
   const productId = group.members[0]?.product_id ?? null;
   const { data: liveStock, isLoading: liveLoading } = useLocationStock(productId, true);
 
@@ -729,9 +732,15 @@ export function PlanLinesGrid({
       purchaseTrendReady: liveTrendReady,
       onOpenPurchaseTrend: liveOnNeedPurchaseTrend,
     } = suggestedQtyCellInputsRef.current;
+    // A covered row is telling the buyer they already have it, so the quantity it SUGGESTS
+    // is 0 - never the rounded "buy anyway" offer, which is what the engine still stores on
+    // the row for the Covered-by-stock view and for the decision the buyer records if they
+    // take it. Read off the row's own kind rather than a zeroed field, so nothing else that
+    // reads `order_qty` (the ledger, the decision cell) loses the offer.
+    const suggested = original.status === 'covered_by_stock' ? 0 : original.order_qty;
     return (
       <span className="inline-flex items-center gap-1">
-        <span className="tabular-nums">{fmtInt(original.order_qty)}</span>
+        <span className="tabular-nums">{fmtInt(suggested)}</span>
         <StopClick>
           <Popover>
             <PopoverTrigger asChild>
