@@ -305,11 +305,16 @@ export function useClassificationEvidence(productId?: string | null, enabled = t
  *
  * Addressed by ids: two products on the live book share the item code `B2155-NL-BLUE`, so a
  * lookup by code would answer confidently about the wrong one.
+ *
+ * `lineIds` are the cell's own contributing lines. Their rows come back marked, so a planner
+ * can find themselves in a list that is otherwise all other people's documents. Part of the
+ * key, because a different asker is a different answer.
  */
-export function useStockDetail(productId: string, warehouseId: string) {
+export function useStockDetail(productId: string, warehouseId: string, lineIds: string[] = []) {
+  const key = lineIds.join(',');
   return useQuery({
-    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId],
-    queryFn: () => getStockDetail(productId, warehouseId),
+    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId, key],
+    queryFn: () => getStockDetail(productId, warehouseId, lineIds),
     retry: 1,
     refetchOnWindowFocus: false,
   });

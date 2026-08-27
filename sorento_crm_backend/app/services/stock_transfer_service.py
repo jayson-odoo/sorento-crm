@@ -442,18 +442,27 @@ class StockTransferService:
         self,
         *,
         query: Optional[str] = None,
-        state: Optional[str] = None,
+        state: Optional[Sequence[str]] = None,
         kind: Optional[str] = None,
         from_warehouse_id: Optional[str] = None,
         to_warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
         sales_order_id: Optional[str] = None,
+        so_numbers: Optional[Sequence[str]] = None,
         project_sales_order_id: Optional[str] = None,
         sales_agent_id: Optional[str] = None,
     ):
         q = self._base_query()
         if state:
-            q = q.filter(StockTransfer.state == state)
+            # A LIST, because "what has not moved yet" is `proposed` OR `approved` and the
+            # planning board asks that as one question (PLAN section 3.D4). One value is the
+            # same call with a list of one, so the Transfers page's own filter is untouched.
+            q = q.filter(StockTransfer.state.in_(list(state)))
+        if so_numbers:
+            # The board knows its orders by DOCUMENT NUMBER (`?orders=SO404352`), so it asks
+            # by one. Resolved through the join the base query already makes; a number this
+            # system does not hold simply matches nothing.
+            q = q.filter(SalesOrder.so_number.in_(list(so_numbers)))
         if kind:
             q = q.filter(StockTransfer.kind == kind)
         if from_warehouse_id:

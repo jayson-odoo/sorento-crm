@@ -77,6 +77,7 @@ export function CellStockTable({
   itemCode,
   groupNote,
   taken,
+  lineIds,
 }: {
   locations: BoardCellLocation[];
   /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
@@ -97,6 +98,11 @@ export function CellStockTable({
    * the table come to disagree about a line the planner has just amended.
    */
   taken?: Map<string, string>;
+  /**
+   * The cell's own contributing lines, passed down to the expanded documents panel so their
+   * rows are tagged there. The table itself does not read them.
+   */
+  lineIds?: string[];
 }) {
   const drawn = taken ?? EMPTY_TAKEN;
   /**
@@ -257,6 +263,7 @@ export function CellStockTable({
                         warehouseId={entry.warehouse_id as string}
                         itemCode={itemCode}
                         locationCode={entry.location ?? ''}
+                        lineIds={lineIds}
                       />
                     </td>
                   </tr>

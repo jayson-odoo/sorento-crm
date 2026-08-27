@@ -371,6 +371,9 @@ class BoardLineDecision(BaseModel):
     #: Why the composition is not the engine's, in the planner's own words. Absent when they
     #: took the proposal as it stood.
     amend_reason: Optional[str] = None
+    #: The planner flagged this decision as one whose numbers look wrong (R10). Echoed on
+    #: the frozen decision so the warning stays on the pill after a reload.
+    suspected_system_issue: bool = False
 
 
 class BoardLineOrderInquiry(BaseModel):
@@ -612,7 +615,13 @@ class BorrowCandidate(BaseModel):
 
 
 class StockDetailSalesOrder(BaseModel):
-    """One document contributing to a location's SO Qty, as AutoCount's drill-down lists it."""
+    """One document contributing to a location's SO Qty, as AutoCount's drill-down lists it.
+
+    NO RANK AND NO QUEUE STATE (R5, `PLAN-scm-planning-inline-decisions.md` section 3.B3):
+    the list answers "what else is claiming this stock, and when", the queue screen answers
+    "why is that line in front of mine", and carrying half of the second question here made
+    the first one harder to read.
+    """
 
     sales_order_id: str
     so_number: str
@@ -623,22 +632,17 @@ class StockDetailSalesOrder(BaseModel):
     agent_code: Optional[str] = None
     project_label: Optional[str] = None
     demand_class: Optional[str] = None
-    #: The document's own date, and the date the quantity is wanted.
+    #: The document's own date, and the date the quantity is wanted. The list is ordered by
+    #: the second, ascending.
     doc_date: Optional[date] = None
     delivery_date: Optional[date] = None
     so_qty: str
-    #: A confirmed decision already covers this line: committed demand, not merely outstanding.
-    is_covered: bool = False
     #: The CORE sales-order line this document row IS. Addressing only: one order stands
     #: behind a location once per line, so the order id alone does not name a row.
     line_id: Optional[str] = None
-    line_no: Optional[int] = None
-    #: Where this line stands in the pile's queue (1-based, `pile_book` order) and the score
-    #: that put it there, with the same per-factor breakdown the queue screen shows. Null on a
-    #: covered line: its claim is already a hold, so it is not in the queue at all.
-    rank_position: Optional[int] = None
-    rank_score: Optional[float] = None
-    rank_factors: List[BoardRankFactor] = []
+    #: One of the lines the drawer was opened for (`line_ids`), so a planner can find their
+    #: own row in somebody else's list.
+    is_this_line: bool = False
 
 
 class StockDetailIncoming(BaseModel):
@@ -676,8 +680,6 @@ class StockDetail(BaseModel):
     qty_free: str
     sales_orders: List[StockDetailSalesOrder] = []
     incoming: List[StockDetailIncoming] = []
-    #: The `scm.priority_policy` the ranks in `sales_orders` came from.
-    policy_name: Optional[str] = None
 
 
 class PileQueueLine(BaseModel):

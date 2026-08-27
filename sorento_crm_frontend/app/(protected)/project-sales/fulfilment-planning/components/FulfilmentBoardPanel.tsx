@@ -511,7 +511,13 @@ export function FulfilmentBoardPanel({
       }
       if (orders.length === 0) return;
 
-      const result = await confirmMany.mutateAsync({ orders });
+      // The batch the board was opened on travels with the press (AC-P3-4). Without it a
+      // Confirm on a `?batch=` board writes an ordinary revision and leaves the planning
+      // change pending for ever - the per-order Confirm carried it before this button
+      // replaced the per-order cards.
+      const result = await confirmMany.mutateAsync(
+        batchId ? { orders, batch_id: batchId } : { orders },
+      );
       setBatchResults(result.results);
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
@@ -558,7 +564,7 @@ export function FulfilmentBoardPanel({
     } finally {
       setConfirmingAll(false);
     }
-  }, [board, allContributions, draft, adopt, confirmMany]);
+  }, [board, allContributions, draft, adopt, confirmMany, batchId]);
 
   /**
    * The rows on screen, and the rows the selection holds.

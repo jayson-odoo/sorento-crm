@@ -1989,7 +1989,11 @@ def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_
     not the 12 the order is resubmitting."""
     client, world = api
     db = world.db
-    stock = _stock(db, world.product, world.pool_wh, on_hand=10)
+    # 20 on hand, deliberately: the subject here is the INCREASE accounting, and asking 12
+    # of a location that physically holds 10 is refused earlier by the R14 on-hand guard for
+    # a different (also true) reason. `quantity_reserved` is what leaves exactly 1 unit free
+    # beyond this order's own carried 10.
+    stock = _stock(db, world.product, world.pool_wh, on_hand=20)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
@@ -2012,7 +2016,7 @@ def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_
     # The customer orders 2 more, and only 1 unit is free beyond this order's own carried
     # 10 - not enough for the 2-unit increase.
     core_line.qty_ordered = Decimal("12")
-    stock.quantity_reserved = 9
+    stock.quantity_reserved = 19
     db.commit()
 
     second = client.post(

@@ -1207,6 +1207,14 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
 
     confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     confirmed_at = Column(DateTime(timezone=False), nullable=True)
+    #: Any line of this revision was flagged "this might be a system problem" (R10,
+    #: migration 439). The flag itself is per LINE, in `line_snapshots` beside its
+    #: `amend_reason`, which is where every other per-line word of a decision is frozen;
+    #: this is the revision's own answer to "was anything on it flagged", so a doubt can be
+    #: found in SQL without walking a JSONB array.
+    suspected_system_issue = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
 
     supersedes_id = Column(
         UUID(as_uuid=False),

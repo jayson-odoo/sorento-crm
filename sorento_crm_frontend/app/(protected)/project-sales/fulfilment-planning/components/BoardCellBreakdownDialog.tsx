@@ -141,6 +141,18 @@ export function BoardCellBreakdownDialog({
    */
   const taken = React.useMemo(() => takenByLocation(cell, draft), [cell, draft]);
   /**
+   * The lines this drawer is planning, for the documents panel under a location row: their
+   * rows are tagged there, so a planner reading twenty other people's documents can see which
+   * claim is their own (R5). CORE line ids, which is what the drill-down is addressed by.
+   */
+  const askingLineIds = React.useMemo(
+    () =>
+      cell.contributions
+        .map((contribution) => contribution.line_id)
+        .filter((value): value is string => Boolean(value)),
+    [cell.contributions],
+  );
+  /**
    * Did ANY contributing line record what the engine suggested?
    *
    * A revision frozen before `proposed_components` existed (AC-D1) recorded none, and an
@@ -628,6 +640,7 @@ export function BoardCellBreakdownDialog({
             itemCode={cell.item_code}
             groupNote={cell.location_group_note}
             taken={taken}
+            lineIds={askingLineIds}
           />
         </DialogHeader>
 
