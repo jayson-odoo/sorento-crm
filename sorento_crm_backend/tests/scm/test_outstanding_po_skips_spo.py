@@ -320,3 +320,127 @@ def test_the_sales_book_never_applies_the_rule(db):
     assert [l.doc_number for l in read.lines] == [so_number]
     assert read.spo_lines == []
     assert read.shipping_order_row_numbers == []
+
+
+# ------------------------------------------- review round: identity, not file position
+
+
+def _multi_line_book(codes: Codes, spo_number: str, items) -> bytes:
+    """One shipping order stating several products, in the order the export wrote them."""
+    return po_workbook(
+        [
+            po_minimal_row(spo_number, codes.creditor_main, item, qty,
+                           date(2026, 8, 1), codes.loc_project)
+            for item, qty in items
+        ],
+        headers=PO_MINIMAL,
+    )
+
+
+def _rows_by_product(db, spo_number: str) -> dict[str, dict]:
+    rows = db.execute(
+        text(
+            "SELECT a.id, a.spo_line_number, a.line_status, p.product_code "
+            "FROM spo_allocations a JOIN products p ON p.id = a.product_id "
+            "WHERE a.spo_number = :n"
+        ),
+        {"n": spo_number},
+    ).mappings().all()
+    return {row["product_code"]: dict(row) for row in rows}
+
+
+def test_a_re_export_that_drops_a_line_does_not_re_key_the_rest(seeded, db):
+    """The line's identity was its POSITION IN THE FILE, so a re-export that no longer
+    states a fully received line moved every line below it up one - and each of those rows
+    kept its id while gaining a different product. Anything pointing at that row (an order
+    inquiry link, its audit claim, a container tick) then described goods nobody ordered.
+
+    Identity is `(shipping order, item, location, which occurrence of the three)` mapped
+    onto a line number the row KEEPS.
+    """
+    codes = seeded
+    spo = _spo_number()
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_rl, 100), (codes.item_wt, 60), (codes.item_blue, 40),
+    ]), PO)
+    before = _rows_by_product(db, spo)
+    assert len(before) == 3
+
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_wt, 60), (codes.item_blue, 40),
+    ]), PO)
+
+    after = _rows_by_product(db, spo)
+    assert after[codes.item_wt]["id"] == before[codes.item_wt]["id"]
+    assert after[codes.item_blue]["id"] == before[codes.item_blue]["id"]
+    assert after[codes.item_wt]["line_status"] == "open"
+    assert after[codes.item_blue]["line_status"] == "open"
+    assert after[codes.item_rl]["id"] == before[codes.item_rl]["id"]
+    assert after[codes.item_rl]["line_status"] == "closed", (
+        "the line the book stopped stating is the one that landed"
+    )
+
+
+def test_the_same_product_twice_on_one_document_keeps_both_rows(seeded, db):
+    """The book states the same item twice on one shipping order and each is a real second
+    container, so the identity counts the OCCURRENCE: two rows in, two rows back."""
+    codes = seeded
+    spo = _spo_number()
+
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_wt, 60), (codes.item_wt, 25),
+    ]), PO)
+    first = sorted(l["spo_line_number"] for l in _allocations(db, spo))
+
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_wt, 60), (codes.item_wt, 25),
+    ]), PO)
+
+    lines = _allocations(db, spo)
+    assert len(lines) == 2, "a re-upload doubled the document"
+    assert sorted(l["spo_line_number"] for l in lines) == first
+    assert sorted(float(l["allocated_quantity"]) for l in lines) == [25.0, 60.0]
+
+
+def test_the_preview_and_the_write_close_the_same_rows(seeded, db):
+    """S3. `stated` was counted AFTER the product lookup on the write and BEFORE it on the
+    preview, so a book carrying one SKU the master does not hold made the two disagree
+    about which lines the book still states - and the operator confirmed one number while
+    a different set of rows was settled."""
+    codes = seeded
+    spo, other = _spo_number(), _spo_number()
+    svc.apply(db, _multi_line_book(codes, spo, [(codes.item_wt, 60)]), PO)
+    book = _multi_line_book(codes, other, [("ZZTOS-NO-SUCH-ITEM", 5), (codes.item_rl, 10)])
+
+    result = svc.preview(db, book, PO)
+    out = svc.apply(db, book, PO)
+
+    assert result.spo_closed == out["spo_closed"]
+    assert result.spo_documents == out["spo_documents"]
+    assert result.spo_lines == out["spo_lines"]
+
+
+def test_a_fractional_quantity_lands_as_a_whole_number(seeded, db):
+    """S8. `allocated_quantity` and `quantity_received` are INTEGER columns and the book's
+    figures are floats, so `ordered = qty + received` handed Postgres 10.400000000000002 to
+    round on its own while the line's own status was decided on the UNROUNDED remainder -
+    a row reading 10 ordered, 10 received and still `open`, which `scm.on_order_v` counts
+    as supply that is never coming. Both figures are rounded here, off the file's own
+    stated order quantity when it has one, and the status follows the two integers.
+    """
+    codes = seeded
+    spo = _spo_number()
+    headers = ("PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "QTY RECEIVED",
+               "ETA", "STOCK LOCATION")
+    book = po_workbook(
+        [(spo, codes.creditor_main, codes.item_wt, 10.4, 10.0, date(2026, 8, 1),
+          codes.loc_project)],
+        headers=headers,
+    )
+
+    svc.apply(db, book, PO)
+
+    line = _allocations(db, spo)[0]
+    assert float(line["allocated_quantity"]) == 10
+    assert float(line["quantity_received"]) == 10
+    assert line["line_status"] == "closed"

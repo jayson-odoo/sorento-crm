@@ -723,6 +723,12 @@ export interface OrderInquiryDocumentAllocation {
   qty: string;
   /** The ROW's handshake state, which is what makes its link a draft or a real one (R1). */
   ack_state?: OrderInquiryAckState | string | null;
+  /**
+   * When the link was made (naive UTC, as every datetime on this wire is). On the schema
+   * since the lightbox landed and missing here, so a reader of this type could not see a
+   * field the endpoint sends.
+   */
+  linked_at?: string | null;
 }
 
 export interface OrderInquiryPoDetail {

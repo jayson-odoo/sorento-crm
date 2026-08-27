@@ -430,6 +430,38 @@ describe('ReorderPlanningView - the decision-progress tile replaces Buy / Covere
   });
 });
 
+describe('ReorderPlanningView - the To confirm tile reads the run summary', () => {
+  /**
+   * The plan counts CONFIRMED order inquiry rows only, so rows still in front of
+   * purchasing are invisible on the very screen that decides what to buy
+   * (`PLAN-scm-oi-handshake.md` section 7, AC-D4). The count arrives on the run summary
+   * as `awaiting_rows` and is LIVE, unlike every frozen figure beside it - and the prop
+   * was hardcoded to 0 here, so the number never reached the screen (review round, S6).
+   */
+  it('states the summary\'s own count and leads to that list', () => {
+    stubToday(todayRun({
+      summary: {
+        buy_count: 7, disposition_count: 3, exception_count: 0,
+        total_cash_impact: 125000, recommendation_count: 10, awaiting_rows: 6,
+      },
+    }));
+    renderView();
+
+    expect(screen.getByText('To confirm')).toBeInTheDocument();
+    expect(screen.getByText('6')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /To confirm/ })).toHaveAttribute(
+      'href', '/project-sales/order-inquiries?ack=to_confirm',
+    );
+  });
+
+  it('shows no tile on a day with nothing waiting', () => {
+    stubToday(todayRun());
+    renderView();
+
+    expect(screen.queryByText('To confirm')).not.toBeInTheDocument();
+  });
+});
+
 describe('ReorderPlanningView - the secondary tile row is gone (direct user feedback, 2026-08-12: "I don\'t really need these")', () => {
   it('never renders Needs a level, Stock allocation, Order summary, Plan exceptions or PO worklist as a tile', () => {
     stubToday(todayRun());

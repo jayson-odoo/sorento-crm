@@ -801,7 +801,14 @@ def test_re_acknowledging_a_changed_row_returns_it_and_links_the_remainder(api):
 
 def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     """AC-H9. A reconfirm that cannot settle in place still owes purchasing the fact that
-    this line is one they had already taken on."""
+    this line is one they had already taken on.
+
+    Walked WITH a document in the book (review round 28 Aug): the purchase order lands
+    after the acknowledgement, so the row purchasing confirmed carries no link and IS
+    superseded, and the replacement is drafted onto the new order by the raise-time cascade
+    (`PLAN-scm-oi-draft-links.md` R6). Both halves matter - the handshake stamp AND the
+    document - because the two rules meet on this one press.
+    """
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
@@ -809,6 +816,9 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
+
+    # The book gains a purchase order for the item AFTER purchasing took the line on.
+    po, _line = _open_po_line(world, qty=50)
 
     # A plain reconfirm of the same line: no settle-in-place seam, so the row is
     # superseded and a fresh one is raised in its place.
@@ -823,6 +833,9 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_changed(api):
     replacement = _order_row(world, fixture["line"])
     assert str(replacement.id) != str(row.id)
     assert replacement.ack_state == ACK_CHANGED
+    assert [link.document for link in _links_of(world, replacement)] == [po.po_number], (
+        "the replacement is drafted onto the document the raise could reach"
+    )
 
 
 def _raise_two_rows(api, *, first_qty="10", second_qty="6"):

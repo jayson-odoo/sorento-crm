@@ -646,11 +646,19 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
     acknowledges, and a chip that still claimed six after they had cleared them would send
     them looking for two that do not exist. Scoped to the rows that could ever BE demand -
     a buy verb, still owed - so a cancelled instruction is not counted as work.
+
+    "Waiting" is the ACK state and nothing else (S6, review round 28 Aug). It used to be
+    read as `awaiting` in `raised` / `partly linked`, and both halves were wrong once the
+    raise started drafting its own links (`PLAN-scm-oi-draft-links.md` R6): a drafted row
+    is `placed`, so the chip emptied itself at exactly the moment purchasing was given
+    something to confirm, and a row CS has AMENDED since (`changed`) is work in front of
+    them too. Cancelled and actioned are out, because nobody is waiting on those.
     """
     from app.models.project_so import (
         ACK_AWAITING,
-        INQUIRY_PARTLY_LINKED,
-        INQUIRY_RAISED,
+        ACK_CHANGED,
+        INQUIRY_ACTIONED,
+        INQUIRY_CANCELLED,
         IV_ORDER,
         IV_ORDER_BACK,
         OrderInquiryRow,
@@ -659,9 +667,9 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
     return int(
         db.query(func.count(OrderInquiryRow.id))
         .filter(
-            OrderInquiryRow.ack_state == ACK_AWAITING,
+            OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
             OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
-            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+            OrderInquiryRow.state.notin_((INQUIRY_CANCELLED, INQUIRY_ACTIONED)),
         )
         .scalar()
         or 0

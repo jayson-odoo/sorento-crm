@@ -861,8 +861,10 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
             "qty": "5",
             "location": "BRW-IB",
             # AC-P3-7: the document lands 2026-08-19 and the line wants it 2026-09-01, so
-            # it is early. The flag reaches this reader too, not only the worklist.
+            # it is early. The flag reaches this reader too, not only the worklist, and so
+            # does the day count beside it (AC-D17) - `None` on a document that is in time.
             "late": False,
+            "late_days": None,
             "expected_date": "2026-08-19",
         }
     ]

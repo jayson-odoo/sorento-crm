@@ -35,6 +35,16 @@ import {
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -284,6 +294,10 @@ export function OrderInquiriesClient() {
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
+  // Unlink selected asks first, like every other detach on this page (the ADR's own
+  // "confirm before every destructive OR detach action"): it takes the documents off
+  // several rows at once, and the quantities go back to demand with nothing to undo it.
+  const [unlinkingSelectedOpen, setUnlinkingSelectedOpen] = React.useState(false);
   const [rejectingSelected, setRejectingSelected] = React.useState(false);
   // The ONE ticked row the manual Link dialog is about (R8). Held by id rather than by
   // the row, so a refetch between the press and the dialog cannot hand it a stale copy.
@@ -613,6 +627,7 @@ export function OrderInquiriesClient() {
         await unplaceOrderInquiryRow(row.id);
       }
       toast.success(`Unlinked ${selectedLinked.length}`);
+      setUnlinkingSelectedOpen(false);
       setRowSelection({});
       void list.refetch();
       void summary.refetch();
@@ -1090,7 +1105,7 @@ export function OrderInquiriesClient() {
                             selectedLinked.length === 0
                               ? 'Tick linked rows to unlink.'
                               : undefined,
-                          onClick: () => void unlinkSelected(),
+                          onClick: () => setUnlinkingSelectedOpen(true),
                         },
                       ]
                     : []),
@@ -1256,6 +1271,30 @@ export function OrderInquiriesClient() {
           onQueued={(queued) => setUploadJobId(queued.job_id)}
         />
       ) : null}
+      <AlertDialog open={unlinkingSelectedOpen} onOpenChange={setUnlinkingSelectedOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink selected</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedLinked.length === 1
+                ? 'Remove this row\u2019s links? That quantity goes back to demand, and the next reorder suggestion counts it again.'
+                : `Remove every link on the ${selectedLinked.length} selected rows? Those quantities go back to demand, and the next reorder suggestion counts them again.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unlinkingSelected}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void unlinkSelected();
+              }}
+              disabled={unlinkingSelected}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}

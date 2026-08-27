@@ -559,6 +559,26 @@ class ProjectOrderInquiryService:
                 # the new Buy would be silently short.
                 if row.redirected_to_pool:
                     continue
+                # A DRAFT is an instruction, not supply (B2, review round 28 Aug). Since
+                # R6 the raise links its own rows, so a row nobody has confirmed is
+                # `placed` within a second of being raised - and the netting below then
+                # read it as quantity purchasing had already bought. A reconfirm carrying
+                # a new date changed nothing at all, a lower quantity raised a
+                # CANCEL_BALANCE exception about a purchase nobody had agreed to, and a
+                # higher one split the line in two. The row goes back to what it is: its
+                # links come down (they were drafts, and the quantity returns to the
+                # document for whoever needs it next) and it is superseded and re-raised
+                # like any raised row, which the raise-time cascade drafts again.
+                # ACKNOWLEDGED is untouched: purchasing said yes, so it IS supply.
+                if row.ack_state != ACK_ACKNOWLEDGED and row.state in (
+                    INQUIRY_PLACED,
+                    INQUIRY_PARTLY_LINKED,
+                ):
+                    self._unplace_drafts([row], trigger="re-raise")
+                    row.state = INQUIRY_CANCELLED
+                    stamp = f"Superseded by revision {decision.revision_no}"
+                    row.note = f"{row.note}; {stamp}" if row.note else stamp
+                    continue
                 if row.state == INQUIRY_ACTIONED:
                     # `mark_rows` is the only writer of this state and it carries no
                     # links, so the row's own quantity is what purchasing dealt with.
@@ -1033,24 +1053,44 @@ class ProjectOrderInquiryService:
         with none belongs to the amendment path, which is a different instruction to
         purchasing and is not this method's to touch. An `actioned` row stays, exactly as
         it does on a covered line - placed supply is in the ledger.
+
+        A DRAFTED row counts as still-raised here (B3, review round 28 Aug). Since R6 the
+        raise links its own rows, so a row nobody has confirmed reads `placed` or `partly
+        linked` within a second of being raised - and a filter that only knew `raised` left
+        every one of them alive on a line CS had taken back out of the decision, holding
+        purchase-order quantity for an instruction that no longer exists. The links come
+        down with the row, because they were drafts and the document is owed to whoever
+        needs it next. A CONFIRMED row is left exactly where it is: purchasing bought it.
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
         stale = (
             self.db.query(OrderInquiryRow)
             .filter(
                 OrderInquiryRow.order_inquiry_id == inquiry.id,
-                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.state.in_(
+                    (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+                ),
                 OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
                 OrderInquiryRow.supply_decision_id.isnot(None),
                 OrderInquiryRow.supply_decision_id != decision.id,
             )
             .all()
         )
+        stamp = f"Superseded by revision {decision.revision_no}"
         for row in stale:
             if str(row.so_line_id) in covered:
                 continue
+            if row.state == INQUIRY_RAISED:
+                row.state = INQUIRY_CANCELLED
+                row.note = stamp
+                continue
+            if row.ack_state == ACK_ACKNOWLEDGED:
+                continue
+            # The draft's own history is kept rather than overwritten: which document it
+            # was holding, and that the retirement is what took it back.
+            self._unplace_drafts([row], trigger="retired")
             row.state = INQUIRY_CANCELLED
-            row.note = f"Superseded by revision {decision.revision_no}"
+            row.note = f"{row.note}; {stamp}" if row.note else stamp
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
@@ -2208,15 +2248,21 @@ class ProjectOrderInquiryService:
         leaves the buyer to work out which half from a screen that has already moved on,
         and the dialog asked one question about all of them.
 
-        Each row then goes through the same `_reject_one` a single refusal does, so the two
-        doors cannot come to mean different things.
+        Every row is STAMPED first and the sales orders are un-decided afterwards, ONE call
+        per order carrying every line the batch refused (B4, review round 28 Aug). Row by
+        row it could not work: un-decking one line writes a fresh revision of the whole
+        order, and that revision cancels and re-raises the other lines' rows - so the
+        second refusal stamped a row that had just been superseded while its live
+        replacement went on sitting in front of purchasing as if nobody had refused it. One
+        revision per order also matches what the buyer did: they pressed once.
         """
         text_reason = self._reject_reason(reason)
         rows = self._rows_or_404(row_ids)
         for row in rows:
             self._assert_rejectable(row)
         for row in rows:
-            self._reject_one(row, reason=text_reason, actor_user_id=actor_user_id)
+            self._stamp_rejected(row, reason=text_reason, actor_user_id=actor_user_id)
+        self._uncover_rejected_lines(rows, actor_user_id=actor_user_id)
         return {
             "rejected": len(rows),
             "results": [{"row_id": str(row.id), "ok": True} for row in rows],
@@ -2257,6 +2303,18 @@ class ProjectOrderInquiryService:
     ) -> None:
         """Take the row's documents back, stamp the refusal, and uncover its line.
 
+        ONE row, which is the per-row endpoint's whole job. The batch stamps every row
+        first and then un-decides each ORDER once (`reject_rows`), because a revision
+        written between two refusals moves the rows the second one is about.
+        """
+        self._stamp_rejected(row, reason=reason, actor_user_id=actor_user_id)
+        self._uncover_rejected_line(row, actor_user_id=actor_user_id)
+
+    def _stamp_rejected(
+        self, row: OrderInquiryRow, *, reason: str, actor_user_id: str
+    ) -> None:
+        """The refusal itself: the documents back, then who refused it, when and why.
+
         The unlink comes FIRST and is not optional: every link on a refused row was a claim
         on somebody's purchase order, and leaving it there would hold quantity for an
         instruction nobody is answering.
@@ -2272,7 +2330,6 @@ class ProjectOrderInquiryService:
         row.rejected_reason = reason
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
-        self._uncover_rejected_line(row, actor_user_id=actor_user_id)
 
     def _uncover_rejected_line(self, row: OrderInquiryRow, *, actor_user_id: str) -> None:
         """Send the rejected row's sales-order line back to the board undecided.
@@ -2285,26 +2342,47 @@ class ProjectOrderInquiryService:
         is an ordinary outcome and not a failure. Everything else goes through the ONE
         seam: a fresh revision carrying every line but this one.
         """
-        if not row.so_line_id:
-            return
-        line = self._line_or_none(str(row.so_line_id))
-        if line is None:
-            return
-        order = (
-            self.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.id == line.project_sales_order_id)
-            .first()
-        )
-        if order is None:
+        self._uncover_rejected_lines([row], actor_user_id=actor_user_id)
+
+    def _uncover_rejected_lines(
+        self, rows: Sequence[OrderInquiryRow], *, actor_user_id: str
+    ) -> None:
+        """The same un-decide for a BATCH: one call per sales order, every refused line of
+        that order named in it.
+
+        Grouped rather than looped (B4): each call writes a revision of the WHOLE order, so
+        a second call for a sibling line would be undoing and redoing the first one's work
+        - and, worse, would cancel and re-raise the rows the rest of the batch is about.
+        """
+        by_order: Dict[str, Tuple[Any, List[str]]] = {}
+        for row in rows:
+            if not row.so_line_id:
+                continue
+            line = self._line_or_none(str(row.so_line_id))
+            if line is None:
+                continue
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == line.project_sales_order_id)
+                .first()
+            )
+            if order is None:
+                continue
+            _order, line_ids = by_order.setdefault(str(order.id), (order, []))
+            if str(line.id) not in line_ids:
+                line_ids.append(str(line.id))
+        if not by_order:
             return
         from app.services.project_supply_service import ProjectSupplyService
 
-        ProjectSupplyService(self.db).uncover_lines(
-            order,
-            [str(line.id)],
-            actor_user_id=actor_user_id,
-            reason="Purchasing rejected the order inquiry row for this line.",
-        )
+        supply = ProjectSupplyService(self.db)
+        for order, line_ids in by_order.values():
+            supply.uncover_lines(
+                order,
+                line_ids,
+                actor_user_id=actor_user_id,
+                reason="Purchasing rejected the order inquiry row for this line.",
+            )
 
     def link_now(
         self,
@@ -2617,9 +2695,18 @@ class ProjectOrderInquiryService:
         return {document: rank for rank, document in enumerate(ordered)}
 
     def _candidates_for_row(
-        self, row: OrderInquiryRow, *, manual: bool = False
+        self, row: OrderInquiryRow, *, manual: bool = False, credit_own_links: bool = False
     ) -> List[Dict[str, Any]]:
         """Every open document line this row could be linked to, in the walk's own order.
+
+        `credit_own_links` asks the question a RE-DEAL has to ask: what could this row
+        reach if it gave back what it is already holding? Its own links are added back to
+        every line's `remaining`, so the walk compares the document it sits on against the
+        alternatives on equal terms - without which a row fully covering itself would find
+        its own line "fully claimed" and move to a worse one. Nothing is unlinked to ask
+        it (B1, review round 28 Aug): the answer is computed FIRST and the links come down
+        only once there is a better one to write, so a row whose candidate has gone, or
+        that the horizon holds back, keeps what it has.
 
         `manual` widens it to a purchase order that is not yet ACTIVE. The automatic walk
         refuses one deliberately - a `draft_recommendation` order is not an outstanding
@@ -2653,6 +2740,15 @@ class ProjectOrderInquiryService:
         if not product_id:
             return []
         by_po, by_spo = self._linked_by_target()
+        if credit_own_links:
+            by_po, by_spo = dict(by_po), dict(by_spo)
+            for link in self._links_of(str(row.id)):
+                key = str(link.po_line_id) if link.po_line_id else None
+                if key and key in by_po:
+                    by_po[key] = by_po[key] - _dec(link.qty)
+                key = str(link.spo_allocation_id) if link.spo_allocation_id else None
+                if key and key in by_spo:
+                    by_spo[key] = by_spo[key] - _dec(link.qty)
         pools = self._pool_codes()
         cited = self._cited_documents(row)
         own_location = (row.stock_location or "").strip().upper() or None
@@ -2765,7 +2861,16 @@ class ProjectOrderInquiryService:
                 # it: its ticks say "this row is served by THIS container line", the line
                 # is at the site the split just sent it to, and that is a deliberate
                 # instruction rather than the automatic walk helping itself.
-                if not manual and str(location or "").strip().upper() not in pools:
+                #
+                # The WAREHOUSE and never the book's raw code (review round 28 Aug): the
+                # listing's own read of the same rule (`link_candidate_products`) joins the
+                # warehouse and can read nothing else, so a book line carrying a pool-shaped
+                # code the master does not hold would have been dealt here and reported as
+                # no candidate there - the flag offering a Link the dialog then shows empty.
+                if not manual and (
+                    str(warehouse.warehouse_code if warehouse else "").strip().upper()
+                    not in pools
+                ):
                     continue
                 candidates.append(
                     self._candidate(
@@ -2896,7 +3001,8 @@ class ProjectOrderInquiryService:
         }
 
     def _groups_awaiting_a_link(self, product_id: str) -> set:
-        """The ownership groups holding a still-unlinked row of this product - the demand a purchase order at that group was bought for.
+        """The ownership groups holding a still-unlinked row of this product - the demand
+        a purchase order at that group was bought for.
 
         The LISTING's own read (`link_candidate_products`), which answers per product and
         has no row in hand. The per-ROW exemption the candidate walk applies is
@@ -2914,10 +3020,12 @@ class ProjectOrderInquiryService:
         `PLAN-scm-oi-draft-links.md` R6: the cascade drafts for them now, and the demand a
         group's purchase order was bought for is exactly the row CS has just raised - the
         earlier `ACK_LINKABLE` reading refused a group its own buy until somebody had
-        pressed Confirm, which is the press this whole plan exists to answer. The row's group is its own stated `stock_location`
-        where it has one, and otherwise the reconciled core line's warehouse - the same two
-        arms `rows_needed_at` reads a row's location through. A row that resolves to no
-        location belongs to no group and is not evidence about one.
+        pressed Confirm, which is the press this whole plan exists to answer.
+
+        The row's group is its own stated `stock_location` where it has one, and otherwise
+        the reconciled core line's warehouse - the same two arms `rows_needed_at` reads a
+        row's location through. A row that resolves to no location belongs to no group and
+        is not evidence about one.
 
         MEMOISED per product on the instance (S3, code review 27 Aug 2026): it costs up to
         three queries and the cascade asks it once per row, which on a full pass over one
@@ -3727,9 +3835,12 @@ class ProjectOrderInquiryService:
           board's own confirm - and a purchase-order confirm, and Auto link all - find the
           documents up front rather than leaving the page blank until somebody presses
           Confirm. The links it writes read as drafts because their rows are awaiting;
-        * `redeal_drafts` UNPLACES the drafts of the rows in scope before dealing, so a
-          nearer document that has arrived since can take over. Only drafts: a confirmed
-          row's link is a promise, and no automatic pass ever moves it (R2).
+        * `redeal_drafts` lets a draft MOVE, so a nearer document that has arrived since can
+          take over. Only drafts: a confirmed row's link is a promise, and no automatic pass
+          ever moves it (R2). The take is computed first and the old links come down only
+          when there is a better answer to write in their place, so a row the horizon holds
+          back, a row whose document has closed, and a row the walk lands on the same
+          document again all come out of the pass exactly as they went in (B1/S4).
 
         Both default to false, so Confirm's own cascade and every existing caller keep the
         acknowledged-only gate they were written under.
@@ -3777,8 +3888,6 @@ class ProjectOrderInquiryService:
             query = narrowed
 
         rows = query.all()
-        if redeal_drafts:
-            self._unplace_drafts(rows, trigger=trigger)
         rows = self._rank_raised_rows(rows)
         # LADDER V4 (section 1d): prime the availability reader ONCE, from every product
         # this pass will ask about. `_netting` rebuilds whenever it meets a product it has
@@ -3794,7 +3903,17 @@ class ProjectOrderInquiryService:
             product_id = self._resolve_product_id(row)
             if not product_id:
                 continue
-            need = self._unlinked_need(row)
+            # A DRAFT this pass may re-deal: its links come down only if the walk finds
+            # something better to write, so from here the row is measured as if it were
+            # holding nothing (B1, review round 28 Aug). Held per ROW rather than over the
+            # whole scope, because every guard below is a reason to leave a row exactly as
+            # it is - and a scope-wide unplace had already taken the answer away by then.
+            drafts = (
+                self._links_of(str(row.id))
+                if redeal_drafts and row.ack_state != ACK_ACKNOWLEDGED
+                else []
+            )
+            need = _dec(row.qty) if drafts else self._unlinked_need(row)
             if need <= _ZERO:
                 continue
             # The horizon, checked on a row that still has something to link and before any
@@ -3803,12 +3922,21 @@ class ProjectOrderInquiryService:
             if self._after_horizon(row, link_up_to):
                 after_horizon += 1
                 continue
-            candidates = self._candidates_for_row(row)
+            candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
                 continue
             takes = self._cascade_take(candidates, need)
             if not takes:
                 continue
+            if drafts and self._same_placement(drafts, takes):
+                # The best answer today is the one the row already holds. Deleting and
+                # rewriting identical links would move the audit trail and append
+                # "Unlinked from X; Re-dealt by <trigger>" to the note on every press
+                # (S4), so a buyer pressing Auto link all twice read a row that looked
+                # like it had changed document twice and had not moved at all.
+                continue
+            if drafts:
+                self._unplace_drafts([row], trigger=trigger)
             self.place_on_po_allocations(
                 row.id,
                 [
@@ -3836,6 +3964,26 @@ class ProjectOrderInquiryService:
             "link_up_to": link_up_to,
             "link_horizon": self._horizon_mode(link_up_to),
         }
+
+    @staticmethod
+    def _same_placement(
+        links: Sequence[OrderInquiryLink],
+        takes: Sequence[Tuple[Dict[str, Any], Decimal]],
+    ) -> bool:
+        """Would the re-deal write exactly what the row already holds? (S4)
+
+        Compared as a MULTISET of (target, quantity): the walk may return the same
+        documents in a different order and that is not a change, while two links of 5 on
+        one line are not the same answer as one of 10.
+        """
+        held = sorted(
+            (str(link.spo_allocation_id or link.po_line_id or ""), _dec(link.qty))
+            for link in links
+        )
+        offered = sorted(
+            (str(candidate["target_id"]), _dec(qty)) for candidate, qty in takes
+        )
+        return held == offered
 
     def _unplace_drafts(self, rows: Sequence[OrderInquiryRow], *, trigger: str) -> None:
         """Take the DRAFT links off these rows so the walk can deal them again (R2).

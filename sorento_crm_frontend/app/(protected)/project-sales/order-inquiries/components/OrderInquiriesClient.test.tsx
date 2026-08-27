@@ -517,6 +517,49 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
   });
 });
 
+describe('Unlink selected asks first', () => {
+  it('opens a confirmation rather than unlinking on the press itself', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    // row-5 is `placed`, so it is the one Unlink selected counts.
+    fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(unplaceOrderInquiryRow).not.toHaveBeenCalled();
+  });
+
+  it('unlinks the ticked rows once the confirmation is taken', async () => {
+    unplaceOrderInquiryRow.mockResolvedValue({});
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unlink' }));
+
+    await waitFor(() => expect(unplaceOrderInquiryRow).toHaveBeenCalledWith('row-5'));
+  });
+
+  it('changes nothing when the confirmation is cancelled', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Unlink selected (1)' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(unplaceOrderInquiryRow).not.toHaveBeenCalled();
+  });
+});
+
 describe('AC-D5: Confirm selected', () => {
   it('sends exactly the ticked row ids, with no horizon of its own (R6)', async () => {
     acknowledgeOrderInquiryRows.mockResolvedValue({ acknowledged: 2, linked_rows: 1, links: 1 });

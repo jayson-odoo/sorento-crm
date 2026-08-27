@@ -621,8 +621,12 @@ def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
     # the plan's own SELECT: acknowledged + changed only - the awaiting row is nothing
     # to buy against yet.
     assert _project_committed(world, planned=True) == Decimal("9")
-    # the chip: exactly the one row nobody has acted on.
-    assert awaiting_acknowledgement_rows(world.db) == before_awaiting + 1
+    # The chip counts what is still IN FRONT of purchasing, which is the To confirm set
+    # the page itself opens on (R3): the row nobody has read AND the row CS has amended
+    # since it was read. The rejected row is nobody's work - it went back to CS - and the
+    # count is blind to whether a draft has made either row `placed` (S6, review round
+    # 28 Aug), which is the state every row reaches a second after it is raised.
+    assert awaiting_acknowledgement_rows(world.db) == before_awaiting + 2
 
     world.db.refresh(awaiting["row"])
     assert awaiting["row"].ack_state == ACK_AWAITING

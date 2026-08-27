@@ -61,19 +61,25 @@ from app.services.project_order_inquiry_service import ProjectOrderInquiryServic
 from .test_order_inquiry_handshake import (
     ACK_URL,
     BASE,
+    FAR,
+    HORIZON,
     LINK_NOW,
     LIST,
     MARKER,
     NOW,
+    PURCHASING,
     WAS,
     _as_purchasing,
     _client,
+    _confirm,
+    _line_payload,
     _links_of,
     _open_po_line,
     _order_row,
     _product,
     _project_committed,
     _raise_one_row,
+    _raise_two_rows,
     _restore,
     _settle,
     _supplier,
@@ -814,3 +820,495 @@ def test_the_shipping_order_lightbox_denies_a_user_without_the_view_grant(world)
         _restore(originals)
 
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Review round (28 Aug): the re-deal never costs a row the links it already has
+# ---------------------------------------------------------------------------
+
+
+def test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off(api):
+    """B1. The unplace used to run over the WHOLE scope before the per-row guards, so a
+    drafted row the buyer had since moved past the cut off lost its documents and was
+    reported as merely "held back". A press that leaves a row alone must leave its links
+    alone: the cut off says "do not deal this one", not "take back what it holds"."""
+    _client, world = api
+    _po, _line = _open_po_line(world, qty=50)
+    row = _raise_one_row(api, qty="10")["row"]
+    before = [str(link.id) for link in _links_of(world, row)]
+    assert before, "the draft has to exist for the test to mean anything"
+
+    row.delivery_date = FAR
+    world.db.flush()
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(AUTO_PLACE, json={"link_up_to": HORIZON.isoformat()})
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    # `>= 1`: this suite runs on the shared prod-copy database, whose own rows are past
+    # this cut off too. What matters is that THIS row was counted and left alone.
+    assert response.json()["after_horizon"] >= 1
+    assert [str(link.id) for link in _links_of(world, row)] == before
+
+
+def test_auto_link_all_keeps_the_draft_when_the_document_has_since_closed(api):
+    """B1, the other half. The re-deal found no candidate at all - the purchase order was
+    received and closed between the raise and the press - and the old answer is still the
+    best one anybody has. Taking it down would leave the row reading "Not found (new
+    order)" for a quantity that IS on its way."""
+    _client, world = api
+    po, line = _open_po_line(world, qty=50)
+    row = _raise_one_row(api, qty="10")["row"]
+    before = [str(link.id) for link in _links_of(world, row)]
+    assert before
+
+    line.line_status = "closed"
+    world.db.flush()
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(AUTO_PLACE, json={}).status_code == 200
+    world.db.commit()
+
+    assert [str(link.id) for link in _links_of(world, row)] == before
+    assert _link_documents(world, row) == [po.po_number]
+
+
+def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
+    """S4. The re-deal deleted and rewrote identical links on every press, and wrote
+    "Unlinked from X; Re-dealt by worklist" onto the row's note each time - so a buyer who
+    pressed the button twice read a row that looked like it had moved twice. The take is
+    computed first, and a take that matches what the row already holds is skipped."""
+    _client, world = api
+    _open_po_line(world, qty=50)
+    row = _raise_one_row(api, qty="10")["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(AUTO_PLACE, json={}).status_code == 200
+        world.db.commit()
+        world.db.refresh(row)
+        first = [str(link.id) for link in _links_of(world, row)]
+        note = row.note
+        assert buyer.post(AUTO_PLACE, json={}).status_code == 200
+    world.db.commit()
+
+    world.db.refresh(row)
+    assert [str(link.id) for link in _links_of(world, row)] == first
+    assert row.note == note
+
+
+# ---------------------------------------------------------------------------
+# B2: a re-confirm of a DRAFTED row re-raises it rather than netting it as bought
+# ---------------------------------------------------------------------------
+
+
+def test_a_reconfirm_with_a_new_date_re_raises_the_drafted_row_on_that_date(api):
+    """B2. A draft made the row `placed`, and the reconfirm netted it as supply already
+    bought - so a board re-confirm carrying a new delivery date did nothing at all and the
+    row went on saying the old one. A row nobody has confirmed is an instruction, not
+    supply: it is unlinked, superseded, and re-raised on the new date (which the raise-time
+    cascade then drafts again)."""
+    _client, world = api
+    po, _line = _open_po_line(world, qty=50)
+    fixture = _raise_one_row(api)
+    row = fixture["row"]
+    assert _links_of(world, row), "the draft has to exist for the test to mean anything"
+
+    fixture["core_line"].required_date = NOW
+    fixture["line"].delivery_date = NOW
+    world.db.flush()
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.refresh(row)
+    assert row.state == INQUIRY_CANCELLED, "the draft was netted as if it were bought"
+    assert _links_of(world, row) == [], "and it kept the document with it"
+    replacement = _order_row(world, fixture["line"])
+    assert replacement.delivery_date == NOW
+    assert _link_documents(world, replacement) == [po.po_number]
+
+
+def test_a_reconfirm_that_lowers_a_drafted_rows_quantity_raises_no_exception(api):
+    """B2. `placed > need` wrote a CANCEL_BALANCE exception - "purchasing bought 10, CS now
+    wants 4" - about a purchase nobody had agreed to."""
+    _client, world = api
+    _open_po_line(world, qty=50)
+    fixture = _raise_one_row(api, qty="10")
+    row = fixture["row"]
+
+    fixture["core_line"].qty_ordered = Decimal("4")
+    fixture["line"].qty = Decimal("4")
+    world.db.flush()
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="4")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    assert response.json()["exceptions"] == []
+    assert _cancel_balance_rows(world, fixture["line"]) == []
+    live = _live_rows(world, fixture["line"])
+    assert [str(item.qty) for item in live] == ["4.0000"]
+    assert sum(
+        Decimal(str(link.qty)) for link in _links_of(world, live[0])
+    ) == Decimal("4")
+
+
+def test_a_reconfirm_that_raises_a_drafted_rows_quantity_leaves_one_row(api):
+    """B2. The netting split the line: 10 already "placed" plus a fresh 5, two rows in
+    front of purchasing for one instruction. One row of 15, drafted."""
+    _client, world = api
+    _open_po_line(world, qty=50)
+    fixture = _raise_one_row(api, qty="10")
+
+    fixture["core_line"].qty_ordered = Decimal("15")
+    fixture["line"].qty = Decimal("15")
+    world.db.flush()
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="15")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    live = _live_rows(world, fixture["line"])
+    assert [str(item.qty) for item in live] == ["15.0000"]
+    assert sum(
+        Decimal(str(link.qty)) for link in _links_of(world, live[0])
+    ) == Decimal("15")
+
+
+def test_a_confirmed_rows_links_survive_a_reconfirm_untouched(api):
+    """The other side of B2, and the rule it must not break: purchasing said yes, so the
+    row IS supply and a reconfirm nets it exactly as it always did."""
+    _client, world = api
+    po, _line = _open_po_line(world, qty=50)
+    fixture = _raise_one_row(api, qty="10")
+    row = fixture["row"]
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+    before = [str(link.id) for link in _links_of(world, row)]
+
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.refresh(row)
+    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.state == INQUIRY_PLACED
+    assert [str(link.id) for link in _links_of(world, row)] == before
+    assert _link_documents(world, row) == [po.po_number]
+
+
+# ---------------------------------------------------------------------------
+# B3: a drafted row whose line leaves the revision is retired with it
+# ---------------------------------------------------------------------------
+
+
+def test_a_drafted_row_is_retired_when_its_line_leaves_the_revision(api):
+    """B3. The retirement read `raised` only, and a drafted row is `placed` - so a line CS
+    took back out of the decision left its row alive, holding purchase-order quantity for
+    an instruction that no longer exists."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    _client, world = api
+    _po, line = _open_po_line(world, qty=50)
+    fixture = _raise_two_rows(api)
+    dropped = fixture["first"]["row"]
+    kept = fixture["second"]["row"]
+    assert _links_of(world, dropped), "the draft has to exist for the test to mean anything"
+
+    ProjectSupplyService(world.db).uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    world.db.refresh(dropped)
+    assert dropped.state == INQUIRY_CANCELLED
+    assert _links_of(world, dropped) == [], "it held the quantity for ever"
+    assert _live_rows(world, fixture["first"]["line"]) == []
+    assert _links_of(world, _order_row(world, fixture["second"]["line"])), (
+        "the line the revision kept keeps its own draft"
+    )
+    assert kept is not None
+
+
+# ---------------------------------------------------------------------------
+# B4: a batch reject over two lines of ONE order
+# ---------------------------------------------------------------------------
+
+
+def _raise_three_rows(api):
+    """One order, THREE lines, all confirmed as Buy - the shape a batch reject needs.
+
+    Two lines are refused and the third is not, so the un-decide has a surviving line to
+    carry: that is what makes the press write a revision at all (an order whose every
+    covered line is refused is superseded outright, and there is no "one revision per
+    order" to count).
+    """
+    from .test_planning_changes import _core_line, _core_so, _project_line, _project_so
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    made = []
+    for index, qty in enumerate(("10", "6", "4"), start=1):
+        core_line = _core_line(
+            db, core_so, world.product, world.warehouse, qty_ordered=qty,
+            required_date=WAS,
+        )
+        line = _project_line(
+            db, order, line_no=index, product=world.product, core_line=core_line
+        )
+        made.append({"line": line, "core_line": core_line, "qty": qty})
+    db.commit()
+
+    response = _confirm(
+        client,
+        order.id,
+        [_line_payload(entry["line"].id, buy_qty=entry["qty"]) for entry in made],
+    )
+    assert response.status_code == 200, response.text
+    db.commit()
+    for entry in made:
+        entry["row"] = _order_row(world, entry["line"])
+    return {"order": order, "lines": made}
+
+
+def test_the_batch_reject_of_two_lines_of_one_order_refuses_both(api):
+    """B4. Each row was uncovered on its own, and uncovering ONE line writes a revision
+    that cancels and re-raises the OTHER lines' rows - so the second refusal stamped a row
+    that had just been superseded, and its live replacement went on sitting in front of
+    purchasing as if nobody had refused it. The batch uncovers a whole order in one call:
+    one revision, and every refused line named in it.
+    """
+    _client, world = api
+    _open_po_line(world, qty=50)
+    fixture = _raise_three_rows(api)
+    first, second, kept = (entry["row"] for entry in fixture["lines"])
+    assert _links_of(world, first), "the drafts have to exist for the test to mean anything"
+    revisions_before = _revision_count(world, fixture["order"])
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            REJECT_BATCH,
+            json={"row_ids": [str(first.id), str(second.id)], "reason": "No supplier"},
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    for row in (first, second):
+        world.db.refresh(row)
+        assert row.ack_state == ACK_REJECTED, (
+            "a mid-batch revision moved the row this press was refusing"
+        )
+        assert _links_of(world, row) == []
+    for entry in fixture["lines"][:2]:
+        left = [
+            item
+            for item in _live_rows(world, entry["line"])
+            if item.ack_state != ACK_REJECTED
+        ]
+        assert left == [], "a line the batch refused still has a row nobody refused"
+    assert _revision_count(world, fixture["order"]) == revisions_before + 1, (
+        "one press, one revision per order"
+    )
+    assert _live_rows(world, fixture["lines"][2]["line"]), (
+        "the line nobody refused is still purchasing's work"
+    )
+    assert kept is not None
+
+
+def _live_rows(world, line) -> list:
+    """Every row of this line the page still shows - what `_order_row` asks for, without
+    its "exactly one" demand, because half of these tests are about how many there are."""
+    return (
+        world.db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb == IV_ORDER,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .order_by(OrderInquiryRow.created_at.asc())
+        .all()
+    )
+
+
+def _cancel_balance_rows(world, line) -> list:
+    """The "purchasing bought more than CS now wants" exception rows on this line."""
+    from app.models.project_so import IV_CANCEL_BALANCE
+
+    return (
+        world.db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb == IV_CANCEL_BALANCE,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+
+
+def _revision_count(world, order) -> int:
+    from app.models.project_so import SOSupplyDecision
+
+    return (
+        world.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .count()
+    )
+
+
+# ---------------------------------------------------------------------------
+# S1: the day count on the SCM sales order's own Linked to column
+# ---------------------------------------------------------------------------
+
+
+def test_the_scm_sales_order_detail_states_the_day_count_too(api):
+    """S1. `SalesOrderLineLink` is a third `response_model` over the same link, and the SO
+    detail's Lines tab already prints "arrives late" off it - so the number of days has to
+    survive that schema as well, or the badge there says less than the same badge two
+    screens away."""
+    _client, world = api
+    _open_po_line(world, qty=50, expected_date=LATE_ARRIVAL)
+    fixture = _raise_one_row(api)
+
+    with _as_purchasing(world, permissions=[*PURCHASING, "scm.dashboard.view"]) as buyer:
+        response = buyer.get(f"/api/v1/scm/sales-orders/{fixture['core_so'].id}")
+    assert response.status_code == 200, response.text
+
+    lines = {line["id"]: line for line in response.json()["lines"]}
+    link = lines[str(fixture["core_line"].id)]["linked_to"][0]
+    assert link["late"] is True
+    assert link["late_days"] == LATE_BY
+
+
+# ---------------------------------------------------------------------------
+# S5: a plan purchase order takes the draft it was bought for
+# ---------------------------------------------------------------------------
+
+
+def _po_at(world, *, qty, issue_date, expected_date, status="active"):
+    """One purchase order and one line, with the dates the walk sorts on stated."""
+    supplier = _supplier(world)
+    po = PurchaseOrder(
+        id=_uid(),
+        company_id=world.company_id,
+        po_number=f"ZZT-PO-{_uid()[:8]}",
+        supplier_id=supplier.id,
+        issue_date=issue_date,
+        status=status,
+    )
+    world.db.add(po)
+    world.db.flush()
+    line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=world.company_id,
+        purchase_order_id=po.id,
+        product_id=world.product.id,
+        warehouse_id=world.warehouse.id,
+        qty_ordered=Decimal(str(qty)),
+        qty_received=Decimal("0"),
+        expected_date=expected_date,
+        line_status="open",
+    )
+    world.db.add(line)
+    world.db.flush()
+    world.db.commit()
+    return po, line
+
+
+def test_a_plan_purchase_order_confirm_moves_the_draft_it_was_bought_for(api):
+    """S5. The purchase-order confirm is one of the four re-deal doors (section 5.4): the
+    plan bought THIS order for these rows, so its own document beats the far one the raise
+    could reach at the time. Only a draft moves."""
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    _client, world = api
+    far, _far_line = _po_at(
+        world, qty=50, issue_date=date(2026, 7, 1), expected_date=date(2027, 1, 1)
+    )
+    row = _raise_one_row(api, qty="10")["row"]
+    assert _link_documents(world, row) == [far.po_number]
+
+    plan_po, _line = _po_at(
+        world,
+        qty=50,
+        issue_date=date(2026, 6, 1),
+        expected_date=date(2026, 8, 10),
+        status="draft_recommendation",
+    )
+    PurchaseOrderService(world.db).bulk_confirm([str(plan_po.id)], actor=world.buyer)
+    world.db.commit()
+
+    world.db.expire_all()
+    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
+    assert _link_documents(world, row) == [plan_po.po_number]
+
+
+def test_a_plan_purchase_order_confirm_never_moves_a_confirmed_rows_link(api):
+    """The same press, on a row purchasing has already confirmed: its link is a promise."""
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    _client, world = api
+    far, _far_line = _po_at(
+        world, qty=50, issue_date=date(2026, 7, 1), expected_date=date(2027, 1, 1)
+    )
+    row = _raise_one_row(api, qty="10")["row"]
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+
+    plan_po, _line = _po_at(
+        world,
+        qty=50,
+        issue_date=date(2026, 6, 1),
+        expected_date=date(2026, 8, 10),
+        status="draft_recommendation",
+    )
+    PurchaseOrderService(world.db).bulk_confirm([str(plan_po.id)], actor=world.buyer)
+    world.db.commit()
+
+    world.db.expire_all()
+    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
+    assert _link_documents(world, row) == [far.po_number]
+
+
+# ---------------------------------------------------------------------------
+# S6: the plan page's "to confirm" chip counts drafted rows too
+# ---------------------------------------------------------------------------
+
+
+def test_the_to_confirm_count_still_sees_a_row_its_draft_made_placed(api):
+    """S6. The count read `awaiting` rows in `raised` / `partly_linked` only, and a drafted
+    row is `placed` - so the chip on the plan page emptied itself the moment the raise
+    found a document, which is exactly when purchasing has something to confirm."""
+    from app.services.scm import reorder_run_service
+
+    _client, world = api
+    _open_po_line(world, qty=50)
+    before = reorder_run_service.awaiting_acknowledgement_rows(world.db)
+
+    row = _raise_one_row(api, qty="10")["row"]
+    assert row.state == INQUIRY_PLACED, "the row has to be drafted for this to mean anything"
+
+    assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before + 1
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+
+    assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before
