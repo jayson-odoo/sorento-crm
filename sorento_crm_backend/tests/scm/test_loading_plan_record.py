@@ -126,6 +126,48 @@ def test_creating_a_plan_for_a_supplier_that_does_not_exist_is_a_404(scm_app):
     assert r.status_code == 404, r.text
 
 
+def test_creating_a_plan_for_another_companys_supplier_is_a_404(scm_app):
+    # B1 again, on this route. `_supplier_name` was a bare
+    # `SELECT supplier_name FROM suppliers WHERE id = :i`, so a caller in company A could
+    # start a plan against company B's supplier - and every screen from there on would name
+    # and address that supplier.
+    from app.models.company import Company
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    other = str(uuid.uuid4())
+    db.add(
+        Company(
+            id=other,
+            name=f"{MARKER} other company {other[:8]}",
+            code=f"{MARKER}-{uuid.uuid4().hex[:6]}".upper()[:50],
+            is_active=True,
+        )
+    )
+    db.flush()
+    db.execute(
+        text("UPDATE suppliers SET company_id = CAST(:c AS uuid) WHERE id = CAST(:s AS uuid)"),
+        {"c": other, "s": str(w.supplier.id)},
+    )
+    db.flush()
+
+    r = _create(TestClient(app), str(w.supplier.id))
+
+    assert r.status_code == 404, r.text
+
+
+def test_creating_a_plan_for_a_supplier_id_that_is_not_an_id_is_a_404(scm_app):
+    # The raw lookup handed a non-uuid straight to the UUID column and 500'd on it. A typo in
+    # a body is a 404, the same answer every other id-shaped filter in this module gives.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+
+    r = _create(TestClient(app), "not-a-supplier-id")
+
+    assert r.status_code == 404, r.text
+
+
 def test_creating_a_plan_requires_the_operator_permission(scm_app):
     app, db, gcu, gcuk = scm_app
     as_user(app, gcu, gcuk, seed_user(db, None))

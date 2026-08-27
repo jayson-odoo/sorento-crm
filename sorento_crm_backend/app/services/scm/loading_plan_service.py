@@ -418,24 +418,40 @@ def build(
 # --------------------------------------------------------------------------- #
 
 
-def _supplier_name(db: Session, supplier_id: str) -> Optional[str]:
-    row = db.execute(
-        text("SELECT supplier_name FROM suppliers WHERE id = :i"), {"i": supplier_id}
-    ).first()
-    return row[0] if row else None
+def _supplier_row(db: Session, supplier_id: str) -> Optional[dict]:
+    """The plan's supplier: name and address, company-scoped and uuid-guarded (B1).
 
+    Both halves were bare `SELECT ... FROM suppliers WHERE id = :i`, which read straight
+    across the company boundary - a caller in company A could start a plan against company B's
+    supplier, and every screen from there on named and addressed that supplier - and handed a
+    non-uuid id to the UUID column, which is a 500 rather than "no such supplier". Same shape
+    as `supplier_notice_service._supplier`, which carries the reasoning in full; it returns
+    None rather than raising because the serializer's callers show a plan with no supplier
+    name, and only `create_record` turns that into a refusal.
 
-def _supplier_email(db: Session, supplier_id: str) -> Optional[str]:
-    """The address the send dialog opens with in its To field (AC-C2).
-
-    On the plan rather than fetched by the dialog: the record page already holds the plan, and
+    The address is the one the send dialog opens with in its To field (AC-C2). It rides on the
+    plan rather than being fetched by the dialog: the record page already holds the plan, and
     a second round trip to learn one column of a supplier it has just been handed is a round
     trip for data that was already on the wire.
     """
-    row = db.execute(
-        text("SELECT email FROM suppliers WHERE id = :i"), {"i": supplier_id}
-    ).first()
-    return row[0] if row else None
+    from app.services.company_scope_sql import company_sql_predicate
+    from app.services.scm.supplier_scope import is_uuid
+
+    if not is_uuid(supplier_id):
+        return None
+    predicate, params = company_sql_predicate(db, "company_id", param_prefix="lps")
+    row = (
+        db.execute(
+            text(
+                "SELECT supplier_name, email FROM suppliers "
+                f"WHERE id = :i AND {predicate or 'true'}"
+            ),
+            {"i": str(supplier_id), **params},
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
 
 
 def serialize(db: Session, plan: LoadingPlan, *, with_lines: bool = True) -> dict[str, Any]:
@@ -626,8 +642,9 @@ def record_dict(
     named the supplier has already answered both.
     """
     if supplier_name is None:
-        supplier_name = _supplier_name(db, str(plan.supplier_id))
-        supplier_email = _supplier_email(db, str(plan.supplier_id))
+        row = _supplier_row(db, str(plan.supplier_id)) or {}
+        supplier_name = row.get("supplier_name")
+        supplier_email = row.get("email")
     if notice is None:
         notice = _latest_notice_channels(db, [str(plan.id)]).get(str(plan.id))
     if pi_number is None and plan.document_kind == "proforma":
@@ -741,7 +758,7 @@ def create_record(
     what pins the Document label: a newer list uploaded later changes the plan's numbers (R2,
     stated in the open) but must not rewrite which file this plan was started from.
     """
-    if _supplier_name(db, supplier_id) is None:
+    if _supplier_row(db, supplier_id) is None:
         raise ValueError("Supplier not found")
     as_of = None
     if document_kind == "stock_list":
