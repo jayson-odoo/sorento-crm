@@ -1,6 +1,6 @@
 # PLAN - Fulfilment planning: decide in the row, one Confirm, transfers on the page; sales orders list tidy-up
 
-Status: **GO** 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
+Status: **PHASE 1 DONE** 2026-08-27 (worktree commit, browser-checked on :3010; Phase 2 next). GO given 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
 
 ## 0. What the captain asked (27 Aug, after walking SO404352 on `/project-sales/fulfilment-planning`)
 
@@ -90,7 +90,9 @@ Two pages.
 
 ## 4. Out of scope
 
-Engine formula (unchanged, per R1). Investigation listing for flagged decisions (R10). Mark-moved / cancel on the board panel (link to `/inventory-management/stock-transfers` for those). Order Inquiries changes. The `List` view of the board. Reorder planning page.
+Engine formula (unchanged, per R1). Investigation listing for flagged decisions (R10). Mark-moved / cancel on the board panel (link to `/inventory-management/stock-transfers` for those). Order Inquiries changes. Reorder planning page.
+
+Phase 1 deviations (27 Aug, accepted): the board `List` view was converted to the same pill + expanded panel, because it was the only other importer of the deleted Amend modal and C6 says no Amend button anywhere; the breakdown dialog widened to `sm:max-w-[95vw]` with the header capped at `max-h-[45vh]` so the editor is reachable at 900px tall; the ranking sentence under the drawer header went with the Rank column.
 
 ## 5. Build order (PRINCIPLES.md steps)
 

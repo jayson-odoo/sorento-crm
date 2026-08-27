@@ -24,12 +24,12 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 ## C. Contributing lines
 
 - C1 Columns, in order: Sales order, Customer, Agent, Project, Outstanding, Delivery date, Location, Sourced from, Order inquiry, Decision. No Rank, Ordered or Delivered column, and the column picker does not offer them.
-- C2 At 1280 with default column sizes the grid shows every column without a horizontal scrollbar.
+- C2 At 1280 with default column sizes the grid shows every column without a horizontal scrollbar (a vitest pins the default sizes under the dialog width; a user with a saved layout keeps their saved sizes, reset via the column picker).
 - C3 The Decision cell is a pill only: Suggested, Approved, Amended, Confirmed, Rejected. A confirmed line reads **Confirmed** with no revision number.
 - C4 Clicking the row expands it in place; the expanded panel shows Ordered 24 / Delivered 0 / Outstanding 24 / Incoming 0, Reserve inputs per location (BRW-AM with "9 available" beside it, BRW with "16 available"), the Borrow block, the Buy switch, the decision summary, the reason box, the system-problem checkbox and the three buttons Approve suggestion / Save amendment / Reject.
 - C5 Opening a second row closes the first; if the first had unsaved edits a confirm prompt appears first.
 - C6 No Amend button exists anywhere and no modal opens for amending.
-- C7 Editing Reserve BRW-AM from 9 to 5 shows the hint **4 short** and Save amendment is disabled; setting BRW to 19 clears the hint and enables Save.
+- C7 Editing Reserve BRW-AM from 9 to 5 shows the hint **4 short** and Save amendment is disabled; setting BRW to 19 clears the hint, and Save enables once the reason is typed (a composition that differs from the suggestion always needs the reason, `amendNeedsReason` unchanged).
 - C8 No line of the form "24 outstanding = 0 incoming + ..." appears.
 - C9 Save amendment turns the pill to Amended; Approve suggestion turns it to Approved and resets the inputs to the suggestion; Reject requires a reason and turns the pill to Rejected.
 - C10 Ticking "This might be a system problem" and saving shows a warning icon on the pill; after Confirm and a reload the icon is still there (the flag persisted).
