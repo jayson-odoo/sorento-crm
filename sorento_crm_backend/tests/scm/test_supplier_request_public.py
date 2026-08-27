@@ -394,3 +394,48 @@ def test_the_page_still_carries_the_flat_lines(scm_app):
 
     assert body["lines"][0]["item_code"] == w.product("A").product_code
     assert body["lines"][0]["qty"] == 500
+
+
+# --------------------------------------------------------------------------- #
+# the sheet is frozen at send time
+# --------------------------------------------------------------------------- #
+
+
+def test_the_page_shows_the_sheet_that_was_sent_not_one_rebuilt_today(scm_app):
+    # AC-D5/H2. The page rebuilt the document from the supplier's CURRENT stock list on every
+    # GET, so the moment they sent a newer list the link stopped agreeing with the xlsx in
+    # their own inbox - two documents for one ask, and only one of them is what was asked.
+    from sqlalchemy import text as sql
+
+    app, db, *_ = scm_app
+    w, token = _sent(db)
+    sent_sheet = svc.public_request_page(db, token)["sheet"]
+
+    db.execute(
+        sql(
+            "UPDATE scm.supplier_inventory SET qty_packed = 999, qty_unfinished = 888 "
+            "WHERE supplier_id = CAST(:s AS uuid)"
+        ),
+        {"s": str(w.supplier.id)},
+    )
+    db.flush()
+
+    assert svc.public_request_page(db, token)["sheet"] == sent_sheet
+    assert "120" in str(sent_sheet) or 120 in [
+        c.get("value") for r in sent_sheet["rows"] for c in r["cells"]
+    ]
+
+
+def test_a_link_issued_before_the_sheet_was_frozen_still_renders(scm_app):
+    # AC-H2. A token from before this column existed is open in somebody's inbox; it falls
+    # back to today's rebuild rather than showing them an empty document.
+    app, db, *_ = scm_app
+    w, token = _sent(db)
+    for notice in _notices_for_token(db, token):
+        notice.sheet_json = None
+    db.flush()
+
+    page = svc.public_request_page(db, token)
+
+    assert page["sheet"]["rows"]
+    assert page["line_count"] == 1

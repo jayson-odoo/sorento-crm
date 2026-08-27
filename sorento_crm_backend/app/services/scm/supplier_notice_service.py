@@ -1065,6 +1065,10 @@ def request_and_notify(
         xlsx_storage_key=xlsx_key,
         line_count=len(pack),
         production_line_count=0,
+        # The document AS SENT, frozen beside the lines (AC-D5). Rebuilding it on every GET
+        # of the link meant a newer stock list from the supplier changed the page under them,
+        # so the link and the xlsx in their own inbox stopped being the same ask.
+        sheet_json=sheet.to_dict(),
         created_by=actor,
         public_token=public_token,
         public_token_expires_at=public_token_expires_at,
@@ -1242,10 +1246,15 @@ def public_request_page(db: Session, token: str) -> dict:
     second. The lines are the notice's own frozen copy, so the page says what was actually
     sent rather than what the plan would compute today.
 
-    Their packed / unfinished come off the CURRENT stock-list snapshot rather than the
-    notice, which stores no holdings. That is their own latest statement about their own
-    warehouse, which is the honest thing to show them; a product they have never listed
-    reads as null rather than as zero.
+    The sheet is the one that was SENT, off `sheet_json`, not one rebuilt today: the supplier
+    sends a newer stock list every few weeks, and a page that moved with it stopped agreeing
+    with the xlsx sitting in their own inbox. A token issued before that column existed is
+    still open in somebody's inbox, so it falls back to the rebuild (AC-H2).
+
+    Their packed / unfinished on the `lines` block come off the CURRENT stock-list snapshot
+    rather than the notice, which stores no holdings. That is their own latest statement about
+    their own warehouse, which is the honest thing to show them; a product they have never
+    listed reads as null rather than as zero.
     """
     notice = request_by_public_token(db, token)
     lines = (
@@ -1262,7 +1271,8 @@ def public_request_page(db: Session, token: str) -> dict:
         # S4 / AC-D5: the third renderer of the ONE model - their own columns, their merges,
         # their marks. `lines` stays beside it (AC-H2): a link issued before S4 is open in
         # somebody's inbox and its page must keep rendering.
-        "sheet": _request_sheet(
+        "sheet": notice.sheet_json
+        or _request_sheet(
             db,
             str(notice.supplier_id),
             [

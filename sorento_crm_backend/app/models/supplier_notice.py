@@ -76,6 +76,16 @@ class SupplierNotice(Base, CompanyScopedMixin):
     last_opened_at = Column(DateTime(timezone=False), nullable=True)
     open_count = Column(Integer, nullable=False, server_default=text("0"))
 
+    #: The document AS SENT (`SheetModel.to_dict()`, migration 442). The public page rebuilt
+    #: it from the supplier's CURRENT stock list on every GET, so a newer list from them made
+    #: the link disagree with the xlsx in their own inbox - two documents for one ask. Frozen
+    #: here at send time, beside the lines that are already frozen on `supplier_notice_lines`.
+    #: Nullable, and the page falls back to the rebuild: links issued before this column are
+    #: open in somebody's inbox (AC-H2). Deliberately NOT on `serialize` - it is a whole
+    #: workbook, read server-side by the public page, and a 50-row notice listing carrying 50
+    #: of them would be megabytes nothing on that screen reads.
+    sheet_json = Column(JSONB, nullable=True)
+
     #: `skipped` is an outcome, not a failure: a supplier with no address on file still gets a
     #: notice and a document Ms Tee can send by hand (AC-F3).
     status = Column(String(20), nullable=False, server_default=text("'pending'"))

@@ -9,6 +9,11 @@ S3 / R9-R11 of `PLAN-scm-fulfilment-feedback-p4.md`.
 - `opened_at` / `last_opened_at` / `open_count` - the supplier opening their link is an
   EVENT that repeats, so it is counted on the notice rather than promoted to a plan status
   (a status would flip back and forth or lie, plan section 10).
+- `sheet_json` (JSONB) - the document AS SENT. The public page rebuilt it from the supplier's
+  CURRENT stock list on every GET, so the moment they sent a newer list the link stopped
+  agreeing with the xlsx sitting in their own inbox: two documents for one ask, and only one
+  of them was what was asked. Nullable, and the page falls back to the rebuild when it is
+  null, because links issued before this column are open in somebody's inbox (AC-H2).
 
 Numbered 442 in the part-4 chain (440 = packing-list numbering, 441 = loading-plan
 lifecycle); it touches only `supplier_notices`, so it is order-independent among them.
@@ -55,6 +60,10 @@ def upgrade() -> None:
         op.add_column(
             TABLE, sa.Column("last_opened_at", sa.DateTime(timezone=False), nullable=True)
         )
+    if "sheet_json" not in existing:
+        op.add_column(
+            TABLE, sa.Column("sheet_json", postgresql.JSONB(astext_type=sa.Text()), nullable=True)
+        )
     if "open_count" not in existing:
         op.add_column(
             TABLE,
@@ -77,5 +86,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for column in ("open_count", "last_opened_at", "opened_at", "recipients"):
+    for column in ("sheet_json", "open_count", "last_opened_at", "opened_at", "recipients"):
         op.drop_column(TABLE, column)
