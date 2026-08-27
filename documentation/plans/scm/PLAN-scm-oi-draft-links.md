@@ -134,3 +134,9 @@ pytest: board confirm raises rows WITH draft links (inverts the handshake test "
 ## 8. Out of scope
 
 Renaming `ack_state` or the permission slug; a link state column; moving SPO documents between tables; the R10 history drop (separate script, needs its own go); any change to the reorder plan's demand rule; the board's decision UI (own plan, `PLAN-scm-planning-inline-decisions.md`).
+
+## 9. Phase 1 (frontend), 27 Aug, commit `512debbb3`
+
+Built against the section 5 contract with four `// PHASE2:` fallbacks (ack `to_confirm` rewritten to `awaiting`, `lateDaysOf` computed client-side, bulk reject looping the per-row endpoint, `toConfirmCount` summed client-side), all removed in Phase 2. Deleted: `OrderInquiryPoDetailPopover`, `OrderInquiryRejectAction`, `OrderInquiryUploadMenu` (+ tests). `OrderInquiryRowActions` kept: the per-project page still mounts it. One shared-component change: `DataGridListToolbar`'s left cluster gained `grow` (it sat at its own 424px basis beside 721px of free space, which is why Columns + refresh wrapped on every listing).
+
+Browser evidence (:3050, sidebar, session `scm-oi-draft-p1`, screenshots `mockups/oi-p1-*.png`): AC-D12 default `?ack=to_confirm` with the chip, cleared state round-trips as `?ack=all`; AC-D13 one row at 1280, no sideways scroll at 375; AC-D14 both menus with counts disabling at 0; AC-D15 headers, State column + filter gone; AC-D16 SRTSC07 reads `SPO-2026/08-0015 BRW 1`; AC-D17 `late 31 d`; AC-D2 "Not found (new order)"; AC-D18 PO lightbox at 1280 and 375; AC-D19 SPO lightbox empty state until Phase 2; D6 empty reason refused, no request sent. Draft icon not walkable yet: no unconfirmed row carries a link until the raise-time cascade lands.
