@@ -835,14 +835,14 @@ describe('order-qty ledger - the card reads demand first and history last (AC-R8
 
   it('states the purchase history last, and says so when there is none', () => {
     renderLedger({ runId: 'run-1', purchaseTrendReady: true });
-    expect(screen.getByText('Never purchased in the imported history.')).toBeInTheDocument();
+    expect(screen.getByText('Never ordered in the imported history.')).toBeInTheDocument();
     expect(screen.getByText('No purchases in the imported history.')).toBeInTheDocument();
   });
 
   it('does not read "never purchased" while the lazy purchase fetch is still out', () => {
     renderLedger({ runId: 'run-1', purchaseTrendReady: false });
     expect(screen.getByText('Loading purchases...')).toBeInTheDocument();
-    expect(screen.queryByText('Never purchased in the imported history.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Never ordered in the imported history.')).not.toBeInTheDocument();
   });
 
   it('shows the purchases when the trend arrives', () => {
@@ -859,7 +859,7 @@ describe('order-qty ledger - the card reads demand first and history last (AC-R8
       },
     });
     expect(
-      screen.getByText('Purchased 400 in the last 3 months, 1,200 in the 3 months before.'),
+      screen.getByText('Ordered 400 in the last 3 months, 1,200 in the 3 months before.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Kailu')).toBeInTheDocument();
   });

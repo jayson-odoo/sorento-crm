@@ -106,8 +106,10 @@ day lead would otherwise hide a live product. All locations:
 - **Slow moving** - sold in the window, nothing bought.
 - **Dead** - nothing sold and nothing bought, stock on hand > 0 -> "Consider discontinuing".
 - **No history** - nothing sold, nothing bought, nothing on hand.
-"Purchased N in the last 3 months" on the card reads the same receipts. Net's incoming stays
-the PO book (`qty_ordered - qty_received` open) plus unreceived SPO.
+The Recent purchases popup keeps reading the PO book (captain's item 6, 27 Aug: a buyer
+asks "what did we order"), so its headline reads "Ordered N in the last 3 months", never
+"Purchased". Net's incoming stays the PO book (`qty_ordered - qty_received` open) plus
+unreceived SPO.
 The column reads the class and, for Dead, the suggestion. "Margin unknown" goes.
 
 ### Price and supplier are the buyer's to change
