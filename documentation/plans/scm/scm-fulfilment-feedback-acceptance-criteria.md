@@ -113,3 +113,15 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 - AC-H3 Existing PI import / list / detail / bulk delete / convert tests green; a PI without cbm converts as before.
 - AC-H4 Existing SPO creation with no ticks changed produces the same allocations as today (golden fixture shipment).
 - AC-H5 Existing public tokenised pages (quotation sign, purchase request view) unchanged.
+
+## F12. Product sets on the loading plan (R19, R20, R21)
+
+- AC-F12.1 A supplier code spelled as one of our active set codes (exact, separator-normalised or token-reordered) binds to that set automatically on stock-list and PI upload and on Refresh matching; the alias row carries `product_set_id`, rung `set_exact` / `set_separator` / `set_token_set`. `CWC605-RL` binds; `CWC605-RL-180` does not (no size rung for sets) and sits in the unmatched queue.
+- AC-F12.2 The inline picker (unmatched queue) and the PI detail Match dialog offer products and sets in one server-searched list, sets badged "Set"; picking a set writes a manual alias with `product_set_id` and binds the stock rows and PI lines to the set.
+- AC-F12.3 The loading-plan row for a set shows the set code with a "Set" badge and its driver member's code beneath; Need, Project, Retail, On hand, SPO, Incoming PL, PO, Earliest need-by, Project peak, Retail peak and both SO drills are the driver member's figures. Driver = the member in the fewest sets, ties by `sort_order` then product code. Worked example: `CWC605-RL` reads `CWCX605-RL`'s figures, never `CWCY605`'s.
+- AC-F12.4 A driver product does not appear twice: when the supplier's statement names the set, the set row stands and no separate row for the driver product is emitted from that statement.
+- AC-F12.5 Suggested qty for a set row = driver need - driver site-pool on hand - driver site-pool incoming SPO, floor 0; the header tooltip and the per-row title read the same rule.
+- AC-F12.6 Send to supplier carries the set line under the supplier's own code; the xlsx and the tokenised supplier page print it as the supplier wrote it.
+- AC-F12.7 Converting a PI whose line is bound to a set writes one inbound shipment line per member, qty x member quantity, each pointing at the same PI line; the PI detail still shows one set line with its placed qty; Unwind reverses all member lines together.
+- AC-F12.8 Company scope: a set of another company never binds (a Sorento supplier list naming `MWC...` codes stays unmatched under Sorento).
+- AC-F12.9 Migration 433 is the single alembic head; the CHECK refuses an alias naming both a product and a set, and one naming neither unless dismissed.
