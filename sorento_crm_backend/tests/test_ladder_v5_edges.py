@@ -521,7 +521,11 @@ def test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count(
 
         seen_lines = sum(len(cell["contributions"]) for cell in board["cells"])
         assert seen_lines == line_count, "the seed actually reached the board"
-        assert calls["n"] <= 40, calls["n"]
+        # MEASURED 37 on this fixture (27 August 2026), after `_warehouses_for_groups`
+        # stopped scanning the warehouse table once per CELL. One statement of slack, and
+        # no more: the bound is here to catch a `for line in lines: db.query(...)`, and a
+        # generous one lets 76 lines' worth of per-line reads hide under it.
+        assert calls["n"] <= 38, calls["n"]
 
 
 # --------------------------------------------------------------------------- #

@@ -72,15 +72,15 @@ describe('DecisionStrip render order', () => {
       .getAllByTestId(/^decision-strip-(?!changed-)/)
       .map((node) => node.getAttribute('data-testid'));
 
-    // The five the captain named, in the order the ladder asks its questions - `incoming`
-    // trails them (section 1e's own ORDER: it is history, not a rung the engine walks).
+    // The five the captain named, in the order the ladder asks its questions. `incoming`
+    // is absent here because nothing on this board is that kind (section 1e's own ORDER
+    // still puts it last, whenever there IS something to total).
     expect(cards).toEqual([
       'decision-strip-own',
       'decision-strip-shared',
       'decision-strip-borrow_other',
       'decision-strip-borrow_order',
       'decision-strip-buy',
-      'decision-strip-incoming',
     ]);
   });
 
@@ -92,31 +92,46 @@ describe('DecisionStrip render order', () => {
     expect(onToggle).toHaveBeenCalledWith('shared');
   });
 
-  it('keeps the incoming card in the strip, disabled, at 0 and 0', () => {
-    // Nothing here is `incoming` - the LIVE ladder never composes it (AC-V2) and no
-    // decided line on this board is frozen under an older one.
+  // RULED 27 August 2026: the incoming card is HIDDEN at 0 and 0, not disabled in place.
+  // The other five stand for the ladder's four questions and Buy, and a zero there is an
+  // answer worth holding a position for; `incoming` is not a question. What question 1
+  // draws off the water totals under "Use own location", so this card only ever counts
+  // decisions frozen under an older ladder - and on a board with none it is a card about
+  // nothing.
+  it('hides the incoming card entirely when it is 0 and 0', () => {
     renderStrip([rich]);
 
-    const incoming = screen.getByTestId('decision-strip-incoming');
-    expect(incoming).toBeInTheDocument();
-    expect(incoming).toBeDisabled();
+    expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
   });
 
-  // CAPTAIN'S OPEN QUESTION, not a defect this suite fixes: the brief this test was
-  // written against says a 0/0 card is HIDDEN. `DecisionStrip.tsx`'s own docstring rules
-  // the opposite on purpose ("A CARD READING NOTHING IS DISABLED RATHER THAN HIDDEN ...
-  // it keeps its place, because a card that came and went would move every card beside
-  // it" - `SupplyKindCard.tsx` lines 15-18 say the same thing). Marked failing so the
-  // discrepancy is visible rather than silently asserting the code's own behaviour under
-  // a docstring that claims the brief's.
-  it.fails(
-    'hides the incoming card entirely when it is 0 and 0 (captain\'s ruling per the brief; ' +
-      'current code disables it in place instead - DecisionStrip.tsx / SupplyKindCard.tsx, ' +
-      'both by deliberate docstring, not oversight)',
-    () => {
-      renderStrip([rich]);
+  it('keeps a question card in place, disabled, when it reads 0 and 0', () => {
+    // `borrow_order` is question 4, which the engine never proposes - so it is always 0
+    // and it always keeps its column, or the four questions stop reading in one order.
+    renderStrip([rich]);
 
-      expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
-    },
-  );
+    const borrowOrder = screen.getByTestId('decision-strip-borrow_order');
+    expect(borrowOrder).toBeInTheDocument();
+    expect(borrowOrder).toBeDisabled();
+  });
+
+  it('shows the incoming card again for a line decided under an older ladder', () => {
+    // A frozen `timely_spo` from a v3/v4 decision. The card is what keeps that promise
+    // visible, so it comes back the moment there is one to total.
+    const frozen = line({
+      key: 'frozen',
+      covered: true,
+      decision: {
+        revision_no: 3,
+        timely_spo_qty: '12',
+        reserve: [],
+        borrow: [],
+        buy_qty: '0',
+      },
+      sources: [source({ kind: 'timely_spo', rung: 'incoming', qty: '12', location: 'BRW-BB' })],
+    } as Partial<BoardContribution>);
+
+    renderStrip([rich, frozen]);
+
+    expect(screen.getByTestId('decision-strip-incoming')).toBeInTheDocument();
+  });
 });

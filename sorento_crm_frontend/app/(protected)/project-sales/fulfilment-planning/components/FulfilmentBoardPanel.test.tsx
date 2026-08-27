@@ -2114,10 +2114,13 @@ describe('FulfilmentBoardPanel: the strip and the views agree', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    // Nothing here is incoming or borrowed, so those cards read 0 / 0 and cannot be pressed -
-    // they keep their place, because a card that came and went would move every card beside it.
-    expect(screen.getByTestId('decision-strip-incoming')).toBeDisabled();
+    // Nothing here is borrowed, so that card reads 0 / 0 and cannot be pressed - it keeps
+    // its place, because it stands for one of the ladder's four questions and a card that
+    // came and went would move every card beside it.
     expect(screen.getByTestId('decision-strip-borrow_order')).toBeDisabled();
     expect(screen.getByTestId('decision-strip-buy')).not.toBeDisabled();
+    // `incoming` is the exception (ruled 27 August 2026): it is not a question, it is what
+    // a decision frozen under an older ladder carries, so at 0 / 0 it is not shown at all.
+    expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
   });
 });

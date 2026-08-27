@@ -24,6 +24,14 @@ import type { BoardContribution, BoardDraft } from '../../_shared/types/fulfilme
  * of supply, so there is nothing to filter to, and a press that produced an empty board would
  * read as a broken filter. It keeps its place, because a card that came and went would move
  * every card beside it and the strip is read by glancing at a position.
+ *
+ * EXCEPT `incoming`, which is HIDDEN at 0 and 0 (captain, 27 August 2026). The other five are
+ * the ladder's four questions and Buy: every one of them was asked about every line, so a zero
+ * there is an answer and holding its place is what makes the strip readable. `incoming` is not
+ * a question - what question 1 draws off the water totals under "Use own location" with the
+ * rest of that question's answer, and this card counts only the frozen `timely_spo` of
+ * decisions taken under an older ladder. On a board with none, it is a card about nothing, and
+ * the grid narrows from six columns to five so the five that remain fill the row.
  */
 export function DecisionStrip({
   contributions,
@@ -38,14 +46,23 @@ export function DecisionStrip({
   onToggle: (kind: SupplyKind) => void;
 }) {
   const totals = React.useMemo(
-    () => decisionStripTotals(contributions, draft),
+    () =>
+      decisionStripTotals(contributions, draft).filter(
+        (total) =>
+          total.kind !== 'incoming' ||
+          toMinor(total.suggested) !== 0 ||
+          toMinor(total.decided) !== 0,
+      ),
     [contributions, draft],
   );
 
   return (
     <div
       data-testid="decision-strip"
-      className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+      className={cn(
+        'grid grid-cols-2 gap-2 sm:grid-cols-3',
+        totals.length > 5 ? 'lg:grid-cols-6' : 'lg:grid-cols-5',
+      )}
     >
       {totals.map((total) => {
         const selected = active === total.kind;

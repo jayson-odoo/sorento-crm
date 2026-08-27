@@ -425,7 +425,11 @@ class FulfilmentBoardService:
         # MWH-BB / DC1-BB. One read for the whole board; empty when no order's agent holds a
         # group, which is what makes the cell say so rather than silently show one location.
         self._group_warehouses: Dict[str, List[Tuple[str, str]]] = {}
-        self._active_warehouse_ids_cache: Optional[set] = None
+        # EVERY active warehouse by the group its code carries, built once per board off
+        # the supply service's own cached read. `_cited_locations` asks per cell.
+        self._warehouses_by_group_cache: Optional[
+            Dict[str, List[Tuple[str, str]]]
+        ] = None
         # Warehouse id -> code for every site pool rung 2 may draw on, read once per board.
         # The cell's location table lists the pool a proposal cites, tagged as a pool rather
         # than left to look like one of the agent's own group warehouses.
@@ -1668,7 +1672,7 @@ class FulfilmentBoardService:
         # planner can check. Any group could be the donor, so the honest read set is all of
         # them: it is the same three grouped queries with a wider `IN`, and the product filter
         # is what makes them cheap.
-        warehouse_ids |= self._active_warehouse_ids()
+        warehouse_ids |= set(self.supply._active_warehouses())
         # WHICH warehouses the three batched reads below were actually asked about. A location
         # OUTSIDE this set has no fact and no absence of one: nothing looked, and the table
         # prints a dash rather than a zero. With the line above there is normally no such
@@ -3031,51 +3035,49 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the answer
 
+    def _warehouses_by_group(self) -> Dict[str, List[Tuple[str, str]]]:
+        """Every active warehouse, indexed by the ownership group its code carries.
+
+        ONE read for the whole board (the supply service's own request-scoped
+        `_active_warehouses`, which ladder v4's netting has already paid for), then the
+        ladder's OWN suffix rule (`sales_agent_service.group_of_warehouse_code`) decides
+        which group each code belongs to. Filtering in SQL with a `LIKE '%-BB'` would be a
+        second definition of "the BB group", and the two would drift the first time a code
+        grew a second hyphen.
+
+        Indexed rather than filtered per call because `_cited_locations` asks per CELL, and
+        which group a donor belongs to is not known until the engine has composed: a board
+        of 400 cells was scanning the whole warehouse table 400 times.
+        """
+        if self._warehouses_by_group_cache is None:
+            index: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+            for warehouse_id, warehouse in self.supply._active_warehouses().items():
+                group = sales_agent_service.group_of_warehouse_code(
+                    warehouse.warehouse_code
+                )
+                if group:
+                    index[group].append((str(warehouse_id), warehouse.warehouse_code))
+            for pairs in index.values():
+                pairs.sort(key=lambda pair: pair[1])
+            self._warehouses_by_group_cache = dict(index)
+        return self._warehouses_by_group_cache
+
     def _warehouses_for_groups(
         self, groups: Sequence[Optional[str]]
     ) -> Dict[str, List[Tuple[str, str]]]:
-        """`{group: [(warehouse_id, warehouse_code), ...]}` for the groups asked about.
-
-        ONE query for every active warehouse, then the ladder's OWN suffix rule
-        (`sales_agent_service.group_of_warehouse_code`) decides which group each code belongs
-        to. Filtering in SQL with a `LIKE '%-BB'` would be a second definition of "the BB
-        group", and the two would drift the first time a code grew a second hyphen.
-        """
-        keys = {
-            key
-            for key in (sales_agent_service.normalize_location_group(g) for g in groups)
-            if key
-        }
-        if not keys:
-            return {}
-        out: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
-        rows = (
-            self.db.query(Warehouse.id, Warehouse.warehouse_code)
-            .filter(Warehouse.is_active.is_(True))
-            .all()
-        )
-        for warehouse_id, code in rows:
-            group = sales_agent_service.group_of_warehouse_code(code)
-            if group in keys:
-                out[group].append((str(warehouse_id), code))
-        for pairs in out.values():
-            pairs.sort(key=lambda pair: pair[1])
-        return dict(out)
-
-    def _active_warehouse_ids(self) -> set:
-        """Every active warehouse, once per request.
-
-        The read set for the batched stock reads (see `_allocate`). One query, and the ids
-        are all it needs - `_warehouses_for_groups` is the one that cares about codes.
-        """
-        if self._active_warehouse_ids_cache is None:
-            self._active_warehouse_ids_cache = {
-                str(warehouse_id)
-                for (warehouse_id,) in self.db.query(Warehouse.id)
-                .filter(Warehouse.is_active.is_(True))
-                .all()
+        """`{group: [(warehouse_id, warehouse_code), ...]}` for the groups asked about."""
+        index = self._warehouses_by_group()
+        return {
+            key: index[key]
+            for key in {
+                key
+                for key in (
+                    sales_agent_service.normalize_location_group(g) for g in groups
+                )
+                if key
             }
-        return self._active_warehouse_ids_cache
+            if key in index
+        }
 
     def _pool_by_warehouse(self) -> Dict[str, str]:
         """`{warehouse_id: pool_warehouse_id}` for every active warehouse, one query.
@@ -3378,13 +3380,19 @@ class FulfilmentBoardService:
                 warehouse_id = source.get("warehouse_id") or row.warehouse_ids.get(code)
                 if not code or not warehouse_id:
                     continue
+                if code in seen:
+                    # Already listed - as the line's OWN location, as one of the agent's
+                    # group, or as a pool. Registering its group as a DONOR group here was
+                    # how a cell whose order has no agent group came to list every `*-BB`
+                    # warehouse under "another ownership group": the location the ladder
+                    # cited was the line's own. A donor is a location this table has not
+                    # already accounted for.
+                    continue
+                seen.add(code)
                 is_pool = warehouse_id in self._pool_warehouses
                 group = None if is_pool else sales_agent_service.group_of_warehouse_code(code)
                 if group and group not in donor_groups and group not in self._group_warehouses:
                     donor_groups.append(group)
-                if code in seen:
-                    continue
-                seen.add(code)
                 out.append(
                     self._location(
                         code, (), product_id=product_id, warehouse_id=warehouse_id,
