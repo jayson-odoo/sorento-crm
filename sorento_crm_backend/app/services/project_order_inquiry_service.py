@@ -2752,12 +2752,20 @@ class ProjectOrderInquiryService:
                     warehouse.warehouse_code if warehouse else allocation.location_code
                 )
                 # R11 (`PLAN-scm-oi-draft-links.md`): an SPO is always allocated at a POOL
-                # location, so only a pool line may be linked. A line at any other code is
-                # SHOWN - the lightbox lists every line of the document - and never taken,
-                # because the goods on it are already spoken for by the site that holds
-                # them. Read off the warehouse rather than the book's raw code: an unknown
-                # code resolved to no warehouse, and a code nobody holds is not a pool.
-                if str(location or "").strip().upper() not in pools:
+                # location and moved out from there, so only a pool line is OFFERED. A line
+                # at any other code is SHOWN - the lightbox lists every line of the
+                # document - and never dealt, because the goods on it are already spoken
+                # for by the site that holds them. Read off the warehouse rather than the
+                # book's raw code: an unknown code resolved to no warehouse, and a code
+                # nobody holds is not a pool.
+                #
+                # A PERSON naming a line by hand is let through, exactly as `manual`
+                # already lets them through to a purchase order that is not yet active and
+                # past a group in deficit. The container planner is the caller that needs
+                # it: its ticks say "this row is served by THIS container line", the line
+                # is at the site the split just sent it to, and that is a deliberate
+                # instruction rather than the automatic walk helping itself.
+                if not manual and str(location or "").strip().upper() not in pools:
                     continue
                 candidates.append(
                     self._candidate(

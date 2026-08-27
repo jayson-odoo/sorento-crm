@@ -342,6 +342,15 @@ class PreviewResult:
     # "would import" is a count, and a book that is half SPO would otherwise claim to import
     # twice what it will.
     shipping_order_rows: int = 0
+    # What the shipping-order half of the same file would do (R4): the documents and lines
+    # it files into `spo_allocations`, the locations no warehouse matches (the line is kept
+    # either way), and the open lines it would CLOSE because this book no longer states
+    # them. The last one is the number an operator has to see before pressing Confirm
+    # upload, not after: a PO-only export settles every shipping order this channel holds.
+    spo_documents: int = 0
+    spo_lines: int = 0
+    spo_unknown_locations: int = 0
+    spo_closed: int = 0
 
     @property
     def ok(self) -> bool:
@@ -364,6 +373,10 @@ class PreviewResult:
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
             "warnings": self.warnings,
             "shipping_order_rows": self.shipping_order_rows,
+            "spo_documents": self.spo_documents,
+            "spo_lines": self.spo_lines,
+            "spo_unknown_locations": self.spo_unknown_locations,
+            "spo_closed": self.spo_closed,
         }
 
 
@@ -1172,17 +1185,244 @@ def _unreadable_date_warning(problems: list[RowProblem]) -> list[str]:
 
 
 def _shipping_order_warning(read: ReadResult) -> list[str]:
-    """The purchase book states two families and this channel writes one. Said once, up
-    front: a file whose rows are half shipping orders imports half of itself, and an
-    operator who is not told reads the difference as loss."""
+    """The purchase book states two families and they land in two different tables. Said
+    once, up front: the operator reads the Test result before pressing Confirm upload, and
+    "N of your rows went somewhere else" is a fact they need before it happens, not after.
+
+    It used to say "left out", which was true and is not any more (R4)."""
     n = len(read.shipping_order_row_numbers)
     if not n:
         return []
     row = "row" if n == 1 else "rows"
     return [
-        f"{n} {row} are shipping orders (SPO), which this book does not carry; they are "
-        "left out"
+        f"{n} {row} are shipping orders (SPO); they are filed as open SPO allocations "
+        "rather than as purchase orders"
     ]
+
+
+#: The stamp the OUTSTANDING channel puts on the `spo_allocations` rows it writes. The same
+#: value the purchase-order headers carry, so the two halves of one upload are one feed, and
+#: the only rows this channel is allowed to close (`po_history_service` writes
+#: `scm_spo_history`, the external API writes its own, and neither is ours to settle).
+SPO_UPLOAD_SOURCE = "scm_upload"
+
+
+@dataclass
+class _SpoWrite:
+    """What the shipping-order half of one upload did, for the summary and the preview."""
+
+    documents: int = 0
+    lines: int = 0
+    closed: int = 0
+    unknown_locations: int = 0
+    product_ids: list[str] = field(default_factory=list)
+
+
+def _spo_plan(db: Session, read: ReadResult) -> tuple[dict, dict, dict]:
+    """The masters the shipping-order rows resolve against: products and warehouses by
+    code, and the lines grouped per document in file order.
+
+    ORM queries, not raw SQL: `products` and `warehouses` are company-scoped and the
+    isolation filter runs on ORM execution only, so a raw lookup would resolve a code
+    against every company's rows at once.
+    """
+    by_document: dict[str, list] = {}
+    for line in read.spo_lines:
+        by_document.setdefault(line.doc_number, []).append(line)
+    if not by_document:
+        return {}, {}, {}
+
+    codes = {_norm(l.item_code) for lines in by_document.values() for l in lines}
+    products = {
+        _norm(code): str(pid)
+        for pid, code in db.query(Product.id, Product.product_code)
+        .filter(func.upper(Product.product_code).in_(list(codes)))
+        .all()
+    }
+    locations = {
+        _norm(l.location)
+        for lines in by_document.values()
+        for l in lines
+        if l.location
+    }
+    warehouses: dict[str, str] = {}
+    if locations:
+        for wid, code in (
+            db.query(Warehouse.id, Warehouse.warehouse_code)
+            .filter(func.upper(Warehouse.warehouse_code).in_(list(locations)),
+                    Warehouse.is_active.is_(True))
+            .all()
+        ):
+            # FIRST wins on a case collision, for the reason `po_history_service` states:
+            # last would make the answer depend on the order Postgres returned rows in.
+            warehouses.setdefault(_norm(code), str(wid))
+    return by_document, products, warehouses
+
+
+def _write_spo_lines(db: Session, read: ReadResult, outcome: ImportOutcome) -> _SpoWrite:
+    """File the book's shipping-order rows as OPEN `spo_allocations` lines (R4).
+
+    Upserted on `(company, spo_number, spo_line_number)` - the LINE, not the (document,
+    product, location) triple, because the book states the same product on one shipping
+    order many times over and each of those is a real second container. The same key
+    `po_history_service._write_shipping_order` writes on, so the two feeds meet on one row
+    rather than on two that merely look alike.
+
+    The line NUMBER is this line's position in its document, in file order. The outstanding
+    export states none of its own, and the same file re-exported states its lines in the
+    same order, so a re-upload lands on the same numbers.
+
+    OPEN and not received, which is the whole point: `scm.on_order_v` counts a shipping
+    order only while it is open with quantity still to come, and until R4 nothing in the
+    system could create such a row - the history book writes them closed by construction.
+
+    Only rows THIS channel wrote are ever restated or closed (`source_system`): a history
+    row reopened here would make a delivery from 2020 read as stock on its way in, for ever,
+    and an external-API row is somebody else's record of the same document.
+    """
+    from app.models.procurement import SPOAllocation
+
+    out = _SpoWrite()
+    by_document, products, warehouses = _spo_plan(db, read)
+    stated_keys: set[tuple[str, int]] = set()
+    touched: set[str] = set()
+    for number in sorted(by_document):
+        held = {
+            row.spo_line_number: row
+            for row in db.query(SPOAllocation)
+            .filter(SPOAllocation.spo_number == number)
+            .all()
+        }
+        stated = 0
+        for index, line in enumerate(by_document[number], start=1):
+            source_row = int(line.row_ref) if (line.row_ref or "").isdigit() else None
+            identity = _identity(number, line.item_code, line.location or "")
+            product_id = products.get(_norm(line.item_code))
+            if product_id is None:
+                outcome.skip(row=source_row, code=oc.PRODUCT_NOT_FOUND,
+                             identity=identity, value=line.item_code)
+                continue
+            code = (line.location or "").strip().upper() or None
+            warehouse_id = warehouses.get(code) if code else None
+            if code and warehouse_id is None:
+                # The line is KEPT: the code the book printed is the only record of where
+                # the goods were meant to go, and dropping the row would lose the quantity
+                # with it. Counted, so the operator can close the master gap.
+                out.unknown_locations += 1
+            extra = read.extras.get(str(line.row_ref), {})
+            received = extra.get("qty_fulfilled") or 0
+            ordered = line.qty + received
+            stated += 1
+            # STATED, whatever happens to it below: a line the book still names is not one
+            # the closure should settle, even when this run could not write it.
+            stated_keys.add((number, index))
+            row = held.get(index)
+            if row is not None and (row.source_system or "") != SPO_UPLOAD_SOURCE:
+                outcome.skip(row=source_row, code=oc.DOCUMENT_OWNED_ELSEWHERE,
+                             identity=identity, value=number)
+                continue
+            if row is None:
+                row = SPOAllocation(
+                    spo_number=number,
+                    spo_line_number=index,
+                    product_id=product_id,
+                    warehouse_id=warehouse_id,
+                    location_code=code,
+                    allocated_quantity=ordered,
+                    quantity_received=received,
+                    receipt_status="pending" if line.qty > 0 else "fully_received",
+                    line_status="open" if line.qty > 0 else "closed",
+                    source_system=SPO_UPLOAD_SOURCE,
+                    issue_date=extra.get("order_date"),
+                    expected_date=line.required_date,
+                    unit_cost=extra.get("unit_cost"),
+                    currency=extra.get("currency"),
+                )
+                db.add(row)
+                db.flush()
+                held[index] = row
+                outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                                value=number, entity_type="spo_allocation",
+                                entity_id=row.id)
+            else:
+                row.product_id = product_id
+                row.allocated_quantity = ordered
+                row.quantity_received = received
+                row.receipt_status = "pending" if line.qty > 0 else "fully_received"
+                row.line_status = "open" if line.qty > 0 else "closed"
+                row.location_code = code
+                row.warehouse_id = warehouse_id
+                row.issue_date = extra.get("order_date") or row.issue_date
+                # An unreadable date must never blank one the database already holds - the
+                # same rule the purchase-order half applies to its own ETA column.
+                if line.required_date is not None:
+                    row.expected_date = line.required_date
+                if extra.get("unit_cost") is not None:
+                    row.unit_cost = extra["unit_cost"]
+                if extra.get("currency"):
+                    row.currency = extra["currency"]
+                outcome.updated(row=source_row, identity=identity, value=number,
+                                entity_type="spo_allocation", entity_id=row.id)
+            touched.add(str(product_id))
+        if stated:
+            out.documents += 1
+            out.lines += stated
+
+    # CLOSED BY ABSENCE, the same rule the purchase-order half applies to its own lines.
+    # The outstanding book is the statement of what is still open, and every open row this
+    # channel holds was written by an earlier upload of that same book - so a line it has
+    # stopped stating has been received. A status change and never a delete: the line was
+    # planned against, and erasing it would make last week's plan unexplainable.
+    #
+    # ONLY when this book carries shipping orders at all. A file with none is not evidence
+    # about the shipping-order family - it is a purchase-order-only export, and there are
+    # plenty of those - so reading its silence as "every shipping order has landed" would
+    # settle the whole open SPO book (715 lines on the dev copy) on an upload that never
+    # mentioned one. A book that states SOME shipping orders IS the SPO book, and what it
+    # leaves out has been received. The PREVIEW states the count either way, so the number
+    # is on screen before Confirm upload rather than discovered after it.
+    going = _spo_lines_to_close(db, stated_keys) if by_document else []
+    for row in going:
+        row.line_status = "closed"
+    out.closed = len(going)
+    db.flush()
+    out.product_ids = sorted(touched)
+    return out
+
+
+def _spo_lines_to_close(db: Session, stated_keys: set[tuple[str, int]]) -> list:
+    """The open shipping-order lines THIS channel holds that a book no longer states.
+
+    One reader for the preview and the write, so the number the operator confirms and the
+    rows the commit settles cannot differ.
+    """
+    from app.models.procurement import SPOAllocation
+
+    return [
+        row
+        for row in db.query(SPOAllocation).filter(
+            SPOAllocation.source_system == SPO_UPLOAD_SOURCE,
+            SPOAllocation.line_status == "open",
+        )
+        if (row.spo_number, row.spo_line_number) not in stated_keys
+    ]
+
+
+def _spo_preview(db: Session, read: ReadResult) -> _SpoWrite:
+    """What the shipping-order half WOULD do. Writes nothing."""
+    out = _SpoWrite()
+    by_document, products, warehouses = _spo_plan(db, read)
+    stated_keys: set[tuple[str, int]] = set()
+    for number, lines in by_document.items():
+        out.documents += 1
+        for index, line in enumerate(lines, start=1):
+            stated_keys.add((number, index))
+            out.lines += 1
+            code = (line.location or "").strip().upper() or None
+            if code and warehouses.get(code) is None:
+                out.unknown_locations += 1
+    out.closed = len(_spo_lines_to_close(db, stated_keys)) if by_document else 0
+    return out
 
 
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
@@ -1197,6 +1437,7 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
             warnings=_unreadable_date_warning(read.problems),
         )
     row_problems = read.problems + plan.problems
+    spo = _spo_preview(db, read) if doc_type == PO else _SpoWrite()
     return PreviewResult(
         doc_type=doc_type,
         scope_documents=diff.scope_documents,
@@ -1212,6 +1453,10 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         unmapped_agents=plan.agent_notices,
         warnings=_unreadable_date_warning(row_problems) + _shipping_order_warning(read),
         shipping_order_rows=len(read.shipping_order_row_numbers),
+        spo_documents=spo.documents,
+        spo_lines=spo.lines,
+        spo_unknown_locations=spo.unknown_locations,
+        spo_closed=spo.closed,
     )
 
 
@@ -1396,8 +1641,9 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
         outcome.skip(row=row_number, code=oc.NOT_A_LINE)
     for row_number in read.settled_row_numbers:
         outcome.skip(row=row_number, code=oc.NOTHING_OUTSTANDING)
-    for row_number in read.shipping_order_row_numbers:
-        outcome.skip(row=row_number, code=oc.SHIPPING_ORDER)
+    # The shipping-order rows are NOT recorded here any more (R4): they are written into
+    # `spo_allocations` by `_write_spo_lines`, which records an outcome per row itself. A
+    # skip recorded here as well would account for the same row twice.
 
     for problem in read.problems:
         if str(problem.row_number) in read_rows:
@@ -2076,6 +2322,15 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # Best-effort for the same reason the two batches below are: the write has already
     # succeeded, and a defect in the reaction must cost the operator a relocation the next
     # upload makes again, never the upload itself.
+    # The shipping-order half of the same book (R4). Written after the purchase-order half
+    # and before the reactions below, so "Link now" is offered the products BOTH halves
+    # touched: a row whose only cover is a shipping order is exactly the row this feature
+    # exists for, and a product list that named only the purchase-order side would leave it
+    # unlinked.
+    spo = _write_spo_lines(db, read, outcome) if doc_type == PO else _SpoWrite()
+    if spo.product_ids:
+        touched_pids = sorted(set(touched_pids) | set(spo.product_ids))
+
     relinked = 0
     if doc_type == PO and order_ids:
         try:
@@ -2143,6 +2398,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # matches the demand (AC-G3). 0 on the SO channel and on a PO book that changed no
         # location - which is most of them.
         "relinked_placements": relinked,
+        # The shipping-order half of this book (R4): documents and lines filed into
+        # `spo_allocations`, lines closed because the book no longer states them, and
+        # locations no warehouse matched (the line is kept and the raw code with it).
+        "spo_documents": spo.documents,
+        "spo_lines": spo.lines,
+        "spo_closed": spo.closed,
+        "spo_unknown_locations": spo.unknown_locations,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

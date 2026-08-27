@@ -603,13 +603,14 @@ def test_auto_link_finishes_a_partly_linked_row_and_a_second_pass_links_nothing(
     assert second["placed_rows"] == 0
 
 
-def test_an_spo_line_outside_the_pool_is_never_a_candidate_and_cannot_be_named(world):
+def test_an_spo_line_outside_the_pool_is_never_offered(world):
     """R11: "show every location in the lightbox, link only from POOL locations".
 
     An SPO is allocated at a pool and moved out from there; a line already sitting at a
-    site's own group is spoken for by that site, and a link would promise it twice. Held at
-    the WRITE as well as the read, so a caller naming one by hand is refused rather than
-    quietly making the link the walk would not offer.
+    site's own group is spoken for by that site, and dealing it out would promise it twice.
+    Never OFFERED, so neither the walk nor the dialog can take it - a person naming one by
+    hand is still let through, exactly as `manual` already reaches a purchase order that is
+    not yet active, and the container planner's ticks depend on that.
     """
     _two_purchase_orders(world)
     allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-BB", 332)
@@ -617,16 +618,14 @@ def test_an_spo_line_outside_the_pool_is_never_a_candidate_and_cannot_be_named(w
 
     assert all(c["kind"] == "po" for c in world.svc.po_candidates_for_row(row.id))
 
-    from app.services.error_handler import AppException
+    world.svc.place_on_po_allocations(
+        row.id,
+        [{"spo_allocation_id": allocation, "qty": Decimal("8")}],
+        actor_user_id=None,
+    )
+    world.db.flush()
 
-    with pytest.raises(AppException) as caught:
-        world.svc.place_on_po_allocations(
-            row.id,
-            [{"spo_allocation_id": allocation, "qty": Decimal("8")}],
-            actor_user_id=None,
-        )
-
-    assert "order_inquiry_po_line_closed" in str(caught.value)
+    assert [link.spo_allocation_id for link in world.svc._links_of(row.id)] == [allocation]
 
 
 def test_an_order_back_may_link_to_an_spo_allocation(world):

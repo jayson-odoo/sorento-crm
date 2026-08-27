@@ -77,11 +77,18 @@ class ReadResult:
     layout_row_numbers: list[int] = field(default_factory=list)
     settled_row_numbers: list[int] = field(default_factory=list)
     #: Rows on the PURCHASE book whose document is a shipping order (`SPO-...`). AutoCount
-    #: exports both families in one file and this channel writes `purchase_orders`, so an
-    #: SPO row imported here becomes a purchase order nobody raised, counted as on-order
-    #: supply and indistinguishable from a real one. Counted, so the file is not quietly
-    #: half-used.
+    #: exports both families in one file and this channel's diff writes `purchase_orders`,
+    #: so an SPO row put through THAT becomes a purchase order nobody raised, counted as
+    #: on-order supply and indistinguishable from a real one. The row numbers stay for the
+    #: count the operator reads; the lines themselves are in `spo_lines`.
     shipping_order_row_numbers: list[int] = field(default_factory=list)
+    #: The same rows AS LINES, held apart from `lines` so the purchase-order diff never
+    #: meets them (`PLAN-scm-oi-draft-links.md` R4). `outstanding_import_service` writes
+    #: them into `spo_allocations`, which is where a shipping order lives since migration
+    #: 420. They used to be dropped, and that left nothing in the system able to create an
+    #: OPEN shipping-order line: the history book writes them closed, so the Order
+    #: Inquiries page could never link to one.
+    spo_lines: list[Line] = field(default_factory=list)
     # Per-row fields the DIFF does not care about but the WRITE does: counterparty code,
     # unit cost, currency. Kept in a side map keyed by `Line.row_ref` rather than added to
     # `Line`, because `outstanding_diff` is deliberately document-agnostic and adding
@@ -343,9 +350,9 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
         # authority the history channel splits its two families on. Purchase book only: the
         # sales book has no families, and an SO numbered like a shipping order is still a
         # sales order.
-        if doc_type == PO and doc_family(doc) == FAMILY_SPO:
+        is_shipping_order = doc_type == PO and doc_family(doc) == FAMILY_SPO
+        if is_shipping_order:
             result.shipping_order_row_numbers.append(row_number)
-            continue
 
         # Three real file shapes, resolved in a fixed order of preference rather than by
         # column position. Getting this wrong is not cosmetic: reading ORDERED as
@@ -408,7 +415,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
 
         location = _clean(rec.get("stock_location"))
 
-        result.lines.append(Line(
+        (result.spo_lines if is_shipping_order else result.lines).append(Line(
             doc_number=doc,
             item_code=item,
             location=location,
