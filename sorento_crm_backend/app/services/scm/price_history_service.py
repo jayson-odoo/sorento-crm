@@ -346,8 +346,10 @@ def _other_supplier_price(db: Session, product_ids: list[str],
                           not_a_purchase: tuple[str, ...]) -> dict[str, dict]:
     if not product_ids:
         return {}
-    rows = db.execute(text(_OTHER_SUPPLIER_PRICE_SQL),
-                      {"pids": product_ids, "not_a_purchase": not_a_purchase}).mappings().all()
+    rows = db.execute(
+        text(_OTHER_SUPPLIER_PRICE_SQL),
+        {"pids": product_ids, "not_a_purchase": not_a_purchase},
+    ).mappings().all()
     return {
         r["product_id"]: {
             "purchase": Purchase(
@@ -383,7 +385,7 @@ def _product_history(db: Session, product_ids: list[str],
 
 
 def price_history_for_run(
-    db: Session, run_id: str, *, as_of: Optional[date] = None
+    db: Session, run_id: str, *, as_of: Optional[date] = None,
 ) -> dict[str, PriceAdvice]:
     """Price facts for every (product, supplier) pair the run recommends.
 
@@ -391,6 +393,12 @@ def price_history_for_run(
     that pair. A cheaper price from a different supplier is a different negotiation and is
     never substituted in: the whole point of the number is that it is what THIS supplier
     charged us.
+
+    Whole-product, with NO destination narrowing: this is read once per RUN and every row
+    on the plan has its own site pool, so a run-wide warehouse parameter would be the
+    wrong pool for most of them. The pool-filtered price the panel prints comes from
+    `inputs.last_purchase` instead (`reorder_run_service._last_purchase_cost_map`), which
+    is frozen per row and says which basis it used.
     """
     as_of = as_of or date.today()
 

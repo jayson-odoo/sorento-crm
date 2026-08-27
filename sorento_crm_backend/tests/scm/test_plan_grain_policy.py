@@ -39,6 +39,7 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text as _text
 
 from app.models.inventory import Warehouse
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -683,14 +684,20 @@ def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec
 ):
     """Reversed doctrine (captain, 21 Aug): confirming is no longer refused outright on
     a product-grain run - it dispatches to `_confirm_product_grain`, which reconciles
-    `OrderSummaryRow.chosen_qty`, NEVER a recommendation's own `status`. So a product-
-    grain run's recommendation carrying a stray LOCATION-shaped `status="accepted"`
-    (the other grain's decision surface, set directly here rather than through the
-    guarded Accept endpoint) is still not what confirm reads - it succeeds with
-    nothing to confirm, exactly as if no decision had been made at all."""
+    `OrderSummaryRow.chosen_qty` and the grid's own `PlanRowDecision`, NEVER a
+    recommendation's own `status`. So a product-grain run's recommendation carrying a
+    stray LOCATION-shaped `status="accepted"` (the other grain's decision surface, set
+    directly here rather than through the guarded Accept endpoint) is not what confirm
+    reads.
+
+    It IS confirmed, and at the engine's own quantity - but for the other reason, R3
+    (`PLAN-scm-reorder-revamp.md`): "Confirm covers untouched rows as the engine
+    suggestion". The row nobody decided is bought at what the engine sized, which is the
+    same answer whatever its status column happens to say. Before R3 this read
+    `confirmed_count == 0`; the status played no part then either."""
     f = decision_api
     run = _run(f["db"], decision_grain="product", contract_version=1)
-    rec = _recommendation(f["db"], run, f["product"], f["warehouse"])
+    rec = _recommendation(f["db"], run, f["product"], f["warehouse"], qty=50)
     rec.status = "accepted"
     f["db"].flush()
 
@@ -699,8 +706,13 @@ def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec
 
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["confirmed_count"] == 0
-    assert body["po_count"] == 0
+    assert body["confirmed_count"] == 1, "untouched, so bought at the suggestion (R3)"
+    assert body["po_count"] == 1
+
+    qty = f["db"].execute(_text(
+        "SELECT qty_ordered FROM purchase_order_lines WHERE source_ref = :r"
+    ), {"r": rec.id}).scalar()
+    assert float(qty) == 50, "the ENGINE's quantity, never anything the status implied"
 
 
 def test_reset_decisions_over_http_refuses_a_legacy_run(decision_api):

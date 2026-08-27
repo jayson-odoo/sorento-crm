@@ -1,24 +1,29 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Save } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
+import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { usePlanLines } from '../hooks/usePlanLines';
+import { usePlanEdits } from '../hooks/usePlanEdits';
 import type { PlanLine, PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
+import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
 import { lineBreachStatus } from '../lib/orderQtyLedger';
+import { fmtInt, fmtMoney } from '../../lib/format';
 import { LevelChangesPanel } from './LevelChangesPanel';
 import { PlanBudgetReview } from './PlanBudgetReview';
 import { PlanLinesGrid } from './PlanLinesGrid';
 
 /**
  * ONE list (S11) - PlanLinesGrid + PlanBudgetReview + LevelChangesPanel, driven entirely
- * by `usePlanLines(runId)`. Extracted out of `ReorderPlanningView` so a second screen (the
- * SCM simulation page's "Planning view" tab) can render the exact same grid, hooks, cell
- * popovers and decision controls against a different run instead of re-implementing them.
+ * by `usePlanLines(runId)`. Extracted out of the plan page so a second screen (the SCM
+ * simulation page's "Planning view" tab) can render the exact same grid, hooks, row panel
+ * and decision controls against a different run instead of re-implementing them.
  * One render source - tooltips/popovers/columns can never drift between the two screens.
  *
  * `statusFilter` / `onStatusFilterChange` and `decidedFilter` / `onDecidedFilterChange` are
@@ -33,6 +38,7 @@ export function PlanLinesSection({
   onDecidedFilterChange,
   onTotalsChange,
   onDecisionProgressChange,
+  onUnsavedChange,
   secondaryActions,
   decisionsReadOnly = false,
   readOnlyReason = null,
@@ -54,6 +60,9 @@ export function PlanLinesSection({
    *  derived from whatever is currently on screen - a filtered/grouped view must not
    *  change what the header reports. */
   onDecisionProgressChange?: (progress: { decided: number; total: number }) => void;
+  /** How many PRODUCTS carry an unsaved draft (R14). The page uses it for the leave-page
+   *  prompt on its own back link - `beforeunload` cannot see an in-app navigation. */
+  onUnsavedChange?: (count: number) => void;
   /** Forwarded to `PlanLinesGrid`'s own toolbar (quiet links to Order summary / Plan
    *  exceptions / PO worklist, next to Filters / Columns / Export). */
   secondaryActions?: ToolbarAction[];
@@ -152,6 +161,96 @@ export function PlanLinesSection({
     onDecisionProgressChange?.({ decided: decidedCount, total: totalDecidableCount });
   }, [decidedCount, totalDecidableCount, onDecisionProgressChange]);
 
+  /**
+   * The rows AS THE GRID RENDERS THEM. The grid groups per-warehouse rows into one row per
+   * product on a product-grain run, and the draft map is keyed by those row ids - so the
+   * counts here have to be taken over the same set, not over the ungrouped lines that feed
+   * it. Same pure function, same input, same ids.
+   */
+  const gridRows = useMemo(
+    () => (groupByChannel ? groupPlanLinesByChannel(visibleLines) : visibleLines),
+    [groupByChannel, visibleLines],
+  );
+
+  const planEdits = usePlanEdits(
+    runId,
+    gridRows,
+    planLines.decisions,
+    planLines.coverFor,
+    planLines.poFor,
+  );
+
+  useEffect(() => {
+    onUnsavedChange?.(planEdits.saveCount);
+  }, [planEdits.saveCount, onUnsavedChange]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const { products: confirmProducts, cash: confirmCash, unpriced: confirmUnpriced } =
+    planEdits.confirmable;
+
+  const confirmDescription = `${fmtInt(confirmProducts)} product${
+    confirmProducts === 1 ? '' : 's'
+  } go into draft purchase orders, ${fmtMoney(confirmCash)} of buying.${
+    confirmUnpriced > 0
+      ? ` ${fmtInt(confirmUnpriced)} of them carry no price yet and are drafted unpriced.`
+      : ''
+  } Products nobody touched are confirmed as the plan suggested; skipped ones are left out.`;
+
+  const doSave = async () => {
+    try {
+      const result = await planEdits.save();
+      if (!result) return;
+      toast.success(
+        `Saved ${fmtInt(result.saved_rows)} change${result.saved_rows === 1 ? '' : 's'}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the changes.');
+    }
+  };
+
+  const doConfirm = async () => {
+    try {
+      const result = await planEdits.confirm();
+      setConfirmOpen(false);
+      if (!result) return;
+      toast.success(
+        result.confirmed_count > 0
+          ? `Confirmed ${fmtInt(result.confirmed_count)} product${result.confirmed_count === 1 ? '' : 's'} into ${fmtInt(result.po_count)} draft purchase order${result.po_count === 1 ? '' : 's'}.`
+          : 'Nothing to confirm - no product carries a buy.',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not confirm the plan.');
+    }
+  };
+
+  /**
+   * Save and Confirm, on the grid's own toolbar, right of Actions and Confirm last (R11).
+   * They sit with the grid rather than in the page header because they act on what the grid
+   * holds - the draft map - and a header button acting on a table below it was the layout
+   * the captain asked to end.
+   */
+  const toolbarPrimary = decisionsReadOnly ? null : (
+    <>
+      <Button
+        variant="outline"
+        onClick={() => void doSave()}
+        disabled={planEdits.saveCount === 0 || planEdits.isSaving}
+        title="Save every unsaved change on this plan"
+      >
+        <Save className="size-4" />
+        {`Save (${fmtInt(planEdits.saveCount)})`}
+      </Button>
+      <Button
+        onClick={() => setConfirmOpen(true)}
+        disabled={confirmProducts === 0 || planEdits.isConfirming}
+        title="Save, then turn this plan into draft purchase orders"
+      >
+        <CheckCircle2 className="size-4" />
+        {`Confirm (${fmtInt(confirmProducts)})`}
+      </Button>
+    </>
+  );
+
   if (planLines.isLoading) {
     return <Skeleton className="h-72 w-full rounded-xl" />;
   }
@@ -186,17 +285,16 @@ export function PlanLinesSection({
         groupByChannel={groupByChannel}
         lines={visibleLines}
         decisions={planLines.decisions}
-        onDecide={(line, next) => planLines.decide(line, next)}
-        onClear={(line) => planLines.clear(line)}
+        edits={planEdits.edits}
+        onRowEdit={planEdits.setRowEdit}
+        onResetRow={planEdits.resetRow}
+        toolbarPrimary={toolbarPrimary}
         coverFor={planLines.coverFor}
         priceFor={planLines.priceFor}
         cheaperFor={planLines.cheaperFor}
         levelFor={planLines.levelFor}
-        onAmendLevel={planLines.amendLevel}
-        onAmendMoq={planLines.updateMoq}
         poFor={planLines.poFor}
         trendFor={planLines.trendFor}
-        channelTrendFor={planLines.channelTrendFor}
         trendSeriesMonths={planLines.trendSeriesMonths}
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}
@@ -208,10 +306,16 @@ export function PlanLinesSection({
         economicsFor={planLines.economicsFor}
         healthThresholds={planLines.healthThresholds}
         healthWindows={planLines.healthWindows}
-        choiceFor={planLines.choiceFor}
-        onChoose={planLines.chooseRow}
-        onDecideLifecycle={planLines.decideLifecycle}
-        staleAfterDays={planLines.staleAfterDays}
+      />
+
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Confirm this plan?"
+        description={confirmDescription}
+        confirmLabel="Confirm"
+        isBusy={planEdits.isConfirming}
+        onConfirm={() => void doConfirm()}
       />
       {/* Last, and only here: what it costs and whether that works. */}
       <PlanBudgetReview

@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -15,21 +16,26 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import { ReorderPlanningView } from './components/ReorderPlanningView';
+import { ReorderRunsGrid } from './components/ReorderRunsGrid';
 
 export const metadata: Metadata = {
   title: 'Reorder Planning',
-  description: 'Run reorder planning and review buy + disposition recommendations.',
+  description: 'Every reorder plan, and the one button that starts a new one.',
 };
 
-export default async function ReorderPlanningPage({
+export default async function ReorderPlansPage({
   searchParams,
 }: {
-  searchParams: Promise<{ run?: string }>;
+  searchParams: Promise<{ run?: string; plan?: string }>;
 }) {
-  // `?run=1` auto-opens the Manual plan modal (deep-link support; the dashboard's
-  // header "Reorder plan" button now navigates here without it - M8-B6).
-  const { run } = await searchParams;
+  const { run, plan } = await searchParams;
+
+  // R1: the plan lives at its own address now. Every `?plan=` link ever copied off the old
+  // screen still lands on the right plan - it just arrives at the URL that names it.
+  if (plan) redirect(`/scm/reorder/${encodeURIComponent(plan)}`);
+
+  // `?run=1` auto-opens the Start Plan modal (deep-link support; the dashboard's header
+  // "Reorder plan" button navigates here without it - M8-B6).
   const autoOpenRun = run === '1';
 
   return (
@@ -59,7 +65,7 @@ export default async function ReorderPlanningPage({
       </Container>
 
       <Container width="fluid">
-        <ReorderPlanningView autoOpenRun={autoOpenRun} />
+        <ReorderRunsGrid autoOpenRun={autoOpenRun} />
       </Container>
     </RequireAccess>
   );

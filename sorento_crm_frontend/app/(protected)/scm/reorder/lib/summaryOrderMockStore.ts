@@ -100,9 +100,9 @@ const GENERATED_AT = '2026-08-03T07:05:00';
 
 /**
  * The Order summary tile's count: short products with no quantity decided yet.
- * A constant here rather than a query in `ReorderPlanningView`, so opening the
- * plan does not fetch a whole report just to put a number on a card. Phase 2
- * feeds it from the run summary, alongside `MOCK_PLAN_TILE_COUNTS`.
+ * A constant here rather than a query on the plan page, so opening the plan does
+ * not fetch a whole report just to put a number on a card. Phase 2 feeds it from
+ * the run summary, alongside `MOCK_PLAN_TILE_COUNTS`.
  */
 export const MOCK_ORDER_SUMMARY_PENDING = 2;
 

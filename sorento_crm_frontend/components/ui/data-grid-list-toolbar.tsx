@@ -165,6 +165,14 @@ export type DataGridListToolbarProps<TData extends object> = {
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
+  /**
+   * Extra controls at the END of the left cluster, after Export / Refresh - for a grid
+   * whose rows expand (Expand all / Collapse all). They belong beside Columns and Export
+   * because they change what the TABLE shows, not what the list contains, and hiding them
+   * in the Actions menu on the right puts a view control among the record actions.
+   * Hidden while the bulk strip is up, like everything else in that cluster.
+   */
+  leftActions?: ReactNode;
   /** Primary call-to-action (e.g. the "Add" button). Anchored to the right edge. */
   primaryAction?: ReactNode;
   /** Secondary actions (Import, attachment links, templates). Overflow `▾` at >=2 (D7). */
@@ -245,6 +253,7 @@ export function DataGridListToolbar<TData extends object>({
   selectAllMatching,
   onRefresh,
   isRefreshing = false,
+  leftActions,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -476,6 +485,7 @@ export function DataGridListToolbar<TData extends object>({
                 <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
             ) : null}
+            {leftActions}
           </div>
         )}
 

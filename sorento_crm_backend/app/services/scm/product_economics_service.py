@@ -244,7 +244,8 @@ def movement_class(sold_qty: float, bought_qty: float, on_hand: float) -> str:
 
 
 def record_lifecycle_decision(db: Session, *, product_id: str, decision: Optional[str],
-                              decided_by: Optional[str]) -> dict[str, Any]:
+                              decided_by: Optional[str],
+                              commit: bool = True) -> dict[str, Any]:
     """Record (or withdraw, with None) the buyer's keep-or-discontinue call.
 
     Overwrite-in-place: the decision is the CURRENT answer, not a history - the advisory
@@ -275,6 +276,11 @@ def record_lifecycle_decision(db: Session, *, product_id: str, decision: Optiona
             DO UPDATE SET decision = :d, decided_by = :by, decided_at = :now
         """), {"id": str(uuid_mod.uuid4()), "p": product_id, "d": decision,
                "by": decided_by, "now": now})
-    db.commit()
+    # See `reorder_level_service.upsert_level` - `commit=False` hands the transaction to
+    # the plan's bulk save.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return {"product_id": product_id, "decision": decision,
             "decided_at": now.isoformat() if decision else None}

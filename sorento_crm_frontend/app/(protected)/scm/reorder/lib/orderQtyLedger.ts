@@ -110,8 +110,8 @@ export interface MixtureResult {
  * Recompute the buy after toggling which cover parts are in play.
  *
  * `needed` is the same base every other cover surface on the row uses - `Math.ceil(order_qty)`
- * (see `PlanLineDecisionCell`) - so a toggle here can never disagree with the Decision cell or
- * the Suggested-action column reading the same line.
+ * (see `planEdits.suggestedDecisionFor`) - so a toggle here can never disagree with the
+ * decision panel or the Decision pill reading the same line.
  */
 export function composeMixture(
   needed: number,
