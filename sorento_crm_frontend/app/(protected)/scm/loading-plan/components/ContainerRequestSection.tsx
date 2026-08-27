@@ -37,6 +37,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -314,7 +315,9 @@ export function ContainerRequestSection({
         min={0}
         className="h-8 w-24 tabular-nums"
         value={qty}
-        title="Suggested qty"
+        // The netting rule with this row's own numbers in it (F2): what the figure IS, on
+        // the figure, so nobody has to remember whether the packing list was subtracted.
+        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.suggested_qty)}`}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
@@ -386,7 +389,26 @@ export function ContainerRequestSection({
       },
       {
         id: 'suggested_qty',
-        header: ({ column }) => <DataGridColumnHeader title="Suggested qty" column={column} />,
+        header: ({ column }) => (
+          <span className="flex items-center gap-1">
+            <DataGridColumnHeader title="Suggested qty" column={column} />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  aria-label="How the suggested quantity is worked out"
+                  className="inline-flex cursor-help items-center text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                Need - on hand at site pools - incoming SPO at site pools, never below 0.
+                Incoming packing lists and open POs are not subtracted.
+              </TooltipContent>
+            </Tooltip>
+          </span>
+        ),
         cell: renderQtyCell,
         size: 140,
         enableSorting: false,
