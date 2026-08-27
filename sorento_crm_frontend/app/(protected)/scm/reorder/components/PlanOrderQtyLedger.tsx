@@ -708,7 +708,11 @@ export function OrderQtyLedger({
 
   return (
     <div>
-      <DrillHeader title={`Order qty = ${fmtInt(line.order_qty)}`} />
+      {/* Reads what the grid reads: a covered row suggests 0, its buy-anyway offer lives
+          in The buy below (the captain, 27 Aug). */}
+      <DrillHeader
+        title={`Order qty = ${fmtInt(line.status === 'covered_by_stock' ? 0 : line.order_qty)}`}
+      />
       {/* Scrolls INSIDE the popover rather than overflowing the viewport - the ledger has
           grown to three blocks, and a 375px screen has no room to spare (S3). */}
       <div className="max-h-[70vh] overflow-y-auto">

@@ -32,7 +32,7 @@ export function RecentPurchasesTable({ lines }: { lines: PurchaseTrendLine[] }) 
       </thead>
       <tbody>
         {lines.map((l, i) => (
-          <tr key={`${l.po_number ?? i}-${l.order_date ?? i}`}>
+          <tr key={`${l.po_number ?? 'po'}-${l.order_date ?? 'date'}-${i}`}>
             <td
               className="max-w-32 truncate py-0.5"
               title={l.supplier_name ?? l.supplier_code ?? undefined}
