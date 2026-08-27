@@ -26,3 +26,18 @@ service) or a vitest (ledger card); the two named rows are the browser proof on 
 - **AC-R9 Set level writes the product row.** Pressing Set level on the plan upserts
   `scm.reorder_level` with `warehouse_id IS NULL`, `source = manual`.
 - **AC-R10 disposition unchanged.** BRW's overstock row for SRTWT7408 still appears.
+
+## Phase 2
+
+- **AC-R11 level formula.** GIVEN 900 units out over 90 days (ADU 10), lead time 30, safety
+  days 14 THEN suggested level = 10 x 30 + 10 x 14 = 440, and the popover names ADU 10 / day,
+  lead 30 d, safety 140.
+- **AC-R12 health by movement.** GIVEN sales and purchases in the window THEN "Fast moving";
+  sales only THEN "Slow moving"; neither with stock on hand THEN "Dead - consider
+  discontinuing"; neither and no stock THEN "No history". No margin figure anywhere.
+- **AC-R13 price switch.** GIVEN a row reading "Ask new price" WHEN the buyer switches it to
+  "Use last price" THEN the decision carries `price_mode = use_last`, the row's cost uses the
+  last price, and the draft PO line carries it.
+- **AC-R14 supplier select.** GIVEN a product with two suppliers WHEN the buyer picks the
+  other one THEN the row shows that supplier's last price and lead time, the decision carries
+  `supplier_id`, and the draft PO goes to that supplier.

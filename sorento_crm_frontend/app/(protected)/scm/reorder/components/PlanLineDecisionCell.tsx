@@ -160,7 +160,7 @@ export function PlanLineDecisionCell({
             <HoverCardTrigger asChild>
               <button
                 type="button"
-                className="min-w-0 flex-1 truncate text-start text-sm text-muted-foreground"
+                className="min-w-0 flex-1 whitespace-normal break-words text-start text-sm leading-tight text-muted-foreground"
                 title={summary(decision, true)}
               >
                 {summary(decision, true)}
@@ -217,15 +217,19 @@ export function PlanLineDecisionCell({
             the hover table beside it, never in a `title` sentence. */}
         <HoverCard openDelay={120}>
           <HoverCardTrigger asChild>
+            {/* Wraps rather than truncates (the captain, 27 Aug): "Stock 2,974 + PO 1,500 +
+                Bu..." hid the buy figure, the one number the button asks about. */}
             <Button
               size="sm"
-              className="h-8 px-2"
+              className="h-auto min-h-8 px-2 py-1"
               onClick={() => void decide(suggested)}
               disabled={!canAccept}
               aria-label={`Accept for ${line.sku}: ${summary(suggested)}`}
             >
               <Check className="size-3.5 shrink-0" />
-              <span className="max-w-44 truncate">{summary(suggested)}</span>
+              <span className="max-w-48 whitespace-normal break-words text-start leading-tight">
+                {summary(suggested)}
+              </span>
             </Button>
           </HoverCardTrigger>
           <HoverCardContent className="w-56 p-3" align="start">

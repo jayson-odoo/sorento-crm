@@ -74,3 +74,32 @@ qty       = level - net             (order UP TO the level), floored at MOQ, rou
 
 Forecast policies (`reorder_point` / `periodic_review`) keep their maths. The link horizon and
 the pool-only cascade live in `PLAN-scm-oi-handshake.md` section 10.
+
+## Phase 2 (captain, 27 Aug afternoon; build after the per-product rule lands)
+
+### Suggested level, the industry way
+```
+ADU          = outgoing quantity over the study window (3 months, all locations) / days
+lead_time    = the product's supplier lead time (days); 30 when none is known
+safety_stock = ADU x safety_days (the policy's safety days; 14 by default)
+level        = ADU x lead_time + safety_stock, rounded up to a whole unit
+```
+Replaces the "avg monthly movement x cover months" suggestion in `scm.reorder_level.
+suggested_level` / `suggestion_basis`. The basis JSON names ADU, lead time, safety stock so
+the popover can show the three terms. Reorder qty stays `level - net`.
+
+### Product health, by movement only
+No margin: costs are often CNY and selling prices MYR, and no exchange rate is trusted.
+Over the same window, all locations:
+- **Fast moving** - sold AND bought in the window.
+- **Slow moving** - sold in the window, nothing bought.
+- **Dead** - nothing sold and nothing bought, stock on hand > 0 -> "Consider discontinuing".
+- **No history** - nothing sold, nothing bought, nothing on hand.
+The column reads the class and, for Dead, the suggestion. "Margin unknown" goes.
+
+### Price and supplier are the buyer's to change
+On the plan row, the Suggested price pill is a switch (Use last price / Ask new price) and
+the Suggested supplier is a select over the product's suppliers (`alternatives` on the
+recommendation, then every supplier linked to the product). Both ride on the row's decision
+(`plan_row_decision`: `price_mode`, `supplier_id`, `unit_cost`) and flow into the draft PO
+the plan confirms. Changing the supplier re-reads that supplier's last price and lead time.

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CellContext,
@@ -1070,11 +1072,24 @@ export function PlanLinesGrid({
         id: 'incoming_spo',
         accessorFn: (row) => row.rec.incoming_spo ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="SPO" visibility column={column} />,
-        cell: ({ row }) => (
-          <span className="tabular-nums" title="On the water - incoming SPO quantity">
-            {numCell(row.original.rec.incoming_spo)}
-          </span>
-        ),
+        // A figure above zero is a door to the SPO allocations that make it up (the
+        // captain, 27 Aug), the way PO outstanding opens its book.
+        cell: ({ row }) =>
+          (row.original.rec.incoming_spo ?? 0) > 0 ? (
+            <StopClick>
+              <Link
+                href={`/procurement-management/spo-allocations?query=${encodeURIComponent(row.original.sku)}`}
+                className="tabular-nums text-primary underline-offset-2 hover:underline"
+                title="On the water - open the SPO allocations for this product"
+              >
+                {numCell(row.original.rec.incoming_spo)}
+              </Link>
+            </StopClick>
+          ) : (
+            <span className="tabular-nums" title="On the water - incoming SPO quantity">
+              {numCell(row.original.rec.incoming_spo)}
+            </span>
+          ),
         size: 80,
         enableSorting: true,
         meta: { headerTitle: 'SPO (incoming)', skeleton: <Skeleton className="h-4 w-10" /> },

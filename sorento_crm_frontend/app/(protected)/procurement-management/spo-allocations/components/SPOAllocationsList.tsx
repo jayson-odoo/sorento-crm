@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -52,7 +52,9 @@ export default function SPOAllocationsList() {
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'spo_number', desc: false },
   ]);
-  const [searchQuery, setSearchQuery] = useState('');
+  // A link from the reorder plan's SPO column lands here narrowed to its product.
+  const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('query') ?? '');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedAllocationIds, setSelectedAllocationIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
