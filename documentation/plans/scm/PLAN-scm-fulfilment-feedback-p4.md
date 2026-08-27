@@ -64,6 +64,20 @@ Captain (27 Aug, artifact): these dialogs follow reorder planning's lightboxes (
 
 **R8a. SPO reads the purchase-order table.** Captain (27 Aug): "we need to standardize and take from the purchase order table cause we will allow the upload of SPO to purchase order table". So the SPO cell and its lightbox read SPO-kind rows of `purchase_orders` / `purchase_order_lines` (today the planner-created SPOs are the lines carrying `source_ref`, R9 of part 3; the SPO upload lane lands uploaded SPOs on the same table with the same kind marker), bound for a site pool, open first then received. `_stock_context.incoming_spo` moves off `net_position.on_order` / `spo_allocations` onto this reader in S2 Phase 2, and the guard test AC-H1 re-baselines the From SPO card on that read. PO and SPO share one reader keyed by kind.
 
+**R8a NOT TAKEN as written, on measurement (S2 Phase 2, 28 Aug). Needs the captain's re-ruling.**
+Measured read-only on the dev copy before any code was written, for CHAOZHOU JINBAICHUAN's 71 stock-list products:
+
+| Reading | Figure | Rows |
+| --- | --- | --- |
+| `net_position_v.on_order` at site pools (what the SPO cell shows today) | **3,051** | 15 (product, location) |
+| open `spo_allocations` at site pools | **3,051** | the same rows |
+| SPO-kind `purchase_order_lines` bound for a site pool (`source_system = 'crm_spo'` OR `po_number ILIKE 'SPO%'/'CRM-SPO%'`, `line_status = 'open'`, `qty_ordered > qty_received`) | **0** | 12 lines exist for these products, none open at a pool |
+| `purchase_orders` rows whose number is an `SPO-` document, whole database | **0** | migration 420 moved 3,983 documents / 79,968 lines out |
+
+The cause is a ruling, not a gap: migration `420_spo_docs_in_allocations` (captain, 25-26 Aug, "a shipping order is not a purchase order") moved every SPO document out of `purchase_orders` into `spo_allocations`, and `scm.on_order_v` has read the allocations since. Only four `CRM-SPO-*` headers raised by `spo_conversion_service` remain on the PO table, and those are already counted in the PO cell, so counting them again as SPO would show one unit twice on one row.
+
+Taken instead: `_stock_context` is UNTOUCHED, and the drill's `spo` kind reads `spo_allocations` with `on_order_v`'s own predicate narrowed to site pools, so the dialog foots to the cell (AC-B5 holds for all three kinds). The trigger for moving it is named rather than guessed: **when the SPO upload lane files SPO documents on `purchase_orders` with an identity to select on, `container_request_drill._spo_rows` swaps its FROM clause and `_stock_context.incoming_spo` follows it in the same change.** Until then the captain's A1 would return an empty dialog under a non-zero number.
+
 ## 3. Send to supplier: channel, recipients, opens
 
 ### What exists
@@ -165,6 +179,6 @@ Phase 1 (FE against mocks, browser-verified) then Phase 2 (BE test-first) per sl
 | Q5 | A sent plan cannot be deleted; cancel instead (R3 / AC-A9). |
 | Q6 | "Add to existing draft" is dropped everywhere, list and PI detail (R15). |
 | Q7 | Empty Sales order cut-off = every open order counts, same words as reorder planning (R4). |
-| A1 | SPO figures and lightbox read the purchase-order table; one reader for PO and SPO (R8a). |
+| A1 | SPO figures and lightbox read the purchase-order table; one reader for PO and SPO (R8a). **Measured impossible today, see the note under R8a: migration 420 moved every SPO document off that table, so the reading is 0 against the cell's 3,051. Awaiting the captain's re-ruling.** |
 | A2 | SPO planner expanded row = destinations only, full width; coverage in the SO covered lightbox (R22). |
 | A3 | Gear items on the loading plan record confirmed (R5). |
