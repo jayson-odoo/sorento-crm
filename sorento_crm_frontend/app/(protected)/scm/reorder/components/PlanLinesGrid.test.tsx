@@ -191,6 +191,14 @@ describe('PlanLinesGrid - the collapsed row (C4)', () => {
     ]);
   });
 
+  it('keeps the Project column on a run whose every row is retail (28 Aug: "where is my project quantity column")', () => {
+    renderGrid([line({ segment: 'dealer' }), line({ id: 'r2', segment: 'dealer' })]);
+    const names = headerNames();
+    expect(names).toContain('Project');
+    expect(names).toContain('Retail');
+    expect(names.indexOf('Project')).toBeLessThan(names.indexOf('Retail'));
+  });
+
   it('has no MOQ, price, supplier, level or health column - they moved into the panel', () => {
     renderGrid([line()]);
     const names = headerNames();
