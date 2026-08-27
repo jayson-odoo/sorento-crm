@@ -8,16 +8,16 @@
  * ── BACKEND CONTRACT (app/api/v1/scm/proforma_invoices.py) ─────────────────
  *
  *  POST /api/v1/scm/proforma-invoices/preview  -> 200 ProformaInvoicePreview
- *       multipart: file (required) + supplier_id (required) [+ currency]
+ *       multipart: file (required) + supplier_id (required)
  *  POST /api/v1/scm/proforma-invoices/apply    -> 200 ProformaApplyResult
  *       ?validate_only=true                    -> 200 UploadTestResult
- *       multipart: file + supplier_id [+ currency] [+ revision_of]
+ *       multipart: file + supplier_id [+ revision_of] [+ file_as_new]
  *       `revision_of` is JSON `{"<document index>": "<invoice id>"}` - one file holds
  *       several documents, so whether each is a revision is answered per document (AC-E7).
  *       `file_as_new` is JSON `["<document index>"]` - the documents whose offer was
  *       UNTICKED. Needed on top of an absent `revision_of` because the same file derives
  *       the same number: without it the apply lands in place and creates nothing.
- *  GET  /api/v1/scm/proforma-invoices?supplier_id&placement&limit&offset -> 200 ProformaInvoiceListResponse
+ *  GET  /api/v1/scm/proforma-invoices?supplier_id&placement&query&limit&offset -> 200 ProformaInvoiceListResponse
  *       `placement` narrows to not_converted / converted / split (AC-F6). The API defaults
  *       to all of them; the LIST defaults its control to Not converted, which is the
  *       question being asked when somebody opens that screen.
@@ -57,9 +57,11 @@
  *       block layout with the ADJUSTED quantities (AC-E4). Auth: `scm.dashboard.view`.
  *
  * The supplier travels WITH the file because the document never says reliably who wrote
- * it. Currency does NOT have to: the document usually states it and the supplier's price
- * list often does, so the form field is the last resort (AC-P3.1) - append it only when the
- * operator actually typed one, never an empty string.
+ * it. Currency does NOT travel with it at all (R24): the document states it or the
+ * supplier's price list does, and where NEITHER does, the Test verdict names the invoices
+ * and Confirm is disabled - a third place to type a currency was one more thing to get
+ * wrong on a document that already carries the answer. The backend's `currency` form field
+ * is still accepted; nothing in this app sends it.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -415,16 +417,12 @@ export type RevisionSelection = Record<string, string>;
 function proformaForm(
   file: File,
   supplierId: string,
-  currency?: string | null,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
   body.append('supplier_id', supplierId);
-  // Only when the operator typed one: an empty string would be read as a currency the
-  // backend cannot resolve and refuse a file the document itself could have answered.
-  if (currency) body.append('currency', currency);
   if (revisionOf && Object.keys(revisionOf).length > 0) {
     body.append('revision_of', JSON.stringify(revisionOf));
   }
@@ -440,11 +438,10 @@ function proformaForm(
 export async function previewProformaInvoice(
   file: File,
   supplierId: string,
-  currency?: string | null,
 ): Promise<ProformaInvoicePreview> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/preview', {
     method: 'POST',
-    body: proformaForm(file, supplierId, currency),
+    body: proformaForm(file, supplierId),
   });
   return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
@@ -452,13 +449,12 @@ export async function previewProformaInvoice(
 export async function applyProformaInvoice(
   file: File,
   supplierId: string,
-  currency?: string | null,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, currency, revisionOf, fileAsNew),
+    body: proformaForm(file, supplierId, revisionOf, fileAsNew),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
@@ -466,11 +462,10 @@ export async function applyProformaInvoice(
 export async function testProformaInvoice(
   file: File,
   supplierId: string,
-  currency?: string | null,
 ): Promise<UploadTestResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply?validate_only=true', {
     method: 'POST',
-    body: proformaForm(file, supplierId, currency),
+    body: proformaForm(file, supplierId),
   });
   return readJson<UploadTestResult>(res, 'Failed to test the proforma invoice');
 }

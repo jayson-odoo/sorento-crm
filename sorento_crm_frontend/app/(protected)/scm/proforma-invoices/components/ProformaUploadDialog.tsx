@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, TestTube } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -13,21 +13,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
-import { CountTile } from '../../reorder/components/UploadCountTile';
-import { UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
-import { EM_DASH, fmtSupplierCost } from '../../lib/format';
+import { UploadReadingIndicator } from '../../reorder/components/UploadReadingIndicator';
+import {
+  UploadTestVerdict,
+  type UploadTestResult,
+} from '../../reorder/components/UploadTestVerdict';
+import { EM_DASH } from '../../lib/format';
 import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
 import { useProformaInvoicesApplied } from '../../hooks/useProformaInvoices';
 import {
   applyProformaInvoice,
   previewProformaInvoice,
-  testProformaInvoice,
   type ProformaApplyResult,
   type ProformaInvoicePreview,
   type RevisionSelection,
@@ -36,37 +36,124 @@ import {
 /**
  * The supplier's proforma invoice, uploaded and held.
  *
- * Unlike the packing-list dialog, the supplier is chosen HERE rather than on the page
- * behind it: the list's own supplier filter is what to READ, and the upload's supplier is
- * whose document this is - two different questions that happen to often share an answer.
- * The dropzone stays closed until one is picked, because the file never says reliably who
- * wrote it (AC journey step 1).
+ * The SAME three presses as the purchase-order and sales-order uploads next door (R24,
+ * superseding R13): pick a file, Test to read it, Confirm to write it. Choosing a file runs
+ * nothing, and what Test says is the standard `{valid, errors, warnings, summary}` verdict
+ * every other importer in this system shows. This dialog used to be the odd one out - it
+ * read the file on drop and printed a card per invoice with a currency box and a revision
+ * tickbox on each - and the captain's verdict was that it asks the operator to adjudicate
+ * things the file already answers.
  *
- * The one screen where those two questions ARE the same question passes the answer in
- * (`supplierId` / `supplierOption`): the loading plan is built for one supplier, so the
- * proforma that stands in for their missing stock list (Q2) is theirs by construction, and
- * the picker becomes a line of text.
+ * WHAT IS NO LONGER ASKED, and why:
  *
- * Currency is asked for LAST and usually not at all - the document usually states it
- * (`RMB`, `单价(元)`) and the supplier's price list often does too, so the field is the last
- * resort rather than the first question (AC-P3.1). Where one of them answered, the preview
- * says which.
+ * - **Currency.** The document states it (`RMB`, `单价(元)`) or the supplier's price list
+ *   does. Where NEITHER does, the verdict carries an error naming the invoices and Confirm
+ *   is disabled - which is the honest answer, rather than inviting a guess into a document
+ *   of record.
+ * - **Which invoices are revisions.** The file's own numbers decide, and the candidates are
+ *   applied as revisions by DEFAULT. A wrong link is undone on the invoice's own detail page
+ *   ("Mark as revision of"), which is one press in the rare case instead of a tickbox to
+ *   read in every case.
+ *
+ * The supplier is still chosen HERE rather than on the page behind it: the list's own
+ * supplier filter is what to READ, and the upload's supplier is whose document this is - two
+ * different questions that happen to often share an answer. The one screen where they ARE
+ * the same question passes the answer in (`supplierId` / `supplierOption`): the loading plan
+ * is built for one supplier, so the picker becomes a line of text.
  */
-
-/** Where the currency came from, in the words the operator would use. */
-const CURRENCY_SOURCE: Record<string, string> = {
-  form: 'as entered above',
-  document: 'stated by the file',
-  supplier_price_list: "from the supplier's price list",
-};
-
-const TOTAL_TOLERANCE = 0.01;
 
 /** The invoice numbers, when the result carries them - never a bare count on its own where
  *  a name is available, because "updated 1" is what made a Confirm read as a no-op. */
 function named(rows: { pi_number: string }[]): string | null {
   const numbers = rows.map((r) => r.pi_number).filter(Boolean);
   return numbers.length ? numbers.join(', ') : null;
+}
+
+/** At most this many names in one verdict line before it says "and N more". */
+const NAME_LIMIT = 8;
+
+function listed(names: string[]): string {
+  const head = names.slice(0, NAME_LIMIT).join(', ');
+  return names.length > NAME_LIMIT ? `${head} and ${names.length - NAME_LIMIT} more` : head;
+}
+
+/**
+ * The preview, read as the standard `{valid, errors, warnings, summary}` verdict.
+ *
+ * Derived in the browser rather than asked for a second time - the same shape
+ * `OutstandingUploadDialog.verdictFromPreview` uses, and for the same reason: this channel's
+ * preview already carries every fact the verdict needs.
+ *
+ * ERRORS are what makes the FILE unusable - a missing column, a workbook holding no invoice
+ * at all, or a priced invoice nothing can price in. WARNINGS are what the upload will still
+ * do, differently from a clean run: codes that bind to no product (the lines still land,
+ * with no product against them), documents that will supersede an earlier version, and the
+ * rows the reader could not use.
+ */
+export function verdictFromPreview(preview: ProformaInvoicePreview): UploadTestResult {
+  // Priced, and nothing anywhere says in which money. Named, because "some invoice has no
+  // currency" is not something an operator can act on (AC-P3.2).
+  const unpriceable = preview.documents
+    .filter((doc) => !doc.currency && (doc.total ?? 0) > 0)
+    .map((doc) => doc.pi_number);
+  const errors = [
+    ...preview.missing_columns.map((column) => `This file has no ${column} column.`),
+    ...(!preview.ok && preview.missing_columns.length === 0
+      ? ['No proforma invoice was found in this file.']
+      : []),
+    ...(unpriceable.length
+      ? [
+          `Nothing says which money ${unpriceable.length === 1 ? 'this invoice is' : 'these invoices are'} ` +
+            `in: ${listed(unpriceable)}. State the currency on the document or the supplier's price list.`,
+        ]
+      : []),
+  ];
+
+  const revisions = preview.documents
+    .filter((doc) => doc.revision_candidate)
+    .map((doc) => doc.pi_number);
+  const warnings = [
+    ...(preview.unmatched_items > 0
+      ? [
+          `${preview.unmatched_items} ${preview.unmatched_items === 1 ? 'code is' : 'codes are'} ` +
+            `not in the catalogue: ${listed(preview.unmatched_item_codes)}. Those lines still load, ` +
+            'with no product against them.',
+        ]
+      : []),
+    ...(revisions.length
+      ? [
+          `${revisions.length} ${revisions.length === 1 ? 'invoice updates' : 'invoices update'} ` +
+            `an earlier version: ${listed(revisions)}.`,
+        ]
+      : []),
+    ...preview.problems,
+    ...preview.unmapped_headers.map((header) => `Column not recognised: ${header}`),
+  ];
+
+  return {
+    valid: preview.ok && errors.length === 0,
+    errors,
+    warnings,
+    summary: {
+      total_rows: preview.rows_read,
+      // The unit of THIS channel is a document, not a row: one file is routinely five
+      // invoices, and "500 rows" never said how many invoices that is.
+      document_count: preview.document_count,
+      would_apply: preview.ok ? preview.line_count : 0,
+      error_count: errors.length,
+    },
+  };
+}
+
+/** Every candidate, ticked. The file's own numbers decide; a wrong link is undone on the
+ *  detail page rather than adjudicated here (R24). */
+function revisionsFrom(preview: ProformaInvoicePreview | null): RevisionSelection {
+  if (!preview) return {};
+  return Object.fromEntries(
+    preview.documents
+      .filter((doc) => doc.revision_candidate)
+      .map((doc) => [String(doc.index), doc.revision_candidate!.invoice_id]),
+  );
 }
 
 export function ProformaUploadDialog({
@@ -92,134 +179,73 @@ export function ProformaUploadDialog({
   // whatever unfiltered first page happens to be cached (S8-followup: KAILU HARDWARE
   // FACTORY, picked by search, is well past the `/select` endpoint's 100-row cap).
   const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
-  const [currency, setCurrency] = useState('');
-  const trimmedCurrency = currency.trim() || null;
-  // Which of this file's documents supersede one already on file. Pre-selected from the
-  // preview's own proposal (AC-E6) and unticked by anyone who disagrees - the pre-loading
-  // list carries no invoice number, so the match is a suggestion and the operator decides.
-  const [revisionOf, setRevisionOf] = useState<RevisionSelection>({});
-  // Which documents were OFFERED a revision, so an untick can be told from "there was
-  // nothing to untick". Held apart from the preview because the apply closure below reads
-  // it, and reading the preview there makes the upload hook's own type circular.
-  const [offered, setOffered] = useState<string[]>([]);
   const invalidateLists = useProformaInvoicesApplied();
 
-  // Cleared on every open, like the file and the verdict: a supplier or currency left over
-  // from the last upload would silently file - or price - the next one under it.
+  /**
+   * The read Confirm applies WITH, held outside React state.
+   *
+   * Confirm files the file's revision candidates as revisions, so it needs the preview -
+   * and the operator is not required to press Test first (testing is a tool, not ceremony,
+   * in every dialog here). So: use the read Test already did, and where there is none, take
+   * one on the Confirm press itself. Never on the file being picked - that is the behaviour
+   * R24 removed.
+   */
+  const previewRef = useRef<ProformaInvoicePreview | null>(null);
+
+  // Cleared on every open, like the file and the verdict: a supplier left over from the last
+  // upload would silently file the next one under it.
   useEffect(() => {
     if (open) {
       setSupplierId(fixedSupplierId);
       setSupplierOption(fixedSupplierOption);
-      setCurrency('');
-      setRevisionOf({});
-      setOffered([]);
+      previewRef.current = null;
     }
   }, [open, fixedSupplierId, fixedSupplierOption]);
 
   const upload = useTwoStepUpload<ProformaInvoicePreview, ProformaApplyResult>({
     open,
-    preview: (file) => previewProformaInvoice(file, supplierId as string, trimmedCurrency),
-    apply: (file) =>
-      applyProformaInvoice(
-        file,
-        supplierId as string,
-        trimmedCurrency,
-        revisionOf,
-        // The documents whose offer was UNTICKED, named explicitly: the same file derives
-        // the same number, so an absent `revision_of` alone would land the upload on the
-        // invoice already there and report "updated in place" with no new row.
-        offered.filter((index) => !revisionOf[index]),
-      ),
-    test: (file) => testProformaInvoice(file, supplierId as string, trimmedCurrency),
+    preview: (file) => previewProformaInvoice(file, supplierId as string),
+    apply: async (file) => {
+      const read =
+        previewRef.current ?? (await previewProformaInvoice(file, supplierId as string));
+      return applyProformaInvoice(file, supplierId as string, revisionsFrom(read));
+    },
     onApplied: (result) => {
       invalidateLists();
       onApplied?.(result);
     },
   });
 
-  const { result } = upload;
-  const supplierName = supplierOption?.label ?? null;
+  const { file, preview, previewing, applying, result, error } = upload;
 
-  /**
-   * This channel reads the file as soon as one is picked, and the others do not.
-   *
-   * `useTwoStepUpload` deliberately fetches nothing on drop - picking a file is not a
-   * decision to do anything with it - and Confirm is enabled without a Test, because
-   * testing is a tool rather than ceremony. For every other channel that is fine: the
-   * preview only DESCRIBES what would happen. Here it also answers a question that changes
-   * what Confirm does - "is this the supplier's second send of a document you already
-   * hold" - so a Confirm with no preview behind it filed every revision as a new invoice
-   * and nothing on screen had offered otherwise (browser pass 2, AC-E6).
-   */
-  const [probed, setProbed] = useState<ProformaInvoicePreview | null>(null);
+  // The hook clears its preview on a new file, so this ref follows it rather than
+  // accumulating one file's answer onto the next one's Confirm.
   useEffect(() => {
-    if (!open || !upload.file || !supplierId || upload.preview) {
-      setProbed(null);
-      return;
-    }
-    let cancelled = false;
-    previewProformaInvoice(upload.file, supplierId, trimmedCurrency)
-      .then((answer) => {
-        if (!cancelled) setProbed(answer);
-      })
-      .catch(() => {
-        // Silent: the Test button and the apply both report their own failures, and a
-        // dialog that shouts about a background read the operator never asked for is
-        // reporting its own plumbing.
-        if (!cancelled) setProbed(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, upload.file, supplierId, trimmedCurrency, upload.preview]);
-
-  const preview = upload.preview ?? probed;
-
-  // A fresh preview replaces the proposal wholesale: a tick left over from the last file
-  // would file THIS one as a revision of a document it has nothing to do with.
-  useEffect(() => {
-    if (!preview) {
-      setRevisionOf({});
-      setOffered([]);
-      return;
-    }
-    const withCandidate = preview.documents.filter((doc) => doc.revision_candidate);
-    setOffered(withCandidate.map((doc) => String(doc.index)));
-    setRevisionOf(
-      Object.fromEntries(
-        withCandidate.map((doc) => [
-          String(doc.index),
-          doc.revision_candidate!.invoice_id,
-        ]),
-      ),
-    );
+    previewRef.current = preview;
   }, [preview]);
 
-  // A Test verdict/preview describes the prices AS READ IN THE OLD CURRENCY - changing the
-  // currency mid-flow must not leave that stale verdict on screen looking current. Re-chooses
-  // the SAME file, which is what `useTwoStepUpload.choose` already clears preview/test state
-  // for. Left alone once `result` exists (post-apply) - that is the just-shown summary S8
-  // keeps the dialog open to display, not a stale verdict to clear.
-  const handleCurrencyChange = (raw: string) => {
-    const next = raw.toUpperCase().slice(0, 3);
-    setCurrency(next);
-    if (!upload.result && upload.file && (upload.preview || upload.testResult)) {
-      upload.choose(upload.file);
-    }
-  };
+  // One press, one answer: the preview IS the test read, so the verdict is derived from it
+  // rather than costing the operator a second one.
+  const verdict = preview ? verdictFromPreview(preview) : null;
+  const supplierName = supplierOption?.label ?? null;
+  // A file already KNOWN to be unusable is never confirmable; an untested one still is.
+  const canConfirm = !!supplierId && upload.canConfirm && (!verdict || verdict.valid);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Upload proforma invoice</DialogTitle>
+          {/* One line, and it earns its place twice over: it is the promise the two-step
+              flow makes, and it is the dialog's accessible description. */}
           <DialogDescription>
-            Every invoice the file holds is priced and held against the chosen supplier.
+            Test reads the file. Confirm holds every invoice it carries against the chosen
+            supplier.
             {supplierName ? ` Uploading as ${supplierName}.` : ''}
           </DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="space-y-4">
+        <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
           <div>
             <Label
               htmlFor={fixedSupplierId ? undefined : 'proforma-supplier'}
@@ -239,178 +265,41 @@ export function ProformaUploadDialog({
                 onOptionChange={setSupplierOption}
                 // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
                 // caps at 100 rows, so a client-filtered static list silently hid any supplier
-                // past that page. `fetchOptions` re-queries as the user types (debounced by
-                // `SearchableSelect` itself).
+                // past that page.
                 fetchOptions={(query) => getFulfilmentSuppliers(query)}
                 selectedOption={supplierOption ?? undefined}
                 placeholder="Choose a supplier"
-                disabled={upload.previewing || upload.applying}
+                disabled={previewing || applying}
               />
             )}
           </div>
 
           <FileDropzone
-            files={upload.file ? [upload.file] : []}
-            onFilesChange={(next) => void upload.choose(next[0] ?? null)}
+            files={file ? [file] : []}
+            onFilesChange={(next) => upload.choose(next[0] ?? null)}
             onReject={upload.reject}
             accept={upload.accept}
             maxSizeMb={MAX_SIZE_MB}
-            disabled={!supplierId || upload.previewing || upload.applying}
+            disabled={!supplierId || previewing || applying}
             aria-label="Proforma invoice file"
           />
 
-          <div>
-            <Label htmlFor="proforma-currency" className="mb-1 block text-xs">
-              Currency
-            </Label>
-            <Input
-              id="proforma-currency"
-              value={currency}
-              onChange={(e) => handleCurrencyChange(e.target.value)}
-              maxLength={3}
-              placeholder="CNY"
-              autoComplete="off"
-              className="w-28 uppercase"
-              disabled={upload.previewing || upload.applying}
-            />
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Only needed when neither the file nor the supplier&apos;s price list says.
-            </p>
-          </div>
+          <UploadReadingIndicator reading={previewing} />
 
-          {upload.previewing ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <LoaderCircle className="size-3.5 animate-spin" /> Reading the file...
-            </p>
-          ) : null}
-
-          {upload.error ? (
+          {error ? (
             <Alert variant="destructive">
-              <AlertDescription>{upload.error}</AlertDescription>
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
 
-          {preview && !preview.ok ? (
-            <Alert variant="destructive">
-              <AlertDescription>
-                {preview.missing_columns?.length
-                  ? `This file has no ${preview.missing_columns.join(', ')} column.`
-                  : 'No proforma invoice was found in this file.'}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {preview?.ok && !result ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <CountTile label="Invoices" value={preview.document_count} />
-                <CountTile label="Lines" value={preview.line_count} />
-                <CountTile label="Not in catalogue" value={preview.unmatched_items} />
-              </div>
-              <div className="divide-y divide-border rounded-lg border">
-                {preview.documents.map((doc) => {
-                  const mismatch =
-                    doc.stated_total != null &&
-                    doc.total != null &&
-                    Math.abs(doc.stated_total - doc.total) > TOTAL_TOLERANCE;
-                  return (
-                    <div key={doc.index} className="space-y-1 p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium">
-                          {doc.pi_number}
-                          {!doc.pi_number_stated ? (
-                            <span className="ms-1.5 text-2xs font-normal text-muted-foreground">
-                              (derived)
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="shrink-0 text-2xs text-muted-foreground">
-                          {doc.invoice_date || EM_DASH}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 text-2xs text-muted-foreground">
-                        <span>{doc.container_no ? `Container ${doc.container_no}` : 'No container stated'}</span>
-                        <span>{doc.lines} lines</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 text-2xs">
-                        <span className={mismatch ? 'font-medium text-amber-700' : 'text-muted-foreground'}>
-                          Total {fmtSupplierCost(doc.total, doc.currency)}
-                          {doc.stated_total != null
-                            ? ` (stated ${fmtSupplierCost(doc.stated_total, doc.currency)})`
-                            : ''}
-                          {mismatch ? ' - does not match the lines' : ''}
-                        </span>
-                      </div>
-                      <p className="text-2xs text-muted-foreground">
-                        {doc.currency
-                          ? `Priced in ${doc.currency} (${CURRENCY_SOURCE[doc.currency_source] ?? doc.currency_source}).`
-                          : 'Nothing states which money this invoice is in - enter a currency above.'}
-                      </p>
-                      {doc.revision_candidate ? (
-                        <label className="flex items-start gap-2 rounded-md bg-muted/50 p-2">
-                          <Checkbox
-                            className="mt-0.5"
-                            checked={!!revisionOf[String(doc.index)]}
-                            onCheckedChange={(checked) =>
-                              setRevisionOf((prev) => {
-                                const next = { ...prev };
-                                if (checked) {
-                                  next[String(doc.index)] = doc.revision_candidate!.invoice_id;
-                                } else {
-                                  delete next[String(doc.index)];
-                                }
-                                return next;
-                              })
-                            }
-                            aria-label={`Upload as a revision of ${doc.revision_candidate.pi_number}`}
-                          />
-                          <span className="text-2xs">
-                            <span className="font-medium">
-                              Revision of {doc.revision_candidate.pi_number}
-                            </span>
-                            <span className="ms-1 text-muted-foreground">
-                              {doc.revision_candidate.matched_items} of{' '}
-                              {doc.revision_candidate.lines} item codes match. Untick to file
-                              it as a new invoice.
-                            </span>
-                          </span>
-                        </label>
-                      ) : null}
-                      {doc.unmatched_items.length ? (
-                        <p className="text-2xs text-muted-foreground">
-                          {doc.unmatched_items.slice(0, 8).join(', ')}
-                          {doc.unmatched_items.length > 8
-                            ? ` and ${doc.unmatched_items.length - 8} more`
-                            : ''}{' '}
-                          not in the catalogue.
-                        </p>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-              {preview.unmatched_items > 0 ? (
-                <p className="text-2xs text-muted-foreground">
-                  {preview.unmatched_item_codes.slice(0, 8).join(', ')}
-                  {preview.unmatched_items > 8
-                    ? ` and ${preview.unmatched_items - 8} more`
-                    : ''}{' '}
-                  {preview.unmatched_items === 1 ? 'code is' : 'codes are'} not in the catalogue
-                  ({preview.unmatched_items}). Those lines are still loaded, with no product
-                  against them.
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-
-          {upload.testResult ? <UploadTestVerdict result={upload.testResult} /> : null}
+          {verdict && !result ? <UploadTestVerdict result={verdict} /> : null}
 
           {result ? (
             <Alert>
               <AlertDescription>
                 {/* Every invoice NAMED. "Nothing new was created" on its own is how a
                     Confirm that landed on the document already on file reads as a Confirm
-                    that did nothing at all - which is what the browser pass reported. */}
+                    that did nothing at all. */}
                 {result.documents_created > 0
                   ? `Created ${named(result.results.filter((r) => r.created)) ?? `${result.documents_created} invoice${result.documents_created === 1 ? '' : 's'}`}`
                   : 'Nothing new was created'}
@@ -427,39 +316,42 @@ export function ProformaUploadDialog({
         </DialogBody>
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => void upload.runTest()}
-            disabled={!supplierId || !upload.file || upload.testing || upload.applying}
-            title={!supplierId ? 'Choose a supplier first' : undefined}
-          >
-            {upload.testing ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <TestTube className="size-4" />
-            )}
-            Test
-          </Button>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={applying}>
             {result ? 'Close' : 'Cancel'}
           </Button>
           {!result ? (
-            <Button
-              onClick={() => void upload.confirm()}
-              disabled={!supplierId || !upload.canConfirm}
-              // WHY it will not act. A button that is disabled and silent reads as a button
-              // that was pressed and did nothing.
-              title={
-                !supplierId
-                  ? 'Choose a supplier first'
-                  : preview && !preview.ok
-                    ? 'This file could not be read as a proforma invoice.'
-                    : undefined
-              }
-            >
-              {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Confirm
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void upload.runTest()}
+                disabled={!supplierId || !file || previewing || applying || upload.testing}
+                title={!supplierId ? 'Choose a supplier first' : undefined}
+              >
+                {upload.testing ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <TestTube className="size-4" aria-hidden />
+                )}
+                Test
+              </Button>
+              <Button
+                onClick={() => void upload.confirm()}
+                disabled={!canConfirm}
+                // WHY it will not act. A button that is disabled and silent reads as a button
+                // that was pressed and did nothing.
+                title={
+                  !supplierId
+                    ? 'Choose a supplier first'
+                    : verdict && !verdict.valid
+                      ? verdict.errors[0]
+                      : undefined
+                }
+              >
+                {applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                Confirm
+              </Button>
+            </>
           ) : null}
         </DialogFooter>
       </DialogContent>
