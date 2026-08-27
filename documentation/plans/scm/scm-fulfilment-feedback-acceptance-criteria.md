@@ -92,6 +92,7 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 - AC-F11.4 The ladder refuses a dismissed code: the next stock-list or PI upload leaves it unmatched, with no automatic bind and no badge.
 - AC-F11.5 Below the grid, "n dismissed" with a Show toggle lists each dismissed code with an Undo (the existing Forget). Undo puts the code back in the queue and the ladder answers it again on the next upload; nothing else changes. Queue empty AND nothing dismissed renders no panel at all.
 - AC-F11.6 `POST /api/v1/scm/supplier-code-aliases/dismiss` takes `{supplier_id, supplier_code}` behind `scm.reorder.run`, answers 201 with `source: 'dismissed'`, `product_id: null` and the rebind counts; the database refuses a dismissal carrying a product and a match carrying none.
+- AC-F11.7 Refresh matching (R18) sits in the queue's header and in the loading-plan toolbar beside Upload proforma invoice, disabled until a supplier is chosen and while the pass is in flight. `POST /api/v1/scm/supplier-code-aliases/rematch` with `{supplier_id}` behind `scm.reorder.run` re-runs the ladder over the supplier's UNBOUND stock rows and the lines of their current, un-converted PIs, binding what master data can now answer and writing the auto aliases an upload would write; a bound row and a dismissed code are untouched. It answers `{inventory_bound, invoice_lines_bound, still_unmatched}` and the toast reports those counts.
 
 ## G. SPO planner: choose the PO and the SO
 

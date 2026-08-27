@@ -18,6 +18,7 @@ import {
   useUnmatchedSupplierCodes,
 } from '../../hooks/useSupplierCodeAliases';
 import type { UnmatchedSupplierCode } from '../../services/supplierCodeAliasService';
+import { RefreshMatchingButton } from './RefreshMatchingButton';
 import { EM_DASH, fmtInt } from '../../lib/format';
 
 /**
@@ -233,9 +234,15 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
                 : `${rows.length} codes match nothing we hold`}
             </CardTitle>
           </CardHeading>
-          <Badge variant="secondary" appearance="light">
-            {fmtInt(rows.reduce((sum, r) => sum + (r.qty_packed || 0), 0))} packed
-          </Badge>
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge variant="secondary" appearance="light">
+              {fmtInt(rows.reduce((sum, r) => sum + (r.qty_packed || 0), 0))} packed
+            </Badge>
+            {/* Master data moves while this queue is being worked down - a product created to
+                answer one of these codes answers others too, and the ladder is what finds
+                them (R18). */}
+            <RefreshMatchingButton supplierId={supplierId} size="sm" />
+          </div>
         </CardHeader>
         <CardTable>
           {/* Five columns are wider than a phone, so the table scrolls inside its own

@@ -177,6 +177,17 @@ describe('LoadingPlanView - a supplier is chosen', () => {
     expect(screen.getByTestId('open-proforma-upload')).toBeEnabled();
   });
 
+  it('offers Refresh matching from the toolbar, where the queue may be empty', async () => {
+    renderView();
+    // The queue panel hides itself when every code binds, so the toolbar is the only place
+    // this is reachable in exactly the state somebody is trying to reach (R18).
+    expect(screen.getByTestId('refresh-matching')).toBeDisabled();
+
+    await chooseSupplier();
+
+    expect(screen.getByTestId('refresh-matching')).toBeEnabled();
+  });
+
   it('opens the proforma upload against the supplier already chosen here', async () => {
     renderView();
     await chooseSupplier();

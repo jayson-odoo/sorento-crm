@@ -49,6 +49,7 @@ const state = {
   match: vi.fn(),
   dismiss: vi.fn(),
   forget: vi.fn(),
+  rematch: vi.fn(),
 };
 
 vi.mock('../../hooks/useSupplierCodeAliases', () => ({
@@ -57,6 +58,7 @@ vi.mock('../../hooks/useSupplierCodeAliases', () => ({
   useMatchSupplierCode: () => ({ mutateAsync: state.match, isPending: false }),
   useDismissSupplierCode: () => ({ mutateAsync: state.dismiss, isPending: false }),
   useForgetSupplierCodeMatch: () => ({ mutate: state.forget, isPending: false }),
+  useRematchSupplierCodes: () => ({ mutate: state.rematch, isPending: false }),
 }));
 
 vi.mock(
@@ -157,6 +159,7 @@ beforeEach(() => {
     rebound_invoice_lines: 0,
   });
   state.forget = vi.fn();
+  state.rematch = vi.fn();
 });
 
 describe('UnmatchedSupplierCodesPanel', () => {
@@ -174,6 +177,14 @@ describe('UnmatchedSupplierCodesPanel', () => {
     const { container } = render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('offers to run the ladder again beside the queue it would shorten', () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    fireEvent.click(screen.getByTestId('refresh-matching'));
+
+    expect(state.rematch).toHaveBeenCalledWith({ supplier_id: 'sup-1' });
   });
 
   it('records the match from the row itself, against that row s code', async () => {

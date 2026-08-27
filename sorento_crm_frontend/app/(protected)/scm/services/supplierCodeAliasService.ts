@@ -17,6 +17,9 @@
  *         Body: { supplier_id, supplier_code }. "None of ours": records a ruling with no
  *         product, UNBINDS the rows already uploaded under that code, and takes it out of
  *         the unmatched queue.
+ *  POST   /api/v1/scm/supplier-code-aliases/rematch          -> 200 SupplierCodeRematched
+ *         Body: { supplier_id }. Runs the ladder again over the rows still unbound, so a
+ *         product added after the upload binds without the file being uploaded again.
  *  DELETE /api/v1/scm/supplier-code-aliases/{id}             -> 200 { deleted, rebound_* }
  *         Forgets the ruling - a match or a dismissal - and puts those rows back to
  *         whatever the ladder says now.
@@ -145,6 +148,24 @@ export async function dismissSupplierCode(body: {
     body: JSON.stringify(body),
   });
   return readJson<SupplierCodeDismissed>(res, 'Failed to dismiss the code');
+}
+
+/** What the ladder answered on a second pass, and what is left to answer by hand. */
+export interface SupplierCodeRematched {
+  inventory_bound: number;
+  invoice_lines_bound: number;
+  still_unmatched: number;
+}
+
+export async function rematchSupplierCodes(body: {
+  supplier_id: string;
+}): Promise<SupplierCodeRematched> {
+  const res = await apiFetch('/api/v1/scm/supplier-code-aliases/rematch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return readJson<SupplierCodeRematched>(res, 'Failed to refresh the matching');
 }
 
 export async function forgetSupplierCodeMatch(id: string): Promise<void> {

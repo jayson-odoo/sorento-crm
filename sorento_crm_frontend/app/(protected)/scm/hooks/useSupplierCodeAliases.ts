@@ -8,6 +8,7 @@ import {
   listSupplierCodeAliases,
   listUnmatchedSupplierCodes,
   matchSupplierCode,
+  rematchSupplierCodes,
 } from '../services/supplierCodeAliasService';
 
 const KEY = ['scm', 'supplier-code-aliases'] as const;
@@ -74,6 +75,37 @@ export function useDismissSupplierCode() {
       void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
       void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
       toast.success(`${written.supplier_code} will not be asked about again.`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * Run the ladder again over the rows still unbound, after master data has moved.
+ *
+ * The same invalidations as a match: it binds stock rows and invoice lines, so the loading
+ * plan, the container request and the proforma screens are stale the moment it returns. The
+ * toast says what moved and what is left, because the button is otherwise indistinguishable
+ * from one that did nothing.
+ */
+export function useRematchSupplierCodes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: rematchSupplierCodes,
+    onSuccess: (out) => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
+      const bound = out.inventory_bound + out.invoice_lines_bound;
+      toast.success(
+        bound === 0
+          ? `Nothing new matched. ${out.still_unmatched} still unmatched.`
+          : `Matched ${out.inventory_bound} stock row${
+              out.inventory_bound === 1 ? '' : 's'
+            } and ${out.invoice_lines_bound} invoice line${
+              out.invoice_lines_bound === 1 ? '' : 's'
+            }, ${out.still_unmatched} still unmatched.`,
+      );
     },
     onError: (e: Error) => toast.error(e.message),
   });

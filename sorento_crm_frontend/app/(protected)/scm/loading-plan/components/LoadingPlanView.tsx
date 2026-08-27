@@ -15,6 +15,7 @@ import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
 import { ProformaUploadDialog } from '../../proforma-invoices/components/ProformaUploadDialog';
 import { StockListUploadDialog } from './StockListUploadDialog';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
+import { RefreshMatchingButton } from './RefreshMatchingButton';
 import { ContainerRequestSection } from './ContainerRequestSection';
 
 /**
@@ -134,6 +135,10 @@ export function LoadingPlanView() {
               <FileText className="size-4" />
               Upload proforma invoice
             </Button>
+            {/* Here as well as on the queue panel: the panel hides itself when every code
+                binds, and that is exactly the state somebody is trying to reach after adding
+                the missing products (R18). */}
+            <RefreshMatchingButton supplierId={supplierId} size="md" />
           </div>
         </div>
       </Card>
