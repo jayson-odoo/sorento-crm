@@ -25,6 +25,13 @@ export interface UploadTestResult {
   errors: string[];
   warnings: string[];
   summary?: Record<string, unknown>;
+  /**
+   * Extra one-line facts about what the file would do, printed under the counts. For the
+   * figures that are neither a count of rows nor a problem: today the shipping-order half
+   * of a purchase book, which lands in a different table from the rows around it and has
+   * its own new / changed / unchanged split.
+   */
+  notes?: string[];
 }
 
 function num(v: unknown): string | null {
@@ -54,6 +61,12 @@ export function UploadTestVerdict({ result }: { result: UploadTestResult }) {
       {parts.length ? (
         <p className="text-2xs text-muted-foreground">{parts.join(' • ')}</p>
       ) : null}
+
+      {(result.notes ?? []).map((note) => (
+        <p key={note} className="text-2xs text-muted-foreground">
+          {note}
+        </p>
+      ))}
 
       {result.valid ? (
         <Alert className="border-green-200 bg-green-50 text-green-900">

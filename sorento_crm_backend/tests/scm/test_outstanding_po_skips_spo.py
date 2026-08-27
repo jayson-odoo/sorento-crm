@@ -444,3 +444,122 @@ def test_a_fractional_quantity_lands_as_a_whole_number(seeded, db):
     assert float(line["allocated_quantity"]) == 10
     assert float(line["quantity_received"]) == 10
     assert line["line_status"] == "closed"
+
+
+# ------------------------------------- the Test verdict: new, changed, unchanged (28 Aug)
+#
+# The prod defect this pins: the Test result printed "721 rows are shipping orders (SPO)"
+# and, directly under it, "Nothing would change - every line already matches what we hold".
+# Both halves were computed honestly and neither knew about the other - the "nothing"
+# sentence reads the PURCHASE-order diff only, and the shipping-order half counted the lines
+# it would state without ever asking what the table already holds, so it could not have
+# contradicted it. Each planned line is now classified against the row it maps to.
+
+
+def _spo_counts_of(result) -> dict:
+    """The six shipping-order figures off a preview, as the response dict states them."""
+    return {
+        k: v for k, v in result.to_dict().items() if k.startswith("spo_")
+    }
+
+
+def _apply_spo_counts(out: dict) -> dict:
+    return {k: v for k, v in out.items() if k.startswith("spo_")}
+
+
+def test_the_first_upload_of_a_shipping_order_counts_it_as_new(seeded, db):
+    """Nothing is held, so every stated line is new - and the file plainly changes something."""
+    codes = seeded
+    spo = _spo_number()
+
+    result = svc.preview(db, _book(codes, spo), PO)
+
+    assert result.spo_lines == 1
+    assert result.spo_new == 1
+    assert result.spo_changed == 0
+    assert result.spo_unchanged == 0
+
+
+def test_the_same_book_uploaded_twice_states_nothing_new_and_closes_nothing(seeded, db):
+    """The re-upload the captain actually ran. Every line already matches what we hold, and
+    the count has to say so rather than report a bare 721."""
+    codes = seeded
+    spo = _spo_number()
+    svc.apply(db, _book(codes, spo), PO)
+
+    result = svc.preview(db, _book(codes, spo), PO)
+    out = svc.apply(db, _book(codes, spo), PO)
+
+    assert result.spo_new == 0
+    assert result.spo_changed == 0
+    assert result.spo_unchanged == 1
+    # The first upload settled every open line of this channel the book does not state, so
+    # the second one has nothing left to close.
+    assert result.spo_closed == 0
+    assert out["spo_closed"] == 0
+
+
+def test_a_line_whose_quantity_moved_counts_as_changed(seeded, db):
+    codes = seeded
+    spo = _spo_number()
+    svc.apply(db, _book(codes, spo), PO)
+    moved = po_workbook([
+        po_minimal_row(codes.main_po, codes.creditor_main, codes.item_rl, 100,
+                       date(2026, 7, 1), codes.loc_project),
+        po_minimal_row(spo, codes.creditor_main, codes.item_wt, 80,
+                       date(2026, 8, 1), codes.loc_project),
+    ], headers=PO_MINIMAL)
+
+    result = svc.preview(db, moved, PO)
+
+    assert result.spo_changed == 1
+    assert result.spo_new == 0
+    assert result.spo_unchanged == 0
+
+
+def test_a_line_the_book_stopped_stating_is_counted_as_a_closure(seeded, db):
+    """The number that has to be on screen BEFORE Confirm: a re-export that drops a line
+    settles it."""
+    codes = seeded
+    spo = _spo_number()
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_wt, 60), (codes.item_blue, 40),
+    ]), PO)
+
+    result = svc.preview(db, _multi_line_book(codes, spo, [(codes.item_wt, 60)]), PO)
+
+    assert result.spo_closed == 1
+    assert result.spo_unchanged == 1
+    assert result.spo_new == 0
+    assert result.spo_changed == 0
+
+
+def test_the_warning_carries_the_numbers_rather_than_a_bare_row_count(seeded, db):
+    codes = seeded
+
+    result = svc.preview(db, _book(codes, _spo_number()), PO)
+
+    warning = [w for w in result.warnings if "shipping order" in w.lower()]
+    assert warning, result.warnings
+    assert "1 new" in warning[0], warning
+    assert "0 changed" in warning[0], warning
+    assert "0 unchanged" in warning[0], warning
+
+
+def test_the_write_reports_the_same_classification_the_preview_promised(seeded, db):
+    """One resolver for both halves (S3): the operator confirms the numbers the commit
+    then reports."""
+    codes = seeded
+    spo = _spo_number()
+    svc.apply(db, _multi_line_book(codes, spo, [
+        (codes.item_wt, 60), (codes.item_blue, 40),
+    ]), PO)
+    book = _multi_line_book(codes, spo, [(codes.item_wt, 60), (codes.item_rl, 15)])
+
+    result = svc.preview(db, book, PO)
+    out = svc.apply(db, book, PO)
+
+    assert _spo_counts_of(result) == _apply_spo_counts(out)
+    assert result.spo_new == 1
+    assert result.spo_unchanged == 1
+    assert result.spo_closed == 1

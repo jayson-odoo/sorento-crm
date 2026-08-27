@@ -1001,11 +1001,15 @@ def _sources(
     touches the same tables, so it counts as "the book moved" too - hence both job types per
     family, and the table fallback checks both the live stamp and the matching history stamp.
 
-    SPO book: the structured purchase-history upload writes BOTH families into
-    `purchase_orders` in the SAME job, told apart only by `source_system`
-    (`scm_po_history` vs `scm_spo_history` - `history_sources.py`). There is no separate SPO
-    job type to key on, so its freshness is read off the rows it actually wrote rather than
-    the job row.
+    SPO book: read off `spo_allocations`, and off the ROWS rather than a job stamp, for two
+    reasons. Migration 420 moved every SPO document out of `purchase_orders` into that
+    table, so the old read (`purchase_orders` + `scm_spo_history`) has matched nothing since
+    and the strip has said "SPO -" however recently a book was loaded. And no job type is
+    SPO-specific: the structured history upload writes both families in ONE
+    `po_history_import`, and the weekly outstanding book files its shipping orders inside
+    `outstanding_po_import` - so keying on either would date the SPO book off a
+    purchase-order-only export that stated no shipping order at all. Both SPO writers are
+    read: the weekly upload (`scm_upload`) and the closed history (`scm_spo_history`).
     """
     jobs_co, jobs_params = company_sql_predicate(db, "company_id", param_prefix="srcj")
 
@@ -1036,7 +1040,7 @@ def _sources(
     po_book_as_of = _job_max(_PO_BOOK_JOB_TYPES) or _table_max(
         "purchase_orders", (_LIVE_UPLOAD_SOURCE, PO_HISTORY_SOURCE)
     )
-    spo_as_of = _table_max("purchase_orders", (SPO_HISTORY_SOURCE,))
+    spo_as_of = _table_max("spo_allocations", (_LIVE_UPLOAD_SOURCE, SPO_HISTORY_SOURCE))
 
     return {
         "so_book_as_of": so_book_as_of,
