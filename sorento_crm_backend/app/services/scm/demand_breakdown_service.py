@@ -160,7 +160,19 @@ def _scope_for(db: Session, rec,
     """
     wid = rec["warehouse_id"]
     if not wid:
-        # A network-scope row names no location, so there is nothing to narrow to.
+        # A row that names no location was still sized over a set of them, and that set is
+        # frozen on the row: `plan_basis.locations` (AC-F08). Reading it is what lets a
+        # per-product buy (`PLAN-scm-reorder-per-product.md`) list the orders behind it -
+        # without it the drill has nothing to narrow to and answers "no open demand" for a
+        # row that was sized against demand at ten locations.
+        basis = (rec["inputs"] or {}).get("plan_basis") or {}
+        members = sorted({str(loc["warehouse_id"])
+                          for loc in (basis.get("locations") or [])
+                          if isinstance(loc, dict) and loc.get("warehouse_id")})
+        if members:
+            # Neither one location nor one pool: the product's own set, which is the word
+            # the FE already understands for a union across locations.
+            return members, "product", None
         return [], "warehouse", None
 
     pool_ids, pool_code = _pool_of(db, wid)

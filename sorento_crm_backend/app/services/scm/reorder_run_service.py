@@ -1466,8 +1466,12 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # which is where the goods would come from and the row a planner recognises. Ties break
     # on code so a re-run cannot move it. Only `sku` / `product_name` are read off it: the
     # emitted row names no warehouse.
-    anchor = max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0),
-                                       str(r["warehouse_code"] or "")))
+    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0),
+                                            str(r["warehouse_code"] or ""))))
+    # Demand nobody located was landed on ONE location of the product; the product row was
+    # sized against all of it, so it states the whole of it rather than only the part that
+    # happened to land on the anchor.
+    anchor["unlocated_added"] = sum(float(r.get("unlocated_added") or 0.0) for r in prows)
     # Firm project demand, capped by what is actually being bought: the two halves of the
     # basis have to sum to the sized quantity, or the Summary Order Report re-derives a
     # bigger number than the plan row it is reporting (AC-F03).
