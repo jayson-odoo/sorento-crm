@@ -187,7 +187,7 @@ describe('PlanLinesGrid - the collapsed row (C4)', () => {
     renderGrid([line()]);
     expect(headerNames()).toEqual([
       '#', 'Product', 'Location', 'Suggested qty', 'Reorder level', 'Reorder qty',
-      'Project', 'Retail', 'On hand', 'SPO', 'PO', 'Decision',
+      'Project', 'Retail', 'On hand BRW', 'SPO', 'PO', 'Decision',
     ]);
   });
 
@@ -329,9 +329,9 @@ describe('PlanLinesGrid - the six lightboxes (F1)', () => {
 
   it('On hand opens the site pool stock, with the documents under each location', () => {
     renderGrid([line({ on_hand: 5431 })]);
-    openNumber(/^On hand - open the stock by location$/);
+    openNumber(/^On hand in the site pool - open the stock by location$/);
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('On hand - SKU-1');
+    expect(dialog).toHaveTextContent('On hand BRW - SKU-1');
     expect(within(dialog).getByText('BRW')).toBeInTheDocument();
     expect(within(dialog).getByText(/Stock as of/)).toBeInTheDocument();
   });

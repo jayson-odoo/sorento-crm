@@ -575,7 +575,10 @@ def list_cover_sources(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Stock held somewhere else that could cover a shortage instead of buying it.
+    """Stock held in another SITE POOL that could cover a shortage instead of buying it.
+
+    Project bins are never offered (R18): their stock is already claimed by an Order
+    Inquiry, so a row covered from one would move units that cannot move.
 
     Keyed by product rather than folded onto each row, because the pool is SHARED: two lines
     for the same product draw on the same units, and duplicating it per row would let the

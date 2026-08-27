@@ -21,7 +21,6 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -373,7 +372,6 @@ export function PlanLinesGrid({
     (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided');
   // S14: one filter per suggestion column, so the buyer can work one question at a time
   // ("show me every stale price", "every level change", "project side only").
-  const [sideFilter, setSideFilter] = useState<string>('all');
   const [priceFilter, setPriceFilter] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<string>('all');
   const [levelFilter, setLevelFilter] = useState<string>('all');
@@ -387,7 +385,6 @@ export function PlanLinesGrid({
       if (statusFilter !== 'all' && l.status !== statusFilter) return false;
       if (decidedFilter === 'undecided' && decisions[l.id]) return false;
       if (decidedFilter === 'decided' && !decisions[l.id]) return false;
-      if (sideFilter !== 'all' && (l.rec.segment ?? 'project') !== sideFilter) return false;
       if (priceFilter !== 'all') {
         const advice = l.purchasable ? priceFor?.(l)?.advice : undefined;
         if ((advice ?? 'none') !== priceFilter) return false;
@@ -419,7 +416,7 @@ export function PlanLinesGrid({
         l.supplier.name.toLowerCase().includes(needle)
       );
     });
-  }, [lines, searchQuery, statusFilter, decidedFilter, sideFilter, priceFilter,
+  }, [lines, searchQuery, statusFilter, decidedFilter, priceFilter,
       actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
 
   // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
@@ -441,11 +438,12 @@ export function PlanLinesGrid({
   );
 
   // The channel COLUMN set: Project and Retail, always (captain, 28 Aug 2026: "where is my
-  // project quantity column" on a run whose rows were all retail). The 19-20 Aug rule that
-  // derived the set from the run's rows (`presentChannels`) made Project vanish for a whole
-  // plan with no project demand, which read as a missing column rather than a zero. A zero
-  // is the answer; the column stays. Empty on the ungrouped grid, which has no channel
-  // columns at all.
+  // project quantity column" on a run whose rows were all retail). The 19-20 Aug rule
+  // derived the set from the WAREHOUSE SEGMENTS the run happened to touch, so Project
+  // vanished for a whole plan with no project demand - a missing column, where the answer
+  // was a zero. R17 ended the derivation outright: a demand channel is the sales order's
+  // own class, never where the stock sits. Empty on the ungrouped grid, which has no
+  // channel columns at all.
   const dynamicChannels = useMemo<PlanChannel[]>(
     () => (groupByChannel ? PLAN_CHANNEL_ORDER : []),
     [groupByChannel],
@@ -622,31 +620,15 @@ export function PlanLinesGrid({
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       } satisfies ColumnDef<PlanLine>] : []),
-      // The Order-type chip and the SO/Project/Retail columns are an
-      // UNGROUPED-only chapter (5.3 follow-up, 19-20 Aug): grouped mode replaces all five
-      // with the dynamic channel columns below - "instead of 1 column SO, 1 column
-      // project, 1 column retail, it should be 2 columns" - so a channel is never both a
-      // chip AND a column at once.
-      ...(!groupByChannel ? [{
-        id: 'side',
-        accessorFn: (row) => row.rec.segment ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Order type" visibility column={column} />,
-        // Project vs Retail, off the warehouse's segment. Never merged into one figure
-        // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
-        // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
-        cell: ({ row }) => {
-          const seg = row.original.rec.segment;
-          if (!seg) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          return (
-            <Badge variant={seg === 'project' ? 'info' : 'success'} appearance="light" size="sm">
-              {seg === 'project' ? 'Project' : 'Retail'}
-            </Badge>
-          );
-        },
-        size: 90,
-        enableSorting: true,
-        meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
-      } satisfies ColumnDef<PlanLine>] : []),
+      // The SO and Project/Retail columns are an UNGROUPED-only chapter (5.3 follow-up,
+      // 19-20 Aug): grouped mode replaces them with the channel columns below - "instead
+      // of 1 column SO, 1 column project, 1 column retail, it should be 2 columns".
+      //
+      // There is no "Order type" chip beside them any more (R17, captain 28 Aug). It read
+      // Project or Retail off the WAREHOUSE'S SEGMENT, which is a fact about where stock
+      // sits, not about who ordered it - so a retail order into a project bin was labelled
+      // Project beside a Retail column that counted it correctly. A demand channel is
+      // `sales_orders.demand_class` on this screen and nothing else.
       ...(!groupByChannel ? [{
         id: 'needed',
         accessorFn: (row) => row.rec.outstanding_sales ?? 0,
@@ -798,21 +780,23 @@ export function PlanLinesGrid({
       {
         id: 'on_hand',
         accessorFn: (row) => row.rec.on_hand ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="On hand" visibility column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="On hand BRW" visibility column={column} />
+        ),
         cell: ({ row }) =>
           row.original.rec.on_hand === null || row.original.rec.on_hand === undefined ? (
             <span className="text-muted-foreground">{EM_DASH}</span>
           ) : (
             <PlanNumberButton
               value={fmtInt(row.original.rec.on_hand)}
-              label="On hand - open the stock by location"
+              label="On hand in the site pool - open the stock by location"
               onClick={() => openDialog('on_hand', row.original)}
               disabled={!row.original.product_id}
             />
           ),
         size: 74,
         enableSorting: true,
-        meta: { headerTitle: 'On hand', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'On hand BRW', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'incoming_spo',
@@ -1060,19 +1044,17 @@ export function PlanLinesGrid({
           'project_need', 'retail_need',
           'on_hand', 'incoming_spo', 'outstanding_po',
           'decision',
-          'cost', 'side', 'needed', 'net', 'days_cover',
+          'cost', 'needed', 'net', 'days_cover',
         ],
   );
   // Off by default, one columns-menu click to bring back. `cost` joins them (plan 4.3): the
   // panel states the line cost where the buy is actually decided, so a column repeating it
   // on every row is a second place to read the same figure. `net`/`days_cover` are computed
-  // steps rather than decisions, and `side`/`needed` restate the two channel columns beside
-  // them.
+  // steps rather than decisions, and `needed` restates the two channel columns beside it.
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({
     cost: false,
     net: false,
     days_cover: false,
-    side: false,
     needed: false,
   });
 
@@ -1170,9 +1152,9 @@ export function PlanLinesGrid({
         }
         filters={{
           kind: 'custom',
-          active: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+          active: [statusFilter, decidedFilter, priceFilter, actionFilter,
                    levelFilter].some((f) => f !== 'all'),
-          activeCount: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+          activeCount: [statusFilter, decidedFilter, priceFilter, actionFilter,
                         levelFilter].filter((f) => f !== 'all').length,
           content: (
             <div className="space-y-3">
@@ -1192,16 +1174,6 @@ export function PlanLinesGrid({
                   { value: 'decided', label: 'Already decided' },
                 ]}
                 placeholder="Decision"
-              />
-              <SearchableSelect
-                value={sideFilter}
-                onChange={setSideFilter}
-                options={[
-                  { value: 'all', label: 'Both order types' },
-                  { value: 'project', label: 'Project' },
-                  { value: 'dealer', label: 'Retail' },
-                ]}
-                placeholder="Order type"
               />
               <SearchableSelect
                 value={priceFilter}

@@ -194,3 +194,29 @@ def test_thresholds_default_and_travel_with_the_payload():
         assert out["thresholds"]["margin_floor_pct"] == 15.0
         assert out["thresholds"]["dead_turnover_months"] == 6.0
         assert out["sell_window_months"] == 12
+
+
+def test_on_hand_counts_the_site_pool_only_never_a_project_bin():
+    """R16 (captain, 28 Aug): "On hand" in reorder planning is the site POOL.
+
+    A project bin's stock is already spoken for by an Order Inquiry, so counting it in the
+    product-health figure told a buyer they were holding 154 when the pool held 120 - and
+    that number is what the discontinue advice and the turnover months are read off.
+    """
+    from tests._pg_fixture import pg_session, unique_code
+    with pg_session() as db:
+        w = _world(db)  # 120 on hand at a warehouse with no segment (a pool)
+        bin_id = _u()
+        db.execute(text(
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+            {"id": bin_id, "c": unique_code("WB")[:20]})
+        db.execute(text(
+            "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+            "synced_to_excel) VALUES (:id, :p, :w, 34, false)"),
+            {"id": _u(), "p": w["product_id"], "w": bin_id})
+        db.flush()
+
+        e = svc.economics_for_run(db, w["run_id"], as_of=AS_OF)["products"][w["product_id"]]
+
+        assert e["on_hand"] == 120.0, "the 34 in the project bin are not the pool's"

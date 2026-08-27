@@ -32,11 +32,20 @@ _ZERO = Decimal("0")
 
 
 def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
-    """One row per ACTIVE warehouse carrying any nonzero figure for ``product_id``.
+    """Every ACTIVE site pool, plus each project bin carrying a nonzero figure.
 
-    All-zero locations are dropped - a product simply is not stocked, ordered or
-    incoming at most warehouses, and printing every one of them would turn the popup
-    into the warehouse list rather than an answer.
+    R16 (captain, 28 Aug): a SITE POOL is listed whatever it holds. Dropping the all-zero
+    pools answered a different question - "DC1 has none" is a fact a buyer choosing where
+    to buy into needs to read, while a missing row says only that nobody told them, and
+    the two are indistinguishable on screen.
+
+    A PROJECT BIN is still dropped when every figure is zero: there are fifty-five of them
+    against five pools, and listing them all would turn the dialog into the warehouse list
+    rather than an answer.
+
+    Ordered pools first, then bins, each by warehouse code - one reading order, so this
+    dialog is walked the same way as the fulfilment board's own location table rather than
+    in whatever order Postgres returned the warehouses.
 
     BL-1: a caller-supplied ``product_id`` that is not id-shaped reached the UUID columns
     raw (``Stock.product_id == product_id`` etc.) and 500'd on `InvalidTextRepresentation`.
@@ -122,8 +131,10 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
         # Signed, never clamped - `stock_detail`'s own formula (AutoCount arithmetic: a
         # location oversold by more than it holds says so as a negative number).
         available = on_hand - so_qty + spo_qty
-        if not any((on_hand, reserved, held_qty, free_qty, so_qty, spo_qty, available,
-                    po_qty)):
+        is_pool = is_pool_by_id.get(wid, True)
+        if not is_pool and not any((on_hand, reserved, held_qty, free_qty, so_qty,
+                                    spo_qty, available, po_qty)):
+            # An empty project bin only. A pool holding nothing still says so (R16).
             continue
         locations.append({
             "warehouse_id": wid,
@@ -131,7 +142,7 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
             # Whether THIS location's own stock is counted by the reorder engine's
             # `on_hand` (pool-only, captain 20 Aug) or is project-held supply that is
             # visible here but not counted there.
-            "is_pool": is_pool_by_id.get(wid, True),
+            "is_pool": is_pool,
             "on_hand": float(on_hand),
             "reserved": float(reserved),
             "held_by_decisions": float(held_qty),
@@ -143,6 +154,11 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
             # 0 rather than null: the purchase book has an answer for every location.
             "po_qty": po_qty,
         })
+
+    # Pools first, then bins, each by code (R16). The query above returns the warehouses
+    # in no stated order at all, so without this the same product listed its locations
+    # differently on two reads of the same page.
+    locations.sort(key=lambda loc: (not loc["is_pool"], loc["warehouse_code"] or ""))
 
     # The SOURCE of the answer stays inside `_stock_as_of` (its own return says which
     # branch answered, which is what its tests read). The dialog prints one line, "Stock as

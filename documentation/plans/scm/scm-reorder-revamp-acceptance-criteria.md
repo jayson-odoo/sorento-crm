@@ -94,6 +94,31 @@ data, P3 = browser run). A criterion is met only when its check passes on the de
   Issued, ETA, Status; BRW pool key only; a BRW-BB-bound or destination-less line excluded (test).
 - F7 (P2) Panel last price / last supplier equal the PO dialog's newest history row (same source).
 
+## I. Pool-only on hand, cover and channels (R16-R18, 28 Aug)
+
+- I1 (P2) `GET /reorder-runs/location-stock` lists EVERY active site pool for the product,
+  zeros included, and drops an all-zero project bin. Rows come back pools-first, each set
+  by warehouse code. Test: two empty pools are listed at 0; an empty project bin is not.
+- I2 (P2) Product-health `on_hand` counts site pools only. Test: 34 units in a project bin
+  beside 120 in the pool reads 120.
+- I3 (P1) The collapsed column header and the lightbox title read "On hand BRW"; the
+  lightbox renders every pool row it is given, zeros included, and no project bin - with
+  no fall-back to the whole list when the payload flags none as a pool.
+- I4 (P1) The product-health factor reads "On hand: N in the pool" (or "nothing in the
+  pool"), and the ledger's On-hand-by-location aside lists pools only.
+- I5 (P2) `cover_service.free_stock_by_product` offers no project location. Test: 34 free
+  in BRW-IB (`segment = 'project'`) with 0 in the BRW pool yields NO source, and a
+  shortage of 100 is bought in full.
+- I6 (P1/P2) `sources_in_scope` / `sourcesInScope` drop a project source whatever the
+  cover scope says; `cross_segment` and the `line_segment` argument no longer exist on
+  either side.
+- I7 (P1) The panel lists the per-pool split under From stock when the take spans more
+  than one location; a single source states none.
+- I8 (P1) No demand channel is derived from a warehouse segment anywhere in reorder
+  planning: `grep -rn channelOf app/(protected)/scm/reorder` is empty, the group meta
+  carries `PLAN_CHANNEL_ORDER`, and the ungrouped grid has no "Order type" column or
+  filter.
+
 ## G. Regressions guarded
 
 - G1 (P2) Engine output for a run is byte-identical before and after this lane (existing golden
