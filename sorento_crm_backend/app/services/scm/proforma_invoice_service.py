@@ -26,11 +26,11 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 from sqlalchemy import func, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product
-from app.models.product_set import ProductSet
+from app.models.product_set import ProductSet, ProductSetMember
 from app.models.scm import (
     ContainerSize,
     ProformaInvoice,
@@ -1084,14 +1084,48 @@ def _line_placements(db: Session, invoice_id: str) -> dict[str, list[dict]]:
     return out
 
 
+def _set_members(db: Session, set_ids) -> dict[str, list]:
+    """`{set_id: its members, in the author's own order}` (R21).
+
+    Ordered by `sort_order` then product code, ending on the member id so the order is
+    TOTAL: the FIRST member is where a set line's price and its volume land on the
+    container, and a rule that could pick a different member on a second run would put the
+    same invoice's cost on a different line each time it was converted.
+    """
+    wanted = [str(i) for i in dict.fromkeys(set_ids) if i]
+    if not wanted:
+        return {}
+    rows = (
+        db.query(ProductSetMember)
+        .options(joinedload(ProductSetMember.product))
+        .filter(ProductSetMember.product_set_id.in_(wanted))
+        .all()
+    )
+    out: dict[str, list] = {}
+    for member in sorted(
+        rows,
+        key=lambda m: (
+            m.sort_order or 0,
+            (getattr(m.product, "product_code", None) or ""),
+            str(m.id),
+        ),
+    ):
+        out.setdefault(str(member.product_set_id), []).append(member)
+    return out
+
+
 def _placeable(line: ProformaInvoiceLine) -> float:
     """What of this line COULD go on a container.
 
-    A line with no catalogue product cannot: `inbound_shipment_lines.product_id` is NOT
-    NULL, so there is nowhere to write it. Counting it as outstanding would leave the
+    A line bound to neither a product nor a SET cannot: `inbound_shipment_lines.product_id`
+    is NOT NULL, so there is nowhere to write it. Counting it as outstanding would leave the
     invoice reading Split for ever, with a remainder nobody can ever place.
+
+    A set line CAN (R21): it explodes into one container line per member, and its placed
+    quantity is counted in the invoice's own units - sets - so what is placeable is the
+    line's own quantity, exactly as it is for a product.
     """
-    if line.product_id is None:
+    if line.product_id is None and line.product_set_id is None:
         return 0.0
     qty = float(line.qty or 0)
     return qty if qty > 0 else 0.0
@@ -1281,7 +1315,10 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
                 "amount": None,
             }
             invoices[str(invoice.id)] = entry
-        entry["lines"] += 1
+        # DISTINCT PI lines, not link rows: a set line becomes one container line per
+        # member (R21), and counting the rows would report one invoice line as two.
+        entry.setdefault("_line_ids", set()).add(str(link.proforma_invoice_line_id))
+        entry["lines"] = len(entry["_line_ids"])
         entry["qty"] += qty
         price = prices.get(str(link.proforma_invoice_line_id))
         if price is not None:
@@ -1292,10 +1329,15 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
                 {
                     "proforma_invoice_id": str(invoice.id),
                     "pi_number": invoice.pi_number,
-                    "qty": qty,
+                    # NULL, never 0, on the sibling line of an exploded SET (R21): the
+                    # quantity is the PI line's own and is recorded once, on the first
+                    # member, so a 0 beside the cistern would read as goods that never came.
+                    "qty": qty if link.qty is not None else None,
                 }
             )
 
+    for entry in invoices.values():
+        entry.pop("_line_ids", None)
     return {
         "invoices": sorted(invoices.values(), key=lambda i: i["pi_number"]),
         "by_shipment_line": by_line,
@@ -1579,10 +1621,20 @@ def convert_to_draft_shipment(
     }
     requested = {str(k): _dec(v) for k, v in (line_quantities or {}).items()}
 
+    # A line bound to a SET explodes into its members (R21): stock lives on the members and
+    # `inbound_shipment_lines.product_id` is NOT NULL, so a set has nowhere to be written on
+    # a container. Read once for the whole convert, in the author's own order - the first
+    # member is where the set's price and its volume land, so which one it is has to be
+    # settled and repeatable.
+    members_by_set = _set_members(db, {ln.product_set_id for ln in lines if ln.product_set_id})
+
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
-        if ln.product_id is None:
+        if ln.product_id is None and ln.product_set_id is None:
             skipped.append((ln, "No catalogue product matches this line's item code."))
+            continue
+        if ln.product_id is None and not members_by_set.get(str(ln.product_set_id)):
+            skipped.append((ln, "This set has no members to ship."))
             continue
         remaining = _dec(ln.qty) - _dec(placed_per_line.get(str(ln.id), 0))
         if remaining <= 0:
@@ -1603,79 +1655,114 @@ def convert_to_draft_shipment(
         if qty <= 0:
             skipped.append((ln, "This line has no positive quantity to ship."))
             continue
-        product_ids.add(str(ln.product_id))
-        key = (str(ln.product_id), str(invoice.supplier_id) if invoice.supplier_id else None)
-        group = groups.get(key)
-        if group is None:
-            group = {
-                "product_id": str(ln.product_id),
-                "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
-                "quantity_shipped": Decimal("0"),
-                "unit_cost": None,
-                "currency": None,
-                # Volume and cartons ADD across the lines a group merges, and stay None
-                # until something states one: 0 cbm would be summed on the packing list as
-                # a container that takes no room (AC-F1).
-                "cbm": None,
-                "cartons": None,
-                # How the goods are made and boxed. These do NOT add across merged lines -
-                # a carton is the size it is however many lines name it - so the first
-                # line that states one wins and the rest are ignored, the same rule the
-                # unit price follows two blocks below (AC-F3.5).
-                "measurements": {},
-                "remarks": [],
-                "source_lines": [],
-            }
-            groups[key] = group
-        prev_qty = group["quantity_shipped"]
-        group["quantity_shipped"] = prev_qty + qty
-        # A part-placed line brings its SHARE of the volume and the cartons, not the whole
-        # line's: half a line in this container takes half the room in it.
-        share = (qty / _dec(ln.qty)) if ln.qty else Decimal("1")
-        if ln.cbm_per_unit is not None:
-            group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_per_unit) * qty
-        elif ln.cbm_total is not None:
-            group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_total) * share
-        if ln.cartons is not None:
-            group["cartons"] = (group["cartons"] or 0) + int(
-                (_dec(ln.cartons) * share).to_integral_value(rounding=ROUND_HALF_UP)
+        # `(which product, how many of it)`. One pair for an ordinary line; one per member
+        # for a set line, at `qty x member.quantity`. The FIRST pair is the PRIMARY: the
+        # set's price and its volume land there and nowhere else, because a set priced once
+        # must not become N priced lines and a set that takes one carton must not become N
+        # cartons - a container reading several times its real size is refused by the
+        # capacity gate for goods that fit.
+        if ln.product_id is not None:
+            targets = [(str(ln.product_id), qty)]
+        else:
+            targets = [
+                (str(m.product_id), qty * _dec(m.quantity if m.quantity is not None else 1))
+                for m in members_by_set[str(ln.product_set_id)]
+            ]
+
+        for target_index, (target_product_id, target_qty) in enumerate(targets):
+            primary = target_index == 0
+            product_ids.add(target_product_id)
+            key = (
+                target_product_id,
+                str(invoice.supplier_id) if invoice.supplier_id else None,
             )
-        # The supplier's own measurements, carried across so the container workbook can be
-        # printed without anyone re-typing them. `net_weight` / `gross_weight` are PER
-        # CARTON on both documents, which is why they land on the per-carton columns.
-        for source, target in (
-            ("material", "material"),
-            ("pcs_per_carton", "pcs_per_carton"),
-            ("carton_length_cm", "carton_length_cm"),
-            ("carton_width_cm", "carton_width_cm"),
-            ("carton_height_cm", "carton_height_cm"),
-            ("net_weight", "net_weight_per_carton"),
-            ("gross_weight", "gross_weight_per_carton"),
-        ):
-            value = getattr(ln, source, None)
-            if value is not None and group["measurements"].get(target) is None:
-                group["measurements"][target] = value
-        group["placed"] = group.get("placed", {})
-        group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
-        placing_cbm = _placing_volume(ln, float(qty))
-        if placing_cbm is not None:
-            placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
-        if ln.unit_price is not None:
-            if group["unit_cost"] is None:
-                group["unit_cost"] = ln.unit_price
-                group["currency"] = invoice.currency
-            elif (group["currency"] or None) == (invoice.currency or None):
-                total_qty = Decimal(str(prev_qty)) + Decimal(str(qty))
-                if total_qty > 0:
-                    group["unit_cost"] = (
-                        Decimal(str(group["unit_cost"])) * Decimal(str(prev_qty))
-                        + Decimal(str(ln.unit_price)) * Decimal(str(qty))
-                    ) / total_qty
-            # A currency mismatch across the merged lines is not arithmetic - the first
-            # price stands and the disagreement is visible on the PI lines themselves.
-        if ln.remark:
-            group["remarks"].append(ln.remark)
-        group["source_lines"].append(ln)
+            group = groups.get(key)
+            if group is None:
+                group = {
+                    "product_id": target_product_id,
+                    "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
+                    "quantity_shipped": Decimal("0"),
+                    "unit_cost": None,
+                    "currency": None,
+                    # Volume and cartons ADD across the lines a group merges, and stay None
+                    # until something states one: 0 cbm would be summed on the packing list
+                    # as a container that takes no room (AC-F1).
+                    "cbm": None,
+                    "cartons": None,
+                    # How the goods are made and boxed. These do NOT add across merged
+                    # lines - a carton is the size it is however many lines name it - so the
+                    # first line that states one wins and the rest are ignored, the same
+                    # rule the unit price follows two blocks below (AC-F3.5).
+                    "measurements": {},
+                    "remarks": [],
+                    "source_lines": [],
+                }
+                groups[key] = group
+            prev_qty = group["quantity_shipped"]
+            group["quantity_shipped"] = prev_qty + target_qty
+            # A part-placed line brings its SHARE of the volume and the cartons, not the
+            # whole line's: half a line in this container takes half the room in it.
+            share = (qty / _dec(ln.qty)) if ln.qty else Decimal("1")
+            if primary and ln.cbm_per_unit is not None:
+                group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_per_unit) * qty
+            elif primary and ln.cbm_total is not None:
+                group["cbm"] = (group["cbm"] or Decimal("0")) + _dec(ln.cbm_total) * share
+            if primary and ln.cartons is not None:
+                group["cartons"] = (group["cartons"] or 0) + int(
+                    (_dec(ln.cartons) * share).to_integral_value(rounding=ROUND_HALF_UP)
+                )
+            # The supplier's own measurements, carried across so the container workbook can
+            # be printed without anyone re-typing them. `net_weight` / `gross_weight` are
+            # PER CARTON on both documents, which is why they land on the per-carton
+            # columns. On the primary alone, for the same reason the carton count is: they
+            # describe the box the whole set travels in.
+            if primary:
+                for source, target in (
+                    ("material", "material"),
+                    ("pcs_per_carton", "pcs_per_carton"),
+                    ("carton_length_cm", "carton_length_cm"),
+                    ("carton_width_cm", "carton_width_cm"),
+                    ("carton_height_cm", "carton_height_cm"),
+                    ("net_weight", "net_weight_per_carton"),
+                    ("gross_weight", "gross_weight_per_carton"),
+                ):
+                    value = getattr(ln, source, None)
+                    if value is not None and group["measurements"].get(target) is None:
+                        group["measurements"][target] = value
+            group["placed"] = group.get("placed", {})
+            if primary:
+                # HOW MUCH of the PI line came here, in the PI line's OWN units, recorded
+                # ONCE per line per container. A set line placed as two member lines is
+                # still ten sets placed, and a quantity on each of them would sum to twenty
+                # and finish the invoice twice over. The sibling's link row therefore
+                # carries no quantity at all, which every reader already coalesces to zero.
+                group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
+                placing_cbm = _placing_volume(ln, float(qty))
+                if placing_cbm is not None:
+                    placing[str(ln.invoice_id)] = (
+                        placing.get(str(ln.invoice_id), 0.0) + placing_cbm
+                    )
+            if primary and ln.unit_price is not None:
+                # The price is the SET's, so it lands on the first member and nowhere else -
+                # which is Sorento's own catalogue convention, where the whole set's list
+                # price parks on the pedestal and the cistern reads 0.00.
+                if group["unit_cost"] is None:
+                    group["unit_cost"] = ln.unit_price
+                    group["currency"] = invoice.currency
+                elif (group["currency"] or None) == (invoice.currency or None):
+                    total_qty = Decimal(str(prev_qty)) + Decimal(str(target_qty))
+                    if total_qty > 0:
+                        group["unit_cost"] = (
+                            Decimal(str(group["unit_cost"])) * Decimal(str(prev_qty))
+                            + Decimal(str(ln.unit_price)) * Decimal(str(target_qty))
+                        ) / total_qty
+                # A currency mismatch across the merged lines is not arithmetic - the first
+                # price stands and the disagreement is visible on the PI lines themselves.
+            if primary and ln.remark:
+                group["remarks"].append(ln.remark)
+            # EVERY member line links back to the PI line it came from, so the provenance is
+            # total: a cistern on a container has to be able to say which invoice charged it.
+            group["source_lines"].append(ln)
 
     if not groups:
         raise AppException(
@@ -2783,6 +2870,18 @@ def serialize(
         .all()
     )
     codes = _product_codes(db, [str(ln.product_id) for ln in lines if ln.product_id])
+    # A line can be bound to one of our SETS instead (R19): no product carries the code the
+    # supplier wrote, so the set's own code is what "this line matched" means for it.
+    set_codes = {
+        str(row.id): row.set_code
+        for row in db.query(ProductSet)
+        .filter(
+            ProductSet.id.in_(
+                [str(ln.product_set_id) for ln in lines if ln.product_set_id] or [""]
+            )
+        )
+        .all()
+    } if any(ln.product_set_id for ln in lines) else {}
     line_placements = _line_placements(db, str(invoice.id))
     # How each line's code came to mean a product, where it was not an exact agreement
     # (R16): an automatic bind has to be visible AS one, or nobody can be asked to check it.
@@ -2852,22 +2951,34 @@ def serialize(
             "supplier_unit_price": _f(ln.supplier_unit_price),
             # The product we hold, by CODE. A line that matched nothing says so rather than
             # carrying an id nobody can read.
-            "product_code": codes.get(str(ln.product_id)) if ln.product_id else None,
-            "matched": ln.product_id is not None,
+            "product_code": (
+                codes.get(str(ln.product_id))
+                if ln.product_id
+                else set_codes.get(str(ln.product_set_id))
+                if ln.product_set_id
+                else None
+            ),
+            # The SET this line names, when it names one - so the cell can badge it rather
+            # than reading as an ordinary product code the catalogue does not hold.
+            "set_code": set_codes.get(str(ln.product_set_id)) if ln.product_set_id else None,
+            "matched": ln.product_id is not None or ln.product_set_id is not None,
             # Null on an exact match: the codes agreed, and nothing was worked out.
             "matched_by": (
                 aliases[ln.item_code.strip().upper()].matched_by
-                if ln.product_id and ln.item_code.strip().upper() in aliases
+                if (ln.product_id or ln.product_set_id)
+                and ln.item_code.strip().upper() in aliases
                 else None
             ),
             "match_source": (
                 aliases[ln.item_code.strip().upper()].source
-                if ln.product_id and ln.item_code.strip().upper() in aliases
+                if (ln.product_id or ln.product_set_id)
+                and ln.item_code.strip().upper() in aliases
                 else None
             ),
             "match_id": (
                 str(aliases[ln.item_code.strip().upper()].id)
-                if ln.product_id and ln.item_code.strip().upper() in aliases
+                if (ln.product_id or ln.product_set_id)
+                and ln.item_code.strip().upper() in aliases
                 else None
             ),
             # Where this line went, once converted - null on every line until the first
