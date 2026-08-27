@@ -60,9 +60,37 @@ def _grant(db, uid: str, slug: str) -> None:
     db.flush()
 
 
+def _seed_packing_list_numbering(db) -> None:
+    """The `inbound_shipment_draft` series for THIS suite's own company.
+
+    `as_company_user` creates the company from nothing, and migration 440 seeded the rule
+    only for the companies that existed when it ran - so a convert here would have no
+    series to draw from and be refused (R16, `numbering_rule_missing`).
+    """
+    from app.models.numbering import DocumentNumberingRule
+    from app.services.company_scope import get_company_scope
+
+    company_id = next(iter(get_company_scope(db) or []), None)
+    db.add(
+        DocumentNumberingRule(
+            id=_u(),
+            company_id=company_id,
+            doc_type="inbound_shipment_draft",
+            enabled=True,
+            prefix_template="PL-{yy}{month:02d}-",
+            number_digits=3,
+            next_value=1,
+            start_value=1,
+            reset_policy="monthly",
+        )
+    )
+    db.flush()
+
+
 def _client(scm_app, *, upload: bool = False, view: bool = False) -> tuple:
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk, role=None)
+    _seed_packing_list_numbering(db)
     uid = app.dependency_overrides[gcu]()["id"]
     if upload:
         _grant(db, uid, UPLOAD_PERMISSION)
@@ -515,14 +543,14 @@ def test_a_placement_nobody_recognises_is_a_422(scm_app):
     assert r.status_code == 422, r.text
 
 
-def test_the_draft_shipments_route_is_not_swallowed_by_the_id_route(scm_app):
+def test_the_draft_shipments_route_is_gone(scm_app):
+    """It served the dropped "add to an existing draft" select and nothing else (Q6)."""
     client, db = _client(scm_app, upload=True, view=True)
     _applied_invoice(client, db)
 
     r = client.get(f"{URL}/draft-shipments")
 
-    assert r.status_code == 200, r.text
-    assert "data" in r.json()
+    assert r.status_code == 404, r.text
 
 
 def test_converting_part_of_a_line_and_then_the_rest(scm_app):
@@ -548,17 +576,44 @@ def test_converting_part_of_a_line_and_then_the_rest(scm_app):
 
     second = client.post(
         f"{URL}/convert-to-draft-shipment",
+        json={"proforma_invoice_ids": [detail["id"]]},
+    )
+    assert second.status_code == 201, second.text
+    # A NEW packing list for the rest: a convert never adds to an existing draft (Q6).
+    assert second.json()["shipment_id"] != first.json()["shipment_id"]
+
+    finished = client.get(f"{URL}/{detail['id']}").json()
+    assert finished["placement"] == "converted"
+    assert finished["remaining_qty"] == 0
+
+
+def test_a_body_still_naming_a_target_packing_list_gets_a_new_one(scm_app):
+    """A stale bundle sending `target_shipment_id` must not silently land its goods in
+    somebody else's box: the field is not part of the request any more, and the convert
+    does what every convert does (Q6)."""
+    client, db = _client(scm_app, upload=True, view=True)
+    _grant(db, client.app.dependency_overrides[scm_app[2]]()["id"], "scm.reorder.run")
+    detail, _ = _applied_invoice(client, db)
+    matched = [ln["id"] for ln in detail["lines"] if ln["matched"]]
+    first = client.post(
+        f"{URL}/convert-to-draft-shipment",
+        json={
+            "proforma_invoice_ids": [detail["id"]],
+            "line_quantities": {lid: 1 for lid in matched},
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    second = client.post(
+        f"{URL}/convert-to-draft-shipment",
         json={
             "proforma_invoice_ids": [detail["id"]],
             "target_shipment_id": first.json()["shipment_id"],
         },
     )
-    assert second.status_code == 201, second.text
-    assert second.json()["shipment_id"] == first.json()["shipment_id"]
 
-    finished = client.get(f"{URL}/{detail['id']}").json()
-    assert finished["placement"] == "converted"
-    assert finished["remaining_qty"] == 0
+    assert second.status_code == 201, second.text
+    assert second.json()["shipment_id"] != first.json()["shipment_id"]
 
 
 def test_the_packing_list_route_names_the_invoices_behind_it(scm_app):

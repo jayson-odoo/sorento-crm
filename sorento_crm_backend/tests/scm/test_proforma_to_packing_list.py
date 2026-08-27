@@ -1,8 +1,9 @@
 """F6 / F10 - what the packing list knows about the proforma invoices behind it.
 
-TEST-FIRST: the cbm carry-over, the per-link quantity, the add-to-existing-draft option and
-the "which packing list is this PI in" reads do not exist at the time this file is written,
-so every test here is expected to be red until they land.
+TEST-FIRST: the cbm carry-over, the per-link quantity and the "which packing list is this
+PI in" reads did not exist at the time this file was written, so every test here was red
+until they landed. "Add to an existing draft" was dropped afterwards (part 4, Q6): a convert
+ALWAYS opens a new packing list, and the tests below pin that.
 
 Postgres via `pg_session` (rolled back at teardown), same as the rest of this channel: the
 reader resolves its header aliases from the alias table, so these suites also prove the
@@ -361,62 +362,71 @@ def test_placing_more_than_a_line_has_left_is_refused():
         assert exc.value.status_code == 422
 
 
-def test_a_convert_can_be_added_to_an_open_draft_instead_of_making_a_new_one():
+def test_two_converts_open_two_packing_lists():
+    """Q6: "add to an existing draft" is gone, so the second convert cannot land in the
+    first one's box however much room is left in it."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
-        first = _kailu_invoice(db, w)
-        draft = svc.convert_to_draft_shipment(db, [str(first.id)])
+        first_invoice = _kailu_invoice(db, w)
+        first = svc.convert_to_draft_shipment(db, [str(first_invoice.id)])
         # A second document from the same factory, for the same container.
-        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
+        second_invoice = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
 
-        out = svc.convert_to_draft_shipment(
-            db, [str(second.id)], target_shipment_id=draft["shipment_id"]
-        )
+        second = svc.convert_to_draft_shipment(db, [str(second_invoice.id)])
 
-        assert out["shipment_id"] == draft["shipment_id"]
-        # One shipment, both invoices behind it.
-        source = svc.source_proforma_invoices(db, draft["shipment_id"])
-        assert {i["pi_number"] for i in source["invoices"]} == {
-            first.pi_number, second.pi_number
-        }
-
-
-def test_only_a_draft_can_be_added_to():
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _kailu_invoice(db, w)
-        draft = svc.convert_to_draft_shipment(db, [str(invoice.id)])
-        shipment = (
+        assert second["shipment_id"] != first["shipment_id"]
+        assert (
             db.query(InboundShipment)
-            .filter(InboundShipment.id == draft["shipment_id"])
-            .one()
-        )
-        shipment.shipment_status = "in_transit"
-        db.flush()
-        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
-
-        with pytest.raises(AppException) as exc:
-            svc.convert_to_draft_shipment(
-                db, [str(second.id)], target_shipment_id=str(shipment.id)
+            .filter(
+                InboundShipment.id.in_([first["shipment_id"], second["shipment_id"]])
             )
-        assert exc.value.status_code == 422
+            .count()
+            == 2
+        )
+        # Each packing list names its own invoice and nobody else's.
+        assert {
+            i["pi_number"] for i in svc.source_proforma_invoices(db, first["shipment_id"])["invoices"]
+        } == {first_invoice.pi_number}
+        assert {
+            i["pi_number"] for i in svc.source_proforma_invoices(db, second["shipment_id"])["invoices"]
+        } == {second_invoice.pi_number}
 
 
-def test_the_open_drafts_are_listed_for_the_dialog_to_offer():
+def test_the_rest_of_a_split_invoice_goes_into_a_packing_list_of_its_own():
+    """The Q9 split still works, and its second half opens a second box rather than being
+    added to the first (Q6)."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
         invoice = _kailu_invoice(db, w)
-        draft = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+        line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
 
-        offered = svc.draft_shipments(db, supplier_id=str(w.supplier.id))
+        first = svc.convert_to_draft_shipment(
+            db, [str(invoice.id)], line_quantities={str(line.id): 1}
+        )
+        rest = svc.convert_to_draft_shipment(db, [str(invoice.id)])
 
-        assert draft["shipment_id"] in [d["shipment_id"] for d in offered]
-        row = next(d for d in offered if d["shipment_id"] == draft["shipment_id"])
-        assert row["lines"] > 0
-        assert w.supplier.supplier_name in row["supplier_names"]
+        assert rest["shipment_id"] != first["shipment_id"]
+
+
+def test_the_convert_no_longer_takes_a_target_packing_list():
+    """The parameter is gone from the signature, not merely ignored - a caller still
+    passing it is told so rather than quietly getting a new box it did not ask for."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _kailu_invoice(db, w)
+
+        with pytest.raises(TypeError):
+            svc.convert_to_draft_shipment(
+                db, [str(invoice.id)], target_shipment_id=str(uuid.uuid4())
+            )
+
+
+def test_the_drafts_are_no_longer_offered_for_a_convert_to_land_in():
+    """`draft_shipments` served the dropped target select and nothing else."""
+    assert not hasattr(svc, "draft_shipments")
 
 
 # --------------------------------------------------------------------------------- #
@@ -665,37 +675,6 @@ def test_the_convert_locks_the_invoice_before_it_reads_what_is_placed():
         assert locks, "the convert never locked the invoice it is about to place"
         assert reads, "the convert never read what is already placed"
         assert locks[0] < reads[0], "the placement was read before the row was locked"
-
-
-def test_adding_to_a_draft_locks_the_draft_too():
-    """Two converts adding to the SAME draft race on its contents - the capacity gate reads
-    what the box already holds, and both would read it empty."""
-    from sqlalchemy import event
-
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        first = _kailu_invoice(db, w)
-        draft = svc.convert_to_draft_shipment(db, [str(first.id)])
-        second = _kailu_invoice(db, w, pi_number="KL20260801", source_ref="second.xlsx")
-
-        statements: list[str] = []
-
-        def record(conn, cursor, statement, parameters, context, executemany):
-            statements.append(" ".join(statement.split()))
-
-        engine = db.get_bind()
-        event.listen(engine, "before_cursor_execute", record)
-        try:
-            svc.convert_to_draft_shipment(
-                db, [str(second.id)], target_shipment_id=draft["shipment_id"]
-            )
-        finally:
-            event.remove(engine, "before_cursor_execute", record)
-
-        assert any(
-            "FROM inbound_shipments" in sql and "FOR UPDATE" in sql for sql in statements
-        ), "the draft everyone is loading into was never locked"
 
 
 # --------------------------------------------------------------------------------- #
