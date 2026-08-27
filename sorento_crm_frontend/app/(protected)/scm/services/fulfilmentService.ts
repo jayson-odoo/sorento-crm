@@ -30,7 +30,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import {
   filenameFromContentDisposition,
   saveBlobAs,
@@ -282,47 +282,170 @@ export async function deleteContainerSize(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the container size'));
 }
 
-export interface LoadingPlanRequest {
+/* ─────────────────────────────────────────────────────────────────────────────
+ * The plan as a RECORD (part 4, R1-R6)
+ *
+ * A container plan used to be React state on one page: leave it and it was gone, two people
+ * could not look at the same one, and there was nothing to cancel, delete or reopen. It is
+ * now a row in `scm.loading_plan` - the table the supplier notices already point at - listed
+ * at `/scm/loading-plan` and opened at `/scm/loading-plan/{id}`.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
+ *  GET    /api/v1/scm/loading-plans?page&limit&sort&dir&query&status -> 200 {data,total}
+ *  POST   /api/v1/scm/loading-plans        -> 201 LoadingPlanRecord. Auth: `scm.reorder.run`.
+ *  POST   /api/v1/scm/loading-plans/{id}/cancel -> 200 LoadingPlanRecord
+ *  PUT    /api/v1/scm/loading-plans/{id}/edits  -> 200 LoadingPlanRecord
+ *  DELETE /api/v1/scm/loading-plans/{id}   -> 204, or 409 `plan_sent` once a notice exists.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * PHASE 1 ONLY. The five plan-row calls below answer out of
+ * `loading-plan/mocks/loadingPlanMock` while the endpoints are being built, so the screens
+ * can be tuned and browser-verified first. Phase 2 deletes this constant, the five branches
+ * that read it, and the mock file - nothing else in this block changes.
+ */
+const PLAN_ROW_MOCK = true;
+
+export type LoadingPlanStatus = 'planning' | 'sent' | 'cancelled';
+
+/** Which document the plan was started from. `none` is a real answer, not a missing one. */
+export type PlanDocumentKind = 'stock_list' | 'proforma' | 'none';
+
+export interface LoadingPlanRecord {
+  id: string;
   supplier_id: string;
-  container_count: number;
-  container_type?: string | null;
-  container_cbm?: number | null;
+  supplier_name: string | null;
+  /** When somebody started planning this container. The row has no number: it is named by
+   *  supplier and start time, exactly as a reorder run is. */
+  started_at: string;
+  /** "Sales order cut-off". Null = every open order counts. */
+  plan_horizon_date: string | null;
+  document_kind: PlanDocumentKind;
+  /** Ready to print: "Stock list 27/07/2026" / "Proforma invoice PI-x" / "No file". */
+  document_label: string;
+  source_attachment_id: string | null;
+  status: LoadingPlanStatus;
+  /** The latest notice for this plan, so the list can say how and when it went out. */
+  sent_channel: 'email' | 'chat' | null;
+  sent_at: string | null;
+  /** When the supplier first opened the link. Always null until S3 lands the tracking. */
+  opened_at: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  /** The typed quantities, `row_key -> qty`. Applied to `suggested_qty` by the build. */
+  line_edits: Record<string, number>;
+  /** What the last build of this plan asked for, so the list does not have to re-run one
+   *  build per row to fill a column. Null before the plan has ever been opened. */
+  to_request_qty: number | null;
+  to_request_cbm: number | null;
 }
 
-export async function createLoadingPlan(body: LoadingPlanRequest): Promise<LoadingPlan> {
+export interface LoadingPlanListParams {
+  pageIndex: number;
+  pageSize: number;
+  sorting: { id: string; desc: boolean }[];
+  searchQuery: string;
+  /** `active` = planning + sent, the default chip. */
+  status: LoadingPlanStatus | 'active' | '';
+}
+
+export async function getLoadingPlanList(
+  params: LoadingPlanListParams,
+): Promise<{ data: LoadingPlanRecord[]; total: number }> {
+  if (PLAN_ROW_MOCK) {
+    const { mockListPlans } = await import('../loading-plan/mocks/loadingPlanMock');
+    return mockListPlans(params);
+  }
+  const qs = buildDataGridParams(params, { status: params.status });
+  const res = await apiFetch(`/api/v1/scm/loading-plans?${qs.toString()}`);
+  return readJson(res, 'Failed to load the loading plans');
+}
+
+export interface LoadingPlanCreate {
+  supplier_id: string;
+  plan_horizon_date: string | null;
+  document_kind: PlanDocumentKind;
+  source_attachment_id: string | null;
+  /** PHASE 1 ONLY - the backend resolves the supplier's name itself. */
+  supplier_name?: string | null;
+}
+
+export async function createLoadingPlanRecord(
+  body: LoadingPlanCreate,
+): Promise<LoadingPlanRecord> {
+  if (PLAN_ROW_MOCK) {
+    const { mockCreatePlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    return mockCreatePlan({ ...body, supplier_name: body.supplier_name ?? null });
+  }
   const res = await apiFetch('/api/v1/scm/loading-plans', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return readJson<LoadingPlan>(res, 'Failed to build the loading plan');
+  return readJson<LoadingPlanRecord>(res, 'Failed to start the plan');
 }
 
-export async function updateLoadingPlan(
+/**
+ * Change the sales order cut-off on an open plan (the gear's "Change cut-off", R5).
+ *
+ * A PATCH on the plan, not a new plan: the buyer is narrowing the same ask, and starting a
+ * second row for it would leave two plans for one container with nothing to tell them apart.
+ */
+export async function updateLoadingPlanCutOff(
   id: string,
-  body: { container_count?: number; container_type?: string | null },
-): Promise<LoadingPlan> {
+  planHorizonDate: string | null,
+): Promise<LoadingPlanRecord> {
+  if (PLAN_ROW_MOCK) {
+    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    return mockPatchPlan(id, { plan_horizon_date: planHorizonDate });
+  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ plan_horizon_date: planHorizonDate }),
   });
-  return readJson<LoadingPlan>(res, 'Failed to re-run the loading plan');
+  return readJson<LoadingPlanRecord>(res, 'Failed to change the cut-off');
 }
 
-export async function getLoadingPlans(supplierId?: string): Promise<LoadingPlan[]> {
-  const qs = supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : '';
-  const res = await apiFetch(`/api/v1/scm/loading-plans${qs}`);
-  const body = await readJson<{ data: LoadingPlan[] }>(res, 'Failed to load loading plans');
-  return body.data;
+export async function cancelLoadingPlan(id: string): Promise<LoadingPlanRecord> {
+  if (PLAN_ROW_MOCK) {
+    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    return mockPatchPlan(id, {
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString().slice(0, 19),
+      cancelled_by: 'You',
+    });
+  }
+  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/cancel`, { method: 'POST' });
+  return readJson<LoadingPlanRecord>(res, 'Failed to cancel the plan');
 }
 
-export async function getLoadingPlan(id: string): Promise<LoadingPlan> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`);
-  return readJson<LoadingPlan>(res, 'Failed to load the loading plan');
+/**
+ * The typed quantities, WHOLE map, one transaction (R6). Not a patch: what is not in the map
+ * is not an edit any more, so a cleared cell cannot survive as a stale override.
+ */
+export async function saveLoadingPlanEdits(
+  id: string,
+  edits: Record<string, number>,
+): Promise<LoadingPlanRecord> {
+  if (PLAN_ROW_MOCK) {
+    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    return mockPatchPlan(id, { line_edits: edits });
+  }
+  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/edits`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ line_edits: edits }),
+  });
+  return readJson<LoadingPlanRecord>(res, 'Failed to save the quantities');
 }
 
 export async function deleteLoadingPlan(id: string): Promise<void> {
+  if (PLAN_ROW_MOCK) {
+    const { mockDeletePlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    mockDeletePlan(id);
+    return;
+  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the loading plan'));
 }
@@ -474,8 +597,12 @@ export interface ContainerRequestRow {
   open_so_need: number;
   /** NETTED against on_hand / incoming_spo only, floored at 0 - the editable ask.
    *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
-   *  20 Aug follow-up - see the module docstring). */
+   *  20 Aug follow-up - see the module docstring). The plan's saved edit for this row, when
+   *  it has one, is ALREADY applied here (R2). */
   suggested_qty: number;
+  /** What the engine worked out before any typed quantity was applied. `Save (N)` counts the
+   *  rows where the two differ, and the formula tooltip still explains this figure. */
+  engine_qty: number;
   /** SITE POOLS ONLY (`warehouses.segment <> 'project'`), the reorder engine's own predicate.
    *  Stock sitting in a group location is real, but it is spoken for, so it can neither be
    *  asked against nor netted off the ask; it travels beside this as `on_hand_group` and is
@@ -591,6 +718,9 @@ export interface ContainerRequestSources {
 }
 
 export interface ContainerRequestBuild {
+  /** The plan row this build belongs to (R2): supplier and cut-off are read off it, and the
+   *  typed quantities in `line_edits` are already applied to every `suggested_qty` below. */
+  plan: LoadingPlanRecord;
   supplier_id: string;
   /** Null when this supplier has no stock list applied yet. NOT an empty state since F1: the
    *  plan builds from `product_suppliers` and the open order book regardless, and "They hold"
@@ -606,17 +736,38 @@ export interface ContainerRequestBuild {
   plan_horizon_date: string | null;
 }
 
-export async function buildContainerRequest(
-  supplierId: string,
-  planHorizonDate?: string | null,
-): Promise<ContainerRequestBuild> {
+export async function buildContainerRequest(planId: string): Promise<ContainerRequestBuild> {
+  if (PLAN_ROW_MOCK) {
+    // PHASE 1: the plan row is local, the FIGURES are real - the supplier-scoped build has
+    // shipped since S13, so the record page is tuned against real demand rather than fixtures.
+    const { mockGetPlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    const plan = mockGetPlan(planId);
+    const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supplier_id: plan.supplier_id,
+        ...(plan.plan_horizon_date ? { plan_horizon_date: plan.plan_horizon_date } : {}),
+      }),
+    });
+    const built = await readJson<ContainerRequestBuild>(
+      res,
+      'Failed to work out what to ask this supplier for',
+    );
+    return {
+      ...built,
+      plan,
+      rows: built.rows.map((r) => ({
+        ...r,
+        engine_qty: r.suggested_qty,
+        suggested_qty: plan.line_edits[r.row_key] ?? r.suggested_qty,
+      })),
+    };
+  }
   const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      supplier_id: supplierId,
-      ...(planHorizonDate ? { plan_horizon_date: planHorizonDate } : {}),
-    }),
+    body: JSON.stringify({ plan_id: planId }),
   });
   return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
 }
@@ -689,13 +840,32 @@ export type ContainerRequestLine = { qty: number } & (
 );
 
 export async function sendContainerRequest(
-  supplierId: string,
+  planId: string,
   lines: ContainerRequestLine[],
 ): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
+  if (PLAN_ROW_MOCK) {
+    const { mockGetPlan, mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
+    const plan = mockGetPlan(planId);
+    const res = await apiFetch('/api/v1/scm/container-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supplier_id: plan.supplier_id, lines }),
+    });
+    const out = await readJson<{ notices: SupplierNotice[]; document_filename: string }>(
+      res,
+      'Failed to send the request to the supplier',
+    );
+    mockPatchPlan(planId, {
+      status: 'sent',
+      sent_at: new Date().toISOString().slice(0, 19),
+      sent_channel: out.notices.find((n) => n.status === 'sent')?.channel ?? 'email',
+    });
+    return out;
+  }
   const res = await apiFetch('/api/v1/scm/container-requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ supplier_id: supplierId, lines }),
+    body: JSON.stringify({ plan_id: planId, lines }),
   });
   return readJson(res, 'Failed to send the request to the supplier');
 }

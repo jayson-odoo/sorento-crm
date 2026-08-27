@@ -1,95 +1,186 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Container, Eye, RefreshCw, Settings, Upload } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  ArrowLeft,
+  Ban,
+  CalendarDays,
+  Download,
+  Eye,
+  FileText,
+  Link2,
+  LoaderCircle,
+  RefreshCw,
+  Save,
+  Send,
+  Settings,
+  Trash2,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Toolbar,
+  ToolbarActions,
+  ToolbarHeading,
+  ToolbarTitle,
+} from '@/components/common/toolbar';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { useStockListApplied, useSupplierStockListFile } from '../../hooks/useFulfilment';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
+import {
+  useCancelLoadingPlan,
+  useContainerRequestBuild,
+  useDownloadContainerRequestDocument,
+  useLoadingPlanList,
+  useSaveLoadingPlanEdits,
+  useSendContainerRequest,
+  useSupplierNotices,
+  useSupplierStockListFile,
+  useUpdateLoadingPlanCutOff,
+} from '../../hooks/useFulfilment';
 import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
-import { EM_DASH, fmtDate } from '../../lib/format';
+import {
+  deleteLoadingPlan,
+  type ContainerRequestRow,
+  type LoadingPlanStatus,
+} from '../../services/fulfilmentService';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
-import {
-  PlanContainerDialog,
-  type PlanContainerSelection,
-  type PlanDocumentKind,
-} from './PlanContainerDialog';
+import { requestLinesFrom } from './containerRequestSummary';
+import { copyPublicLink } from './copyPublicLink';
 
 /**
- * Ms Tee's screen: what to ask a supplier for on the next container.
+ * One loading plan, as a record (R5).
  *
- * The order of the page IS the journey. Pick the supplier, optionally narrow to a date, and
- * the ranked request table (`ContainerRequestSection`) does the rest - nothing is asked that
- * can be derived, since the quantities, the ranking, and what the supplier is already holding
- * unfinished all come out of what is already on file. The only decisions left to her are the
- * supplier, any quantity she wants to override, and Send.
+ * What used to be a single page holding its supplier and cut-off in React state is now a row
+ * anyone can reopen, so this screen is shaped like every other detail page: a `Toolbar`
+ * carrying who and when, prev/next across the list, and one right-hand cluster of actions.
  *
- * Those first two picks moved OFF this toolbar and into the Upload popup
- * (`PlanContainerDialog`, captain 27 Aug): one blue CTA starts the whole thing, and what was
- * chosen reads back as text, because a row of four controls made "plan a container" look like
- * four unrelated errands. What is left up here is the state (who, until when) and a gear for
- * the things done occasionally rather than every visit.
+ * The cluster reads [gear] [Save] [Send to supplier] [Back], gear FIRST. Send is the errand;
+ * the gear holds the things done occasionally, and putting it on the left keeps the errand at
+ * the end of the row where the eye stops. The old header card (Supplier / Plan until / Upload
+ * / gear) is gone with the ephemeral page it described, and the "What to ask" card keeps its
+ * heading only.
  *
- * The CBM-fit half of this page (container size, packed-stock fill tiles, and the resulting
- * loading plan) was cut on the captain's 20 Aug live-test ruling ("don't need stage 2"). It is
- * a UI-only removal: `SupplierNoticePanel` (tied to the loading-plan id that half produced) is
- * still in the tree but unreferenced from here, and the backend it read from
- * (`loading_plan_service`, the plan endpoints, supplier notices) is untouched - restoring it is
- * a revert of this component, not a rebuild.
+ * Typed quantities are held HERE, not in the grid, because Save and Send both act on them and
+ * both live up here. What the grid shows is `suggested_qty` with the plan's saved edits
+ * already applied by the backend, plus whatever has been typed since; `engine_qty` is the
+ * engine's own answer, and `Save (N)` counts the rows where the two differ.
  */
 
-export function LoadingPlanView() {
-  const [supplierId, setSupplierId] = useState('');
-  // The picked option's own label, alongside the id - server-searched (in the popup), so the
-  // screen's title and every downstream string cannot assume the chosen supplier sits in
-  // whatever unfiltered first page happens to be cached (S8-followup, same fix as the
-  // proforma upload dialog: a supplier past the `/select` endpoint's 100-row cap is otherwise
-  // unreachable by typing its name here).
-  const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
-  // "Plan until" (captain, 20 Aug): an empty string means no cutoff, today's behaviour - every
-  // open SO need counts regardless of date. Threaded straight to `ContainerRequestSection`, the
-  // only place that reads it.
-  const [planHorizonDate, setPlanHorizonDate] = useState('');
-  const [planOpen, setPlanOpen] = useState(false);
-  // Null opens the popup on its first step; a document kind jumps straight to that upload,
-  // for the CTAs that already know which document is being sent.
-  const [planOpenTo, setPlanOpenTo] = useState<PlanDocumentKind | null>(null);
-  const [stockListPreviewOpen, setStockListPreviewOpen] = useState(false);
+const STATUS_LABEL: Record<LoadingPlanStatus, string> = {
+  planning: 'Planning',
+  sent: 'Sent',
+  cancelled: 'Cancelled',
+};
 
-  const stockListFile = useSupplierStockListFile(supplierId || null);
-  const invalidateSupplier = useStockListApplied();
-  // Same action `RefreshMatchingButton` runs on the queue panel - the panel hides itself when
-  // every code binds, and that is exactly the state somebody is trying to reach after adding
-  // the missing products (R18), so it is also reachable from up here.
+const STATUS_VARIANT: Record<LoadingPlanStatus, 'warning' | 'primary' | 'secondary'> = {
+  planning: 'warning',
+  sent: 'primary',
+  cancelled: 'secondary',
+};
+
+export function LoadingPlanView({ planId }: { planId: string }) {
+  const router = useRouter();
+  const build = useContainerRequestBuild(planId);
+  const plan = build.data?.plan ?? null;
+  const supplierId = plan?.supplier_id ?? '';
+  const supplierName = plan?.supplier_name ?? 'this supplier';
+
+  // Typed since the last Save. Saved edits ride back on `suggested_qty`, so this map holds
+  // ONLY what has not been written yet - which is exactly what the leave-the-page prompt and
+  // the "Send saves first" rule need to know about.
+  const [edits, setEdits] = useState<Record<string, number>>({});
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [cutOffOpen, setCutOffOpen] = useState(false);
+  const [cutOffDraft, setCutOffDraft] = useState('');
+  const [refreshOpen, setRefreshOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  const save = useSaveLoadingPlanEdits(planId);
+  const changeCutOff = useUpdateLoadingPlanCutOff(planId);
+  const send = useSendContainerRequest();
+  const cancel = useCancelLoadingPlan();
+  const download = useDownloadContainerRequestDocument(supplierId);
+  const notices = useSupplierNotices(supplierId || null);
+  const stockListFile = useSupplierStockListFile(
+    plan?.document_kind === 'stock_list' ? supplierId : null,
+  );
+  // The same action `RefreshMatchingButton` runs on the queue panel - the panel hides itself
+  // when every code binds, and that is exactly the state somebody is trying to reach after
+  // adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
 
-  const supplierName = supplierOption?.label ?? 'this supplier';
+  // Neighbours for prev/next. The plans list is short (one supplier plans a container every
+  // few days), so the first page of the same default listing is the set to walk.
+  const neighbours = useLoadingPlanList({
+    pageIndex: 0,
+    pageSize: 100,
+    sorting: [{ id: 'started_at', desc: true }],
+    searchQuery: '',
+    status: 'active',
+  });
 
-  const openPlanDialog = (to: PlanDocumentKind | null) => {
-    setPlanOpenTo(to);
-    setPlanOpen(true);
-  };
+  const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
+  const readOnly = plan?.status === 'cancelled';
 
-  const applyPlanSelection = (selection: PlanContainerSelection) => {
-    setSupplierId(selection.supplierId);
-    setSupplierOption(selection.supplierOption);
-    setPlanHorizonDate(selection.planHorizonDate);
-    if (selection.supplierId) invalidateSupplier(selection.supplierId);
-  };
+  const qtyFor = (row: ContainerRequestRow) => edits[row.row_key] ?? row.suggested_qty;
+  const lines = requestLinesFrom(rows, qtyFor);
+  const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
 
-  // The uploaded sheet itself, previewed through the same modal Resource Management uses.
-  // `url` is left blank - it is a same-origin attachment id, not a public CDN link, and the
-  // Excel slide reads bytes via `downloadUrl` regardless.
+  /** The whole map that goes to the server: every row whose figure differs from the engine's,
+   *  typed this session or saved in an earlier one. Not a patch - see the service. */
+  const editedMap = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+      const qty = edits[r.row_key] ?? r.suggested_qty;
+      if (qty !== r.engine_qty) out[r.row_key] = qty;
+    }
+    return out;
+  }, [rows, edits]);
+  const editedCount = Object.keys(editedMap).length;
+  const unsaved = Object.keys(edits).length > 0;
+
+  // The browser's own guard for a hard navigation (close the tab, hit the address bar). The
+  // in-app "Back to loading plans" gets the dialog below, which can say what is at stake.
+  useEffect(() => {
+    if (!unsaved) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [unsaved]);
+
   const stockListPreviewItems = useMemo<AttachmentPreviewItem[]>(() => {
     const id = stockListFile.data?.attachment_id;
     if (!id) return [];
@@ -103,108 +194,348 @@ export function LoadingPlanView() {
     ];
   }, [stockListFile.data]);
 
-  // The one CTA, in both places it has to be reachable from: the toolbar, and the empty
-  // state where it is the only thing to do. Same action, so same wording and same weight.
-  const uploadCta = (testId: string) => (
-    <Button onClick={() => openPlanDialog(null)} data-testid={testId}>
-      <Upload className="size-4" />
-      Upload
-    </Button>
-  );
+  const requestNotices = (notices.data ?? []).filter((n) => n.notice_type === 'container_request');
+  // Only one send's token is ever live (each send retires the last), so the first match IS the
+  // current ask - and with none, Copy link says why rather than copying nothing.
+  const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
+
+  const goBack = () => router.push('/scm/loading-plan');
+
+  /** Send saves first (R6), so the document and the screen can never disagree. */
+  const doSend = async () => {
+    if (editedCount > 0) await save.mutateAsync(editedMap);
+    send.mutate(
+      { planId, supplierId, supplierName, lines },
+      {
+        onSuccess: () => {
+          setEdits({});
+          setSendOpen(false);
+        },
+      },
+    );
+  };
+
+  if (build.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-72" />
+        <Card className="p-4">
+          <Skeleton className="h-6 w-64" />
+          <Skeleton className="mt-3 h-40 w-full rounded-lg" />
+        </Card>
+      </div>
+    );
+  }
+
+  if (build.isError || !plan) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <p className="text-sm font-medium text-destructive">
+          {build.error?.message ?? 'This loading plan could not be opened.'}
+        </p>
+        <Button variant="outline" size="sm" onClick={goBack}>
+          <ArrowLeft className="size-4" />
+          Back to loading plans
+        </Button>
+      </Card>
+    );
+  }
+
+  const subtitle = [
+    `Started ${formatDateTimeInMalaysia(plan.started_at)}`,
+    `SO cut-off ${plan.plan_horizon_date ? fmtDate(plan.plan_horizon_date) : 'none'}`,
+    plan.document_label,
+  ].join(' · ');
 
   return (
     <div className="space-y-4">
-      <Card className="p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 space-y-0.5">
-            <p className="truncate text-sm" data-testid="plan-supplier-text">
-              <span className="text-muted-foreground">Supplier: </span>
-              <span className="font-medium">
-                {supplierId ? supplierName : 'No supplier chosen'}
-              </span>
-            </p>
-            <p className="text-xs" data-testid="plan-horizon-text">
-              <span className="text-muted-foreground">Plan until: </span>
-              <span className="font-medium">
-                {planHorizonDate ? fmtDate(planHorizonDate) : EM_DASH}
-              </span>
-            </p>
+      <Toolbar>
+        <ToolbarHeading className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <ToolbarTitle className="truncate">{plan.supplier_name ?? EM_DASH}</ToolbarTitle>
+            <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+              {STATUS_LABEL[plan.status]}
+            </Badge>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {uploadCta('open-plan-container')}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="More actions"
-                  disabled={!supplierId}
-                  data-testid="loading-plan-more"
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {stockListFile.data?.attachment_id ? (
-                  <DropdownMenuItem onSelect={() => setStockListPreviewOpen(true)}>
-                    <Eye className="size-4" />
-                    View uploaded list
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  disabled={rematch.isPending}
-                  onSelect={() => rematch.mutate({ supplier_id: supplierId })}
-                  data-testid="refresh-matching-item"
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh matching
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openPlanDialog(null)}>
-                  <Container className="size-4" />
-                  Change supplier / plan until
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </Card>
+          <p className="text-xs text-muted-foreground" data-testid="plan-subtitle">
+            {subtitle}
+          </p>
+        </ToolbarHeading>
+        <ToolbarActions>
+          <RecordNavigation
+            basePath="/scm/loading-plan"
+            currentId={planId}
+            items={neighbours.data?.data ?? []}
+            totalCount={neighbours.data?.total}
+            ariaLabel="loading plan"
+          />
 
-      {!supplierId ? (
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Container className="size-5" />
-          </span>
-          <p className="text-sm font-medium">Choose a supplier to plan a container.</p>
-          {uploadCta('open-plan-container-empty')}
-        </Card>
-      ) : (
-        <>
-        {/* The queue of codes this supplier's file names and our catalogue does not - the
-            stock behind them is invisible to the plan below until somebody answers them. */}
-        <UnmatchedSupplierCodesPanel supplierId={supplierId} />
-        <ContainerRequestSection
-          supplierId={supplierId}
-          supplierName={supplierName}
-          planHorizonDate={planHorizonDate || null}
-          onUploadStockList={() => openPlanDialog('stock-list')}
-          onUploadProforma={() => openPlanDialog('proforma')}
-        />
-        </>
-      )}
+          {/* Everything that is not the errand. ONE gear on this screen (R5): the card below
+              used to carry a second one, which made "the plan's actions" two menus deep. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Plan actions"
+                data-testid="plan-actions"
+              >
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {stockListFile.data?.attachment_id ? (
+                <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
+                  <Eye className="size-4" />
+                  View uploaded list
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem
+                disabled={rematch.isPending}
+                onSelect={() => rematch.mutate({ supplier_id: supplierId })}
+                data-testid="refresh-matching-item"
+              >
+                <RefreshCw className="size-4" />
+                Refresh matching
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={build.isFetching}
+                onSelect={() => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch())}
+              >
+                <RefreshCw className="size-4" />
+                Refresh suggestion
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!liveLinkNotice}
+                title={liveLinkNotice ? undefined : 'No link sent yet'}
+                onSelect={() => void copyPublicLink(liveLinkNotice?.public_url)}
+              >
+                <Link2 className="size-4" />
+                Copy link
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={lines.length === 0 || download.isPending}
+                onSelect={() => download.mutate({ lines, format: 'xlsx' })}
+              >
+                <Download className="size-4" />
+                Download XLSX
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={lines.length === 0 || download.isPending}
+                onSelect={() => download.mutate({ lines, format: 'pdf' })}
+              >
+                <FileText className="size-4" />
+                Download PDF
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={readOnly}
+                onSelect={() => {
+                  setCutOffDraft(plan.plan_horizon_date ?? '');
+                  setCutOffOpen(true);
+                }}
+              >
+                <CalendarDays className="size-4" />
+                Change cut-off
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={readOnly}
+                onSelect={() => setCancelOpen(true)}
+              >
+                <Ban className="size-4" />
+                Cancel plan
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={!!plan.sent_at}
+                title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
+                onSelect={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete plan
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-      <PlanContainerDialog
-        open={planOpen}
-        onOpenChange={setPlanOpen}
+          <Button
+            variant="outline"
+            disabled={readOnly || editedCount === 0 || save.isPending}
+            title={readOnly ? 'This plan is cancelled.' : undefined}
+            onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
+            data-testid="save-plan-edits"
+          >
+            {save.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save ({editedCount})
+          </Button>
+
+          <Button
+            disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+            title={readOnly ? 'This plan is cancelled.' : undefined}
+            onClick={() => setSendOpen(true)}
+            data-testid="send-to-supplier"
+          >
+            {send.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
+            Send to supplier
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
+            data-testid="back-to-plans"
+          >
+            <ArrowLeft className="size-4" />
+            Back to loading plans
+          </Button>
+        </ToolbarActions>
+      </Toolbar>
+
+      {/* The queue of codes this supplier's file names and our catalogue does not - the stock
+          behind them is invisible to the plan below until somebody answers them. */}
+      <UnmatchedSupplierCodesPanel supplierId={supplierId} />
+
+      <ContainerRequestSection
+        planId={planId}
         supplierId={supplierId}
-        supplierOption={supplierOption}
-        planHorizonDate={planHorizonDate}
-        openTo={planOpenTo}
-        onApply={applyPlanSelection}
+        supplierName={supplierName}
+        qtyFor={qtyFor}
+        onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
+        readOnly={readOnly}
       />
 
+      <ConfirmActionDialog
+        open={sendOpen}
+        onOpenChange={setSendOpen}
+        title={`Send this request to ${supplierName}?`}
+        description={
+          <>
+            {lines.length} product{lines.length === 1 ? '' : 's'}, {fmtInt(totalQty)} units in
+            total.
+            {editedCount > 0 ? ' Your typed quantities are saved first.' : ''} The supplier
+            receives the request document by email when an address is on file; the document is
+            available either way.
+          </>
+        }
+        confirmLabel="Send"
+        isBusy={send.isPending || save.isPending}
+        onConfirm={() => void doSend()}
+      />
+
+      <ConfirmActionDialog
+        open={refreshOpen}
+        onOpenChange={setRefreshOpen}
+        title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
+        description="A fresh suggestion is the system looking again, so it replaces what was typed rather than ranking around it."
+        confirmLabel="Refresh suggestion"
+        isBusy={save.isPending || build.isFetching}
+        onConfirm={() => {
+          setEdits({});
+          // The saved edits go too: "refresh" that kept them would return the same numbers.
+          void save.mutateAsync({}).then(() => {
+            setRefreshOpen(false);
+            void build.refetch();
+          });
+        }}
+      />
+
+      <ConfirmActionDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        title="Cancel this plan?"
+        description="The supplier link stops working. The plan stays on the list under the Cancelled filter."
+        confirmLabel="Cancel plan"
+        isBusy={cancel.isPending}
+        onConfirm={() =>
+          cancel.mutate(planId, {
+            onSuccess: () => {
+              setCancelOpen(false);
+              setEdits({});
+            },
+          })
+        }
+      />
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete this plan?"
+        description={
+          <>
+            {plan.supplier_name ?? 'This plan'}, started{' '}
+            {formatDateTimeInMalaysia(plan.started_at)}. The plan and the quantities typed on it
+            are removed. This cannot be undone.
+          </>
+        }
+        successMessage="Plan deleted"
+        onDelete={() => deleteLoadingPlan(planId)}
+        onSuccess={goBack}
+      />
+
+      <ConfirmActionDialog
+        open={leaveOpen}
+        onOpenChange={setLeaveOpen}
+        title="Leave without saving?"
+        description={`${editedCount} typed ${editedCount === 1 ? 'quantity is' : 'quantities are'} not saved yet. Leaving loses them.`}
+        confirmLabel="Leave"
+        isBusy={false}
+        onConfirm={goBack}
+      />
+
+      <Dialog open={cutOffOpen} onOpenChange={setCutOffOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change the sales order cut-off</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-2">
+            <Label htmlFor="plan-cutoff" className="text-xs">
+              Sales order cut-off
+            </Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id="plan-cutoff"
+                type="date"
+                className="w-44"
+                value={cutOffDraft}
+                onChange={(e) => setCutOffDraft(e.target.value)}
+              />
+              {cutOffDraft ? (
+                <Button variant="ghost" size="sm" onClick={() => setCutOffDraft('')}>
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-2xs text-muted-foreground">Empty = every open order counts.</p>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCutOffOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={changeCutOff.isPending}
+              onClick={() =>
+                changeCutOff.mutate(cutOffDraft || null, {
+                  onSuccess: () => setCutOffOpen(false),
+                })
+              }
+            >
+              {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AttachmentPreviewModal
-        open={stockListPreviewOpen}
-        onOpenChange={setStockListPreviewOpen}
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
         items={stockListPreviewItems}
       />
     </div>

@@ -5,9 +5,9 @@ import { toast } from 'sonner';
 import {
   approveLoadingPlan,
   buildContainerRequest,
-  createLoadingPlan,
+  cancelLoadingPlan,
+  createLoadingPlanRecord,
   createSpo,
-  deleteLoadingPlan,
   deleteSpo,
   downloadContainerRequestDocument,
   downloadSpoWorksheet,
@@ -15,21 +15,21 @@ import {
   getContainerRequestHistory,
   getContainerSizes,
   getFulfilmentSuppliers,
-  getLoadingPlan,
-  getLoadingPlans,
+  getLoadingPlanList,
   getPlanNotices,
   getSpoSuggestion,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
+  saveLoadingPlanEdits,
   sendContainerRequest,
-  updateLoadingPlan,
+  updateLoadingPlanCutOff,
   type ContainerRequestLine,
-  type LoadingPlan,
-  type LoadingPlanRequest,
+  type LoadingPlanCreate,
+  type LoadingPlanListParams,
+  type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
-import { fmtTrimmedDecimal } from '../lib/format';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
@@ -59,21 +59,16 @@ export function useSupplierStock(supplierId: string | null) {
   });
 }
 
-export function useLoadingPlans(supplierId: string | null) {
+/**
+ * The plans list (`/scm/loading-plan`, R3). Server-paged, server-sorted and server-searched,
+ * so the grid never holds more than the page it shows.
+ */
+export function useLoadingPlanList(params: LoadingPlanListParams) {
   return useQuery({
-    queryKey: [...KEY, 'plans', supplierId],
-    queryFn: () => getLoadingPlans(supplierId ?? undefined),
-    enabled: !!supplierId,
+    queryKey: [...KEY, 'plan-list', params],
+    queryFn: () => getLoadingPlanList(params),
     refetchOnWindowFocus: false,
-  });
-}
-
-export function useLoadingPlanDetail(planId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'plan', planId],
-    queryFn: () => getLoadingPlan(planId as string),
-    enabled: !!planId,
-    refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -92,8 +87,8 @@ function useSupplierInvalidator() {
   const qc = useQueryClient();
   return (supplierId: string | null) => {
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock', supplierId] });
-    void qc.invalidateQueries({ queryKey: [...KEY, 'plans', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock-list-file', supplierId] });
+    void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
   };
 }
 
@@ -101,40 +96,60 @@ export function useStockListApplied() {
   return useSupplierInvalidator();
 }
 
-export function useBuildLoadingPlan() {
-  const invalidate = useSupplierInvalidator();
-  return useMutation({
-    mutationFn: (body: LoadingPlanRequest) => createLoadingPlan(body),
-    onSuccess: (plan: LoadingPlan) => {
-      invalidate(plan.supplier_id);
-      toast.success(
-        `Planned ${fmtTrimmedDecimal(plan.planned_cbm, 3)} of ${fmtTrimmedDecimal(plan.capacity_cbm, 3)} cbm.`,
-      );
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
-export function useRerunLoadingPlan() {
+/** Start a plan (R4). No toast: the caller navigates straight onto the record. */
+export function useCreateLoadingPlan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; container_count?: number; container_type?: string }) =>
-      updateLoadingPlan(id, body),
-    onSuccess: (plan: LoadingPlan) => {
-      qc.setQueryData([...KEY, 'plan', plan.id], plan);
-      void qc.invalidateQueries({ queryKey: [...KEY, 'plans', plan.supplier_id] });
+    mutationFn: (body: LoadingPlanCreate) => createLoadingPlanRecord(body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Cancel: the plan stops being worked on AND the supplier's live link stops answering (Q4). */
+export function useCancelLoadingPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => cancelLoadingPlan(id),
+    onSuccess: (plan: LoadingPlanRecord) => {
+      qc.setQueryData([...KEY, 'container-request', plan.id], (prev: unknown) =>
+        prev && typeof prev === 'object' ? { ...(prev as object), plan } : prev,
+      );
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', plan.id] });
+      toast.success('Plan cancelled. The supplier link no longer works.');
     },
     onError: (e: Error) => toast.error(e.message),
   });
 }
 
-export function useDeleteLoadingPlan(supplierId: string | null) {
-  const invalidate = useSupplierInvalidator();
+/**
+ * Save the typed quantities (R6). The whole map goes in one PUT, and the build is invalidated
+ * rather than patched: `suggested_qty` comes back with the edits already applied, so the grid
+ * and the document read the same numbers.
+ */
+export function useUpdateLoadingPlanCutOff(planId: string | null) {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deleteLoadingPlan(id),
+    mutationFn: (planHorizonDate: string | null) =>
+      updateLoadingPlanCutOff(planId as string, planHorizonDate),
     onSuccess: () => {
-      invalidate(supplierId);
-      toast.success('Loading plan deleted.');
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
+      toast.success('Cut-off changed. The suggestion has been worked out again.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useSaveLoadingPlanEdits(planId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (edits: Record<string, number>) =>
+      saveLoadingPlanEdits(planId as string, edits),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -175,15 +190,13 @@ export function useApproveLoadingPlan() {
  * `planHorizonDate` ("Plan until", captain 20 Aug) is keyed into the query so picking a
  * different cutoff is a fresh fetch, not a stale one served out of cache under the same key.
  */
-export function useContainerRequestBuild(
-  supplierId: string | null,
-  planHorizonDate?: string | null,
-) {
+export function useContainerRequestBuild(planId: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'container-request', supplierId, planHorizonDate ?? null],
-    queryFn: () => buildContainerRequest(supplierId as string, planHorizonDate),
-    enabled: !!supplierId,
+    queryKey: [...KEY, 'container-request', planId],
+    queryFn: () => buildContainerRequest(planId as string),
+    enabled: !!planId,
     refetchOnWindowFocus: false,
+    retry: false,
   });
 }
 
@@ -222,15 +235,18 @@ export function useSendContainerRequest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      supplierId,
+      planId,
       lines,
     }: {
+      planId: string;
       supplierId: string;
       supplierName: string;
       lines: ContainerRequestLine[];
-    }) => sendContainerRequest(supplierId, lines),
-    onSuccess: (_out, { supplierId, supplierName }) => {
+    }) => sendContainerRequest(planId, lines),
+    onSuccess: (_out, { planId, supplierId, supplierName }) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
       toast.success(`Request sent to ${supplierName}.`);
     },
     onError: (e: Error) => toast.error(e.message),

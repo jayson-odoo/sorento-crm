@@ -1,6 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { LoaderCircle, TestTube } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,152 +13,180 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
-import { ProformaUploadDialog } from '../../proforma-invoices/components/ProformaUploadDialog';
-import { StockListUploadDialog } from './StockListUploadDialog';
+import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
+import { CountTile } from '../../reorder/components/UploadCountTile';
+import { UploadTestVerdict, type UploadTestResult } from '../../reorder/components/UploadTestVerdict';
+import { fmtInt } from '../../lib/format';
+import { useCreateLoadingPlan } from '../../hooks/useFulfilment';
+import {
+  applyStockList,
+  getFulfilmentSuppliers,
+  getSupplierStockListFile,
+  previewStockList,
+  testStockList,
+  type PlanDocumentKind,
+  type StockListPreview,
+} from '../../services/fulfilmentService';
+import {
+  applyProformaInvoice,
+  previewProformaInvoice,
+  type ProformaInvoicePreview,
+  type RevisionSelection,
+} from '../../services/proformaInvoiceService';
+import { verdictFromPreview } from '../../proforma-invoices/components/ProformaUploadDialog';
 
 /**
- * One way onto the loading plan (captain, 27 Aug).
+ * "Plan a container" - the ONE way onto a loading plan (R4, AC-A4/A5).
  *
- * The toolbar used to carry the supplier picker, the date, and one button per document, so
- * planning a container read as four unrelated controls that happened to sit on the same row.
- * It is one decision - "plan this supplier's next container, here is what they sent me" - so
- * it is one popup, and the two answers it needs first (whose container, how far ahead) are
- * asked once here rather than left as inputs on the page behind it.
+ * One decision, so one dialog. It used to be two: this popup asked who and until when, then
+ * handed over to a SECOND dialog for the file, which made an errand out of what is a single
+ * sentence ("plan this supplier's next container, here is what they sent me"). The dropzone
+ * and the existing two-step Test/Confirm (`useTwoStepUpload`, shared with every other SCM
+ * upload) now run in place; the stock-list and proforma dialogs keep serving their own pages
+ * unchanged, and nothing about either read is re-implemented here.
  *
- * Two steps, because the second one already exists. Step 1 collects supplier + plan until +
- * which document; step 2 hands straight over to the SAME `StockListUploadDialog` /
- * `ProformaUploadDialog` used everywhere else, in fixed-supplier mode. Nothing about either
- * upload is reimplemented here.
+ * Confirm does three things in order, and they have to be in that order: apply the file
+ * (which replaces the supplier's snapshot), find the sheet it was retained as, then create
+ * the plan row pointing at it - so the record the buyer lands on names the file it was
+ * started from rather than whatever was on file a moment earlier.
  *
- * "Plan without a file" is the third answer: a supplier whose list or proforma is already on
- * file needs no upload at all, only the two picks, and forcing a file on that person is what
- * made the old toolbar's Upload buttons look mandatory.
+ * "No file" is the third answer, and it is a real one: a supplier whose list or proforma is
+ * already held needs no upload at all, and forcing one is what made the old toolbar's two
+ * Upload buttons look mandatory.
  */
 
-export type PlanDocumentKind = 'stock-list' | 'proforma';
-
-export interface PlanContainerSelection {
-  supplierId: string;
-  supplierOption: SearchableSelectOption | null;
-  planHorizonDate: string;
+/** Every revision candidate, ticked - the file's own numbers decide (R24, same as the PI
+ *  dialog). A wrong link is undone on the invoice's detail page, not adjudicated here. */
+function revisionsFrom(preview: ProformaInvoicePreview | null): RevisionSelection {
+  if (!preview) return {};
+  return Object.fromEntries(
+    preview.documents
+      .filter((doc) => doc.revision_candidate)
+      .map((doc) => [String(doc.index), doc.revision_candidate!.invoice_id]),
+  );
 }
 
 export function PlanContainerDialog({
   open,
   onOpenChange,
-  supplierId: pageSupplierId,
-  supplierOption: pageSupplierOption,
-  planHorizonDate: pagePlanHorizonDate,
-  openTo = null,
-  onApply,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
-  /** What the page is planning right now - the starting point when the popup is re-opened
-   *  to change it, and what a jump straight to step 2 uploads against. */
-  supplierId: string;
-  supplierOption: SearchableSelectOption | null;
-  planHorizonDate: string;
-  /** Opened from a CTA that already knows which document is being sent (the request
-   *  section's own empty state), so step 1 is skipped. Null opens on step 1. */
-  openTo?: PlanDocumentKind | null;
-  /** Fired when the picks become the page's: on "Plan without a file", and after either
-   *  upload applies, so the build re-reads against the supplier just uploaded for. */
-  onApply: (selection: PlanContainerSelection) => void;
 }) {
-  // Held here, not lifted: the page only learns the picks once they are applied, so a
-  // Cancel on step 2 cannot leave the plan behind the popup pointing at a supplier nobody
-  // confirmed. Deliberately NOT reset on close - re-opening lands on the last answers,
-  // since the usual second visit is "same supplier, other document".
-  const [supplierId, setSupplierId] = useState(pageSupplierId);
-  const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(
-    pageSupplierOption,
-  );
-  const [planHorizonDate, setPlanHorizonDate] = useState(pagePlanHorizonDate);
-  const [docKind, setDocKind] = useState<PlanDocumentKind>('stock-list');
-  const [step, setStep] = useState<'choose' | 'upload'>('choose');
+  const router = useRouter();
+  const [supplierId, setSupplierId] = useState('');
+  const [supplierOption, setSupplierOption] = useState<SearchableSelectOption | null>(null);
+  const [planHorizonDate, setPlanHorizonDate] = useState('');
+  const [docKind, setDocKind] = useState<PlanDocumentKind>('stock_list');
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
-  // What the page is planning, readable without being a dependency of the effect below.
-  // It changes the moment an upload applies, and a step-2 dialog that re-ran its own setup
-  // on that change would throw the operator back to step 1 on top of their own result.
-  const pageSelection = useRef<PlanContainerSelection>({
-    supplierId: pageSupplierId,
-    supplierOption: pageSupplierOption,
-    planHorizonDate: pagePlanHorizonDate,
-  });
-  useEffect(() => {
-    pageSelection.current = {
-      supplierId: pageSupplierId,
-      supplierOption: pageSupplierOption,
-      planHorizonDate: pagePlanHorizonDate,
-    };
-  });
+  const create = useCreateLoadingPlan();
+
+  // The proforma apply needs the read Test already took (it files revision candidates), and
+  // Test is never mandatory, so the read is kept here and taken on the Confirm press when
+  // there is none. Same shape as `ProformaUploadDialog`.
+  const proformaPreviewRef = useRef<ProformaInvoicePreview | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    if (openTo) {
-      // The caller knows both the supplier and the document, so the popup carries them
-      // rather than asking again for what is already on screen behind it.
-      setDocKind(openTo);
-      setSupplierId(pageSelection.current.supplierId);
-      setSupplierOption(pageSelection.current.supplierOption);
-      setPlanHorizonDate(pageSelection.current.planHorizonDate);
-      setStep('upload');
-      return;
-    }
-    setStep('choose');
-  }, [open, openTo]);
+    setSupplierId('');
+    setSupplierOption(null);
+    setPlanHorizonDate('');
+    setDocKind('stock_list');
+    setStarting(false);
+    setStartError(null);
+    proformaPreviewRef.current = null;
+  }, [open]);
 
-  const selection = (): PlanContainerSelection => ({
-    supplierId,
-    supplierOption,
-    planHorizonDate,
+  /**
+   * The plan row itself. Created AFTER the file has landed so `source_attachment_id` names
+   * the sheet this plan was started from, and the buyer is taken straight to it (R4).
+   */
+  const startPlan = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      let sourceAttachmentId: string | null = null;
+      if (docKind === 'stock_list') {
+        // Best-effort: the retain is itself best-effort on apply, and a plan without a
+        // pointer to the sheet is still a plan - it just cannot offer "View uploaded list".
+        sourceAttachmentId = await getSupplierStockListFile(supplierId)
+          .then((f) => f.attachment_id)
+          .catch(() => null);
+      }
+      const plan = await create.mutateAsync({
+        supplier_id: supplierId,
+        supplier_name: supplierOption?.label ?? null,
+        plan_horizon_date: planHorizonDate || null,
+        document_kind: docKind,
+        source_attachment_id: sourceAttachmentId,
+      });
+      onOpenChange(false);
+      router.push(`/scm/loading-plan/${plan.id}`);
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : 'Failed to start the plan.');
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const upload = useTwoStepUpload<StockListPreview | ProformaInvoicePreview, unknown>({
+    open,
+    preview: (file) =>
+      docKind === 'proforma'
+        ? previewProformaInvoice(file, supplierId)
+        : previewStockList(file, supplierId),
+    apply: async (file) => {
+      if (docKind === 'proforma') {
+        const read =
+          proformaPreviewRef.current ?? (await previewProformaInvoice(file, supplierId));
+        return applyProformaInvoice(file, supplierId, revisionsFrom(read));
+      }
+      return applyStockList(file, supplierId);
+    },
+    test: docKind === 'proforma' ? undefined : (file) => testStockList(file, supplierId),
+    onApplied: () => void startPlan(),
   });
 
-  const supplierName = supplierOption?.label ?? 'this supplier';
+  const { preview, previewing, applying, error } = upload;
 
-  if (step === 'upload' && supplierId) {
-    const handleApplied = () => onApply(selection());
-    // The upload dialog stays open on its own result summary (what was written, what it
-    // replaced, which invoices were named) - that is the answer to the Confirm, and closing
-    // over it is how an apply reads as a no-op. The plan behind it has already re-read.
-    const handleOpenChange = (next: boolean) => {
-      if (!next) setStep('choose');
-      onOpenChange(next);
-    };
+  useEffect(() => {
+    proformaPreviewRef.current =
+      docKind === 'proforma' ? ((preview as ProformaInvoicePreview | null) ?? null) : null;
+  }, [preview, docKind]);
 
-    return docKind === 'proforma' ? (
-      <ProformaUploadDialog
-        open={open}
-        onOpenChange={handleOpenChange}
-        supplierId={supplierId}
-        supplierOption={supplierOption}
-        onApplied={handleApplied}
-      />
-    ) : (
-      <StockListUploadDialog
-        open={open}
-        onOpenChange={handleOpenChange}
-        supplierId={supplierId}
-        supplierName={supplierName}
-        onApplied={handleApplied}
-      />
-    );
-  }
+  // The verdict card. The stock list has its own `?validate_only=true` endpoint (the hook
+  // runs it alongside the preview); the proforma channel derives the same shape from the
+  // read it already took, rather than costing the operator a second press.
+  const proformaVerdict: UploadTestResult | null =
+    docKind === 'proforma' && preview ? verdictFromPreview(preview as ProformaInvoicePreview) : null;
+  const verdict = proformaVerdict ?? upload.testResult;
+  const stockSummary =
+    docKind === 'stock_list' && preview && 'rows' in ((preview as StockListPreview).summary ?? {})
+      ? (preview as StockListPreview).summary
+      : null;
+
+  const needsFile = docKind !== 'none';
+  const busy = starting || applying || previewing || upload.testing || create.isPending;
+  const canStart =
+    !!supplierId &&
+    !busy &&
+    (needsFile ? upload.canConfirm && (!proformaVerdict || proformaVerdict.valid) : true);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Plan a container</DialogTitle>
         </DialogHeader>
 
-        <DialogBody className="space-y-4">
+        <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
           <div>
             <Label htmlFor="plan-container-supplier" className="mb-1 block text-xs">
               Supplier
@@ -172,19 +203,21 @@ export function PlanContainerDialog({
               selectedOption={supplierOption ?? undefined}
               placeholder="Choose a supplier"
               className="w-full"
+              disabled={busy}
             />
           </div>
 
           <div>
             <Label htmlFor="plan-container-horizon" className="mb-1 block text-xs">
-              Plan until
+              Sales order cut-off
             </Label>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Input
                 id="plan-container-horizon"
                 type="date"
                 className="w-44"
                 value={planHorizonDate}
+                disabled={busy}
                 onChange={(e) => setPlanHorizonDate(e.target.value)}
               />
               {planHorizonDate ? (
@@ -197,6 +230,9 @@ export function PlanContainerDialog({
                   Clear
                 </Button>
               ) : null}
+              <span className="text-2xs text-muted-foreground">
+                Empty = every open order counts.
+              </span>
             </div>
           </div>
 
@@ -204,11 +240,16 @@ export function PlanContainerDialog({
             <Label className="mb-1 block text-xs">Document</Label>
             <RadioGroup
               value={docKind}
-              onValueChange={(next) => setDocKind(next as PlanDocumentKind)}
-              className="grid-cols-1 sm:grid-cols-2"
+              onValueChange={(next) => {
+                setDocKind(next as PlanDocumentKind);
+                // A verdict belongs to the channel it was read on, so switching channels
+                // drops the file with it rather than confirming a stock list as a proforma.
+                upload.choose(null);
+              }}
+              className="grid-cols-1 sm:grid-cols-3"
             >
               <div className="flex items-center gap-2">
-                <RadioGroupItem value="stock-list" id="plan-container-doc-stock" />
+                <RadioGroupItem value="stock_list" id="plan-container-doc-stock" />
                 <Label htmlFor="plan-container-doc-stock" className="text-sm font-normal">
                   Stock list
                 </Label>
@@ -219,31 +260,89 @@ export function PlanContainerDialog({
                   Proforma invoice
                 </Label>
               </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="none" id="plan-container-doc-none" />
+                <Label htmlFor="plan-container-doc-none" className="text-sm font-normal">
+                  No file
+                </Label>
+              </div>
             </RadioGroup>
           </div>
+
+          {needsFile ? (
+            <FileDropzone
+              files={upload.file ? [upload.file] : []}
+              onFilesChange={(next) => upload.choose(next[0] ?? null)}
+              onReject={upload.reject}
+              accept={upload.accept}
+              maxSizeMb={MAX_SIZE_MB}
+              disabled={!supplierId || busy}
+              aria-label={
+                docKind === 'proforma' ? 'Proforma invoice file' : 'Supplier stock list file'
+              }
+            />
+          ) : null}
+
+          {previewing ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <LoaderCircle className="size-3.5 animate-spin" /> Reading the file...
+            </p>
+          ) : null}
+
+          {error || startError ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error ?? startError}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {stockSummary ? (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <CountTile label="Items" value={stockSummary.rows} />
+              <CountTile label="Packed" value={stockSummary.qty_packed} />
+              <CountTile label="Unfinished" value={stockSummary.qty_unfinished} />
+              <CountTile label="Replaces" value={(preview as StockListPreview).rows_held_now} />
+            </div>
+          ) : null}
+
+          {stockSummary && stockSummary.items_unmatched > 0 ? (
+            <p className="text-2xs text-muted-foreground">
+              {fmtInt(stockSummary.items_unmatched)}{' '}
+              {stockSummary.items_unmatched === 1
+                ? 'model number is not in the catalogue. It is kept, but nothing can be loaded against it.'
+                : 'model numbers are not in the catalogue. They are kept, but nothing can be loaded against them.'}
+            </p>
+          ) : null}
+
+          {verdict ? <UploadTestVerdict result={verdict} /> : null}
         </DialogBody>
 
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
             Cancel
           </Button>
+          {needsFile ? (
+            <Button
+              variant="outline"
+              onClick={() => void upload.runTest()}
+              disabled={!supplierId || !upload.file || busy}
+              title={!supplierId ? 'Choose a supplier first' : undefined}
+            >
+              {upload.testing ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <TestTube className="size-4" />
+              )}
+              Test
+            </Button>
+          ) : null}
           <Button
-            variant="outline"
-            disabled={!supplierId}
-            onClick={() => {
-              onApply(selection());
-              onOpenChange(false);
-            }}
-            data-testid="plan-without-file"
+            onClick={() => void (needsFile ? upload.confirm() : startPlan())}
+            disabled={!canStart}
+            title={!supplierId ? 'Choose a supplier first' : undefined}
+            data-testid="plan-container-confirm"
           >
-            Plan without a file
-          </Button>
-          <Button
-            disabled={!supplierId}
-            onClick={() => setStep('upload')}
-            data-testid="plan-container-continue"
-          >
-            Continue
+            {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}
+            {needsFile ? 'Confirm and start plan' : 'Start plan'}
           </Button>
         </DialogFooter>
       </DialogContent>

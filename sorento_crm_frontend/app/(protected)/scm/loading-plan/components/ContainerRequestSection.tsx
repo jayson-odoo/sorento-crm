@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CellContext,
   ColumnDef,
@@ -14,29 +14,15 @@ import {
 import {
   Check,
   Download,
-  FileText,
   Info,
   LayoutGrid,
   Link2,
   LoaderCircle,
   PackageSearch,
   RefreshCw,
-  Send,
-  Settings,
   Table2,
-  Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,12 +30,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -62,18 +42,16 @@ import { EM_DASH, fmtInt } from '../../lib/format';
 import {
   useContainerRequestBuild,
   useContainerRequestHistory,
-  useDownloadContainerRequestDocument,
-  useSendContainerRequest,
   useSupplierNotices,
 } from '../../hooks/useFulfilment';
 import {
   getNoticeDocumentUrl,
   type ContainerRequestHistoryProduct,
-  type ContainerRequestLine,
   type ContainerRequestRow,
   type ContainerRequestSoLine,
   type SupplierNotice,
 } from '../../services/fulfilmentService';
+import { copyPublicLink } from './copyPublicLink';
 import { ContainerRequestHistoryPeakCell } from './ContainerRequestHistory';
 import { FormulaTip } from './FormulaTip';
 import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
@@ -216,31 +194,30 @@ function ChannelQtyCell({
 }
 
 export function ContainerRequestSection({
+  planId,
   supplierId,
   supplierName,
-  planHorizonDate = null,
-  onUploadStockList,
-  onUploadProforma,
+  qtyFor,
+  onQtyChange,
+  readOnly = false,
 }: {
+  /** The plan this section belongs to (R2). Supplier and cut-off are the plan row's, so the
+   *  build is asked for by plan id and nothing on this screen can disagree with it. */
+  planId: string;
   supplierId: string;
   supplierName: string;
-  /** "Plan until" (captain, 20 Aug) - picked next to the supplier, above this section. Null
-   *  means no cutoff, today's behaviour. */
-  planHorizonDate?: string | null;
-  onUploadStockList: () => void;
-  /** The other document that answers "what do they hold" (Q2). Optional so a caller with no
-   *  proforma dialog behind it keeps the single CTA. */
-  onUploadProforma?: () => void;
+  /** The quantity to show and send for a row: the record page owns the typed edits, because
+   *  Save and Send live on ITS toolbar (R5) and both have to act on what the grid shows. */
+  qtyFor: (row: ContainerRequestRow) => number;
+  onQtyChange: (rowKey: string, qty: number) => void;
+  /** A cancelled plan is a record of what was asked, not a form (AC-A8). */
+  readOnly?: boolean;
 }) {
-  const build = useContainerRequestBuild(supplierId, planHorizonDate);
-  const send = useSendContainerRequest();
+  const build = useContainerRequestBuild(planId);
   const notices = useSupplierNotices(supplierId);
-  const download = useDownloadContainerRequestDocument(supplierId);
 
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [confirming, setConfirming] = useState(false);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
@@ -281,59 +258,37 @@ export function ContainerRequestSection({
     [soLines, matrixAxis, matrixGranularity, rankByProductId],
   );
 
-  // A fresh suggestion replaces whatever she had edited into the previous one - "refresh" is
-  // asking the system to look again, not "keep my edits and re-rank around them".
-  useEffect(() => {
-    const seed: Record<string, number> = {};
-    // Keyed on `row_key`, not the product id: a set row's figures are its DRIVER member's,
-    // so two set rows sharing a driver would otherwise share one editable quantity.
-    for (const r of rows) seed[r.row_key] = r.suggested_qty;
-    setOverrides(seed);
-  }, [rows]);
-
-  const overridesRef = useRef(overrides);
-  overridesRef.current = overrides;
-
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
   const historyLoadingRef = useRef(false);
 
-  const qtyFor = (row: ContainerRequestRow) => overrides[row.row_key] ?? row.suggested_qty;
-
-  const lines = useMemo(
-    () =>
-      rows
-        .map((r): ContainerRequestLine => {
-          const qty = qtyFor(r);
-          // A set line names the SET and no product: the ask is the whole WC under the code
-          // the supplier wrote, and naming one member would make the document disagree with
-          // the row it came from (R19).
-          return r.row_kind === 'set' && r.product_set_id
-            ? { product_set_id: r.product_set_id, qty }
-            : { product_id: r.product_id, qty };
-        })
-        .filter((l) => l.qty > 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, overrides],
-  );
-  const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
+  // Read through refs for the same reason the history sidecar is: a column definition that
+  // depended on the record page's edit state would rebuild the whole grid on every keystroke.
+  // Cell functions run on every render, so the typed figure still paints.
+  const qtyForRef = useRef(qtyFor);
+  qtyForRef.current = qtyFor;
+  const onQtyChangeRef = useRef(onQtyChange);
+  onQtyChangeRef.current = onQtyChange;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   // A row edited to 0 leaves the request without being deleted from the grid - she can still
   // see and change her mind about it, it just does not go on the document.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
-    const qty = overridesRef.current[original.row_key] ?? original.suggested_qty;
     return (
       <Input
         type="number"
         min={0}
         className="h-8 w-24 tabular-nums"
-        value={qty}
+        value={qtyForRef.current(original)}
+        disabled={readOnlyRef.current}
         // The netting rule with this row's own numbers in it (F2): what the figure IS, on
         // the figure, so nobody has to remember whether the packing list was subtracted.
-        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.suggested_qty)}`}
+        // `engine_qty`, never the edited figure: it is the formula's own answer.
+        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.engine_qty)}`}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
-          setOverrides((prev) => ({ ...prev, [original.row_key]: next }));
+          onQtyChangeRef.current(original.row_key, next);
         }}
       />
     );
@@ -659,13 +614,9 @@ export function ContainerRequestSection({
   }, [history.data]);
   historyLoadingRef.current = history.isFetching;
 
-  const summary = useMemo(
-    () => summariseContainerRequest(rows, qtyFor),
-    // `qtyFor` reads `overrides`, so the cards follow her edits - which is the whole point of
-    // putting them above the grid.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, overrides],
-  );
+  // `qtyFor` follows the record page's edits, so the cards move as she types - which is the
+  // whole point of putting them above the grid.
+  const summary = summariseContainerRequest(rows, qtyFor);
 
   const openRow = openRowKey
     ? (rows.find((r) => r.row_key === openRowKey) ?? null)
@@ -674,20 +625,6 @@ export function ContainerRequestSection({
   const requestNotices = (notices.data ?? []).filter(
     (n) => n.notice_type === 'container_request',
   );
-
-  // The one link this supplier can still open. Notices come back newest first and only one
-  // send's token is ever live (each send retires the last), so the first match IS the current
-  // ask - and with none, the gear's Copy link says why rather than copying nothing.
-  const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
-
-  const canSend = lines.length > 0 && totalQty > 0 && !send.isPending;
-
-  function confirmSend() {
-    send.mutate(
-      { supplierId, supplierName, lines },
-      { onSuccess: () => setConfirming(false) },
-    );
-  }
 
   // Duplicated from `SupplierNoticePanel.openDocument` rather than generalizing that panel to
   // take an arbitrary notices list: its header couples the document list to ONE action
@@ -710,15 +647,9 @@ export function ContainerRequestSection({
   // The link the supplier already has in their inbox, copied so Ms Tee can paste it into
   // WeChat herself - which is how she reaches the factories that never open email.
   async function copyLink(notice: SupplierNotice) {
-    if (!notice.public_url) return;
-    try {
-      await navigator.clipboard.writeText(notice.public_url);
-      setCopiedNoticeId(notice.id);
-      toast.success('Link copied');
-      window.setTimeout(() => setCopiedNoticeId(null), 2000);
-    } catch {
-      toast.error('Could not copy the link. Copy it from the address bar instead.');
-    }
+    if (!(await copyPublicLink(notice.public_url))) return;
+    setCopiedNoticeId(notice.id);
+    window.setTimeout(() => setCopiedNoticeId(null), 2000);
   }
 
   // SF-4 (reviewer): what has already been sent to this supplier does not disappear just
@@ -863,20 +794,9 @@ export function ContainerRequestSection({
             Nothing to ask {supplierName} for right now.
           </p>
           <p className="text-2xs text-muted-foreground">
-            No open customer demand on what they supply, and nothing of theirs on file.
+            No open customer demand on what they supply, and nothing of theirs on file. Start a
+            new plan from the loading plans list to hand over a newer stock list or proforma.
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button size="sm" variant="outline" onClick={onUploadStockList}>
-              <Upload className="size-4" />
-              Upload stock list
-            </Button>
-            {onUploadProforma ? (
-              <Button size="sm" variant="outline" onClick={onUploadProforma}>
-                <FileText className="size-4" />
-                Upload proforma invoice
-              </Button>
-            ) : null}
-          </div>
         </Card>
         {noticesCard}
       </div>
@@ -903,71 +823,15 @@ export function ContainerRequestSection({
         emptyMessage="No open customer demand for what this supplier supplies."
       >
         <Card>
-          <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold">
-                What to ask {supplierName}
-                {build.data.plan_horizon_date
-                  ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
-                  : ' for'}
-              </h3>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>
-                {send.isPending ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <Send className="size-4" />
-                )}
-                Send to supplier
-              </Button>
-              {/* Everything that is not the errand (R23): looking again, copying the link she
-                  already sent, and taking either file away to read. Same gear the toolbar
-                  above carries, for the same reason. */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Plan actions"
-                    data-testid="request-actions"
-                  >
-                    <Settings className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem
-                    disabled={build.isFetching}
-                    onSelect={() => void build.refetch()}
-                  >
-                    <RefreshCw className="size-4" />
-                    Refresh suggestion
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!liveLinkNotice}
-                    title={liveLinkNotice ? undefined : 'No link sent yet'}
-                    onSelect={() => liveLinkNotice && void copyLink(liveLinkNotice)}
-                  >
-                    <Link2 className="size-4" />
-                    Copy link
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={lines.length === 0 || download.isPending}
-                    onSelect={() => download.mutate({ lines, format: 'xlsx' })}
-                  >
-                    <Download className="size-4" />
-                    Download XLSX
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={lines.length === 0 || download.isPending}
-                    onSelect={() => download.mutate({ lines, format: 'pdf' })}
-                  >
-                    <FileText className="size-4" />
-                    Download PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+          {/* The heading, and nothing else (R5): Send and the gear moved to the record's own
+              toolbar, where the rest of the plan's actions already sit. */}
+          <CardHeader className="py-3">
+            <h3 className="text-sm font-semibold">
+              What to ask {supplierName}
+              {build.data.plan_horizon_date
+                ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
+                : ' for'}
+            </h3>
           </CardHeader>
 
           <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -1080,37 +944,6 @@ export function ContainerRequestSection({
           onClose={() => setOpenRowKey(null)}
         />
       ) : null}
-
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Send this request to {supplierName}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {lines.length} product{lines.length === 1 ? '' : 's'}, {fmtInt(totalQty)} units in
-              total. The supplier receives the request document by email when an address is on
-              file; the document is available either way.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {send.isError ? (
-            <p className="text-xs text-destructive">{send.error.message}</p>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                // Radix closes an Action on click by default; the send is async and can fail,
-                // so closing is deferred to the mutation's own onSuccess instead - a failure
-                // then leaves the dialog open with the error on it, per the CRUD standard.
-                e.preventDefault();
-                confirmSend();
-              }}
-              disabled={send.isPending}
-            >
-              Send
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
