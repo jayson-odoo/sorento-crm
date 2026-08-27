@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -76,6 +75,7 @@ import {
   type SupplierNotice,
 } from '../../services/fulfilmentService';
 import { ContainerRequestHistoryPeakCell } from './ContainerRequestHistory';
+import { FormulaTip } from './FormulaTip';
 import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
 import { ContainerRequestStatCards } from './ContainerRequestStatCards';
 import { summariseContainerRequest } from './containerRequestSummary';
@@ -368,7 +368,21 @@ export function ContainerRequestSection({
     () => [
       {
         id: 'rank',
-        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
+        header: ({ column }) => (
+          <span className="flex items-center gap-1">
+            <DataGridColumnHeader title="Rank" column={column} />
+            <FormulaTip
+              label="How the rank is worked out"
+              formula="score = sum(weight x value) / sum(weight)"
+              terms={[
+                { name: 'Need-by date', weight: 'x3', note: 'earliest SO date, sooner is higher' },
+                { name: 'Demand class', weight: 'x3', note: 'project 1.0, retail 0.4' },
+                { name: 'Document age', weight: 'x1', note: 'oldest SO date, older is higher' },
+              ]}
+              footer="Each value is scaled against the other rows here; a factor with no value is left out. Rank 1 = highest score. Hover a score for its factors; weights live in Policies."
+            />
+          </span>
+        ),
         cell: ({ row }) => {
           const original = row.original;
           const muted = original.has_demand === false;
@@ -452,21 +466,16 @@ export function ContainerRequestSection({
         header: ({ column }) => (
           <span className="flex items-center gap-1">
             <DataGridColumnHeader title="Suggested qty" column={column} />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  tabIndex={0}
-                  aria-label="How the suggested quantity is worked out"
-                  className="inline-flex cursor-help items-center text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <Info className="size-3.5" aria-hidden />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">
-                Need - on hand at site pools - incoming SPO at site pools, never below 0.
-                Incoming packing lists and open POs are not subtracted.
-              </TooltipContent>
-            </Tooltip>
+            <FormulaTip
+              label="How the suggested quantity is worked out"
+              formula="suggested = need - on hand - incoming SPO"
+              terms={[
+                { name: 'Need', note: 'open SO lines, project and retail, until the plan date' },
+                { name: 'On hand', note: 'site pools only' },
+                { name: 'Incoming SPO', note: 'site pools only' },
+              ]}
+              footer="Never below 0. Incoming packing lists and open POs are shown beside it, not subtracted."
+            />
           </span>
         ),
         cell: renderQtyCell,
