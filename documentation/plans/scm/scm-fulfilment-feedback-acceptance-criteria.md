@@ -17,7 +17,7 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 
 ## A2. Loading plan layout (board vocabulary)
 
-- AC-A2.1 Five stat cards above the grid: Need, From pool stock, From SPO, To ask (with estimated cbm), They can pack now; To ask follows the Ask edits live.
+- AC-A2.1 Five stat cards above the grid: Outstanding, BRW On Hand, From SPO, To request (with estimated cbm), They can pack now; no sub-captions except the Plan-until date and the cbm estimate (captain, 27 Aug); To request follows the Ask edits live.
 - AC-A2.2 Grid columns: Rank, Product, Suggested (editable), Need, Project, Retail, On hand, SPO, Incoming PL, PO, Earliest need-by, Open SOs, They hold, Ordered 12 months. No Unclassified column. No legend row: the cards carry the swatches.
 - AC-A2.3 Clicking the product opens the row popover: Quantity needed box, Suggestion box, location table (BRW / MWH / WH3 / DC1 / RSW + one muted group-locations row), Ordered 12 months box (two series), Incoming-for-reference box, contributing SO lines earliest first.
 - AC-A2.4 Legend and colours match the fulfilment board: pool stock emerald, SPO violet, ask rose.

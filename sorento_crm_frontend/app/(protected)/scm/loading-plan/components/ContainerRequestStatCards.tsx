@@ -28,17 +28,16 @@ export function ContainerRequestStatCards({
     >
       <StatCard
         testId="stat-need"
-        label="Need"
+        label="Outstanding"
         value={fmtInt(summary.need)}
-        sub={horizonDate ? `open SO, until ${horizonDate}` : 'open SO'}
+        sub={horizonDate ? `until ${horizonDate}` : undefined}
       />
       <StatCard
         testId="stat-pool"
-        label="From pool stock"
+        label="BRW On Hand"
         value={fmtInt(summary.fromPool)}
         swatch="bg-emerald-500"
         tone="text-emerald-700"
-        sub="site pools only"
       />
       <StatCard
         testId="stat-spo"
@@ -46,11 +45,10 @@ export function ContainerRequestStatCards({
         value={fmtInt(summary.fromSpo)}
         swatch="bg-violet-500"
         tone="text-violet-700"
-        sub="on the water"
       />
       <StatCard
         testId="stat-ask"
-        label="To ask"
+        label="To request"
         value={fmtInt(summary.toAsk)}
         swatch="bg-rose-500"
         tone="text-rose-700"
@@ -64,7 +62,6 @@ export function ContainerRequestStatCards({
         testId="stat-packed"
         label="They can pack now"
         value={fmtInt(summary.canPackNow)}
-        sub="of the ask, packed"
       />
     </div>
   );
