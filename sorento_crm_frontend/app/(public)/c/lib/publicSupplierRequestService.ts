@@ -10,7 +10,7 @@
  * CONTRACT
  *
  * GET /api/v1/public/supplier-request/{token}
- *     -> { supplier_name, requested_at, line_count, lines[], has_pdf, has_xlsx }
+ *     -> { supplier_name, requested_at, line_count, sheet, lines[], has_pdf, has_xlsx }
  *
  * GET /api/v1/public/supplier-request/{token}/document/{pdf|xlsx}
  *     -> { url, filename, expires_in }
@@ -32,10 +32,51 @@ export interface SupplierRequestLine {
   qty_unfinished: number | null;
 }
 
+/**
+ * The supplier's own sheet, as the backend's ONE `SheetModel` (R12): their ten columns in
+ * their own spellings plus `需装数量 / Qty to load`, their row order, and their merged
+ * families as `rowspan`. The xlsx and the PDF are drawn from this same model, which is what
+ * makes the three tally.
+ */
+export interface SupplierRequestSheetColumn {
+  /** Their heading, in their own words. */
+  label: string;
+  /** Ours, as a second line under it. Null for a column we cannot name. */
+  label_en: string | null;
+}
+
+export interface SupplierRequestSheetCell {
+  value: string | number | null;
+  rowspan: number;
+  colspan: number;
+  /** True when a merge starting above or to the left covers this position: draw nothing. */
+  covered: boolean;
+  /** Their own marks on their own document: a maintained field, and a figure to notice. */
+  fill: 'yellow' | null;
+  red: boolean;
+}
+
+export interface SupplierRequestSheetRow {
+  cells: SupplierRequestSheetCell[];
+  /** How many rows this product family covers; 0 on a row that continues one. */
+  family_span: number;
+  /** True for a line we added because their list never named the product. */
+  appended: boolean;
+}
+
+export interface SupplierRequestSheet {
+  title: string | null;
+  columns: SupplierRequestSheetColumn[];
+  rows: SupplierRequestSheetRow[];
+  totals: SupplierRequestSheetRow | null;
+}
+
 export interface SupplierRequest {
   supplier_name: string;
   requested_at: string;
   line_count: number;
+  sheet: SupplierRequestSheet | null;
+  /** The flat form, kept for links issued before the sheet existed. */
   lines: SupplierRequestLine[];
   has_pdf: boolean;
   has_xlsx: boolean;

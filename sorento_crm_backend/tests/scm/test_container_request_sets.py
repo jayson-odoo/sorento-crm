@@ -330,6 +330,8 @@ def test_a_set_line_is_sent_under_the_set_code_with_no_product_behind_it():
             plan_id=str(plan.id),
             lines=[{"product_set_id": str(product_set.id), "qty": 40}],
             actor="Ms Tee",
+            # A send names at least one recipient since R9 (AC-C2).
+            recipients=["sets@example.test"],
         )
 
         written = (

@@ -646,6 +646,28 @@ def list_supplier_notices(
     return {"data": rows, "total": len(rows)}
 
 
+@router.get("/supplier-notices/chat-contacts")
+def supplier_chat_contacts(
+    supplier_id: str = Query(...),
+    query: Optional[str] = Query(None, description="Name, phone or Respond.io id"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Who a chat request can be sent to, the supplier's own number first (AC-C3).
+
+    Declared ahead of `/supplier-notices/{notice_id}/document` for readability; the two do
+    not shadow each other (one segment against two), and the trap the SLA lesson names is a
+    static segment sitting BEHIND a path parameter at the same depth.
+
+    Also states whether the workspace has a WeChat channel at all, so the send dialog can
+    disable the Chat option with the reason rather than offering a channel that cannot carry
+    the message (R10).
+    """
+    return supplier_notice_service.chat_contacts(
+        db, supplier_id=supplier_id, query=query
+    )
+
+
 @router.get("/supplier-notices/{notice_id}/document")
 def supplier_notice_document(
     notice_id: str,

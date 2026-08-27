@@ -1448,7 +1448,17 @@ def history(
     return result
 
 
-def send(db: Session, *, plan_id: str, lines: list[dict], actor: Optional[str] = None) -> dict:
+def send(
+    db: Session,
+    *,
+    plan_id: str,
+    lines: list[dict],
+    actor: Optional[str] = None,
+    channel: str = "email",
+    recipients: Optional[list] = None,
+    chat_contact_id: Optional[str] = None,
+    note: Optional[str] = None,
+) -> dict:
     """Send the reviewed request for one plan. Thin wrapper - the S8 notice machinery lives in
     `supplier_notice_service.request_and_notify`, so a request and a Loading Plan approval
     cannot drift into two different ways of talking to a supplier.
@@ -1466,7 +1476,15 @@ def send(db: Session, *, plan_id: str, lines: list[dict], actor: Optional[str] =
     supplier_id = str(plan.supplier_id)
     _supplier(db, supplier_id)
     out = supplier_notice_service.request_and_notify(
-        db, supplier_id=supplier_id, lines=lines, actor=actor, loading_plan_id=plan_id
+        db,
+        supplier_id=supplier_id,
+        lines=lines,
+        actor=actor,
+        loading_plan_id=plan_id,
+        channel=channel,
+        recipients=recipients,
+        chat_contact_id=chat_contact_id,
+        note=note,
     )
     # After the notices, never before: a send that failed to render must not leave a plan
     # claiming it went out.

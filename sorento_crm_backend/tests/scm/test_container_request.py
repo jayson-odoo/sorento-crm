@@ -875,10 +875,11 @@ def test_send_creates_a_notice_with_a_copied_lines_snapshot_and_a_document(scm_a
 
     assert r.status_code == 201, r.text
     body = r.json()
-    by_channel = {n["channel"]: n for n in body["notices"]}
-    assert set(by_channel) == {"email", "chat"}
-    email = by_channel["email"]
+    # ONE row, on the channel the send chose - email by default (R9, AC-C6).
+    assert [n["channel"] for n in body["notices"]] == ["email"]
+    email = body["notices"][0]
     assert email["status"] == "sent"
+    assert email["recipients"] == [f"{MARKER}@example.test"]
     assert email["has_document"] is True
     assert email["document_filename"].endswith(".pdf")
 
@@ -894,7 +895,11 @@ def test_send_creates_a_notice_with_a_copied_lines_snapshot_and_a_document(scm_a
     assert lines[0].kind == "pack"
 
 
-def test_send_without_a_supplier_email_is_skipped_not_a_failure(scm_app):
+def test_send_with_no_address_anywhere_is_refused(scm_app):
+    # AC-C2, superseding the old "skipped, not a failure" behaviour: since R9 the sender
+    # names the recipients in the send dialog, so a send with nobody on it is a mistake, not
+    # an outcome. The document is still obtainable without sending anything
+    # (`/container-requests/document`), which is what the old skipped row existed for.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -909,10 +914,55 @@ def test_send_without_a_supplier_email_is_skipped_not_a_failure(scm_app):
         },
     )
 
+    assert r.status_code == 422, r.text
+    assert r.json()["code"] == "no_recipients"
+
+
+def test_send_goes_to_every_address_the_sender_named(scm_app):
+    # AC-C2. The supplier's own address is a default, not a limit.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.supplier.email = f"{MARKER}-default@example.test"
+    db.flush()
+    product = w.product("A")
+
+    r = TestClient(app).post(
+        SEND_URL,
+        json={
+            "supplier_id": str(w.supplier.id),
+            "lines": [{"product_id": str(product.id), "qty": 5}],
+            "channel": "email",
+            "recipients": [f"{MARKER}-one@example.com", f"{MARKER}-two@example.com"],
+            "note": "Please confirm by Friday.",
+        },
+    )
+
     assert r.status_code == 201, r.text
-    email = next(n for n in r.json()["notices"] if n["channel"] == "email")
-    assert email["status"] == "skipped"
-    assert "email address" in (email["status_reason"] or "").lower()
+    notice = r.json()["notices"][0]
+    assert notice["recipients"] == [
+        f"{MARKER}-one@example.com",
+        f"{MARKER}-two@example.com",
+    ]
+    assert notice["open_count"] == 0 and notice["opened_at"] is None
+
+
+def test_send_refuses_an_address_that_is_not_one(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("A")
+
+    r = TestClient(app).post(
+        SEND_URL,
+        json={
+            "supplier_id": str(w.supplier.id),
+            "lines": [{"product_id": str(product.id), "qty": 5}],
+            "recipients": ["not-an-address"],
+        },
+    )
+
+    assert r.status_code == 422, r.text
 
 
 def test_send_for_a_plan_that_does_not_exist_is_a_404(scm_app):
