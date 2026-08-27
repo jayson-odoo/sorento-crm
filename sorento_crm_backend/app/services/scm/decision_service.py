@@ -132,6 +132,16 @@ def _supplier_id_for_code(db: Session, code: Optional[str]) -> Optional[str]:
     return sup.id if sup else None
 
 
+def _supplier_code_for_id(db: Session, supplier_id: Optional[str]) -> Optional[str]:
+    """The CODE a stored supplier id names. `_resolve_choice` is keyed by code (the frozen
+    candidates carry codes, never ids), and the decision stores an id because that is what
+    a foreign key can hold - so a decided supplier round-trips through here."""
+    if not supplier_id:
+        return None
+    sup = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    return sup.supplier_code if sup else None
+
+
 def _resolve_choice(
     db: Session, rec: ReorderRecommendation, override_supplier_code: Optional[str]
 ) -> dict:
@@ -580,12 +590,12 @@ def _confirm_location_grain(
         _remove_rec_line(db, rec.id)
         if buy_qty <= 0:
             continue  # use_stock / use_po / skip / an all-non-buy mixture - nothing to draft
-        choice = _resolve_choice(db, rec, None)
-        po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
+        supplier_id, unit_cost, lead_days = _decision_line_inputs(db, rec, decision)
+        po = _draft_po_for_supplier(db, supplier_id, rec.currency)
         _upsert_line(
             db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
-            source_ref=rec.id, qty=buy_qty, unit_cost=choice["unit_cost"],
-            lead_days=choice["lead_time_days"],
+            source_ref=rec.id, qty=buy_qty, unit_cost=unit_cost,
+            lead_days=lead_days,
         )
         touched.add(po.id)
         confirmed += 1
@@ -788,8 +798,8 @@ def _confirm_product_grain(
             qty = float(decision.buy_qty or 0)
             if qty <= 0:
                 continue  # use_stock / use_po / skip / a non-buy mixture - nothing to draft
-            choice = _resolve_choice(db, rec, None)
-            po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
+            supplier_id, unit_cost, lead_days = _decision_line_inputs(db, rec, decision)
+            po = _draft_po_for_supplier(db, supplier_id, rec.currency)
             members = [r for r, _d in by_product[pid]]
             split = _grid_member_split(members, qty)
             members_by_wh = {str(r.warehouse_id): r for r in members}
@@ -802,8 +812,8 @@ def _confirm_product_grain(
                 _upsert_line(
                     db, po, product_id=member_rec.product_id,
                     warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
-                    qty=share_qty, unit_cost=choice["unit_cost"],
-                    lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
+                    qty=share_qty, unit_cost=unit_cost,
+                    lead_days=lead_days, source_system=_SRC_PRODUCT,
                 )
                 touched.add(po.id)
             confirmed += 1
@@ -1051,6 +1061,14 @@ def decide_covered(db: Session, rec_id: str, choice: str,
 #: three; `skip` is deliberately doing nothing this round.
 _PLAN_ROW_KINDS = {"buy", "use_stock", "use_po", "skip", "mixture"}
 
+#: The price the row is costed at (AC-R13). `use_last` = what we last paid this supplier;
+#: `ask_new` = the price is still a question, so the drafted line carries none rather than
+#: a stale figure dressed up as a quote.
+PRICE_MODE_USE_LAST = "use_last"
+PRICE_MODE_ASK_NEW = "ask_new"
+_PRICE_MODES = (PRICE_MODE_USE_LAST, PRICE_MODE_ASK_NEW)
+DEFAULT_PRICE_MODE = PRICE_MODE_USE_LAST
+
 #: Every rec_type this decision may be recorded on. Wider than `_get_buy_rec`'s buy-only
 #: gate on purpose (S16 gap #2) - a needs_level or covered row the buyer overrides with
 #: use_stock/use_po/skip is a real decision. `exception` is excluded: it never reaches
@@ -1132,6 +1150,10 @@ def record_plan_row_decision(
     po_refs: Optional[list[str]],
     reason_text: Optional[str],
     actor: Optional[str],
+    *,
+    price_mode: Optional[str] = None,
+    supplier_code: Optional[str] = None,
+    unit_cost: Optional[float] = None,
 ) -> dict:
     """Record (replacing, if one already exists) the buyer's decision on ONE row.
 
@@ -1140,7 +1162,14 @@ def record_plan_row_decision(
     NOT touch ``rec.status`` - that column stays the legacy accept/adjust/reject/covered
     vocabulary for whatever screen still reads it; this is a parallel, row-scoped record
     that ``confirm_decisions`` treats as authoritative for a rec the moment it exists
-    (see that function's docstring)."""
+    (see that function's docstring).
+
+    The PRICE and the SUPPLIER are the buyer's too (AC-R13 / AC-R14). `supplier_code`
+    (never an id - no UUID crosses the wire, same as a stock take's warehouse code)
+    switches the row onto another of the product's suppliers and RE-READS that supplier's
+    last price and lead time off the recommendation's frozen candidates. `price_mode`
+    decides whether the row is costed at all: `use_last` stores the price, `ask_new`
+    stores none, and the drafted PO line follows."""
     rec = _get_decidable_rec(db, rec_id)
     _assert_not_legacy(db, str(rec.run_id))
 
@@ -1149,6 +1178,25 @@ def record_plan_row_decision(
     stock_total = sum(t["qty"] for t in resolved_takes)
     po_qty_f = float(po_qty or 0)
     _validate_plan_row_decision(kind, buy_qty_f, stock_total, po_qty_f)
+
+    mode = (price_mode or DEFAULT_PRICE_MODE).strip()
+    if mode not in _PRICE_MODES:
+        raise AppException(
+            status_code=422,
+            message="Price must be either the last price or a new one to ask for.",
+        )
+    if unit_cost is not None and float(unit_cost) < 0:
+        raise AppException(status_code=422, message="A price cannot be negative.")
+    choice = _resolve_choice(db, rec, supplier_code)
+    if supplier_code and choice["supplier_id"] is None:
+        raise AppException(status_code=422,
+                           message="That supplier is not on file for this product.")
+    # `ask_new` is the absence of a price, not a price of zero: the drafted line goes out
+    # unpriced and the buyer fills it in when the quote comes back.
+    resolved_cost = (
+        None if mode == PRICE_MODE_ASK_NEW
+        else (float(unit_cost) if unit_cost is not None else choice["unit_cost"])
+    )
 
     existing = (
         db.query(PlanRowDecision)
@@ -1164,10 +1212,15 @@ def record_plan_row_decision(
     existing.po_qty = po_qty_f or None
     existing.po_refs = [r for r in (po_refs or []) if r] or None
     existing.reason_text = (reason_text or "").strip() or None
+    existing.price_mode = mode
+    # Only a buyer's OWN switch is stored. Left NULL, the rec's proposed supplier stands,
+    # which is what `_resolve_choice(rec, None)` already answers everywhere else.
+    existing.supplier_id = choice["supplier_id"] if supplier_code else None
+    existing.unit_cost = resolved_cost
     existing.decided_by = actor
     existing.decided_at = datetime.utcnow()
     db.flush()
-    return _plan_row_decision_dict(existing, _po_for_rec(db, rec.id))
+    return _plan_row_decision_dict(db, existing, _po_for_rec(db, rec.id))
 
 
 def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> dict:
@@ -1214,13 +1267,33 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
         .all()
     )
     data = [
-        _plan_row_decision_dict(decision, _po_for_rec(db, rec_id))
+        _plan_row_decision_dict(db, decision, _po_for_rec(db, rec_id))
         for decision, rec_id in pairs
     ]
     return {"data": data, "decided_count": len(data), "total_count": total}
 
 
-def _plan_row_decision_dict(decision: PlanRowDecision, po: Optional[PurchaseOrder]) -> dict:
+def _plan_row_decision_dict(
+    db: Session, decision: PlanRowDecision, po: Optional[PurchaseOrder]
+) -> dict:
+    supplier = (
+        db.query(Supplier).filter(Supplier.id == decision.supplier_id).first()
+        if decision.supplier_id else None
+    )
+    lead = None
+    if supplier is not None:
+        ps = _product_supplier_choice(
+            db, decision.recommendation.product_id, decision.supplier_id
+        ) or {}
+        lead = ps.get("lead_time_days")
+        if lead is None:
+            # The frozen candidate the UI offered carries the lead time when
+            # `product_suppliers` has none of its own.
+            inp = (decision.recommendation.inputs or {})
+            for cand in [inp.get("supplier") or {}] + list(inp.get("alternatives") or []):
+                if cand and cand.get("supplier_code") == supplier.supplier_code:
+                    lead = cand.get("lead_time_days")
+                    break
     return {
         "recommendation_id": decision.recommendation_id,
         "kind": decision.kind,
@@ -1229,6 +1302,28 @@ def _plan_row_decision_dict(decision: PlanRowDecision, po: Optional[PurchaseOrde
         "po_qty": _f(decision.po_qty),
         "po_refs": decision.po_refs or [],
         "reason_text": decision.reason_text,
+        # The buyer's price + supplier calls (AC-R13 / AC-R14). No UUID on the wire: the
+        # supplier travels as its code, the way a stock take travels as a warehouse code.
+        "price_mode": decision.price_mode or DEFAULT_PRICE_MODE,
+        "supplier_code": supplier.supplier_code if supplier else None,
+        "supplier_name": supplier.supplier_name if supplier else None,
+        "unit_cost": _f(decision.unit_cost),
+        "lead_time_days": _f(lead),
         "draft_po_number": po.po_number if po else None,
         "draft_po_id": po.id if po else None,
     }
+
+
+def _decision_line_inputs(
+    db: Session, rec: ReorderRecommendation, decision: PlanRowDecision
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    """`(supplier_id, unit_cost, lead_days)` a decided row's draft-PO line is raised with.
+
+    The buyer's supplier wins over the engine's; `ask_new` leaves the line unpriced so the
+    quote that comes back is what fills it, never a figure the plan invented."""
+    code = _supplier_code_for_id(db, decision.supplier_id)
+    choice = _resolve_choice(db, rec, code)
+    if (decision.price_mode or DEFAULT_PRICE_MODE) == PRICE_MODE_ASK_NEW:
+        return choice["supplier_id"], None, choice["lead_time_days"]
+    cost = _f(decision.unit_cost) if decision.unit_cost is not None else choice["unit_cost"]
+    return choice["supplier_id"], cost, choice["lead_time_days"]

@@ -110,6 +110,12 @@ class RecordPlanRowDecisionRequest(BaseModel):
     po_qty: Optional[float] = Field(None, ge=0)
     po_refs: List[str] = Field(default_factory=list)  # existing PO numbers, display-only
     reason_text: Optional[str] = None
+    # AC-R13 / AC-R14 - the price and the supplier the buyer chose. `use_last` (default)
+    # costs the row at what we last paid; `ask_new` leaves it unpriced. The supplier
+    # travels as a CODE, never an id.
+    price_mode: Optional[str] = None  # use_last | ask_new
+    supplier_code: Optional[str] = None
+    unit_cost: Optional[float] = Field(None, ge=0)
 
 
 class PlanRowDecision(BaseModel):
@@ -120,6 +126,13 @@ class PlanRowDecision(BaseModel):
     po_qty: Optional[float] = None
     po_refs: List[str] = Field(default_factory=list)
     reason_text: Optional[str] = None
+    # The buyer's price + supplier calls, echoed back so the row can render what it
+    # actually carries rather than what the engine proposed.
+    price_mode: str = "use_last"
+    supplier_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    unit_cost: Optional[float] = None
+    lead_time_days: Optional[float] = None
     # Staged like Accept/Adjust - populated only once Confirm decisions has drafted the
     # buy portion into a PO.
     draft_po_number: Optional[str] = None

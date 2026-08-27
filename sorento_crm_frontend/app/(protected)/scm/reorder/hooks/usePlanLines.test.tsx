@@ -39,6 +39,11 @@ let planRowDecisionsStore: Array<{
   po_qty: number | null;
   po_refs: string[];
   reason_text: string | null;
+  price_mode?: string;
+  supplier_code?: string | null;
+  supplier_name?: string | null;
+  unit_cost?: number | null;
+  lead_time_days?: number | null;
   draft_po_number: string | null;
   draft_po_id: string | null;
 }> = [];
@@ -515,7 +520,7 @@ describe('usePlanLines - S16 row decisions (decide/clear)', () => {
       expect.objectContaining({ kind: 'buy', buy_qty: 23 }),
     );
     // The server round trip lands back in `decisions`, keyed by the real rec id.
-    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23, priceMode: 'use_last' }));
   });
 
   it('a grouped product row fans the SAME decision out to every member, never the synthetic group id', async () => {
@@ -542,13 +547,66 @@ describe('usePlanLines - S16 row decisions (decide/clear)', () => {
     expect(recordPlanRowDecision).not.toHaveBeenCalledWith('group-p1', expect.anything());
   });
 
+  it('a pending price call and supplier ride into the decision when it is made (AC-R13/R14)', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { id: 'r1', rec: { id: 'r1' }, supplier: { code: 'SUP-A' } } as never;
+    // Changing either on an UNDECIDED row records nothing: it must not start counting as
+    // decided just because its supplier changed.
+    await act(async () => {
+      await result.current.chooseRow(line, { priceMode: 'ask_new' });
+      await result.current.chooseRow(line, { supplierCode: 'SUP-B' });
+    });
+    expect(recordPlanRowDecision).not.toHaveBeenCalled();
+    expect(result.current.choiceFor(line)).toEqual({
+      priceMode: 'ask_new',
+      supplierCode: 'SUP-B',
+    });
+
+    await act(async () => {
+      await result.current.decide(line, { buy: 40 });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledWith(
+      'r1',
+      expect.objectContaining({
+        kind: 'buy',
+        buy_qty: 40,
+        price_mode: 'ask_new',
+        supplier_code: 'SUP-B',
+      }),
+    );
+  });
+
+  it('changing the supplier on an ALREADY decided row re-records it there and then', async () => {
+    planRowDecisionsStore = [{
+      recommendation_id: 'r1', kind: 'buy', buy_qty: 23, stock_takes: [], po_qty: null,
+      po_refs: [], reason_text: null, price_mode: 'use_last', supplier_code: null,
+      supplier_name: null, unit_cost: null, lead_time_days: null,
+      draft_po_number: null, draft_po_id: null,
+    }];
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.decisions.r1).toBeDefined());
+
+    const line = { id: 'r1', rec: { id: 'r1' }, supplier: { code: 'SUP-A' } } as never;
+    await act(async () => {
+      await result.current.chooseRow(line, { supplierCode: 'SUP-B' });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledWith(
+      'r1',
+      expect.objectContaining({ kind: 'buy', buy_qty: 23, supplier_code: 'SUP-B' }),
+    );
+  });
+
   it('clear withdraws an ungrouped row, and refetches the decisions', async () => {
     planRowDecisionsStore = [{
       recommendation_id: 'r1', kind: 'buy', buy_qty: 23, stock_takes: [], po_qty: null,
       po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null,
     }];
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
-    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23, priceMode: 'use_last' }));
 
     const line = { rec: { id: 'r1' } } as never;
     await act(async () => {
