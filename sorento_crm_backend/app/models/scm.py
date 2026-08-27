@@ -264,7 +264,7 @@ class ReorderRun(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     created_by = Column(String, nullable=True)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     warehouse_ids = Column(JSONB, nullable=True)
     # The product scope of a manual plan. NULL means none was asked for (the daily run,
     # which plans everything); an EMPTY list means one was asked for and nothing resolved
@@ -351,7 +351,7 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     explanation = Column(Text, nullable=True)  # LLM (M5)
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred
-    status = Column(String(20), default="proposed", nullable=False)  # proposed | accepted | adjusted | dismissed
+    status = Column(String(20), default="proposed", nullable=False, server_default="proposed")  # proposed | accepted | adjusted | dismissed
     # Whether THIS location's purchase order has been keyed into AutoCount (AC-E2.2), for a
     # run decided at LOCATION grain, where the decision lives here rather than on the
     # product summary row. Same three values and the same manual semantics as
@@ -666,7 +666,7 @@ class MarketResearchRun(Base, CompanyScopedMixin):
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
     topic_count = Column(Integer, nullable=True)  # active topics searched this run
