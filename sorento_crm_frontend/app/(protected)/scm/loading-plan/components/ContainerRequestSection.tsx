@@ -931,7 +931,12 @@ export function ContainerRequestSection({
         <Card>
           <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold">What to ask {supplierName} for</h3>
+              <h3 className="text-sm font-semibold">
+                What to ask {supplierName}
+                {build.data.plan_horizon_date
+                  ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
+                  : ' for'}
+              </h3>
               {/* The freshness strip (captain, "plan with trusted data"): a source older than
                   a week reads in a warning tone rather than a hard block - the figures are
                   still real, just possibly stale. */}
@@ -947,15 +952,6 @@ export function ContainerRequestSection({
                   <SourceStamp label="PI" iso={sources.proforma_as_of} />
                 )}
               </p>
-              {/* What was actually applied, read off the build's own echo rather than the
-                  prop - never lets the numbers on screen disagree with what this line says
-                  they mean. */}
-              {build.data.plan_horizon_date ? (
-                <p className="text-2xs text-muted-foreground">
-                  Counting SO need due on or before{' '}
-                  {formatDateInMalaysia(build.data.plan_horizon_date)}.
-                </p>
-              ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>
