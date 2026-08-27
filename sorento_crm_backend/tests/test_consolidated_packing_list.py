@@ -100,13 +100,56 @@ class World:
         db.add(self.shipment)
         db.flush()
 
-        self.line(self.kailu, self.tap, qty=490, cartons=86, cbm="2.1053", remarks="fragile")
-        self.line(self.kailu, self.mocha_basin, qty=100, cartons=10)
+        # The tap is the fully MEASURED line: material, pack size, carton and both weights,
+        # which is what the container workbook derives every one of its figures from. The
+        # rest are deliberately bare, because a container read off a PDF states none of it
+        # and the same sheet has to print that container too.
+        self.line(
+            self.kailu,
+            self.tap,
+            qty=490,
+            cartons=86,
+            cbm="2.1053",
+            remarks="fragile",
+            material="不锈钢",
+            pcs_per_carton=10,
+            carton_length_cm=34,
+            carton_width_cm=24,
+            carton_height_cm=30,
+            net_weight_per_carton="7.000",
+            gross_weight_per_carton="8.300",
+            unit_cost="65.50",
+            currency="CNY",
+        )
+        self.line(self.kailu, self.mocha_basin, qty=100, cartons=10, unit_cost="100.00")
         self.line(self.kailu, self.mat, qty=120, cartons=12)
         self.line(self.caizhou, self.sink, qty=50, cartons=5, cbm="1.5000")
         self.line(None, self.orphan, qty=7, cartons=1)
 
     # -- seeding ---------------------------------------------------------- #
+
+    def costed(self) -> None:
+        """The container as somebody who has typed its paperwork up would see it.
+
+        Separate from `__init__` so the bare container stays the default: an untyped
+        header and blank costs are the state every container starts in, and the sheet has
+        to be printable then too.
+        """
+        self.shipment.loading_date = date(2026, 7, 17)
+        self.shipment.etd_date = date(2026, 7, 23)
+        self.shipment.estimated_arrival_date = date(2026, 7, 25)
+        self.shipment.eta_delay_date = date(2026, 7, 27)
+        self.shipment.seal_number = "J0713349"
+        self.shipment.forwarder_order_ref = "CNH1098313"
+        self.shipment.consignee = "SORENTO SDN BHD"
+        self.shipment.shipper = "SHENZHEN XINDESHENG TRADING CO.,LTD"
+        self.shipment.china_forwarder = "ONE TOUCH"
+        self.shipment.free_days_available = 14
+        self.shipment.delivery_warehouse = "BRW"
+        self.shipment.clearance_cost = 2700
+        self.shipment.china_freight_cost = 13950
+        self.shipment.insurance_rate = 1
+        self.db.flush()
 
     def product(self, key: str, *, brand: Brand | None = None, dims=None) -> Product:
         p = Product(
@@ -136,7 +179,13 @@ class World:
         self.db.flush()
         return s
 
-    def line(self, supplier, product, *, qty, cartons, cbm=None, remarks=None):
+    def line(self, supplier, product, *, qty, cartons, cbm=None, remarks=None, **measured):
+        """One line on the container. `measured` is whatever the supplier's file stated.
+
+        Left out by default so the "nobody measured this" path stays the common case in
+        these tests: a container read off a PDF has none of it, and the workbook has to
+        print that container too.
+        """
         row = InboundShipmentLine(
             id=str(uuid.uuid4()),
             shipment_id=self.shipment.id,
@@ -146,6 +195,7 @@ class World:
             cartons_count=cartons,
             cbm=cbm,
             remarks=remarks,
+            **measured,
         )
         self.db.add(row)
         self.db.flush()
@@ -556,43 +606,259 @@ def test_an_id_that_is_not_an_id_is_a_404_not_a_broken_session(db):
 # --------------------------------------------------------------------------- #
 
 
-def _cells(payload: dict) -> list[list]:
+def _sheet(payload: dict):
+    """The workbook as openpyxl sees it: formulas as formulas, values as values."""
     import openpyxl
 
     wb = openpyxl.load_workbook(BytesIO(svc.to_xlsx(payload)))
-    assert wb.sheetnames == ["PACKING LIST"]
-    return [list(row) for row in wb["PACKING LIST"].iter_rows(values_only=True)]
+    assert wb.sheetnames == ["RMB"]
+    return wb["RMB"]
 
 
-def test_the_workbook_carries_every_factory_its_subtotal_and_the_split(db):
+def _cells(payload: dict) -> list[list]:
+    return [list(row) for row in _sheet(payload).iter_rows(values_only=True)]
+
+
+def _column(ws, letter: str) -> list:
+    return [ws[f"{letter}{r}"].value for r in range(1, ws.max_row + 1)]
+
+
+def _row_of(ws, letter: str, value) -> int:
+    """The row whose cell in `letter` equals `value`. The tests read by content, not index."""
+    for r in range(1, ws.max_row + 1):
+        if ws[f"{letter}{r}"].value == value:
+            return r
+    raise AssertionError(f"no row with {letter} = {value!r}")
+
+
+def test_the_header_block_prints_the_container_and_its_paperwork(db):
+    # Twelve labelled lines above the goods. Every one of them is a column on the
+    # container, so a workbook missing one is a column that never reached the sheet.
     w = World(db)
-    w.notice_for_kailu()
+    w.costed()
     payload = svc.build(db, str(w.shipment.id))
 
-    rows = _cells(payload)
-    first_column = [r[0] for r in rows]
+    ws = _sheet(payload)
+    labels = {ws[f"A{r}"].value: ws[f"B{r}"].value for r in range(1, 13)}
 
-    assert ["FACTORY", "NO", "MODEL", "DESCRIPTION", "QTY", "CTN QTY", "CBM", "LOGO", "REMARKS"] in [
-        list(r) for r in rows
+    assert labels["CONTAINER :"] == w.shipment.shipping_container_number
+    assert labels["SEAL NO : "] == "J0713349"
+    assert labels["SO :"] == "CNH1098313"
+    assert labels["CONSIGNEE :"] == "SORENTO SDN BHD"
+    assert labels["SHIPPER :"] == "SHENZHEN XINDESHENG TRADING CO.,LTD"
+    assert labels["CHINA AGENT : "] == "ONE TOUCH"
+    assert labels["FREE DAYS : "] == "14 FREEDAYS"
+    assert labels["DELIVERY WAREHOUSE : "] == "BRW"
+    assert labels["ETD :"] == "2026-07-23"
+    # The REVISED eta, not the first-published one: `eta_delay_date` is the accurate figure.
+    assert labels["ETA : "] == "2026-07-27"
+    # Every factory on board, in the order the blocks below run.
+    assert labels["FACTORY :"] == f"{w.kailu.supplier_name}, {w.caizhou.supplier_name}"
+
+
+def test_the_header_of_a_container_nobody_has_typed_up_is_blank_not_invented(db):
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+
+    assert ws["B5"].value is None  # seal
+    assert ws["B8"].value is None  # shipper
+    assert ws["B11"].value is None  # free days
+
+
+def test_the_two_row_column_header_is_the_fscu_one(db):
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+
+    assert [ws[f"{c}15"].value for c in "ABCDEFGH"] == [
+        "FACTORY", "NO", "MODEL", "DESCRIPTION", "MATERIAL", "QTY", "PCS / CTN", "CTN QTY",
     ]
-    assert f"{w.kailu.supplier_name} subtotal" in first_column
-    assert f"{w.caizhou.supplier_name} subtotal" in first_column
-    assert "TOTAL" in first_column
-    assert "SORENTO" in first_column
-    assert "MOCHA" in first_column
+    assert ws["I15"].value == "SIZE (CM)"
+    assert [ws["I16"].value, ws["J16"].value, ws["K16"].value] == ["L", "W", "H"]
+    assert [ws[f"{c}15"].value for c in "LMNOPQRSTU"] == [
+        "CBM\n/ CTN", "TOTAL CBM", "NW", "GW", "TOTAL NW", "TOTAL GW",
+        "LOGO", "REMARKS", "RMB", "TOTAL RMB",
+    ]
+    # The lines scroll under the header rather than past it.
+    assert ws.freeze_panes == "A17"
+
+
+def test_one_block_per_factory_with_its_mocha_goods_under_their_own_heading(db):
+    # MOCHA is invoiced separately, so the same factory's MOCHA lines are their own block -
+    # the footer's per-company apportionment has to be readable off the blocks above it.
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    headings = [v for v in _column(ws, "A")[16:] if v and v != "-"]
+
+    assert headings.count(w.kailu.supplier_name) == 2  # tap + mat, both SORENTO
+    assert f"{w.kailu.supplier_name} (MOCHA)" in headings
+    # A factory with no MOCHA line gets one block, not an empty second one.
+    assert f"{w.caizhou.supplier_name} (MOCHA)" not in headings
+
+
+def test_the_lines_are_numbered_once_across_the_whole_container(db):
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    numbers = [v for v in _column(ws, "B")[16:] if isinstance(v, int)]
+
+    assert numbers == list(range(1, 6))
+
+
+def test_a_measured_line_derives_its_cartons_volume_and_weights_as_formulas(db):
+    # Formulas, not computed numbers: the recipient corrects a quantity in Excel - that is
+    # what the sheet is for - and a workbook of frozen totals would keep printing the old
+    # ones underneath the corrected line.
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.tap.product_code)
+
+    assert ws[f"E{r}"].value == "不锈钢"
+    assert ws[f"F{r}"].value == 490
+    assert ws[f"G{r}"].value == 10
+    assert ws[f"H{r}"].value == f"=F{r}/G{r}"
+    assert [ws[f"I{r}"].value, ws[f"J{r}"].value, ws[f"K{r}"].value] == [34.0, 24.0, 30.0]
+    assert ws[f"L{r}"].value == f"=I{r}*J{r}*K{r}/10^6"
+    assert ws[f"M{r}"].value == f"=H{r}*L{r}"
+    assert ws[f"P{r}"].value == f"=N{r}*H{r}"
+    assert ws[f"Q{r}"].value == f"=O{r}*H{r}"
+    assert ws[f"U{r}"].value == f"=T{r}*F{r}"
+
+
+def test_an_unmeasured_line_states_what_it_knows_and_derives_nothing(db):
+    # A formula with no inputs prints a zero, and a container planned against a zero volume
+    # arrives too full to close.
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.sink.product_code)
+
+    assert ws[f"G{r}"].value is None
+    assert ws[f"H{r}"].value == 5  # the carton count the packing list stated
+    assert ws[f"L{r}"].value is None
+    assert ws[f"M{r}"].value == 1.5  # the volume it stated, not a formula
+    assert ws[f"P{r}"].value is None
+    assert ws[f"Q{r}"].value is None
+
+
+def test_one_stated_weight_is_read_as_the_gross_one(db):
+    # `weight_per_carton` is the only weight the line has ever had and every packing list
+    # that states one states the gross. Read as a fallback rather than migrated.
+    w = World(db)
+    w.line(w.caizhou, w.never_packed, qty=10, cartons=2, weight_per_carton="18.70")
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.never_packed.product_code)
+
+    assert ws[f"N{r}"].value is None
+    assert ws[f"O{r}"].value == 18.7
+
+
+def test_every_block_subtotals_its_own_rows(db):
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    first = _row_of(ws, "C", w.tap.product_code)
+    subtotal = first + 2  # tap, mat, then the subtotal: both are SORENTO Kailu lines
+
+    assert ws[f"F{subtotal}"].value == f"=SUM(F{first}:F{first + 1})"
+    assert ws[f"M{subtotal}"].value == f"=SUM(M{first}:M{first + 1})"
+    assert ws[f"U{subtotal}"].value == f"=SUM(U{first}:U{first + 1})"
+    # The factory's own amount sits beside its lines, merged down them.
+    assert ws[f"V{first}"].value == f"=SUM(U{first}:U{first + 1})"
+    assert ws[f"V{subtotal}"].value == f"=V{first}"
+
+
+def test_the_grand_total_sums_the_subtotals_and_never_the_lines_twice(db):
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    dash = _row_of(ws, "A", "-")
+    total = dash + 1
+    subtotals = [
+        r
+        for r in range(17, dash)
+        if isinstance(ws[f"F{r}"].value, str) and ws[f"F{r}"].value.startswith("=SUM(F")
+    ]
+
+    assert ws[f"F{total}"].value == "=SUM(" + ",".join(f"F{r}" for r in subtotals) + ")"
+    # Kailu SORENTO, Kailu MOCHA, Caizhou, and the lines whose factory we were never told.
+    assert len(subtotals) == 4
+
+
+def test_the_footer_splits_the_container_between_the_two_companies(db):
+    w = World(db)
+    w.costed()
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    sorento = _row_of(ws, "L", "SORENTO")
+    mocha = _row_of(ws, "L", "MOCHA")
+    total = _row_of(ws, "A", "-") + 1
+
+    # Clearance and China freight follow the VOLUME, insurance follows the AMOUNT: that is
+    # how the forwarder bills them.
+    assert ws[f"N{sorento}"].value == f"=M{sorento}/M{total}*2700.0"
+    assert ws[f"O{sorento}"].value == f"=U{sorento}/U{total}*1.0"
+    assert ws[f"P{sorento}"].value == f"=M{sorento}/M{total}*13950.0"
+    assert ws[f"U{mocha}"].value.startswith("=SUM(U")
+
+    grand = mocha + 1
+    assert ws[f"M{grand}"].value == f"=M{sorento}+M{mocha}"
+    assert ws[f"U{grand}"].value == f"=U{sorento}+U{mocha}"
+
+    labels = grand + 1
+    assert [ws[f"{c}{labels}"].value for c in "MNOP"] == [
+        "CBM", "CLEARANCE", "INSURANCE", "CHINA FREIGHT",
+    ]
+    assert ws[f"U{labels}"].value == "TOTAL AMOUNT"
+    assert ws[f"C{labels}"].value == "订单号:CNH1098313"
+    assert ws[f"C{labels + 1}"].value == f"柜号:{w.shipment.shipping_container_number}"
+    assert ws[f"C{labels + 2}"].value == "封号:J0713349"
+
+
+def test_a_container_with_no_costs_typed_prints_the_split_and_no_apportionment(db):
+    # The split is what the sheet is for; the costs are typed later, and a zero in their
+    # place would read as a container that cost nothing to clear.
+    w = World(db)
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    sorento = _row_of(ws, "L", "SORENTO")
+
+    assert ws[f"M{sorento}"].value.startswith("=SUM(M")
+    assert ws[f"N{sorento}"].value is None
+    assert ws[f"O{sorento}"].value is None
+    assert ws[f"P{sorento}"].value is None
+    # And the total row does not add two blanks up into a 0 underneath them.
+    grand = _row_of(ws, "L", "MOCHA") + 1
+    assert ws[f"M{grand}"].value is not None
+    assert ws[f"N{grand}"].value is None
+    assert ws[f"P{grand}"].value is None
 
 
 def test_the_workbook_writes_quantities_as_numbers_not_text(db):
-    # A total the recipient cannot sum in Excel is a picture of a packing list.
+    # A quantity the recipient cannot sum in Excel is a picture of a packing list.
     w = World(db)
     payload = svc.build(db, str(w.shipment.id))
 
-    rows = _cells(payload)
-    total = next(r for r in rows if r[0] == "TOTAL")
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.tap.product_code)
 
-    assert total[4] == 767
-    assert total[5] == 114
-    assert isinstance(total[6], float)
+    assert ws[f"F{r}"].value == 490
+    assert isinstance(ws[f"T{r}"].value, float)
 
 
 def test_the_download_is_named_after_the_container_with_nothing_a_filesystem_argues_with(db):
@@ -618,11 +884,56 @@ def test_the_workbook_states_what_was_asked_for_and_never_packed(db):
     w.notice_for_kailu()
     payload = svc.build(db, str(w.shipment.id))
 
-    rows = _cells(payload)
-    gone = next(r for r in rows if r[2] == w.never_packed.product_code)
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.never_packed.product_code)
 
-    assert gone[4] is None
-    assert gone[8] == "Not packed - loading plan asked 100"
+    assert ws[f"F{r}"].value is None
+    assert ws[f"S{r}"].value == "Not packed - loading plan asked 100"
+
+
+def test_a_factory_that_loaded_only_mocha_goods_still_says_what_it_owes(db):
+    """The unpacked list hangs off the factory's FIRST block, not off its SORENTO one.
+
+    A factory whose whole shipment is MOCHA-branded has no SORENTO block at all, and a
+    list attached to one would simply vanish - the container would read as though nothing
+    had been left behind.
+    """
+    w = World(db)
+    # Caizhou ships one MOCHA line and nothing else, against a plan asking for two models.
+    db.query(InboundShipmentLine).filter(
+        InboundShipmentLine.shipment_id == w.shipment.id,
+        InboundShipmentLine.supplier_id == w.caizhou.id,
+    ).delete(synchronize_session=False)
+    db.flush()
+    w.line(w.caizhou, w.mocha_basin, qty=40, cartons=4)
+    w.notice(
+        w.caizhou,
+        [(w.mocha_basin, 40), (w.never_packed, 25)],
+        created_at=datetime(2026, 8, 1, 9, 0, 0),
+    )
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    r = _row_of(ws, "C", w.never_packed.product_code)
+
+    assert ws[f"S{r}"].value == "Not packed - loading plan asked 25"
+
+
+def test_a_container_with_no_lines_still_produces_a_readable_sheet(db):
+    # A container read but not unpacked is a real state, and the screen offering the export
+    # cannot know which ones are empty.
+    w = World(db)
+    db.query(InboundShipmentLine).filter(
+        InboundShipmentLine.shipment_id == w.shipment.id
+    ).delete(synchronize_session=False)
+    db.flush()
+    payload = svc.build(db, str(w.shipment.id))
+
+    ws = _sheet(payload)
+    total = _row_of(ws, "A", "-") + 1
+
+    assert ws[f"F{total}"].value == 0
+    assert ws[f"M{_row_of(ws, 'L', 'MOCHA')}"].value == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -712,11 +1023,13 @@ def test_the_export_route_returns_a_workbook_named_after_the_container(db, clien
     assert r.headers["content-disposition"] == (
         f'attachment; filename="{expected_name}"; filename*=UTF-8\'\'{quote(expected_name)}'
     )
-    wb = openpyxl.load_workbook(BytesIO(r.content))
-    first_column = [row[0] for row in wb["PACKING LIST"].iter_rows(values_only=True)]
-    assert f"{w.kailu.supplier_name} subtotal" in first_column
-    assert "SORENTO" in first_column
-    assert "MOCHA" in first_column
+    ws = openpyxl.load_workbook(BytesIO(r.content))["RMB"]
+    factory_column = [ws[f"A{i}"].value for i in range(1, ws.max_row + 1)]
+    company_column = [ws[f"L{i}"].value for i in range(1, ws.max_row + 1)]
+    assert w.kailu.supplier_name in factory_column
+    assert f"{w.kailu.supplier_name} (MOCHA)" in factory_column
+    assert "SORENTO" in company_column
+    assert "MOCHA" in company_column
 
 
 def test_an_unknown_container_is_a_404_over_the_wire(db, client):
