@@ -638,11 +638,16 @@ def list_plan_notices(
 @router.get("/supplier-notices")
 def list_supplier_notices(
     supplier_id: str = Query(...),
+    loading_plan_id: Optional[str] = Query(
+        None, description="Only this plan's notices (the record page asks with its own id)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    rows = supplier_notice_service.list_for_supplier(db, supplier_id, limit=limit)
+    rows = supplier_notice_service.list_for_supplier(
+        db, supplier_id, limit=limit, loading_plan_id=loading_plan_id
+    )
     return {"data": rows, "total": len(rows)}
 
 

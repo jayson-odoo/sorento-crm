@@ -223,11 +223,17 @@ export function useContainerRequestHistory(supplierId: string | null, productIds
   });
 }
 
-/** Every notice sent to this supplier, either stage - the caller filters by `notice_type`. */
-export function useSupplierNotices(supplierId: string | null) {
+/**
+ * Notices sent to this supplier, either stage - the caller filters by `notice_type`.
+ *
+ * `loadingPlanId` narrows it to one plan (R3/R11), which is what a plan's record page wants:
+ * a supplier commonly has two plans open at once and each holds its own current ask, so the
+ * other one's sends and its live link do not belong on this page.
+ */
+export function useSupplierNotices(supplierId: string | null, loadingPlanId?: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'notices', 'supplier', supplierId],
-    queryFn: () => getSupplierNotices(supplierId as string),
+    queryKey: [...KEY, 'notices', 'supplier', supplierId, loadingPlanId ?? null],
+    queryFn: () => getSupplierNotices(supplierId as string, loadingPlanId),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
   });

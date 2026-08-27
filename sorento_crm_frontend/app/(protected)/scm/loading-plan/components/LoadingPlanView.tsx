@@ -134,7 +134,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const send = useSendContainerRequest();
   const cancel = useCancelLoadingPlan();
   const download = useDownloadContainerRequestDocument(planId);
-  const notices = useSupplierNotices(supplierId || null);
+  // Scoped to THIS plan (R3/R11): the same supplier's other open plan has its own live
+  // link and its own history, and neither belongs on this record.
+  const notices = useSupplierNotices(supplierId || null, planId);
   const stockListFile = useSupplierStockListFile(
     plan?.document_kind === 'stock_list' ? supplierId : null,
   );
@@ -199,8 +201,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   }, [stockListFile.data]);
 
   const requestNotices = (notices.data ?? []).filter((n) => n.notice_type === 'container_request');
-  // Only one send's token is ever live (each send retires the last), so the first match IS the
-  // current ask - and with none, Copy link says why rather than copying nothing.
+  // Only one of THIS PLAN's tokens is ever live (each send retires the plan's last), so the
+  // first match IS the current ask - and with none, Copy link says why rather than copying
+  // nothing.
   const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
 
   const goBack = () => router.push('/scm/loading-plan');

@@ -1033,10 +1033,10 @@ def request_and_notify(
             exc_info=True,
         )
 
-    # F8/AC-C7: this send is the current ask, so every link already out there stops
-    # answering. Done BEFORE the new rows exist so the unique token index cannot see two
-    # live links for one supplier at any point.
-    _retire_public_tokens(db, str(supplier_id))
+    # F8/AC-C7: this send is the current ask for THIS PLAN, so that plan's link already out
+    # there stops answering (R3/R11 - the supplier's other plans keep theirs). Done BEFORE
+    # the new rows exist so there is never a moment with two live links for one plan.
+    _retire_public_tokens(db, str(supplier_id), loading_plan_id=loading_plan_id)
 
     # ONE token per SEND (R23, captain 27 Aug: "email and chat need to both have link"). The
     # supplier clicks it in the email, or reads it in the chat message; it is the same
@@ -1116,8 +1116,20 @@ _PUBLIC_TOKEN_BYTES = 32
 _LINK_GONE = "This link is no longer available. Ask your contact at Sorento to resend it."
 
 
-def _retire_public_tokens(db: Session, supplier_id: str) -> None:
-    """Expire every live container-request link this supplier holds.
+def _retire_public_tokens(
+    db: Session, supplier_id: str, *, loading_plan_id: Optional[str] = None
+) -> None:
+    """Expire the live container-request links, for ONE plan when a plan is named.
+
+    ONE LIVE LINK PER PLAN, not per supplier (part 4, R3/R11 - this supersedes part 3's
+    per-supplier rule). Two plans against one supplier is the ordinary case, a September
+    container and an October one, and each holds its own current ask: retiring per supplier
+    meant a send or a cancel on either one killed the link the supplier was working off for
+    the other. Within a plan the old rule stands unchanged - a resend IS the current ask, so
+    the previous link stops answering.
+
+    Without a plan the sweep is the supplier's, which is what a container request sent
+    outside any plan (the pre-part-4 shape) has always done.
 
     The token is KEPT, not cleared: a notice is the record of what left the building, and
     "there was a link, it ran out on this date" is part of that record. Expiring it is what
@@ -1125,16 +1137,15 @@ def _retire_public_tokens(db: Session, supplier_id: str) -> None:
     that never existed fail through the same branch below.
     """
     now = datetime.utcnow()
-    (
-        db.query(SupplierNotice)
-        .filter(
-            SupplierNotice.supplier_id == supplier_id,
-            SupplierNotice.notice_type == "container_request",
-            SupplierNotice.public_token.isnot(None),
-            SupplierNotice.public_token_expires_at > now,
-        )
-        .update({"public_token_expires_at": now}, synchronize_session=False)
+    query = db.query(SupplierNotice).filter(
+        SupplierNotice.supplier_id == supplier_id,
+        SupplierNotice.notice_type == "container_request",
+        SupplierNotice.public_token.isnot(None),
+        SupplierNotice.public_token_expires_at > now,
     )
+    if loading_plan_id is not None:
+        query = query.filter(SupplierNotice.loading_plan_id == str(loading_plan_id))
+    query.update({"public_token_expires_at": now}, synchronize_session=False)
     db.flush()
 
 
@@ -1722,8 +1733,19 @@ def latest_notice_for_plans(db: Session, plan_ids: list[str]) -> dict[str, dict]
     }
 
 
-def list_for_supplier(db: Session, supplier_id: str, *, limit: int = 50) -> list[dict]:
-    """Notices for one supplier, newest first.
+def list_for_supplier(
+    db: Session,
+    supplier_id: str,
+    *,
+    limit: int = 50,
+    loading_plan_id: Optional[str] = None,
+) -> list[dict]:
+    """Notices for one supplier, newest first; for ONE plan when a plan is named.
+
+    The plan record page asks with its own id (R3/R11): the history it prints is what left
+    the building for the plan being read, and the same supplier's other plans belong on their
+    own pages. Without the parameter the answer is unchanged, which is what the supplier-level
+    callers still want.
 
     N-3: a malformed ``supplier_id`` reached `SupplierNotice.supplier_id == supplier_id`
     raw and 500'd on the UUID column comparison. This is a filter, not a lookup by id -
@@ -1734,10 +1756,13 @@ def list_for_supplier(db: Session, supplier_id: str, *, limit: int = 50) -> list
     """
     if not is_uuid(supplier_id):
         return []
+    query = db.query(SupplierNotice).filter(SupplierNotice.supplier_id == supplier_id)
+    if loading_plan_id is not None:
+        if not is_uuid(loading_plan_id):
+            return []
+        query = query.filter(SupplierNotice.loading_plan_id == loading_plan_id)
     rows = (
-        db.query(SupplierNotice)
-        .filter(SupplierNotice.supplier_id == supplier_id)
-        .order_by(SupplierNotice.created_at.desc(), SupplierNotice.channel)
+        query.order_by(SupplierNotice.created_at.desc(), SupplierNotice.channel)
         .limit(limit)
         .all()
     )

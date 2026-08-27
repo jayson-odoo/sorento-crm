@@ -14,7 +14,7 @@ vi.mock(
   }),
 );
 
-import { deleteSpo, downloadPackingListExport } from './fulfilmentService';
+import { deleteSpo, downloadPackingListExport, getSupplierNotices } from './fulfilmentService';
 
 function fileResponse(disposition: string | null, status = 200) {
   const headers = new Headers();
@@ -128,6 +128,28 @@ describe('deleteSpo', () => {
 
     await expect(deleteSpo('ship-1')).rejects.toThrow(
       'CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.',
+    );
+  });
+});
+
+describe('getSupplierNotices', () => {
+  it('asks for one plan\'s notices when the record page names its plan (R3/R11)', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ data: [] }));
+
+    await getSupplierNotices('sup-1', 'plan-1');
+
+    expect(String(apiFetch.mock.calls[0][0])).toBe(
+      '/api/v1/scm/supplier-notices?supplier_id=sup-1&loading_plan_id=plan-1',
+    );
+  });
+
+  it('asks for the supplier\'s whole history when no plan is named', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ data: [] }));
+
+    await getSupplierNotices('sup-1');
+
+    expect(String(apiFetch.mock.calls[0][0])).toBe(
+      '/api/v1/scm/supplier-notices?supplier_id=sup-1',
     );
   });
 });

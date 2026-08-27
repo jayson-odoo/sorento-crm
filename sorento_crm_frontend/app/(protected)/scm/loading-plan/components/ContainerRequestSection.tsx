@@ -312,7 +312,8 @@ export function ContainerRequestSection({
 }) {
   const router = useRouter();
   const build = useContainerRequestBuild(planId);
-  const notices = useSupplierNotices(supplierId);
+  // This plan's sends only (R3/R11) - the supplier's other open plan keeps its own history.
+  const notices = useSupplierNotices(supplierId, planId);
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);

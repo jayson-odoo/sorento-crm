@@ -940,11 +940,23 @@ export async function downloadContainerRequestDocument(
   saveBlobAs(await res.blob(), filename);
 }
 
-/** Every notice this supplier has ever been sent, across both stages - filtered client-side
- *  to `notice_type` where a caller needs only one stage's history. */
-export async function getSupplierNotices(supplierId: string): Promise<SupplierNotice[]> {
+/**
+ * Every notice this supplier has been sent, across both stages - filtered client-side to
+ * `notice_type` where a caller needs only one stage's history.
+ *
+ * `loadingPlanId` narrows it to ONE plan (R3/R11): the record page prints what left the
+ * building for the plan being read, and the same supplier's other plans belong on their own
+ * pages. Left off, the answer is the supplier's whole history, as it always was.
+ */
+export async function getSupplierNotices(
+  supplierId: string,
+  loadingPlanId?: string | null,
+): Promise<SupplierNotice[]> {
+  const scope = loadingPlanId
+    ? `&loading_plan_id=${encodeURIComponent(loadingPlanId)}`
+    : '';
   const res = await apiFetch(
-    `/api/v1/scm/supplier-notices?supplier_id=${encodeURIComponent(supplierId)}`,
+    `/api/v1/scm/supplier-notices?supplier_id=${encodeURIComponent(supplierId)}${scope}`,
   );
   const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
   return body.data;

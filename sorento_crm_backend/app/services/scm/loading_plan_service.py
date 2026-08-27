@@ -777,17 +777,20 @@ def has_notices(db: Session, plan_id: str) -> bool:
 
 
 def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None) -> LoadingPlan:
-    """Cancel, and retire the link the supplier still holds (Q4).
+    """Cancel, and retire the link THIS PLAN's supplier still holds for it (Q4, R3/R11).
 
     Both halves, always: a cancelled plan whose link still answers is a supplier packing an
-    ask nobody is going to place.
+    ask nobody is going to place. Scoped to the plan, because the same supplier's other plans
+    are still open and their links are still the current ask for them.
     """
     from app.services.scm import supplier_notice_service
 
     plan.status = "cancelled"
     plan.cancelled_at = datetime.utcnow()
     plan.cancelled_by = actor
-    supplier_notice_service._retire_public_tokens(db, str(plan.supplier_id))
+    supplier_notice_service._retire_public_tokens(
+        db, str(plan.supplier_id), loading_plan_id=str(plan.id)
+    )
     db.flush()
     return plan
 

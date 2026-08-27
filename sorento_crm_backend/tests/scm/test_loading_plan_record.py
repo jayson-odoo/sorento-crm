@@ -524,3 +524,95 @@ def test_the_cut_off_can_be_changed_on_an_open_plan(scm_app):
     assert r.status_code == 200, r.text
     assert r.json()["plan_horizon_date"] is None
     assert client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()["plan_horizon_date"] is None
+
+
+# --------------------------------------------------------------------------- #
+# one live link per PLAN, not per supplier (R3/R11)
+# --------------------------------------------------------------------------- #
+
+
+def test_cancelling_one_plan_leaves_the_other_plans_link_answering(scm_app):
+    # R3/R11. Two plans against one supplier is the ordinary case (a September container and
+    # an October one), and retirement per SUPPLIER meant cancelling either one killed the
+    # link the supplier was working off for the other.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    line = [{"product_id": str(w.product("A").id), "qty": 5}]
+    plan_a = _create(client, str(w.supplier.id)).json()
+    token_a = client.post(SEND_URL, json={"plan_id": plan_a["id"], "lines": line}).json()[
+        "notices"
+    ][0]["public_url"]
+    plan_b = _create(client, str(w.supplier.id)).json()
+    client.post(SEND_URL, json={"plan_id": plan_b["id"], "lines": line})
+
+    r = client.post(f"{PLANS_URL}/{plan_b['id']}/cancel")
+
+    assert r.status_code == 200, r.text
+    assert token_a, "plan A's send issued no link"
+    still_live = db.execute(
+        text(
+            "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) "
+            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
+        ),
+        {"p": plan_a["id"]},
+    ).scalar()
+    assert still_live == 1
+    assert (
+        db.execute(
+            text(
+                "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = "
+                "CAST(:p AS uuid) AND public_token_expires_at > now()"
+            ),
+            {"p": plan_b["id"]},
+        ).scalar()
+        == 0
+    )
+
+
+def test_a_resend_for_the_same_plan_still_retires_that_plans_link(scm_app):
+    # AC-C7 stands within the plan: the second request IS the current ask for it.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    line = [{"product_id": str(w.product("A").id), "qty": 5}]
+    plan = _create(client, str(w.supplier.id)).json()
+    client.post(SEND_URL, json={"plan_id": plan["id"], "lines": line})
+    client.post(SEND_URL, json={"plan_id": plan["id"], "lines": line})
+
+    live = db.execute(
+        text(
+            "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) "
+            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
+        ),
+        {"p": plan["id"]},
+    ).scalar()
+
+    assert live == 1
+
+
+def test_the_records_notice_history_is_only_its_own_plans(scm_app):
+    # R3/R11. The record page prints "sent, by whom, when" for the plan it is showing; the
+    # supplier's OTHER plan's sends belong on that plan's page, not on this one.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    line = [{"product_id": str(w.product("A").id), "qty": 5}]
+    plan_a = _create(client, str(w.supplier.id)).json()
+    client.post(SEND_URL, json={"plan_id": plan_a["id"], "lines": line})
+    plan_b = _create(client, str(w.supplier.id)).json()
+    client.post(SEND_URL, json={"plan_id": plan_b["id"], "lines": line})
+
+    scoped = client.get(
+        "/api/v1/scm/supplier-notices",
+        params={"supplier_id": str(w.supplier.id), "loading_plan_id": plan_a["id"]},
+    ).json()
+    every = client.get(
+        "/api/v1/scm/supplier-notices", params={"supplier_id": str(w.supplier.id)}
+    ).json()
+
+    assert [n["loading_plan_id"] for n in scoped["data"]] == [plan_a["id"]]
+    assert len(every["data"]) == 2
