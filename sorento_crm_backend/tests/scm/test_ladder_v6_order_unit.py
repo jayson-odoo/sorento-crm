@@ -52,6 +52,7 @@ from .test_ladder_v5 import _cap
 from .test_project_supply_service_ladder import (
     REQUIRED_DATE,
     _group_sites,
+    _spo_line,
     _world,
 )
 
@@ -116,7 +117,7 @@ def _frozen(db, order):
     lines = service.lines_of(str(order.id))
     facts = service._facts_for(order, lines)
     proposals = service._proposals_for(
-        [(line, None, facts[str(line.id)]) for line in lines]
+        order, [(line, None, facts[str(line.id)]) for line in lines], facts=facts
     )
     return {line.line_no: proposals[str(line.id)] for line in lines}
 
@@ -527,3 +528,264 @@ def test_one_donor_is_borrowed_once_across_the_walk_and_the_later_dates_buy():
         assert _stated(frozen[line_no]) == _stated_board(board[line_no]), (
             f"the freeze and the board disagree about line {line_no}"
         )
+
+
+# ------------------------------------------------------- the confirmation (review B1)
+
+
+def _payload_line(line):
+    """This line's own proposal, posted back unamended - what "Confirm" sends.
+
+    Built from the sheet's own components so the test cannot invent a composition the
+    engine never offered: the whole question here is whether what was PROPOSED can be
+    CONFIRMED.
+    """
+    components = line["components"]
+    return {
+        "project_line_id": line["project_line_id"],
+        "timely_spo_qty": qty_text(
+            sum(
+                (Decimal(c["qty"]) for c in components if c["kind"] == "timely_spo"),
+                Decimal("0"),
+            )
+        ),
+        "reserve": [
+            {"warehouse_id": c["source_warehouse_id"], "qty": c["qty"]}
+            for c in components
+            if c["kind"] == "reserve"
+        ],
+        "borrow": [],
+        "buy_qty": qty_text(
+            sum(
+                (Decimal(c["qty"]) for c in components if c["kind"] == "buy"),
+                Decimal("0"),
+            )
+        ),
+    }
+
+
+def _confirm(db, company_id, actor, order, payload_lines):
+    """POST the confirmation, the way the board and the sheet both do."""
+    from app.models.base import company_scope
+
+    from ..test_so_supply_confirmation import BASE, _client, _restore
+
+    client, originals = _client(db, actor)
+    try:
+        with company_scope(db, frozenset({company_id})):
+            return client.post(
+                f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": payload_lines}
+            )
+    finally:
+        _restore(originals)
+
+
+def test_a_unit_split_across_two_lines_confirms_exactly_as_proposed():
+    """B1. The proposal is composed for the UNIT, so the recheck has to be too.
+
+    AC-U5's own fixture: 5 on the floor, 25 in the pool, lines 31 and 32 wanting 10 and 20.
+    The unit's offer is `max(group net + 30, 0)` = 5, so line 31 is proposed 5 from its own
+    location; the LINE's own offer is `max(-25 + 10, 0)` = 0, and a recheck that re-derived
+    it per line refused the proposal it had just made ("has nothing free for this line
+    now"). A proposal that cannot be confirmed is worth nothing.
+    """
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        _stock(db, product, own, on_hand=5)
+        _stock(db, product, pool, on_hand=25)
+
+        _core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "20", own, REQUIRED_DATE),
+            ],
+        )
+        lines = _sheet(db, order)
+        response = _confirm(
+            db, company_id, eling, order,
+            [_payload_line(lines[31]), _payload_line(lines[32])],
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["revision_no"] == 1
+
+
+def test_a_unit_met_from_the_floor_and_the_water_confirms_as_proposed():
+    """B1, the water half. The group nets 0 with 10 on a floor and an SPO of 20 landing in
+    time, so the unit of 30 is Reserve 10 + Timely SPO 20 - and the split hands the whole of
+    the water to line 32, whose own line-level water share is only 10.
+
+    The timely cap is the UNIT's now, drawn down as its members are checked, so the two
+    halves of one question cannot be counted twice and cannot refuse their own proposal.
+    """
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _stock(db, product, own, on_hand=10)
+        _spo_line(db, product, own, qty=20, arrives=REQUIRED_DATE - timedelta(days=5))
+        db.commit()
+        own_code = own.warehouse_code
+
+        _core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "20", own, REQUIRED_DATE),
+            ],
+        )
+        lines = _sheet(db, order)
+        response = _confirm(
+            db, company_id, eling, order,
+            [_payload_line(lines[31]), _payload_line(lines[32])],
+        )
+
+    assert _stated_sheet(lines[31]) == [("reserve", "10", own_code, "group_take")]
+    assert _stated_sheet(lines[32]) == [("timely_spo", "20", own_code, "group_take")]
+    assert response.status_code == 200, response.text
+
+
+# --------------------------------------------------------- the frozen proposal (S2)
+
+
+def test_confirming_one_line_of_a_unit_freezes_the_proposal_the_sheet_showed():
+    """S2. The frozen suggestion is what the planner was shown, so it is composed over the
+    ORDER, not over the lines the payload happens to name.
+
+    25 in the pool against a unit of 30: the sheet buys both lines whole. Confirming line 32
+    on its own used to freeze "Reserve 20 from the pool" beside it - the composition of a
+    line planned alone, which is not a line anybody was ever shown.
+    """
+    from ..test_so_supply_confirmation import _active_snapshots, _shape
+
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        _stock(db, product, pool, on_hand=25)
+
+        _core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "20", own, REQUIRED_DATE),
+            ],
+        )
+        lines = _sheet(db, order)
+        response = _confirm(db, company_id, eling, order, [_payload_line(lines[32])])
+        assert response.status_code == 200, response.text
+        snapshots = {
+            snapshot["line_no"]: snapshot for snapshot in _active_snapshots(db, order.id)
+        }
+
+    assert _stated_sheet(lines[32]) == [("buy", "20", None, "buy")]
+    assert _shape(snapshots[32]["proposed_components"]) == _stated_sheet(lines[32])
+
+
+# ------------------------------------------------------------- covered lines (S3)
+
+
+def _cover(db, order, line, actor, *, components):
+    """An ACTIVE revision covering one line of the order, as a confirmation leaves it."""
+    from datetime import datetime
+
+    from app.models.project_so import SOSupplyDecision
+
+    db.add(
+        SOSupplyDecision(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            revision_no=1,
+            state="active",
+            line_snapshots=[
+                {
+                    "project_line_id": str(line.id),
+                    "core_line_id": str(line.core_sales_order_line_id),
+                    "line_no": line.line_no,
+                    "open_qty": qty_text(line.qty),
+                    "components": components,
+                }
+            ],
+            confirmed_by=actor,
+            confirmed_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+
+
+def test_a_covered_line_is_out_of_the_unit_on_the_sheet_as_it_is_on_the_board():
+    """S3. A covered line is not re-planned - the captain's standing rule - so it is not in
+    anybody's planning unit either.
+
+    The board already leaves it out of `proposable`; the sheet was still folding its
+    quantity into the unit, so 25 in the pool covered the open line of 20 on the board and
+    bought it on the sheet. Same order, same facts, two answers.
+    """
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        _stock(db, product, pool, on_hand=25)
+
+        core_so, order, mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (31, "10", own, REQUIRED_DATE),
+                (32, "20", own, REQUIRED_DATE),
+            ],
+        )
+        _cover(db, order, mirrors[0], eling, components=[])
+        sheet = _sheet(db, order)
+        board = _board(db, core_so, as_of=date.today())
+
+    assert _stated_sheet(sheet[32]) == [("reserve", "20", pool.warehouse_code, "pool")]
+    assert _stated_board(board[32]) == _stated_sheet(sheet[32])
+    assert sheet[32]["unit_line_count"] == 1
+    assert board[32]["unit_line_count"] == 1
+
+
+# ----------------------------------------------------------------- the proof (S1)
+
+
+def test_the_proof_never_offers_a_donor_the_walk_has_already_spent():
+    """S1. AC-U9's board, read as a planner reads it: the donor's 10 went to the first
+    delivery date, so the Buy on the later ones must not say it can be borrowed.
+
+    Question 3 was recomputing its candidate list without the walk's donor ledger, so the
+    proof said "free stock at DC1-NT, within the cross-group borrow limit" beside a Buy the
+    same ledger had just forced.
+    """
+    from ..test_fulfilment_board import _step
+
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
+        _stock(db, product, donor, on_hand=10)
+        _cap(db, f"zzt-v6-{_uid()[:6]}")
+
+        core_so, _order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (1, "10", own, REQUIRED_DATE),
+                (2, "12", own, REQUIRED_DATE + timedelta(days=14)),
+            ],
+        )
+        board = _board(db, core_so, as_of=date.today())
+
+    took = _step(board[1], "cross_group_borrow")
+    assert took["answer"] == "yes" and took["took"] == "10"
+    spent = _step(board[2], "cross_group_borrow")
+    assert spent["answer"] == "no"
+    assert "within the cross-group borrow limit" not in spent["why"], (
+        "the donor was spent by the first date, so question 3 has nothing to offer"
+    )
+    buy = next(source for source in board[2]["sources"] if source["kind"] == "buy")
+    assert donor.warehouse_code not in buy["reason"], (
+        "and the Buy must not send a planner to a donor with nothing left"
+    )

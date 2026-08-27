@@ -2358,6 +2358,20 @@ def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_
     # And the walk really was order-sensitive, or the assertion above proves nothing: line 10
     # is reached first and takes what the pool has.
     assert a_then_b[10] != a_then_b[20]
+    # Which the LEDGER decided, and not the reserve window: both lines are well inside it,
+    # and line 20's own sentence names the pool it was too late to draw on. Asserted because
+    # the two dates were introduced to keep the lines in separate planning units, and a date
+    # far enough out to leave the window would have made this test pass for the wrong reason.
+    assert a_then_b[10] == [("reserve", "20", world.pool_wh.warehouse_code, "pool")]
+    assert a_then_b[20] == [("buy", "20", None, "buy")]
+    bought = next(
+        snapshot
+        for snapshot in _active_snapshots(db, order.id)
+        if snapshot["line_no"] == 20
+    )
+    assert "of 20 can be covered from stock" in (
+        bought["proposed_components"][0]["reason"]
+    )
 
 
 def test_the_frozen_proposal_is_walked_as_of_the_day_the_planner_was_deciding(api):
