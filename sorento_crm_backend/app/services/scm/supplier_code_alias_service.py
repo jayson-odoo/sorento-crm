@@ -21,6 +21,7 @@ from app.models.product import Product
 from app.models.scm import (
     ProformaInvoice,
     ProformaInvoiceLine,
+    ProformaInvoiceShipmentLink,
     SupplierInventory,
     SupplierProductCodeAlias,
 )
@@ -193,6 +194,96 @@ def delete(db: Session, alias_id: str, *, actor: Optional[str] = None) -> dict:
     match = found.get(code)
     rebound = _rebind(db, supplier_id, code, match.product_id if match else None)
     return {"deleted": 1, **rebound}
+
+
+def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> dict:
+    """Run the ladder again over everything of this supplier's that is still unbound (R18).
+
+    The catalogue moves after the file lands. A product added the day after the stock list
+    was uploaded, or an alias recorded from the invoice screen, leaves rows sitting unbound
+    under a code the ladder can now answer - and the only way to make them catch up was to
+    upload the same file again, which is a ceremony rather than a decision.
+
+    Unbound rows ONLY, both readers, the SAME ladder the upload walks: a row that already
+    carries a product is left where it is (re-deriving a settled binding is a chance to
+    disagree with it), and rung 0 means a dismissal stays dismissed and a person's own pick
+    still outranks every derivation. What the ladder works out is written down as an `auto`
+    alias exactly as an upload writes it, so the next file reads a decision.
+
+    Does not commit.
+    """
+    if not _is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+
+    stock = (
+        db.query(SupplierInventory)
+        .filter(
+            SupplierInventory.supplier_id == str(supplier_id),
+            SupplierInventory.product_id.is_(None),
+        )
+        .all()
+    )
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .join(ProformaInvoice, ProformaInvoice.id == ProformaInvoiceLine.invoice_id)
+        .filter(
+            ProformaInvoice.supplier_id == str(supplier_id),
+            # A superseded revision is what the supplier sent on the day and is read-only, and
+            # a converted invoice has already told each line's story on a shipment - binding
+            # one afterwards would leave the PI detail saying "matched" beside a link row that
+            # says the line was skipped as unmatched.
+            ProformaInvoice.status == "current",
+            ~db.query(ProformaInvoiceShipmentLink)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_id == ProformaInvoice.id
+            )
+            .exists(),
+            ProformaInvoiceLine.product_id.is_(None),
+        )
+        .all()
+    )
+
+    codes = [
+        code
+        for code in dict.fromkeys(
+            [(r.item_code or "").strip() for r in stock]
+            + [(l.item_code or "").strip() for l in lines]
+        )
+        if code
+    ]
+    if not codes:
+        return {
+            "inventory_bound": 0,
+            "invoice_lines_bound": 0,
+            "still_unmatched": len(unmatched_for_supplier(db, supplier_id)),
+        }
+
+    found = resolve(db, supplier_id, codes, remember=True, actor=actor)
+    # Keyed the way the rows are read back: two rows can spell one code in two cases, and the
+    # ladder answers under the spelling it was handed.
+    by_code = {code.strip().upper(): match.product_id for code, match in found.items()}
+
+    bound_stock = 0
+    for row in stock:
+        product_id = by_code.get((row.item_code or "").strip().upper())
+        if product_id:
+            row.product_id = product_id
+            bound_stock += 1
+    bound_lines = 0
+    for line in lines:
+        product_id = by_code.get((line.item_code or "").strip().upper())
+        if product_id:
+            line.product_id = product_id
+            bound_lines += 1
+    db.flush()
+
+    return {
+        "inventory_bound": bound_stock,
+        "invoice_lines_bound": bound_lines,
+        # The queue as the operator will see it after this - stock rows still unbound and not
+        # dismissed - rather than a count of codes, because the queue is what they read.
+        "still_unmatched": len(unmatched_for_supplier(db, supplier_id)),
+    }
 
 
 def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:

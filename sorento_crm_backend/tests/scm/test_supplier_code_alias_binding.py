@@ -799,3 +799,214 @@ def test_dismissing_without_the_write_permission_is_403(scm_app):
     )
 
     assert r.status_code == 403, r.text
+
+
+# --------------------------------------------------------------------------------- #
+# Refresh matching: the ladder runs again over what is still unbound (R18)
+# --------------------------------------------------------------------------------- #
+
+
+def test_rematch_binds_a_product_added_after_the_upload():
+    """The catalogue moves after the file lands. A product created (or an alias recorded)
+    the day after the stock list was uploaded leaves the rows sitting unbound for a code the
+    ladder can now answer, and re-uploading a file to make the catalogue catch up is a
+    ceremony, not a decision."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        code = w.supplier_code("SRTWC8357-RL-300")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        pi_svc.apply(db, _pi_workbook(code), supplier_id=str(w.supplier.id),
+                     currency="CNY", source_ref="jinbaichuan.xlsx", actor="Ms Tee")
+        assert [r.product_id for r in _held(db, str(w.supplier.id))] == [None]
+        assert [l.product_id for l in _pi_lines(db, str(w.supplier.id))] == [None]
+
+        # The catalogue catches up.
+        product = w.product("SRTWC8357-300-RL")
+
+        out = alias_svc.rematch(db, supplier_id=str(w.supplier.id), actor="Ms Tee")
+
+        assert out == {
+            "inventory_bound": 1,
+            "invoice_lines_bound": 1,
+            "still_unmatched": 0,
+        }
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+        assert [str(l.product_id) for l in _pi_lines(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+        # Written down exactly as an upload writes it, so the next file reads a decision.
+        alias = db.query(SupplierProductCodeAlias).filter(
+            SupplierProductCodeAlias.supplier_id == w.supplier.id
+        ).one()
+        assert alias.source == "auto"
+        assert alias.matched_by == "token_set"
+
+
+def test_rematch_leaves_a_dismissed_code_where_it_is():
+    """"Not one of ours" is an answer, and an answer is not re-asked. Binding it here would
+    undo the ruling on the next click of a button whose whole point is that it is safe."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        code = w.supplier_code("SRTWC8357-RL-300")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        alias_svc.dismiss(
+            db, supplier_id=str(w.supplier.id), supplier_code=code, actor="Ms Tee"
+        )
+        w.product("SRTWC8357-300-RL")
+
+        out = alias_svc.rematch(db, supplier_id=str(w.supplier.id), actor="Ms Tee")
+
+        assert out["inventory_bound"] == 0
+        assert [r.product_id for r in _held(db, str(w.supplier.id))] == [None]
+        # And it is not counted as work left to do either - it has been answered.
+        assert out["still_unmatched"] == 0
+
+
+def test_rematch_honours_a_manual_alias():
+    """Rung 0 first, here as everywhere: a person's own pick is what the rows bind to, not
+    whatever the derived rungs would have said about the same code."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        code = w.supplier_code("SRTWC8357-RL-300")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        w.product("SRTWC8357-300-RL")  # what the token-set rung would answer
+        right = w.product("SRTWC8357-RL-SPECIAL")  # what Ms Tee says it is
+        alias_svc.create(
+            db, supplier_id=str(w.supplier.id), supplier_code=code,
+            product_id=str(right.id), actor="Ms Tee",
+        )
+        # Staged directly: `create` re-binds the rows itself, so an unbound row under a code
+        # already ruled on has to be put back by hand to be re-matched at all.
+        db.query(SupplierInventory).filter(
+            SupplierInventory.supplier_id == w.supplier.id
+        ).update({"product_id": None}, synchronize_session=False)
+
+        out = alias_svc.rematch(db, supplier_id=str(w.supplier.id), actor="Ms Tee")
+
+        assert out["inventory_bound"] == 1
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(right.id)
+        ]
+
+
+def test_rematch_does_not_touch_a_row_already_bound():
+    """It answers what is unanswered. A row that already carries a product is not re-derived,
+    because re-deriving a settled binding is a chance to disagree with it."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        product = w.product("SRTWC8357-RL")
+        code = w.supplier_code("SRTWC8357-RL")
+        stock_svc.apply(
+            db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+        out = alias_svc.rematch(db, supplier_id=str(w.supplier.id), actor="Ms Tee")
+
+        assert out == {
+            "inventory_bound": 0,
+            "invoice_lines_bound": 0,
+            "still_unmatched": 0,
+        }
+        assert [str(r.product_id) for r in _held(db, str(w.supplier.id))] == [
+            str(product.id)
+        ]
+
+
+def test_rematch_counts_what_it_could_not_answer():
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        code = w.supplier_code("SRTWC8357-RL-300")
+        orphan = w.supplier_code("NOTHING-LIKE-THIS")
+        stock_svc.apply(
+            db,
+            _stock_workbook([
+                [code, "toilet", 10, 0, 0.17, None],
+                [orphan, "mystery", 5, 0, 0.2, None],
+            ]),
+            supplier_id=str(w.supplier.id), actor="Ms Tee",
+        )
+        w.product("SRTWC8357-300-RL")
+
+        out = alias_svc.rematch(db, supplier_id=str(w.supplier.id), actor="Ms Tee")
+
+        assert out["inventory_bound"] == 1
+        assert out["still_unmatched"] == 1
+
+
+def test_the_rematch_route_reports_what_it_bound(scm_app):
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    code = w.supplier_code("SRTWC8357-RL-300")
+    stock_svc.apply(
+        db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
+        supplier_id=str(w.supplier.id), actor="Ms Tee",
+    )
+    w.product("SRTWC8357-300-RL")
+    db.commit()
+    client = TestClient(app)
+
+    r = client.post(
+        "/api/v1/scm/supplier-code-aliases/rematch",
+        json={"supplier_id": str(w.supplier.id)},
+    )
+
+    assert r.status_code == 200, r.text
+    # Asserted through the ROUTE, because a `response_model` silently drops what it does not
+    # declare and the toast is written from these three numbers.
+    assert r.json() == {
+        "inventory_bound": 1,
+        "invoice_lines_bound": 0,
+        "still_unmatched": 0,
+    }
+    assert client.get(
+        "/api/v1/scm/supplier-code-aliases/unmatched",
+        params={"supplier_id": str(w.supplier.id)},
+    ).json()["data"] == []
+
+
+def test_rematching_without_the_write_permission_is_403(scm_app):
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk, role=None)
+    w = World(db)
+    db.commit()
+
+    r = TestClient(app).post(
+        "/api/v1/scm/supplier-code-aliases/rematch",
+        json={"supplier_id": str(w.supplier.id)},
+    )
+
+    assert r.status_code == 403, r.text

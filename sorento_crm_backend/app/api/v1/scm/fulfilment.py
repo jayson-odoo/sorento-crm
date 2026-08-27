@@ -276,6 +276,32 @@ def dismiss_supplier_code(
     return out
 
 
+class SupplierCodeRematch(BaseModel):
+    supplier_id: str
+
+
+@router.post("/supplier-code-aliases/rematch")
+def rematch_supplier_codes(
+    body: SupplierCodeRematch,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Run the ladder again over what is still unbound (R18).
+
+    Master data moves after a file lands - a product added, an alias recorded elsewhere - and
+    the rows uploaded before it stay unbound under a code the ladder can now answer. Without
+    this the only way to make them catch up is to upload the same file again.
+
+    No `response_model`: the three counts ARE the answer the screen reports, and a model
+    would be one more place for them to be dropped. Declared before the `{alias_id}` route so
+    the literal path is not swallowed by the parameter."""
+    out = supplier_code_alias_service.rematch(
+        db, supplier_id=body.supplier_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
 @router.delete("/supplier-code-aliases/{alias_id}")
 def delete_supplier_code_alias(
     alias_id: str,
