@@ -34,6 +34,7 @@ from app.services.excel_macro_stripper import (
 from app.services.image_normalizer import ensure_rgb_image
 from app.services.image_thumbnailer import store_thumbnail
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
+from app.utils.http import content_disposition
 from app.schemas.resources import (
     AttachmentCreate,
     AttachmentUpdate,
@@ -1483,7 +1484,9 @@ async def download_attachment(
             content=file_content,
             media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
             headers={
-                "Content-Disposition": f'attachment; filename="{attachment.stored_filename or attachment.original_filename}"',
+                "Content-Disposition": content_disposition(
+                    attachment.stored_filename or attachment.original_filename or ""
+                ),
                 "Content-Length": str(attachment.file_size_bytes or len(file_content))
             }
         )

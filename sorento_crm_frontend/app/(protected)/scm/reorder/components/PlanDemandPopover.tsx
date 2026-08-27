@@ -287,21 +287,19 @@ function DemandBody({ data, channel }: { data: PlanDemand; channel?: PlanChannel
  * `delivered`. This is the WHOLE body for that trigger - never stacked with the
  * open-demand list, which is the other surface's own answer (see the file header).
  */
-function HistoryBody({ data, channel }: { data: PlanDemand; channel?: PlanChannel }) {
+function HistoryBody({ data, channel }: { data: PlanDemand; channel: PlanChannel }) {
   const lines = data.history_lines ?? [];
   const months =
     channel === 'project' ? data.project_window_months : data.retail_window_months;
   return (
     <>
       <div className="border-b px-3 py-2">
-        <div className="text-xs font-semibold">
-          {channel ? `${PLAN_CHANNEL_LABEL[channel]} order history` : 'Order history'}
-        </div>
-        <DemandContextHeader data={data} />
+        <div className="text-xs font-semibold">{`${PLAN_CHANNEL_LABEL[channel]} order history`}</div>
+        <DemandContextHeader data={data} channel={channel} />
       </div>
       {!lines.length ? (
         <p className="p-3 text-2xs text-muted-foreground">
-          {`No ${channel ? PLAN_CHANNEL_LABEL[channel].toLowerCase() : ''} orders in the last ${months ?? '-'} full months.`}
+          {`No ${PLAN_CHANNEL_LABEL[channel].toLowerCase()} orders in the last ${months ?? '-'} full months.`}
         </p>
       ) : (
         <>
@@ -391,7 +389,10 @@ function PlanDemandBody({
             ? error.message
             : `Failed to load the ${isHistory ? 'order history' : 'demand'}.`}
         </p>
-      ) : !data ? null : isHistory ? (
+      ) : !data ? null : isHistory && channel ? (
+        // The history body reports ONE channel's window (P5), so it needs to be told which.
+        // Every `scope="product"` trigger names one; a caller that did not has no window to
+        // report and falls through to the demand list, which was always the other answer.
         <HistoryBody data={data} channel={channel} />
       ) : (
         <DemandBody data={data} channel={channel} />

@@ -258,12 +258,13 @@ def get_set_aside_demand(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Project demand the plan did NOT count, because no Order Inquiry named it (S13b).
+    """Project demand the plan did NOT count, because CS has not decided it yet (P3).
 
-    The other half of the demand split: CS filters project sales orders into the Order
-    Inquiry, so a project SO outside it is set aside - and this report is what keeps that
-    from reading as demand silently going missing. Whole-book, like unlocated-demand: it
-    describes the CURRENT book, not a frozen run."""
+    The other half of the demand split: project demand is the Order Inquiry alone, so a
+    project sales-order line no active supply decision covers is awaiting CS on the
+    fulfilment board - and this report is what keeps that from reading as demand silently
+    going missing. Whole-book, like unlocated-demand: it describes the CURRENT book, not a
+    frozen run."""
     return demand_source_service.set_aside_project_demand(db)
 
 
@@ -989,21 +990,16 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "outstanding_sales": inp.get("committed"),
         # Front planning 5.3 / AC-F05: this location's demand, split by channel, beside
         # the shared supply above - which stays single-valued and carries no channel.
-        # NULL on a run whose recommendations predate the contract; unclassified is shown
-        # and never sized into the order (AC-E06).
+        # NULL on a run whose recommendations predate the contract. TWO channels since P3:
+        # project demand is the Order Inquiry alone and a NULL class reads as retail, so
+        # there is no unclassified column left for the plan to show (P4).
         "project_need": inp.get("project_need"),
         "retail_need": inp.get("retail_need"),
-        # Confirmed Buy bypasses the netting; this unconfirmed sheet leg went THROUGH it,
-        # so it is inside `retail_need` and is shown as evidence, not as an extra addend.
-        "project_sheet_need": inp.get("project_sheet_need"),
-        "unclassified_need": inp.get("unclassified_need"),
         # front-planning follow-up (19-20 Aug): the raw `committed_v` split - this row's
-        # OPEN demand by channel (a superset of `project_need`, which is only the
-        # confirmed-for-buy leg). The Product view's channel columns sum these across a
-        # product's locations and the three always sum to `outstanding_sales` above.
+        # OPEN demand by channel. The Product view's channel columns sum these across a
+        # product's locations and the two always sum to `outstanding_sales` above.
         "project_committed": inp.get("project_committed"),
         "retail_committed": inp.get("retail_committed"),
-        "unclassified_committed": inp.get("unclassified_committed"),
         # True when the run is decided at Product grain, or is legacy. The row is still a
         # read and drill row; only its decision controls are closed (AC-F02, AC-F09).
         "decisions_read_only": decisions_read_only,

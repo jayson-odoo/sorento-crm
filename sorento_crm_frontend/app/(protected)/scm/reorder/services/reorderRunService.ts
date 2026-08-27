@@ -48,11 +48,10 @@
  *                                                      (AC-F01 / AC-F09 / AC-F10).
  *
  *    Each recommendation row carries its frozen demand-channel split:
- *      project_need, retail_need, unclassified_need: number | null   (NULL on legacy)
- *          project_need is CONFIRMED unplaced Buy only - the leg that bypasses the
- *          reorder trigger. project_sheet_need: number | null carries the unconfirmed
- *          sheet-origin project leg, which was netted like any other commitment and is
- *          therefore already inside retail_need, never added to it.
+ *      project_need, retail_need: number | null      (NULL on legacy)
+ *          project_need is the un-linked remainder of raised Order Inquiry rows - the leg
+ *          that bypasses the reorder trigger, and since P3 the whole of project demand.
+ *          There is no third channel: a sales order with no class reads as retail.
  *      decisions_read_only: boolean                  true when the run is decided at
  *                                                    the other grain, so the location
  *                                                    row is a read and drill row
@@ -317,6 +316,11 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      // Always sent, empty list included: the backend's `_resolve_warehouse_ids` reads a
+      // falsy scope as EVERY active warehouse (`if warehouse_codes:` ... else every active
+      // one), so `[]` is how "all warehouses" is expressed on the wire (P1). Unlike
+      // `product_codes` the key has always been present, so sending it empty - rather than
+      // omitting it - is what keeps an unnarrowed run byte-identical to before.
       warehouse_codes: req.warehouse_codes,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,

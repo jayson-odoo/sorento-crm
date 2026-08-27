@@ -65,7 +65,7 @@ MARKER = "ZZTOS"
 # The real export's header row and column order, so the generated file exercises the same
 # alias resolution (including PROJECT/CUSTOMER -> label and the unmapped REMARK column).
 HEADERS = ("PROJECT/CUSTOMER", "S/O NO", "SO DATE", "DEBTOR CODE", "ITEM CODE", "UOM",
-           "QTY", "DELIVERY DATE", "STOCK LOCATION", "REMARK")
+           "QTY", "DELIVERY DATE", "STOCK LOCATION", "ORDER TYPE", "REMARK")
 
 # The purchase-order export's header row. Same shape of exercise: every alias the
 # `outstanding_po` doc type declares, in an order nobody agreed, plus one unmapped column.
@@ -220,8 +220,41 @@ def workbook(rows, headers=HEADERS, title="Outstanding SO") -> bytes:
     return buf.getvalue()
 
 
-def _row(label, doc, so_date, debtor, item, qty, when, location, remark=None):
-    return (label, doc, so_date, debtor, item, "PCS", qty, when, location, remark)
+#: Every generated order STATES its class, because since QP1 (captain, 26 Aug 2026) the SO
+#: import refuses a file whose orders it cannot classify - and these two debtor codes carry
+#: no market segment and no agent, so nothing else here could answer for them.
+#:
+#: DEALER on every row, including the ones labelled with a project's name. `PROJECT/CUSTOMER`
+#: is the buyer's NAME and has never decided a class; before the column existed these orders
+#: imported with no class at all, and `scm.committed_v` counted them exactly as it counts
+#: retail. Stating `DEALER` keeps that arithmetic and stating `PROJECT` would not - a
+#: project-class order is not book demand since P3, so every committed-demand assertion in
+#: these files would go to zero for a reason that has nothing to do with what they test.
+#: The project/retail split has its own file, `test_outstanding_import_demand_class.py`.
+_DEFAULT_ORDER_TYPE = "DEALER"
+
+
+#: The column name and the value a fixture states to satisfy QP1, exported so the files
+#: that build their OWN header sets say it the same way this one does rather than each
+#: spelling the alias by hand.
+ORDER_TYPE_HEADER = "ORDER TYPE"
+DEALER_ORDER_TYPE = _DEFAULT_ORDER_TYPE
+
+
+def so_headers(*columns) -> tuple:
+    """A local SO header set, plus the ORDER TYPE column QP1 makes mandatory."""
+    return tuple(columns) + (ORDER_TYPE_HEADER,)
+
+
+def so_row(*values) -> tuple:
+    """A local SO row, plus the class its file has to state. See `_DEFAULT_ORDER_TYPE`."""
+    return tuple(values) + (DEALER_ORDER_TYPE,)
+
+
+def _row(label, doc, so_date, debtor, item, qty, when, location, remark=None,
+         order_type=_DEFAULT_ORDER_TYPE):
+    return (label, doc, so_date, debtor, item, "PCS", qty, when, location, order_type,
+            remark)
 
 
 def week1(codes: Codes) -> bytes:

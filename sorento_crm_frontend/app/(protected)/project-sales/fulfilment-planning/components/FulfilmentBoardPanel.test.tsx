@@ -1959,3 +1959,228 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * The legend is ON the page, above the board, on both views (AC-C5).
+ *
+ * The captain: "make sure the legend is in the fulfilment planning page so the user knows what
+ * each colour means". One instance above the grid/list switch rather than one per view, so the
+ * two views cannot end up explaining the same colours differently.
+ */
+describe('FulfilmentBoardPanel: the supply legend', () => {
+  it('names all six kinds above the grid, before it scrolls', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const legend = screen.getByTestId('supply-legend');
+    expect(legend.textContent).toContain('Buy');
+    expect(legend.textContent).toContain('Use shared stock');
+    expect(legend.textContent).toContain('Use own location');
+    expect(legend.textContent).toContain('Borrow from another order');
+    expect(legend.textContent).toContain('Borrow other location');
+    expect(legend.textContent).toContain('Incoming supply');
+    expect(legend.querySelectorAll('span[data-kind]')).toHaveLength(6);
+
+    // Above the board, not below it: a legend a reader has to scroll to is not a legend.
+    expect(
+      legend.compareDocumentPosition(screen.getByTestId('fulfilment-board-matrix')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('shows the same legend on the list view', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulfilment-board-matrix')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('supply-legend').querySelectorAll('span[data-kind]')).toHaveLength(
+      6,
+    );
+  });
+});
+
+/**
+ * AC-D2: the decision strip.
+ *
+ * The captain asked for "one page that shows, per line, what was SUGGESTED and what was
+ * DECIDED, in the same words", and ruled that the page is this board, with cards.
+ */
+describe('FulfilmentBoardPanel: the decision strip', () => {
+  /** The engine offered the pool; the planner bought the line whole. */
+  const amendedBoard = () =>
+    withContribution(
+      boardOf([demand({ item_code: 'SRT382-6-DIY', qty: '71' })], {}),
+      () => true,
+      (entry) => ({
+        ...entry,
+        covered: true,
+        proposed: {
+          components: [
+            {
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '71',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'Free stock at BRW covers the need.',
+            },
+          ],
+        },
+        sources: [
+          { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+        ],
+        decision: {
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '71',
+        },
+      }),
+    );
+
+  it('states both figures per kind and marks the pair that moved', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const shared = screen.getByTestId('decision-strip-shared');
+    expect(within(shared).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-shared')).toBeInTheDocument();
+
+    const buy = screen.getByTestId('decision-strip-buy');
+    expect(within(buy).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-buy')).toBeInTheDocument();
+  });
+
+  it('sits under the legend, above whichever view is on screen', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const legend = screen.getByTestId('supply-legend');
+    const strip = screen.getByTestId('decision-strip');
+    const matrix = screen.getByTestId('fulfilment-board-matrix');
+    expect(legend.compareDocumentPosition(strip)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(strip.compareDocumentPosition(matrix)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('filters the grid to the cells carrying that kind, and clears on a second press', async () => {
+    // Two products: one bought, one covered from the pool. Pressing Shared has to leave the
+    // pooled one and take the bought one away.
+    const board = withContribution(
+      boardOf(
+        [
+          demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+          demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+        ],
+        { 'WESERP10B|BRW-BB': '999' },
+      ),
+      () => true,
+      (entry) => entry,
+    );
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    // WESERP10B has free stock at its own location, so the ladder takes it on the group rung
+    // and SRT382-6-DIY is bought. Own keeps the first and drops the second.
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+});
+
+/**
+ * The card, the figures above it and BOTH views are one reading or they are none.
+ *
+ * Two ways they came apart, both found in review: the list view ignored the pressed card
+ * entirely (it kept receiving every contribution while the card sat aria-pressed), and the
+ * strip was summed over the whole selection while the grid was filtered over its cells - which
+ * at day granularity is a 30-day window, so a card could read a figure off lines the board
+ * could not show and then empty itself when pressed.
+ */
+describe('FulfilmentBoardPanel: the strip and the views agree', () => {
+  /** One bought line, one covered from its own location. */
+  const mixedBoard = () =>
+    boardOf(
+      [
+        demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+        demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+      ],
+      { 'WESERP10B|BRW-BB': '999' },
+    );
+
+  it('filters the LIST view by the pressed card, not only the grid', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SRT382-6-DIY');
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+
+  it('never shows a figure the view cannot produce: pressing a card leaves something on screen', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Every card carrying a figure must leave at least one product row when pressed. A card
+    // that empties the board is the exact defect this rule exists to prevent.
+    for (const kind of ['buy', 'own']) {
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+      await waitFor(() => {
+        expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No products match')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+    }
+  });
+
+  it('disables a card nothing on the board is that kind of supply', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Nothing here is incoming or borrowed, so those cards read 0 / 0 and cannot be pressed -
+    // they keep their place, because a card that came and went would move every card beside it.
+    expect(screen.getByTestId('decision-strip-incoming')).toBeDisabled();
+    expect(screen.getByTestId('decision-strip-borrow_order')).toBeDisabled();
+    expect(screen.getByTestId('decision-strip-buy')).not.toBeDisabled();
+  });
+});

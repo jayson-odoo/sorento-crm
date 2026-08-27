@@ -185,3 +185,39 @@ describe('DemandDrillPopover - retail ageing, worst-first (AC-C2.4)', () => {
     expect(lines.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
 });
+
+describe('the trailing-window header speaks for the drilled row only (P5)', () => {
+  // The backend sends both figures on every drill; `kind` is what makes one of them
+  // this row's answer. The fixtures predate the fields, so they are added here.
+  const withContext = (over: Record<string, unknown> = {}) => ({
+    ...DEALER,
+    project_12m_qty: 120,
+    retail_3m_qty: 30,
+    project_window_months: 12,
+    retail_window_months: 3,
+    ...over,
+  });
+
+  it('a project drill states the project year, and no retail quarter', () => {
+    renderDrill(state({ data: withContext({ ...PROJECT }) }), { kind: 'project' });
+    openDrill();
+
+    expect(screen.getByText('Project, last 12 full months: 120')).toBeInTheDocument();
+    expect(screen.queryByText(/Retail, last/)).not.toBeInTheDocument();
+  });
+
+  it('a retail drill states the retail quarter, and no project year', () => {
+    renderDrill(state({ data: withContext() }), { kind: 'retail' });
+    openDrill();
+
+    expect(screen.getByText('Retail, last 3 full months: 30')).toBeInTheDocument();
+    expect(screen.queryByText(/Project, last/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing at all when the drilled channel has no figure of its own', () => {
+    renderDrill(state({ data: withContext({ project_12m_qty: null }) }), { kind: 'project' });
+    openDrill();
+
+    expect(screen.queryByText(/full months/)).not.toBeInTheDocument();
+  });
+});

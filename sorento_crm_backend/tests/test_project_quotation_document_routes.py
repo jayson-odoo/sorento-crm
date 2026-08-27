@@ -34,6 +34,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
+from urllib.parse import quote
 
 import pytest
 from sqlalchemy import text
@@ -932,7 +933,9 @@ def test_the_pdf_download_returns_a_real_pdf_named_after_the_reference(api):
     # A PDF, not a 200 carrying an error page. The magic bytes are the only honest check.
     assert response.content[:5] == b"%PDF-"
     expected = f"quotation-{MARKER}-Q-0001-R1.pdf"
-    assert response.headers["content-disposition"] == f'inline; filename="{expected}"'
+    assert response.headers["content-disposition"] == (
+        f'inline; filename="{expected}"; filename*=UTF-8\'\'{quote(expected)}'
+    )
 
 
 def test_a_missing_rendering_library_is_a_503_that_names_itself_not_a_500(api, monkeypatch):
@@ -1015,7 +1018,9 @@ def test_the_excel_download_returns_a_workbook_that_downloads_rather_than_previe
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     expected = f"quotation-{MARKER}-Q-0001-R1.xlsx"
-    assert response.headers["content-disposition"] == f'attachment; filename="{expected}"'
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="{expected}"; filename*=UTF-8\'\'{quote(expected)}'
+    )
 
     # A real workbook, not a 200 carrying an error page. One sheet per scope, with the money on
     # it, so the route is proven to be wired to the exporter rather than to an empty stub.

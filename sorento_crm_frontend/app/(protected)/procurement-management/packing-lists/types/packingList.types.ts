@@ -21,6 +21,26 @@ export interface InboundShipmentLine {
   cartons_count: number;
   weight_per_carton?: number | null;
   unit_cost?: number | null;
+  /**
+   * What `unit_cost` is stated in. On the line since S3b; carried on this type since the
+   * container workbook, because a save that round-tripped the price and dropped the
+   * currency handed the backend a number with no meaning.
+   */
+  currency?: string | null;
+  /**
+   * What the container workbook measures the line by. Editable on the Shipment lines tab -
+   * they come off the supplier's own file and it is not always right.
+   * Lengths in CENTIMETRES; the weights are per CARTON, and the sheet multiplies them by
+   * the carton count itself rather than storing a total that could disagree with them.
+   * Decimal on the wire, so a string is possible.
+   */
+  material?: string | null;
+  pcs_per_carton?: number | string | null;
+  carton_length_cm?: number | string | null;
+  carton_width_cm?: number | string | null;
+  carton_height_cm?: number | string | null;
+  net_weight_per_carton?: number | string | null;
+  gross_weight_per_carton?: number | string | null;
   /** Total SPO allocated quantity for this product on this shipment (all warehouses). */
   spo_allocated_quantity?: number | null;
   /** Sum of quantity_received from SPO allocations for this line. */
@@ -62,6 +82,21 @@ export interface PackingList extends ClearanceFields {
   total_items_shipped?: number | null;
   total_cartons?: number | null;
   notes?: string | null;
+  /**
+   * The container's own paperwork and its costs, as the workbook prints them.
+   *
+   * NOT on `ClearanceFields`: that interface mirrors the backend's one-for-one and a
+   * pytest parity check fails if either side gains a field the Container Status sheet
+   * does not contribute. These come from the container workbook instead.
+   */
+  seal_number?: string | null;
+  shipper?: string | null;
+  /** The forwarder's booking reference (`SO :` on the sheet). "SO" here is a sales order. */
+  forwarder_order_ref?: string | null;
+  /** Typed per container: the sheet apportions them between the companies itself. */
+  clearance_cost?: number | string | null;
+  china_freight_cost?: number | string | null;
+  insurance_rate?: number | string | null;
   created_at: Date;
   created_by?: string | null;
   updated_at: Date;
@@ -143,19 +178,31 @@ export interface PackingListDetail extends PackingList {
 }
 
 export interface PackingListFormData {
+  /**
+   * `null` CLEARS the field; omitting it leaves it alone (the backend PUT is
+   * `exclude_unset`). Every optional field here is nullable for that reason - an edit that
+   * could set a value but never unset one is half an edit, and it reads as a save that did
+   * not work.
+   */
   shipment_number?: string | null;
-  supplier_id?: string;
+  supplier_id?: string | null;
   shipment_date: string;
-  estimated_arrival_date?: string;
-  actual_arrival_date?: string;
-  bill_of_lading_number?: string;
-  shipping_container_number?: string;
-  invoice_number?: string;
+  estimated_arrival_date?: string | null;
+  actual_arrival_date?: string | null;
+  bill_of_lading_number?: string | null;
+  shipping_container_number?: string | null;
+  invoice_number?: string | null;
   shipment_status?: string;
   total_items_shipped?: number;
   total_cartons?: number;
-  notes?: string;
+  notes?: string | null;
   attachment_id?: string | null;
+  seal_number?: string | null;
+  shipper?: string | null;
+  forwarder_order_ref?: string | null;
+  clearance_cost?: number | null;
+  china_freight_cost?: number | null;
+  insurance_rate?: number | null;
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;
@@ -169,5 +216,19 @@ export interface PackingListFormData {
     cartons_count?: number;
     weight_per_carton?: number;
     unit_cost?: number;
+    /** Round-tripped on save, or the PUT hands the backend a price with no unit. */
+    currency?: string;
+    /** Read off the supplier's file, corrected here. Centimetres; weights per carton. */
+    material?: string;
+    pcs_per_carton?: number;
+    carton_length_cm?: number;
+    carton_width_cm?: number;
+    carton_height_cm?: number;
+    net_weight_per_carton?: number;
+    gross_weight_per_carton?: number;
+    /** Volume, editable in place on the Lines tab since F9 - the column has existed on the
+     *  line since S3b and only the importer could ever fill it. */
+    cbm?: number;
+    remarks?: string;
   }>;
 }

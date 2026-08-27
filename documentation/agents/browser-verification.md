@@ -59,6 +59,7 @@ Proven the hard way: an `open https://example.com` came back fine, and minutes l
 reported `http://localhost:3090/signin`, another lane's dev server, in the only tab.
 
 - `--session-name` does NOT isolate you. It is cookie/storage persistence, not a separate browser.
+- `--session <name>` (env `AGENT_BROWSER_SESSION`) DOES isolate you: a separate browser that another lane's `open` cannot navigate. Use it whenever another agent is driving the daemon (26 Aug: four consecutive reads on the default session were hijacked by the :3080 lane). Close only that session by name when done.
 - **`get url` before you trust any read.** Confirm you are on the page you think you are on, at the
   start of a verification run and again after any gap between commands.
 - `tab new` gives you your own tab, which helps, but tab focus is still global - re-check with

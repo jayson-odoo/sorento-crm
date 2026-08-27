@@ -8,11 +8,19 @@ import { ColumnDef } from '@tanstack/react-table';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { proposalSummaryFor } from '../../_shared/lib/fulfilmentBoard';
 import { amendSummary } from '../../_shared/lib/boardAmend';
-import { confirmedSummary } from './BoardCellBreakdownDialog';
 import { BoardAmendDialog } from './BoardAmendDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { SupplyBar } from './SupplyBar';
+import {
+  contributionDecision,
+  contributionSuggestion,
+  contributionSupply,
+  // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
+  // that imports both reads as though the test runner were writing the column.
+  describe as describeSupply,
+  segmentsOf,
+} from '../../_shared/lib/supplyVocabulary';
 import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
 
 const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
@@ -156,23 +164,71 @@ export function FulfilmentBoardListView({
         minSize: 90,
       },
       {
-        id: 'proposal',
+        // AC-D4: what the ENGINE said, in PLAN section 2's own words. Split off the old
+        // single "Proposal" column, which showed the decision on a decided line and the
+        // proposal on an undecided one - so the two could never be compared, which is the
+        // one thing the planner opens this view to do.
+        id: 'suggested',
         accessorFn: () => '',
-        header: 'Proposal',
+        header: 'Suggested',
         cell: ({ row }) => {
           const contribution = row.original;
-          const text =
-            contribution.covered && contribution.decision
-              ? confirmedSummary(contribution.decision)
-              : proposalSummaryFor(contribution);
+          if (contribution.unplannable) {
+            // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
+            // and the reason is the one thing worth saying in its place.
+            return <span className="text-muted-foreground">Needs a location</span>;
+          }
+          const parts = contributionSuggestion(contribution);
+          if (!parts) {
+            // A decision frozen before the proposal was recorded. Not "nothing suggested".
+            return <span className="text-muted-foreground">Not recorded</span>;
+          }
+          const text = describeSupply(parts, contribution.fulfilment_location);
           return (
-            <span className="block truncate" title={text}>
-              {text}
-            </span>
+            <div className="min-w-0 space-y-1">
+              <span className="block truncate" title={text}>
+                {text || <span className="text-muted-foreground">Nothing proposed</span>}
+              </span>
+              {/* Faded: a suggestion is not a decision. */}
+              <SupplyBar
+                segments={segmentsOf(parts, contribution.fulfilment_location)}
+                decided={false}
+              />
+            </div>
           );
         },
-        size: 260,
-        minSize: 180,
+        size: 240,
+        minSize: 170,
+      },
+      {
+        id: 'decided',
+        accessorFn: () => '',
+        header: 'Decided',
+        cell: ({ row }) => {
+          const contribution = row.original;
+          const drafted = draft[contribution.key] ?? null;
+          const parts = contributionDecision(contribution, drafted);
+          if (!parts) {
+            return <span className="text-muted-foreground">Not decided</span>;
+          }
+          // The SAME bar the grid draws, off the same draft, so the two views cannot
+          // disagree about what this line is going to be supplied from.
+          const supply = contributionSupply(contribution, drafted);
+          // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":
+          // the revision is already on the Verdict column and on the row's tick, and
+          // repeating it here would cost the width the composition needs.
+          const text = describeSupply(parts, contribution.fulfilment_location);
+          return (
+            <div className="min-w-0 space-y-1">
+              <span className="block truncate" title={text}>
+                {text}
+              </span>
+              <SupplyBar segments={supply.segments} decided={supply.decided} />
+            </div>
+          );
+        },
+        size: 240,
+        minSize: 170,
       },
       {
         id: 'rank',
@@ -237,7 +293,7 @@ export function FulfilmentBoardListView({
                   {decision.verdict === 'approved'
                     ? 'Approved'
                     : decision.verdict === 'amended'
-                      ? amendSummary(decision)
+                      ? amendSummary(decision, contribution.fulfilment_location)
                       : 'Rejected'}
                 </span>
                 <Button

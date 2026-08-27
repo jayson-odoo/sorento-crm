@@ -139,11 +139,11 @@ def _confirm(db, world, payload_lines):
 def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
     """One line of a two-line order is confirmed. The other must still be planned for.
 
-    Numbers: line A open 50, confirmed as Reserve 20 + Buy 30. Line B open 45, undecided.
+    Numbers: line A open 50, confirmed as a whole-line Buy 50. Line B open 45, undecided.
 
-    * 75 = the undecided 45 through the sheet leg + the confirmed Buy 30. Correct.
-    * 30 = the per-ORDER `decided` CTE this slice replaces: line B vanished.
-    * 125 = line A counted through both legs at once.
+    * 95 = the undecided 45 through the sheet leg + the confirmed Buy 50. Correct.
+    * 50 = the per-ORDER `decided` CTE this slice replaces: line B vanished.
+    * 145 = line A counted through both legs at once.
     """
     with pg_session() as db:
         world = _seed(db)
@@ -156,24 +156,22 @@ def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
 
         after = _committed(db, world)
-        assert after["project_committed"] == Decimal("75"), (
+        assert after["project_committed"] == Decimal("95"), (
             "the undecided line must keep flowing to reorder planning, and the confirmed "
             "line must be counted once, as its Buy residual"
         )
-        assert after["confirmed"] == Decimal("30"), (
+        assert after["confirmed"] == Decimal("50"), (
             "only the confirmed Buy is firm; the sheet remainder is netted like any other "
             "commitment"
         )
-        assert after["committed"] == Decimal("75")
+        assert after["committed"] == Decimal("95")
 
 
 def test_the_reorder_engine_reads_the_undecided_demand_through_its_own_path():
@@ -186,11 +184,9 @@ def test_the_reorder_engine_reads_the_undecided_demand_through_its_own_path():
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
 
@@ -200,9 +196,9 @@ def test_the_reorder_engine_reads_the_undecided_demand_through_its_own_path():
             )
         assert len(rows) == 1, "the engine must still see this product at this location"
         row = rows[0]
-        assert Decimal(str(row["project_committed"])) == Decimal("75")
-        assert Decimal(str(row["project_confirmed_committed"])) == Decimal("30")
-        assert Decimal(str(row["committed"])) == Decimal("75")
+        assert Decimal(str(row["project_committed"])) == Decimal("95")
+        assert Decimal(str(row["project_confirmed_committed"])) == Decimal("50")
+        assert Decimal(str(row["committed"])) == Decimal("95")
 
 
 def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_never():
@@ -213,20 +209,16 @@ def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_neve
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                ),
+                _line_payload(world.line_a.id, buy_qty="50"),
                 _line_payload(world.line_b.id, buy_qty="45"),
             ],
         )
 
         after = _committed(db, world)
-        assert after["project_committed"] == Decimal("75"), (
-            "30 + 45 of confirmed Buy, and not one unit of the 95 the sheet named"
+        assert after["project_committed"] == Decimal("95"), (
+            "50 + 45 of confirmed Buy, counted once each and never through the sheet leg"
         )
-        assert after["confirmed"] == Decimal("75")
+        assert after["confirmed"] == Decimal("95")
 
 
 def test_a_partly_confirmed_order_is_still_a_plan_demand_order():
@@ -241,11 +233,9 @@ def test_a_partly_confirmed_order_is_still_a_plan_demand_order():
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
         db.expire_all()
@@ -278,11 +268,9 @@ def test_the_python_twin_and_the_view_agree_about_which_lines_are_decided():
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
         db.expire_all()

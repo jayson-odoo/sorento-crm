@@ -49,6 +49,19 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The Transfers tab renders the SAME grid the Transfers page does; that component has its
+// own tests, so here only the wiring (which order it is pinned to) has to be proven.
+vi.mock(
+  '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel',
+  () => ({
+    StockTransfersPanel: (props: { salesOrderId?: string; showFilters?: boolean }) => (
+      <div data-testid="stock-transfers-panel" data-sales-order={props.salesOrderId}>
+        {String(props.showFilters)}
+      </div>
+    ),
+  }),
+);
+
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
@@ -169,7 +182,7 @@ function renderDetail() {
  * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down (a plain `click` event
  * in jsdom leaves the tab strip exactly where it was, which reads as a section that vanished).
  */
-function openTab(name: 'General' | 'Lines' | 'Delivery') {
+function openTab(name: 'General' | 'Lines' | 'Delivery' | 'Transfers') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
@@ -260,6 +273,18 @@ describe('SalesOrderDetail - states', () => {
     expect(within(amount as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 
+  it('shows the order\'s stock transfers on their own tab, pinned to it (AC-E6)', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    openTab('Transfers');
+
+    const panel = screen.getByTestId('stock-transfers-panel');
+    expect(panel).toHaveAttribute('data-sales-order', 'so-1');
+    // Pinned, so the page-level filter bar and bulk approve are off.
+    expect(panel).toHaveTextContent('false');
+  });
+
   it('carries one tab per concern of the order, General first', () => {
     useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
     renderDetail();
@@ -268,6 +293,7 @@ describe('SalesOrderDetail - states', () => {
       'General',
       'Lines',
       'Delivery',
+      'Transfers',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',
@@ -933,6 +959,33 @@ describe('SalesOrderDetail - the agent', () => {
       '/project-sales/order-inquiries?query=SO-2026%2F07-0042',
     );
     expect(link.getAttribute('title')).toContain('2/3 placed');
+    // WHO raised it and WHEN, ON the header rather than in a tooltip (AC-H2). 09:00 UTC
+    // is 5:00 pm in Malaysia: rendering the naive stamp as local time is the defect.
+    expect(within(orderCard).getByText(/Yana/)).toBeInTheDocument();
+    expect(within(orderCard).getByText(/18\/07\/2026, 5:00 pm/)).toBeInTheDocument();
+  });
+
+  it('says the inquiry names nobody rather than leaving the header half-written', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({
+        order_inquiries: [
+          {
+            inquiry_no: 'OI-000008',
+            state: 'raised',
+            raised_at: null,
+            raised_by_name: null,
+            rows_total: 1,
+            rows_placed: 0,
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    const orderCard = screen.getByRole('region', { name: 'Order' });
+    expect(within(orderCard).getByText(/Not recorded/)).toBeInTheDocument();
   });
 
   it('shows the Order inquiries field even when there are none - never hidden', () => {
@@ -1250,9 +1303,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The same pill wording the order-inquiry worklist uses, so "Placed" cannot mean two
+    // The same pill wording the order-inquiry worklist uses, so "Linked" cannot mean two
     // things on two screens.
-    expect(within(row).getByText('Placed')).toBeInTheDocument();
+    expect(within(row).getByText('Linked')).toBeInTheDocument();
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
@@ -1288,5 +1341,133 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
       await screen.findByRole('menuitemcheckbox', { name: 'Order inquiry' }),
     ).toBeInTheDocument();
     expect(screen.getByRole('menuitemcheckbox', { name: 'Decision' })).toBeInTheDocument();
+  });
+
+  /**
+   * AC-D4: the SECONDARY surface for the board's two compositions. The board is where the
+   * decision is taken; this is where somebody looking at the order alone can read it, in the
+   * SAME words - `supplyVocabulary.describe`, imported, never restated.
+   */
+  it('states what was suggested and what was decided, in the board\'s words', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        supply_proposed: [
+          { kind: 'reserve', qty: '10', source_location: 'BRW', rung: 'pool' },
+        ],
+        supply_decided: [{ kind: 'buy', qty: '10', source_location: null, rung: 'buy' }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Shared 10 (BRW)')).toBeInTheDocument();
+    expect(within(row).getByText('Buy 10')).toBeInTheDocument();
+  });
+
+  it('says Not recorded for a decided line whose revision froze no proposal', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        supply_proposed: null,
+        supply_decided: [{ kind: 'buy', qty: '10', source_location: null, rung: 'buy' }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    // Not "-": the revision predates the field, which is a different statement from "the
+    // engine suggested nothing".
+    expect(within(row).getByText('Not recorded')).toBeInTheDocument();
+  });
+
+  it('offers the two new columns to the Columns menu as well', async () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Columns' }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: 'mouse',
+    });
+    expect(
+      await screen.findByRole('menuitemcheckbox', { name: 'Suggested' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Decided' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Browser pass 4, findings 4 and 5 - two links to the same SPO line, and the date on them.
+ *
+ * A line CAN be linked twice to one SPO line: the SPO covers it in two goes, and each link
+ * carries its own quantity. The key was kind + document + line label, so the second row
+ * collided with the first and React warned in the console.
+ */
+describe('SalesOrderDetail - two links to the same SPO line', () => {
+  /** One planned line carrying two links to the SAME SPO line - `planned` lives in another
+   *  block, so the line is stated here rather than reached for across it. */
+  const twoLinks = () =>
+    so({
+      lines: [
+        {
+          id: 'l-planned',
+          sku: 'SKU-PLANNED',
+          product_name: 'Planned line',
+          qty_ordered: 10,
+          qty_delivered: 0,
+          uom: 'PCS',
+          warehouse_code: 'BRW-BB',
+          line_status: 'open',
+          required_date: '2026-08-30',
+          linked_to: [
+            {
+              kind: 'spo',
+              document: 'SPO-2026/08-0061',
+              line_label: 'L4',
+              qty: '10',
+              location: 'BRW',
+              expected_date: '2026-09-14',
+            },
+            {
+              kind: 'spo',
+              document: 'SPO-2026/08-0061',
+              line_label: 'L4',
+              qty: '5',
+              location: 'BRW',
+              expected_date: '2026-09-14',
+            },
+          ],
+        } as unknown as SalesOrderLine,
+      ],
+      line_count: 1,
+    });
+
+  it('renders both rows without a duplicate-key warning', () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText(/SPO-2026\/08-0061 L4/)).toHaveLength(2);
+    expect(
+      warn.mock.calls.some((call) => String(call[0]).includes('same key')),
+    ).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('states when the goods are due (AC-G7)', () => {
+    useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText(/14\/09\/2026|2026-09-14/).length).toBeGreaterThanOrEqual(1);
   });
 });

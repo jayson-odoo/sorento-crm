@@ -51,8 +51,10 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     DECISION_ACTIVE,
+    INQUIRY_PLACED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -69,11 +71,14 @@ from app.services.project_supply_service import (
 )
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
     RESERVE,
+    RUNG_BUY,
+    RUNG_INCOMING,
     TIMELY_SPO,
     pool_reserve_capacity,
     qty_text,
@@ -188,12 +193,28 @@ WHERE_OTHER_GROUP = "other_group"
 #: one place, so five rungs cannot phrase the same fact five ways.
 _COVERED_BEFORE = "Fully covered before this rung."
 
-#: Said by both BORROW rungs on a line beyond its ATP reserve window
-#: (`front_planning_engine`): they are not walked for it, so the trail states the rule rather
-#: than reporting an empty search that never happened.
+#: Said by rung 1 on a line beyond its ATP reserve window whose incoming does NOT reach the
+#: whole of it. The rung ran and offered what it had; the whole-line rule is what refused it,
+#: and "arrives in time" printed beside a Buy of the whole line reads as a defect.
+_RESERVE_WINDOW_INCOMING_SHORT_WHY = (
+    "The supply on its way does not cover the whole line, and the delivery date is beyond "
+    "the lead time window, so the whole line is bought rather than part-covered."
+)
+
+#: Said by EVERY STOCK rung on a line beyond its ATP reserve window
+#: (`front_planning_engine`): ladder v3 buys such a line whole and walks none of them, so the
+#: trail states the rule rather than reporting an empty search that never happened.
 _RESERVE_WINDOW_RUNG_WHY = (
-    "The delivery date is beyond the lead time window, so this line takes no stock another "
-    "order holds: purchasing can still buy for it in time."
+    "The delivery date is beyond the lead time window, so this line takes no stock at all: "
+    "purchasing can still buy for it in time."
+)
+
+#: Said by the group-borrow rung on every line. Ruled 25 August 2026: taking another sales
+#: order's committed quantity is a person's decision in Amend, never the engine's, so the
+#: rung is stated and never drawn on automatically.
+_GROUP_BORROW_MANUAL_WHY = (
+    "Borrowing from another sales order is a person's decision: pick the donor in Amend, "
+    "where its position and the order-back are in front of you."
 )
 
 #: What each ranking factor MEANS when it is the reason another line stands in front of you.
@@ -290,12 +311,13 @@ class _Row:
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "trail", "contested", "qty_ordered", "qty_delivered", "proposed",
+        "proposed_components",
         "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
         "outside_reserve_window",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "item_flags", "order_inquiry",
+        "decision", "item_flags", "order_inquiry", "lent_to",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -312,6 +334,11 @@ class _Row:
         # Filled by `_allocate`: what the engine proposes for this line, by kind, and what was
         # still unclaimed at its location when this line was reached.
         self.proposed = {}
+        # What the ENGINE suggested for this line, in `sources` shape (AC-D2): the live
+        # ladder on an undecided line, the composition frozen at confirm on a covered one.
+        # `None` - never `[]` - on a covered line whose revision predates the frozen
+        # proposal: "not recorded" and "suggested nothing" are different answers.
+        self.proposed_components = None
         self.free_before = None
         self.raw_facts = {}
         # Who had already drawn this line's pile down when it was reached, and how much - the
@@ -339,6 +366,9 @@ class _Row:
         # walked - unplannable or covered - because `false` there would claim a judgement that
         # was never made.
         self.item_flags: Optional[Dict[str, Any]] = None
+        # What ANOTHER sales order borrowed off this line, and which order took it (AC-L6).
+        # A list, and an empty one when nothing was lent: the cell has one shape to read.
+        self.lent_to: List[Dict[str, Any]] = []
         # What purchasing has already been TOLD about this line, and how far they got:
         # `{inquiry_no, state}` off the inquiry row covering it, None when there is none.
         self.order_inquiry: Optional[Dict[str, Any]] = None
@@ -399,6 +429,18 @@ class FulfilmentBoardService:
         # The cell's location table lists the pool a proposal cites, tagged as a pool rather
         # than left to look like one of the agent's own group warehouses.
         self._pool_warehouses: Dict[str, str] = {}
+        # Warehouse id -> the pool warehouse id it draws on, for every active warehouse. What
+        # makes "this line's OWN site pool" a fact off `warehouses.pool_warehouse_id` rather
+        # than a comparison of code prefixes - the naming coincidence is not the rule.
+        self._pool_of: Dict[str, str] = {}
+        # The warehouses `_pressure` / `_incoming` / `_po_open` were actually asked about. What
+        # tells "counted, and the answer is zero" from "never looked" for a cited location.
+        self._counted_warehouses: set = set()
+        # (product, warehouse) -> open PURCHASE-order balance there, netted for the
+        # order-inquiry rows already placed on those lines. Information beside the decision:
+        # `available_qty` stays on hand - SO + SPO, because a PO reaches a project line only
+        # through a link (PLAN section I).
+        self._po_open: Dict[Tuple[str, str], Decimal] = {}
         # PROJECT line ids `build()` was asked to preview as uncovered (`exclude_covered_line_ids`).
         self._exclude_covered_line_ids: set = set()
 
@@ -712,6 +754,11 @@ class FulfilmentBoardService:
                 "supplier_name": ref.supplier_name,
                 "expected_date": ref.arrival_date,
                 "spo_qty": qty_text(ref.qty),
+                # A promise whose date has passed is still supply and is still counted
+                # (captain, 26 Aug: trust the book). It is STATED as overdue so the buyer
+                # can see which one to chase, rather than silently dropped or silently
+                # read as fresh. Same number the engine's trail names.
+                "overdue_days": ref.overdue_days,
             }
             for ref in sorted(
                 incoming_rows,
@@ -974,10 +1021,13 @@ class FulfilmentBoardService:
         # Resolved before the line numbers, which prefer the mirror's own numbering.
         self._addressing = self._mirror_addressing([str(line.id) for line, *_r in records])
         line_numbers = self._line_numbers(records)
-        # What an active revision already froze, per CORE line. One read for the whole board.
-        frozen = self._frozen_decisions()
+        # What an active revision already froze, per CORE line: the decision, and beside it
+        # the proposal the engine had made at that moment (AC-D1). One read for both.
+        frozen, frozen_proposals = self._frozen_decisions()
         # What purchasing was already TOLD, per CORE line. One read for the whole board too.
         inquiries = self._order_inquiries([str(line.id) for line, *_r in records])
+        # What another order borrowed OFF each of these lines. One read for the whole board.
+        lent = self._lent_from([str(line.id) for line, *_r in records])
 
         rows: List[_Row] = []
         for line, order, product, warehouse, agent in records:
@@ -1021,13 +1071,71 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
+            # What the engine had suggested for it when that decision was taken. `None` on a
+            # revision written before the proposal was frozen, which the screen reads as
+            # "not recorded"; `_allocate` replaces it with the LIVE ladder on every line no
+            # decision covers.
+            row.proposed_components = frozen_proposals.get(str(line.id))
             # What was already asked for, and how far purchasing got with it. The decision
             # beside it is what was PROMISED; these are the two halves of one answer, and a
             # board that carried only the first sent the planner to another screen for the
             # second.
             row.order_inquiry = inquiries.get(str(line.id))
+            row.lent_to = lent.get(str(line.id), [])
             rows.append(row)
         return rows
+
+    def _lent_from(self, core_line_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """What another sales order borrowed OFF each of these lines (AC-L6).
+
+        The captain, 25 August 2026: the donor's cell reads "71 lent to SO415472". A borrow
+        was visible only on the taking side, so the agent whose stock moved found out when
+        the delivery did not.
+
+        Read off the ACTIVE decisions' frozen compositions, because that is where a group
+        borrow names its donor line (`donor_core_line_id`); `so_line_allocations` records
+        the warehouse the stock came from but not the line it was promised to. This is the
+        REVERSE direction of `_frozen_decisions` - the borrowing order is usually not in
+        this board's own selection - so it reads every active revision rather than the
+        selection's own, in one query, and filters in Python.
+
+        One row per project sales order, and a group borrow is rare, so the scan is small.
+        The trigger for a JSONB index on `donor_core_line_id`: the day this read shows up in
+        a board's own timings.
+        """
+        wanted = {str(line_id) for line_id in core_line_ids}
+        if not wanted:
+            return {}
+        decisions = (
+            self.db.query(SOSupplyDecision, ProjectSalesOrder)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id,
+            )
+            .filter(SOSupplyDecision.state == DECISION_ACTIVE)
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for decision, order in decisions:
+            so_number = order.autocount_doc_no or order.provisional_ref
+            for snapshot in decision.line_snapshots or []:
+                for component in (snapshot or {}).get("components") or []:
+                    donor = component.get("donor_core_line_id")
+                    if not donor or str(donor) not in wanted:
+                        continue
+                    qty = _dec(component.get("qty"))
+                    if qty <= _ZERO:
+                        continue
+                    out.setdefault(str(donor), []).append(
+                        {
+                            "qty": qty_text(qty),
+                            "so_number": so_number,
+                            "line_no": (snapshot or {}).get("line_no"),
+                        }
+                    )
+        for rows in out.values():
+            rows.sort(key=lambda r: (str(r["so_number"] or ""), r["line_no"] or 0))
+        return out
 
     def _order_inquiries(self, core_line_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """The instruction covering each core line, keyed by that line.
@@ -1067,8 +1175,14 @@ class FulfilmentBoardService:
             for core_id, inquiry_no, state in rows
         }
 
-    def _frozen_decisions(self) -> Dict[str, Dict[str, Any]]:
+    def _frozen_decisions(
+        self,
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Optional[List[Dict[str, Any]]]]]:
         """What each ACTIVE revision froze, keyed by the CORE line it covers.
+
+        Two maps off one read: the DECISION, and the PROPOSAL the engine had made when that
+        decision was taken (AC-D1). The second is `None` for a revision written before the
+        proposal was frozen - which is "not recorded", not "the engine suggested nothing".
 
         The core line id is the key because that is what a snapshot names a covered line by,
         and it is the same key `_decided_elsewhere` reads to keep such a line out of the pile's
@@ -1084,7 +1198,7 @@ class FulfilmentBoardService:
             if entry.get("project_sales_order_id")
         }
         if not pso_ids:
-            return {}
+            return {}, {}
         decisions = (
             self.db.query(SOSupplyDecision)
             .filter(
@@ -1094,6 +1208,7 @@ class FulfilmentBoardService:
             .all()
         )
         out: Dict[str, Dict[str, Any]] = {}
+        proposals: Dict[str, Optional[List[Dict[str, Any]]]] = {}
         for decision in decisions:
             frozen = self.supply.frozen_lines_of(decision)
             for snapshot in decision.line_snapshots or []:
@@ -1102,7 +1217,41 @@ class FulfilmentBoardService:
                 if not core_line_id or line_id not in frozen:
                     continue
                 out[str(core_line_id)] = self._line_decision(decision, frozen[line_id])
-        return out
+                proposed = frozen[line_id].get("proposed_components")
+                proposals[str(core_line_id)] = (
+                    None
+                    if proposed is None
+                    else [self._frozen_source(component) for component in proposed]
+                )
+        return out, proposals
+
+    @staticmethod
+    def _frozen_source(component: Dict[str, Any]) -> Dict[str, Any]:
+        """One frozen PROPOSAL component in the same shape a live one arrives in.
+
+        The snapshot spells the warehouse `source_location` / `source_warehouse_id` and the
+        wire spells it `location` / `warehouse_id`; one shape reaches the screen, so both
+        halves of "suggested vs decided" are read by one reader. The engine's reason is a
+        fragment meant to follow "Reserve 10:", stated here as a sentence the way `_source`
+        states a live one.
+        """
+        reason = str(component.get("reason") or "")
+        return {
+            "kind": component.get("kind"),
+            "qty": qty_text(_dec(component.get("qty"))),
+            "location": component.get("source_location"),
+            "warehouse_id": component.get("source_warehouse_id"),
+            "reason": (reason[:1].upper() + reason[1:] + ".") if reason else "",
+            "spo_number": None,
+            "arrival_date": None,
+            "rung": component.get("rung"),
+            "donor_so_number": component.get("donor_so_number"),
+            "donor_line_no": component.get("donor_line_no"),
+            "donor_agent_code": component.get("donor_agent_code"),
+            "same_agent": bool(component.get("same_agent", False)),
+            "donor_core_line_id": component.get("donor_core_line_id"),
+            "donor_required_date": _parse_iso_date(component.get("donor_required_date")),
+        }
 
     def _line_decision(
         self, decision: SOSupplyDecision, frozen: Dict[str, Any]
@@ -1131,6 +1280,11 @@ class FulfilmentBoardService:
                     "warehouse_id": c.get("source_warehouse_id"),
                     "location": c.get("source_location"),
                     "qty": qty_text(_dec(c.get("qty"))),
+                    # The rung the confirmation froze, carried rather than dropped. It was
+                    # dropped, and every reserve row of a covered line reached the screen as
+                    # `rung: null` - so the vocabulary had to be guessed back from the
+                    # warehouse code, which is the one reading PLAN section 2 forbids.
+                    "rung": c.get("rung"),
                 }
                 for c in components
                 if c.get("kind") == RESERVE
@@ -1405,6 +1559,14 @@ class FulfilmentBoardService:
             for warehouse_id, pool in self.supply.site_pool_warehouses().items()
         }
         warehouse_ids |= set(self._pool_warehouses)
+        self._pool_of = self._pool_by_warehouse()
+        # WHICH warehouses the three batched reads below were actually asked about. A location
+        # OUTSIDE this set has no fact and no absence of one: nothing looked. `_cited_locations`
+        # emits exactly such a row - a cross-group donor a Borrow names is discovered from the
+        # engine's components, AFTER the read set was fixed - and defaulting it to zero would
+        # print "SO qty 0, PO qty 0, Available = on hand" for a warehouse the whole book owes
+        # against. It keeps its nulls instead, and the table prints a dash.
+        self._counted_warehouses = set(warehouse_ids)
         # Every stock fact the board states comes from these reads and no other, so the
         # availability printed beside a proposal is the availability the proposal was computed
         # from.
@@ -1413,6 +1575,7 @@ class FulfilmentBoardService:
         self._held = self.supply.held_stock_by_location(product_ids)
         self._pressure = self._demand_pressure(product_ids, warehouse_ids)
         self._incoming = self.supply.incoming_by_location(product_ids, warehouse_ids)
+        self._po_open = self._open_po_balance(product_ids, warehouse_ids)
         # Facts for every plannable row, covered ones included: a covered line is not run
         # through the ladder (its share fields come back empty, and `_apply_frozen` reads
         # none of them), but its DONORS are still read below, from the same fact - Amend on a
@@ -1566,6 +1729,10 @@ class FulfilmentBoardService:
             )
 
             row.sources = [self._source(component, row) for component in components]
+            # An undecided line's suggestion IS its live proposal, said under the key the
+            # decision strip reads for every line (AC-D2), so the strip never has to ask
+            # which of two fields a given row keeps its suggestion in.
+            row.proposed_components = row.sources
             # Said, not implied: the ladder consulted these and never printed them, and the
             # captain read the trail as if it had consulted nothing.
             row.item_flags = {
@@ -1649,6 +1816,11 @@ class FulfilmentBoardService:
         row.proposed = {
             RESERVE: reserve, TIMELY_SPO: incoming, BORROW: borrow, BUY: bought,
         }
+        # EVERY kind carries its rung, not only the borrows. Rebuilt without it, a covered
+        # line's whole composition reached the screen as `rung: null` and the vocabulary had
+        # to be inferred back from the warehouse code - which is exactly the reading PLAN
+        # section 2 replaced ("BRW-BB" and the pool "BRW" share a prefix and are not the
+        # same kind of supply). Incoming and Buy carry their own rung by definition.
         row.sources = [
             *(
                 {
@@ -1659,6 +1831,7 @@ class FulfilmentBoardService:
                     "reason": self._frozen_reason(row, f"Reserved at {component.get('location')}"),
                     "spo_number": None,
                     "arrival_date": None,
+                    "rung": component.get("rung"),
                 }
                 for component in decision.get("reserve") or []
             ),
@@ -1672,6 +1845,7 @@ class FulfilmentBoardService:
                         "reason": self._frozen_reason(row, "Incoming supply, as confirmed"),
                         "spo_number": None,
                         "arrival_date": None,
+                        "rung": RUNG_INCOMING,
                     }
                 ]
                 if incoming > _ZERO
@@ -1690,6 +1864,13 @@ class FulfilmentBoardService:
                     ),
                     "spo_number": None,
                     "arrival_date": None,
+                    "rung": component.get("rung"),
+                    "donor_so_number": component.get("donor_so_number"),
+                    "donor_line_no": component.get("donor_line_no"),
+                    "donor_agent_code": component.get("donor_agent_code"),
+                    "same_agent": bool(component.get("same_agent", False)),
+                    "donor_core_line_id": component.get("donor_core_line_id"),
+                    "donor_required_date": component.get("donor_required_date"),
                 }
                 for component in decision.get("borrow") or []
             ),
@@ -1703,6 +1884,7 @@ class FulfilmentBoardService:
                         "reason": self._frozen_reason(row, "Bought, as confirmed"),
                         "spo_number": None,
                         "arrival_date": None,
+                        "rung": RUNG_BUY,
                     }
                 ]
                 if bought > _ZERO
@@ -1831,18 +2013,17 @@ class FulfilmentBoardService:
                 }
             )
 
-        # Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): the read-only own
-        # location, then incoming, then the pool(s), then group take, then group borrow,
-        # then cross-group borrow, then Buy. The own-location Reserve rung is GONE as a
-        # SOURCE (rule 7) - stock at L is never drawn - but it is kept as a rung rather
-        # than folded into the strip, because it is the one place the queue standing in
-        # front of THIS line, at ITS OWN pile, is named.
+        # Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b): the read-only own-location
+        # STRIP, then incoming, then the ownership group, then the pool(s), then group
+        # borrow, then cross-group borrow, then Buy.
 
-        # 0. Read-only: this line's own location. Never taken (rule 7 - stock at L is
-        #    committed to whichever sales order is queued for it, not to this one), but
-        #    it is the ONE rung `QueueLink`'s dialog can open, because that dialog opens
-        #    exactly `fulfilment_warehouse_id` - which is L, never the pool or a donor.
-        #    "the own-location strip stays read-only but its queue explanation stays."
+        # 0. Read-only: the queue standing in front of THIS line at ITS OWN pile.
+        #
+        #    Not a source rung - the own location IS drawn on under v3, but on the GROUP
+        #    rung two places below, where its capacity is stated as one of the group's
+        #    locations. This one exists because it is the only place the queue is named,
+        #    and it is the ONE rung `QueueLink`'s dialog can open: that dialog opens
+        #    exactly `fulfilment_warehouse_id`, which is L and never the pool or a donor.
         own_ahead_qty = fact.so_qty_ahead
         own_ahead_lines = fact.lines_ahead
         own_left = fact.available_to_this_line
@@ -1864,8 +2045,21 @@ class FulfilmentBoardService:
             ),
         )
 
+        # The ATP reserve window verdict, read once and answered the same way by every rung
+        # below. Rung 1 needs it too now: it RUNS for a far line (incoming is already
+        # bought), but a far line whose incoming falls short is bought WHOLE, and the rung
+        # has to say that rather than leaving "arrives in time" beside a Buy.
+        outside_window = bool(row.outside_reserve_window)
+
         # 1. Supply already on its way that lands on or before the required date.
+        #
+        #    WALKED ON BOTH SIDES OF THE WINDOW (section 1b: "rung 1 unchanged"). It is not
+        #    a stock rung: the quantity is already bought, and refusing it to a far line
+        #    bought the same units a second time.
         incoming_taken = took(TIMELY_SPO, own_code)
+        incoming_short = (
+            outside_window and incoming_taken <= _ZERO and fact.timely_qty > _ZERO
+        )
         add(
             "incoming",
             location=own_code,
@@ -1874,22 +2068,63 @@ class FulfilmentBoardService:
             offered=fact.timely_qty,
             taken=incoming_taken,
             note=self._incoming_note(fact),
-            why=lambda outcome: self._incoming_why(fact, outcome, incoming_taken),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_INCOMING_SHORT_WHY
+                if incoming_short
+                else self._incoming_why(fact, outcome, incoming_taken)
+            ),
         )
 
-        # 2. The shared pool(s) - own site pool first, then every other (section E rule
-        #    2), what hot-selling gates by demand class (PLAN 3.3a). Built from the SAME
+        # 2. The ownership group: positive Available at this line's own location and at
+        #    every sibling of its group, own location first (ladder v3, section 1b rung
+        #    2 - "consider the group location first (only available quantity)").
+        #
+        #    NOT WALKED beyond the ATP reserve window: v3 takes no stock for such a line,
+        #    so `compose_line` builds no candidate list for it and the trail must say the
+        #    same thing rather than printing locations that were never consulted.
+        group_take_candidates = (
+            [] if outside_window else self.supply.group_take_candidates_for(fact)
+        )
+        group_take_offered = sum(
+            (_dec(c.get("qty")) for c in group_take_candidates), _ZERO
+        )
+        group_take_taken = sum(
+            (c.qty for c in components if c.rung == "group_take"), _ZERO
+        )
+        add(
+            "group_take",
+            offered=group_take_offered,
+            taken=group_take_taken,
+            eligible=not outside_window,
+            note=None if outside_window else self._group_take_note(group_take_candidates, fact),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_RUNG_WHY
+                if outside_window
+                else self._group_take_why(outcome, group_take_candidates, fact)
+            ),
+        )
+
+        # 3. The shared pool(s) - own site pool first, then every other (ladder v3,
+        #    section 1b rung 3), what hot-selling gates by demand class (PLAN 3.3a). It
+        #    runs only on what the ownership group above could not meet, and not at all
+        #    beyond the reserve window. Built from the SAME
         #    chain `compose_line` composed from, `pool_chain_for`, unconditionally: a
         #    location with no pool of its OWN still has every other active site pool to
         #    draw from - rule 2 says "own site pool first, THEN the others"; a location
         #    with none of its own simply starts the chain at the others (section 8).
-        pool_chain = self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        pool_chain = (
+            [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        )
         if not pool_chain:
             add(
                 "pool",
                 eligible=False,
-                note="no shared pool",
-                why=lambda _outcome: "No shared pool for this product.",
+                note=None if outside_window else "no shared pool",
+                why=lambda _outcome: (
+                    _RESERVE_WINDOW_RUNG_WHY
+                    if outside_window
+                    else "No shared pool for this product."
+                ),
             )
         else:
             # Same cap `pool_reserve_capacity` applies to every pool draw
@@ -1980,57 +2215,28 @@ class FulfilmentBoardService:
                     ),
                 )
 
-        # 3. Group take: positive Available at a sibling location, never this line's own
-        #    (section E rule 3).
-        group_take_candidates = self.supply.group_take_candidates_for(fact)
-        group_take_offered = sum(
-            (_dec(c.get("qty")) for c in group_take_candidates), _ZERO
-        )
-        group_take_taken = sum(
-            (c.qty for c in components if c.rung == "group_take"), _ZERO
-        )
-        add(
-            "group_take",
-            offered=group_take_offered,
-            taken=group_take_taken,
-            note=self._group_take_note(group_take_candidates, fact),
-            why=lambda outcome: self._group_take_why(
-                outcome, group_take_candidates, fact
-            ),
-        )
-
-        # 4. Group borrow: other sales orders' committed quantity at this line's
-        #    ownership-group locations, donors ranked below this line auto-composed
-        #    (section E rule 4). Every take here carries an order-back.
+        # 4. Group borrow: another sales order's committed quantity at this line's
+        #    ownership-group locations. NEVER auto-composed under ladder v3 (ruled 25
+        #    August 2026): it is a manual pick in Amend, made by a person with the donor's
+        #    position in front of them, and every take still carries an order-back.
         #
-        #    NOT WALKED beyond the ATP reserve window, and the trail has to say the same
-        #    thing the ladder did: `compose_line` never builds these candidate lists for such
-        #    a line, so building them here would print donors that were never considered and
-        #    let the note offer them. The rung is stated, with the window as its reason - a
-        #    rung skipped by a RULE says so under its own outcome (see this method's
-        #    docstring), which is the whole point of emitting every rung.
-        outside_window = bool(row.outside_reserve_window)
-        group_borrow_candidates = (
-            [] if outside_window else self.supply.group_borrow_auto_candidates_for(fact)
-        )
-        group_borrow_offered = sum(
-            (_dec(c.get("qty")) for c in group_borrow_candidates), _ZERO
-        )
+        #    Stated as a rung all the same, because the whole point of the trail is that a
+        #    source nobody drew on says WHY. Silence here reads as "there was nothing
+        #    there", which is a different and usually false statement - the donors are on
+        #    the contribution's own `borrow_candidates`, waiting for a person.
         group_borrow_taken = sum(
             (c.qty for c in components if c.rung == "group_borrow"), _ZERO
         )
         add(
             "group_borrow",
-            offered=group_borrow_offered,
+            offered=_ZERO,
             taken=group_borrow_taken,
-            eligible=not outside_window,
-            note=None if outside_window else self._group_borrow_note(row, fact),
+            eligible=False,
+            note=None if outside_window else "a person's pick, never proposed",
             why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
-                else self._group_borrow_why(
-                    outcome, group_borrow_candidates, row, fact
-                )
+                else _GROUP_BORROW_MANUAL_WHY
             ),
         )
 
@@ -2053,7 +2259,6 @@ class FulfilmentBoardService:
                     fact,
                     pools=pool_chain,
                     group_take=group_take_candidates,
-                    group_borrow=group_borrow_candidates,
                 ),
             )
         )
@@ -2324,16 +2529,27 @@ class FulfilmentBoardService:
     def _group_take_why(
         self, outcome: str, candidates: List[Dict[str, Any]], fact: Any
     ) -> str:
-        """Why rung 3 (group take) ended where it did (section E rule 3)."""
+        """Why rung 2 (the ownership group) ended where it did (section 1b).
+
+        THIS LINE'S OWN LOCATION IS IN THIS RUNG under v3, so the sentences say "group
+        location", not "sibling": telling a planner "no sibling has stock" while their own
+        location is the one that came up empty names the wrong place to go and look.
+        """
         if outcome == "none_needed":
             return _COVERED_BEFORE
         if not fact.group_code:
-            return "This location carries no ownership group, so there are no siblings to take from."
+            return (
+                "This location carries no ownership group, so there is no group to take "
+                "from."
+            )
         if not candidates:
-            return f"No {fact.group_code} sibling location has positive available stock."
+            return (
+                f"No {fact.group_code} location, this line's own included, has stock "
+                "available to it."
+            )
         if outcome == "took":
             taken_at = ", ".join(c["location"] for c in candidates)
-            return f"Positive available stock at {taken_at} was taken."
+            return f"Available stock at {taken_at} was taken."
         return "Not reached - the line was already covered by an earlier rung."
 
     @staticmethod
@@ -2351,7 +2567,7 @@ class FulfilmentBoardService:
     def _group_borrow_why(
         self, outcome: str, candidates: List[Dict[str, Any]], row: "_Row", fact: Any
     ) -> str:
-        """Why rung 4 (group borrow) ended where it did (section E rule 4, section 8)."""
+        """Why rung 4 (group borrow) ended where it did (section 1c)."""
         if outcome == "none_needed":
             return _COVERED_BEFORE
         if not candidates:
@@ -2577,6 +2793,107 @@ class FulfilmentBoardService:
             pairs.sort(key=lambda pair: pair[1])
         return dict(out)
 
+    def _pool_by_warehouse(self) -> Dict[str, str]:
+        """`{warehouse_id: pool_warehouse_id}` for every active warehouse, one query.
+
+        The FK is the authoritative test, not the code's shape: on the live book `BRW-BB`
+        draws on `BRW` and both are plain codes, but a client whose codes look nothing like
+        Sorento's repoints rows rather than needing code (`Warehouse.pool_warehouse_id`).
+        """
+        rows = (
+            self.db.query(Warehouse.id, Warehouse.pool_warehouse_id)
+            .filter(
+                Warehouse.is_active.is_(True),
+                Warehouse.pool_warehouse_id.isnot(None),
+            )
+            .all()
+        )
+        return {str(warehouse_id): str(pool_id) for warehouse_id, pool_id in rows}
+
+    def _open_po_balance(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """Open PURCHASE-order balance per (product, location), netted for what is linked.
+
+        The captain, 25 August: the location table needs a "PO qty" beside the stock, so a
+        planner deciding between Buy and a transfer can see that 500 are already on order at
+        DC1. It is INFORMATION ONLY - `available_qty` stays `on hand - SO + SPO` - because a
+        purchase order reaches a project line only through a link (PLAN section I).
+
+        A line counts as ON ORDER on the same four tests every other on-order reader in this
+        codebase applies (`allocation_suggestion_service`, `loading_plan_service`,
+        `scm.on_order_v`, and `project_order_inquiry_service._candidates_for_row`, which
+        is the reader that decides what may be LINKED):
+
+          * `line_status = 'open'` and a balance still to come. A line fully received has
+            nothing left to report;
+          * `purchase_orders.status IN ('active', 'partial')`. `decision_service` writes a
+            `draft_recommendation` PO per supplier per run, and a recommendation nobody has
+            confirmed is not on order - `on_order_v` leaves it out for exactly that reason
+            (M4-D5), so counting it here would put a proposal on screen as a purchase;
+          * an SPO document is not a PO ("those are SPO, not PO" - the captain, live-testing).
+            It is already counted as `spo_qty`, so counting it here would state one arrival
+            twice. Excluded by both the source stamp and the number, because the two feeds
+            that write the table stamp it differently.
+
+        What an order-inquiry row already claims is then netted OFF, per line and floored at
+        zero, which is `_candidates_for_row`'s own arithmetic - so the figure here and
+        the quantity that dialog offers cannot disagree.
+
+        The placements are materialised by a TOP-LEVEL query first and netted in Python. As a
+        correlated subquery they would join in un-scoped: `CompanyScopedMixin` filters the
+        entity a query is rooted at, and a subquery rooted at `OrderInquiryRow` inside a query
+        rooted at `PurchaseOrderLine` is not the root. Another company's placement would then
+        net down this company's balance.
+
+        Placements are read off `order_inquiry_rows.po_line_id`, which is where a placement
+        lives today; PLAN section I's `projects.order_inquiry_links` is its successor.
+
+        Two queries for the whole board, never one per location.
+        """
+        products = list(product_ids)
+        warehouses = list(warehouse_ids)
+        if not products or not warehouses:
+            return {}
+        placed: Dict[str, Decimal] = {
+            str(po_line_id): _dec(qty)
+            for po_line_id, qty in (
+                self.db.query(OrderInquiryRow.po_line_id, func.sum(OrderInquiryRow.qty))
+                .filter(
+                    OrderInquiryRow.state == INQUIRY_PLACED,
+                    OrderInquiryRow.po_line_id.isnot(None),
+                )
+                .group_by(OrderInquiryRow.po_line_id)
+                .all()
+            )
+        }
+        rows = (
+            self.db.query(
+                PurchaseOrderLine.id,
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.warehouse_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                PurchaseOrderLine.product_id.in_(products),
+                PurchaseOrderLine.warehouse_id.in_(warehouses),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                PurchaseOrder.status.in_(("active", "partial")),
+                func.coalesce(PurchaseOrder.source_system, "") != SPO_HISTORY_SOURCE,
+                PurchaseOrder.po_number.notlike("SPO-%"),
+            )
+            .all()
+        )
+        out: Dict[Tuple[str, str], Decimal] = defaultdict(lambda: _ZERO)
+        for line_id, product_id, warehouse_id, ordered, received in rows:
+            left = _dec(ordered) - _dec(received) - placed.get(str(line_id), _ZERO)
+            if left > _ZERO:
+                out[(str(product_id), str(warehouse_id))] += left
+        return dict(out)
+
     def _group_note(self, members: Sequence[_Row], group_codes: Sequence[str]) -> Optional[str]:
         """Why this cell is showing one location instead of a group, when it is.
 
@@ -2616,6 +2933,7 @@ class FulfilmentBoardService:
             if group and group in self._group_warehouses
         })
         locations.extend(self._group_locations(members, locations, group_codes))
+        locations.extend(self._pool_locations(members, locations))
         locations.extend(self._cited_locations(members, locations))
         return {
             "item_code": item_code,
@@ -2678,6 +2996,55 @@ class FulfilmentBoardService:
                         where=WHERE_GROUP,
                     )
                 )
+        return out
+
+    def _pool_locations(
+        self, members: Sequence[_Row], already: Sequence[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """EVERY active site pool, this line's own site first (AC-B1).
+
+        The captain, on SO415472: "why is BRW the only pool considered? What about MWH, DC1,
+        WH3?" They were considered - `_pool_chain` walks all of them for the ladder - but the
+        table listed only the pool a proposal happened to cite, so a pool that was opened and
+        gave nothing looked exactly like one that was never opened. A row reading 0 answers
+        the question; a missing row leaves it open.
+
+        Read off the SAME warehouses the ladder walks (`supply.site_pool_warehouses`) through
+        the SAME per-location reader every other row uses, so the pool's figures here and the
+        figures the proposal was computed from cannot come apart.
+
+        Emitted only for a cell holding ONE product, for `_group_locations`' reason: a pivoted
+        cell spans several, and this table has no column to say which one a row counts.
+        """
+        if not self._pool_warehouses:
+            return []
+        product_id = self._single_product(members)
+        if product_id is None:
+            return []
+        # This line's own pool leads, off the FK rather than off a shared code prefix: a cell
+        # can hold lines at several locations, so there can be more than one.
+        own_pools: List[str] = []
+        for row in members:
+            pool_id = self._pool_of.get(row.warehouse_id) if row.warehouse_id else None
+            if pool_id and pool_id in self._pool_warehouses and pool_id not in own_pools:
+                own_pools.append(pool_id)
+        rest = sorted(
+            (pool_id for pool_id in self._pool_warehouses if pool_id not in own_pools),
+            key=lambda pool_id: self._pool_warehouses[pool_id],
+        )
+        seen = {entry["location"] for entry in already}
+        out: List[Dict[str, Any]] = []
+        for pool_id in [*own_pools, *rest]:
+            code = self._pool_warehouses[pool_id]
+            if code in seen:
+                continue
+            seen.add(code)
+            out.append(
+                self._location(
+                    code, (), product_id=product_id, warehouse_id=pool_id,
+                    where=WHERE_SITE_POOL,
+                )
+            )
         return out
 
     @staticmethod
@@ -2770,15 +3137,29 @@ class FulfilmentBoardService:
         on_hand, reserved = self._levels.get(key, (None, None))
         incoming = self._incoming.get(key, [])
         stated = location is not None and warehouse_id is not None
-        owed, _covered = self._pressure.get(key, (None, None))
-        incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if stated else None
+        # COUNTED: this warehouse was in the set the batched reads were asked about, so an
+        # absent row is an answer of zero rather than the absence of a question (AC-B2) - the
+        # last upload counted none there, which is a fact. A location that was NOT asked about
+        # keeps its nulls: `_cited_locations` discovers a cross-group Borrow donor off the
+        # engine's own components, after the read set was fixed, and zeroing it would print
+        # "SO qty 0, Available = on hand" for a warehouse the whole book owes against.
+        counted = stated and warehouse_id in self._counted_warehouses
+        # `_levels` / `_free` / `_held` are read by PRODUCT across every warehouse, so an absent
+        # key there is a real zero for any stated location, cited ones included. The three reads
+        # below are warehouse-filtered, and that is the whole distinction `counted` draws.
+        if stated and on_hand is None:
+            on_hand, reserved = _ZERO, _ZERO
+        # Same rule, and the same default `qty_owed_all_orders` below has always used: a
+        # location nothing is owed at owes 0. The two said different things about one number.
+        owed, _covered = self._pressure.get(key, (_ZERO, _ZERO) if counted else (None, None))
+        incoming_qty = sum((ref.qty for ref in incoming), _ZERO) if counted else None
         # AutoCount's own arithmetic: on hand, less what the book has sold, plus what is on the
         # water. It may be NEGATIVE and is never clamped - "oversold here by 632" is the signal
         # a planner needs, and a floor of zero would report it as "nothing left", which is a
         # different and less useful fact.
         available = (
             (on_hand or _ZERO) - (owed or _ZERO) + (incoming_qty or _ZERO)
-            if stated and on_hand is not None
+            if counted and on_hand is not None
             else None
         )
         return {
@@ -2820,23 +3201,30 @@ class FulfilmentBoardService:
             #: sales order, not merely the ones on this board. The number that stops "478 free"
             #: being read as "478 available to me" when 47,009 is owed.
             "qty_owed_all_orders": (
-                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[0]) if stated else None
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[0]) if counted else None
             ),
             #: Of that, the part already covered by a confirmed decision, so committed pressure
             #: can be told from uncommitted pressure.
             "qty_owed_confirmed": (
-                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if stated else None
+                qty_text(self._pressure.get(key, (_ZERO, _ZERO))[1]) if counted else None
             ),
             #: Still to arrive at this location: allocated on a supply PO, not yet received.
-            "qty_incoming": qty_text(incoming_qty) if stated else None,
+            "qty_incoming": qty_text(incoming_qty) if counted else None,
             # ---- AutoCount's Stock Status vocabulary, which is what the planner reads ----
             #: "SO Qty": everything the book still owes here. The same number as
             #: `qty_owed_all_orders`, under the word the captain uses.
             "so_qty": qty_text(owed) if stated and owed is not None else None,
             #: "PO Qty" in AutoCount is the supplier order; in Sorento that is the SPO.
-            "spo_qty": qty_text(incoming_qty) if stated else None,
+            "spo_qty": qty_text(incoming_qty) if counted else None,
             #: "Available Qty": on hand - SO + SPO. Signed.
             "available_qty": qty_text(available) if available is not None else None,
+            #: Open PURCHASE-order balance here, less what an order-inquiry row already
+            #: claims. Information only, and deliberately NOT in `available_qty`: a purchase
+            #: order reaches a project line through a link, never by sitting at the location
+            #: (PLAN section I).
+            "po_open_qty": (
+                qty_text(self._po_open.get(key, _ZERO)) if counted else None
+            ),
             "incoming": [
                 {
                     "spo_number": ref.spo_number,
@@ -2846,7 +3234,7 @@ class FulfilmentBoardService:
                 for ref in sorted(
                     incoming, key=lambda ref: (ref.arrival_date is None, ref.arrival_date)
                 )
-            ] if stated else [],
+            ] if counted else [],
             "qty_proposed_reserve": self._proposed_text(rows, RESERVE),
             "qty_proposed_incoming": self._proposed_text(rows, TIMELY_SPO),
             "qty_proposed_buy": self._proposed_text(rows, BUY),
@@ -2975,12 +3363,25 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: What ANOTHER sales order borrowed off this line (AC-L6): "71 lent to
+            #: SO415472". Empty when nothing was lent, never absent.
+            "lent_to": row.lent_to or [],
             #: What purchasing was already TOLD about this line, and how far they got with
             #: it. The other half of the decision beside it: the decision is the promise,
             #: this is the instruction it produced. Null when nobody has raised one - never
             #: an empty object, because that would claim an instruction saying nothing.
             "order_inquiry": row.order_inquiry,
             "sources": row.sources,
+            #: What the ENGINE suggested, beside what was decided (AC-D2). The live ladder
+            #: on an undecided line - the same list as `sources` there - and the composition
+            #: frozen at confirm on a covered one, where `sources` is the DECISION and would
+            #: otherwise be the only thing on screen. Null on a revision written before the
+            #: proposal was frozen: "not recorded" is not "suggested nothing".
+            "proposed": (
+                None
+                if row.proposed_components is None
+                else {"components": row.proposed_components}
+            ),
             # The ladder, rung by rung, in the order it was walked - including the rungs that
             # gave nothing, because "the pool was checked and had none" is the answer to "how
             # did you arrive at the Buy" and an omitted step reads as a step never taken.

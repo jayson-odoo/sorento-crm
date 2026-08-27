@@ -25,6 +25,7 @@ from sqlalchemy import text
 from app.models.access import MarketSegment
 from app.models.order import Customer, SalesOrder
 from app.services.scm import outstanding_import_service as svc
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
 from tests.scm._outstanding_workbooks import (
@@ -95,7 +96,7 @@ def _demand_class(db, so_number: str):
 def _customer_with_segment(db, stem: str) -> str:
     """A customer whose market segment code carries `stem`, returning its customer code.
 
-    `_demand_class_for` matches "project" / "contract" as a substring of the segment code,
+    `_class_of` matches "project" / "contract" as a substring of the segment code,
     so a marker-prefixed code classifies exactly as a production one does while still
     belonging to this test.
     """
@@ -155,7 +156,7 @@ def test_a_dealer_order_is_stamped_the_default_class_from_its_order_type(db, see
     out = svc.apply(db, _upload(seeded, seeded.dealer_so, "300-A031"), SO)
 
     assert out["ok"]
-    assert _demand_class(db, seeded.dealer_so) == svc.DEFAULT_DEMAND_CLASS
+    assert _demand_class(db, seeded.dealer_so) == DEFAULT_DEMAND_CLASS
 
 
 # --------------------------------------------------------------------------- #
@@ -235,14 +236,72 @@ def test_a_demand_class_already_set_survives_an_upload_that_cannot_resolve_one(d
 # --------------------------------------------------------------------------- #
 
 def test_a_customer_carrying_a_project_segment_still_reads_as_project(db, seeded):
-    """The fallback is a demotion of this function, not a rewrite of it.
+    """The fallback is a demotion of this rule, not a rewrite of it.
 
-    `_demand_class_for` is the only place the segment vocabulary lives, and it stays the
-    fallback's implementation. Green before the change and after: if it goes red, the
-    fallback's meaning moved rather than its priority.
+    `_class_of` over `_segment_of` is the only place the segment vocabulary lives, and it
+    stays the fallback's implementation. Green before the change and after: if it goes red,
+    the fallback's meaning moved rather than its priority. There is no defaulting wrapper
+    to call here any more (QP1): the import refuses what it cannot classify.
     """
     project = _customer_with_segment(db, "PROJECT")
     retail = _customer_with_segment(db, "RETAIL")
 
-    assert svc._demand_class_for(db, project) == "project"
-    assert svc._demand_class_for(db, retail) == svc.DEFAULT_DEMAND_CLASS
+    assert svc._class_of(svc._segment_of(db, project)) == "project"
+    assert svc._class_of(svc._segment_of(db, retail)) == "retail"
+
+
+# --------------------------------------------------------------------------- #
+# 6. station 1: the real book, the morning after migration 425
+# --------------------------------------------------------------------------- #
+#
+# `Dealer Sales Order Outstanding 2020 - 2026.xlsx` carries Doc No, Doc Date, Delivery
+# Date, Debtor Code, Debtor Name, Agent, Ref Doc No, Ref, Remark, Item Code, Location, Qty
+# - and NO order type column. So a NEW document in that book classifies through exactly one
+# route: the debtor's market segment. That is what migration 425 backfills, and this pair
+# is the promise it has to keep.
+
+
+def test_a_book_naming_a_debtor_425_classified_is_accepted_as_retail(db, seeded):
+    """Station 1 on Friday: the same export, re-uploaded, with no order type column in it.
+
+    `retail` is the `market_segments` code migration 425 stamps onto every customer a
+    NULL-class order named, chosen because `class_of` maps it to the retail class. A
+    document nobody holds yet - the case QP1 actually blocks, since an order already
+    carrying a class is never re-derived - goes in and lands classified.
+    """
+    # Present on the prod copy and created by migration 425 on a database that lacks it.
+    if db.query(MarketSegment).filter(MarketSegment.code == "retail").first() is None:
+        db.add(MarketSegment(id=_u(), code="retail", name="Retail", is_active=True))
+        db.flush()
+    debtor = f"{MARKER}-C-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor,
+                    market_segment_code="retail", is_active=True))
+    db.flush()
+    fresh = f"{MARKER}-NEWDOC-{uuid.uuid4().hex[:8]}".upper()
+
+    out = svc.apply(db, _upload(seeded, fresh, debtor), SO)
+
+    assert out["ok"], out.get("unclassified_documents")
+    assert _demand_class(db, fresh) == DEFAULT_DEMAND_CLASS
+
+
+def test_a_book_naming_a_debtor_with_no_segment_is_refused_by_name(db, seeded):
+    """The other half, and the reason 425 has to touch the customers at all.
+
+    Leave one debtor unclassified and the whole book stops - so the refusal has to name the
+    order AND the debtor, because "give this customer a market segment" is the only thing
+    the operator can do about it.
+    """
+    debtor = f"{MARKER}-NOSEG-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
+    db.flush()
+    fresh = f"{MARKER}-NEWDOC-{uuid.uuid4().hex[:8]}".upper()
+
+    out = svc.apply(db, _upload(seeded, fresh, debtor), SO)
+
+    assert not out["ok"]
+    assert out["unclassified_documents"] == [fresh]
+    assert _demand_class(db, fresh) is None, "a refused file wrote the order anyway"
+    reported = " ".join(str(v) for p in out["row_problems"] for v in p.values())
+    assert fresh in reported, "the refusal never named the order"
+    assert debtor in reported, "the refusal never named the debtor to go and fix"

@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/compon
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
-import { DemandContextHeader } from './DemandContextHeader';
+import { DemandContextHeader, hasDemandContext } from './DemandContextHeader';
 import { dayLabel } from '../lib/coverageTimeline';
 import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
 import { fmtQty } from '../lib/qtyPrecision';
@@ -134,9 +134,9 @@ export function DemandDrillPopover({
               </Badge>
             </div>
 
-            {data && (data.project_12m_qty != null || data.retail_3m_qty != null) ? (
+            {data && hasDemandContext(data, kind) ? (
               <div className="border-b px-3 py-2">
-                <DemandContextHeader data={data} />
+                <DemandContextHeader data={data} channel={kind} />
               </div>
             ) : null}
 

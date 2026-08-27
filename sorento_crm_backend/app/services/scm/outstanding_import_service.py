@@ -50,7 +50,6 @@ from app.services.scm import sales_agent_service
 # check constraint, so a second copy of the word list would be a database that accepts what
 # the importer rejects.
 from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
-from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.demand_class import class_of as _class_of
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
@@ -321,6 +320,10 @@ class PreviewResult:
     missing_columns: list[str]
     row_problems: list[RowProblem] = field(default_factory=list)
     resolution_issues: list[ResolutionIssue] = field(default_factory=list)
+    # Documents whose demand class this file cannot decide (QP1). Non-empty means the
+    # upload is REFUSED - `ok` is False and `apply` writes nothing - so the confirm screen
+    # states the same verdict the commit would.
+    unclassified_documents: list[str] = field(default_factory=list)
     samples: dict = field(default_factory=dict)
     # Documents this upload would lift to the live status. Same key as `apply`'s response, so
     # the confirm screen shows the side effect BEFORE it happens and the commit reports the
@@ -342,7 +345,7 @@ class PreviewResult:
 
     @property
     def ok(self) -> bool:
-        return not self.missing_columns
+        return not self.missing_columns and not self.unclassified_documents
 
     def to_dict(self) -> dict:
         return {
@@ -355,6 +358,7 @@ class PreviewResult:
             "missing_columns": self.missing_columns,
             "row_problems": [asdict(p) for p in self.row_problems],
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
+            "unclassified_documents": list(self.unclassified_documents),
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
@@ -747,34 +751,38 @@ def _header_state(db: Session, docs: tuple[str, ...],
 def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
     """This customer's market segment code, or None when there is no customer to read.
 
-    Split from `_demand_class_for` so the caller can tell "no such customer" and "customer
-    with no segment" (both None, both nothing to go on) from "a segment that says retail".
-    Since the amendment of 4 Aug 2026 the segment is the FALLBACK, not the source of truth:
-    it is NULL on 3,276 of 3,284 customers, so an answer from it is a bonus rather than the
-    rule, and treating its silence as "retail" is exactly the invisible mis-prioritisation
-    the report path exists to prevent.
+    Three answers, and the caller needs all three apart: "no such customer" and "customer
+    with no segment" are both None and both nothing to go on, and a segment that says
+    retail is an answer. There is deliberately no defaulting wrapper around this any more
+    (QP1): the import refuses a document it cannot classify rather than writing a guess.
+    Since the amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of
+    truth, because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that
+    balance - it stamped 503 customers retail so the real AutoCount export, which carries no
+    order type column, can classify at all - but not the rule: silence here is still
+    silence, and treating it as "retail" is exactly the invisible mis-prioritisation the
+    refusal exists to prevent.
     """
     if not debtor_code:
         return None
     # ORM again: customers are company-scoped too, and reading another company's customer
     # would decide this order's fulfilment priority from the wrong row.
+    #
+    # ORDERED, because `LIMIT 1` without one picks whatever the planner returns first. The
+    # scope should leave at most one row per code (`customer_code` is unique per company),
+    # and on the day it leaves two - a company-shared row, an unscoped principal - the
+    # useful answer is the one that STATES a segment rather than a coin toss between an
+    # answer and a blank. `id` breaks the remaining tie so a re-run cannot classify the
+    # same file two ways.
     return (
         db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
         .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
+        .order_by(
+            (func.coalesce(func.trim(Customer.market_segment_code), "") == ""),
+            Customer.id,
+        )
         .limit(1)
         .scalar()
     )
-
-
-def _demand_class_for(db: Session, debtor_code: str) -> str:
-    """The class this customer's market segment implies, defaulting when it implies none.
-
-    The never-None facade: a caller holding this answer alone has to write something, and
-    for a customer nothing is known about the safe write is the default. The import path
-    does NOT use it - it needs to tell "no answer" apart from "retail" so it can report the
-    document instead of guessing - but the vocabulary is the same one, `_class_of`.
-    """
-    return _class_of(_segment_of(db, debtor_code)) or DEFAULT_DEMAND_CLASS
 
 
 def _demand_state(db: Session, docs: tuple[str, ...],
@@ -865,6 +873,13 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
     Reported as a `RowProblem` rather than a `ResolutionIssue`: the issue list means "a code
     in this file names nothing we hold", and this is the opposite complaint - the file states
     nothing to resolve. Both lists are put in front of the same person on the same screen.
+
+    Since QP1 (captain, 26 Aug 2026) an unclassified document is a VALIDATION ERROR and not
+    a notice: the second return value is what refuses the whole upload, document numbers and
+    all. "Nothing should be unclassified", and the plan page dropped its Unclassified column
+    on the strength of it, so an import that could quietly create another one would put the
+    demand somewhere no screen shows it. The refusal is per FILE rather than per document
+    because a half-imported order book is a book that disagrees with AutoCount.
     """
     if bind.demand_class_col is None:
         return {}, []
@@ -901,14 +916,23 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
         # Named specifically, because the four sources have four different fixes: an order
         # type on the header, an order type in the export, a market segment on the customer,
         # or a demand class on the agent. "Unclassified" alone tells the operator nothing
-        # about which one to go and set.
+        # about which one to go and set. The DEBTOR is named beside the order because it is
+        # the fix they will reach for first: give that customer a market segment and the
+        # whole file goes in.
         agent_says = (f"agent {agent_code} carries no demand class" if agent_code
                       else "it names no agent")
+        debtor = resolved.party_code_by_doc.get(number, "")
+        # The buyer's NAME beside the code where the file states one. The code is what the
+        # operator searches on and the name is what tells them whether they have the right
+        # customer open, and this message is the only place they get either.
+        label = resolved.party_label_by_code.get(debtor) if debtor else None
+        who = f"debtor {debtor}" + (f" ({label})" if label else "")
+        debtor_says = (f"{who} carries no customer market segment" if debtor
+                       else "it names no debtor code")
         problems.append(RowProblem(
             first_row.get(number, 0),
-            f"{number} states no order type, its debtor code resolves to no customer "
-            f"market segment, and {agent_says}, so its fulfilment priority is left "
-            f"unclassified rather than defaulted to {DEFAULT_DEMAND_CLASS}",
+            f"{number} states no order type, {debtor_says}, and {agent_says}, so its "
+            "demand class cannot be decided; nothing is imported until it can",
             value=number))
     return out, problems
 
@@ -1058,6 +1082,10 @@ class _Plan:
     # Row-scoped complaints this module raises on top of the reader's own, so both entry
     # points hand the operator ONE list of rows to look at.
     problems: list[RowProblem] = field(default_factory=list)
+    # Documents in this file whose demand class could not be decided (QP1). NOT a notice:
+    # while this list is non-empty the upload is refused and nothing is written, so preview
+    # and commit give the same verdict for the same reason.
+    unclassified: list[str] = field(default_factory=list)
     # Agent codes in the file that can classify nothing yet. Master-data gaps, not row
     # failures, so they travel separately.
     agent_notices: list[AgentNotice] = field(default_factory=list)
@@ -1101,6 +1129,7 @@ def _build(db: Session, file_data: bytes, doc_type: str,
         complete=complete,
         demand=demand,
         problems=demand_problems,
+        unclassified=[str(p.value) for p in demand_problems if p.value],
         agent_notices=agent_notices,
         money_by_line=money,
     )
@@ -1177,6 +1206,7 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         missing_columns=read.missing_columns,
         row_problems=row_problems,
         resolution_issues=plan.issues,
+        unclassified_documents=plan.unclassified,
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
@@ -1537,6 +1567,20 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     read, resolved, diff = plan.read, plan.resolved, plan.diff
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
+
+    # QP1: an order nothing can classify refuses the FILE, before any write and before any
+    # outcome is recorded. Half a book is worse than none - the un-imported half is
+    # invisible while the imported half looks complete - and a defaulted class is worse
+    # still, because it is stable and no later upload surfaces it. The row problems name
+    # every offending order and its debtor; fixing the customer's market segment (or the
+    # order type, or the agent's class) and re-uploading is the whole remedy.
+    if plan.unclassified:
+        return {
+            "ok": False,
+            "unclassified_documents": list(plan.unclassified),
+            "row_problems": [asdict(p) for p in read.problems + plan.problems],
+            "counts": {},
+        }
 
     _record_rows_never_written(read, resolved, outcome)
 
@@ -2019,6 +2063,28 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         except Exception:  # pragma: no cover - defensive, see above
             logger.exception("plan exception batch failed for a confirmed SO upload")
 
+    # Section 3.G, AC-G3: the buyer acted on the occupancy panel's "location differs", split
+    # the line in AutoCount and uploaded the book again. The book now states BRW-BB 487 + BRW
+    # 13 and the placements are still on the line that used to be DC1 - so each one is moved
+    # onto the line of this same document whose warehouse matches the demand's own location.
+    # PO book only: a sales-order upload changes no supply line.
+    #
+    # Best-effort for the same reason the two batches below are: the write has already
+    # succeeded, and a defect in the reaction must cost the operator a relocation the next
+    # upload makes again, never the upload itself.
+    relinked = 0
+    if doc_type == PO and order_ids:
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            relinked = ProjectOrderInquiryService(db).relink_to_matching_lines(
+                list(order_ids.values()), actor_user_id=actor, trigger="po_book_upload",
+            )
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("re-linking placements failed for a confirmed PO upload")
+
     # PLAN-so-book-diff-replanning.md section 2: the SO book's own reaction. Best-effort
     # for the same reason the exception batch above is - the upload has already succeeded,
     # and a defect in the reaction must cost the operator a batch the next upload produces
@@ -2065,6 +2131,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # CRM-raised purchase orders this same upload retired because AutoCount now
         # states the identical (product, supplier) - see `_supersede_crm_raised_pos`.
         "superseded_documents": superseded_documents,
+        # How many order-inquiry placements this upload moved onto the line whose warehouse
+        # matches the demand (AC-G3). 0 on the SO channel and on a PO book that changed no
+        # location - which is most of them.
+        "relinked_placements": relinked,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

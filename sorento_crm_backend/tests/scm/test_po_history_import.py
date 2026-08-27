@@ -105,6 +105,12 @@ def blank_book(db):
             text("DELETE FROM purchase_orders WHERE po_number = ANY(:nums)"),
             {"nums": numbers},
         )
+        # The SPO half of the same book lives in `spo_allocations` since migration 420,
+        # and its document numbers are just as fixed as the purchase orders' are.
+        db.execute(
+            text("DELETE FROM spo_allocations WHERE spo_number = ANY(:nums)"),
+            {"nums": numbers},
+        )
         db.flush()
     return numbers
 
@@ -116,6 +122,18 @@ def imported(db, catalogue):
 
 def _order(db, number: str) -> PurchaseOrder:
     return db.query(PurchaseOrder).filter(PurchaseOrder.po_number == number).one()
+
+
+def _allocations(db, number: str):
+    """The SPO half, in the table a shipping order lives in since migration 420."""
+    from app.models.procurement import SPOAllocation
+
+    return (
+        db.query(SPOAllocation)
+        .filter(SPOAllocation.spo_number == number)
+        .order_by(SPOAllocation.spo_line_number)
+        .all()
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -201,12 +219,12 @@ def test_a_charge_line_is_not_written_as_a_product_line(db, imported, catalogue)
     Written as lines they would be two catalogue codes that never match, reported as
     failures on every upload; and a quantity of 1 "HANDLING CHARGES" is not stock.
     """
-    order = _order(db, "SPO-2020/01-0001")
     codes = {
-        db.query(Product.product_code).filter(Product.id == l.product_id).scalar()
-        for l in order.lines
-        if l.product_id
+        db.query(Product.product_code).filter(Product.id == row.product_id).scalar()
+        for row in _allocations(db, "SPO-2020/01-0001")
+        if row.product_id
     }
+    assert codes, "the shipping order wrote no lines at all"
     assert "MISC" not in codes
     assert "HANDLING CHARGES" not in codes
     assert imported["charge_lines"] >= 2

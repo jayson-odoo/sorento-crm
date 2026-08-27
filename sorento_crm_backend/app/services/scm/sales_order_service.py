@@ -350,13 +350,20 @@ class SalesOrderService:
         """One order as the API states it.
 
         ``line_planning`` attaches, per LINE, what has already been planned about it: the
-        order inquiry covering it and the revision that decided it. Two queries for the
-        WHOLE order, and off by default - the list renders neither, and paying for them
-        across a page of 50 orders would be 100 reads for a fact nothing there prints.
+        order inquiry covering it, the revision that decided it, and the documents its Buy
+        is linked to. Three reads for the WHOLE order, and off by default - the list
+        renders none of them, and paying for them across a page of 50 orders would be 150
+        reads for facts nothing there prints.
         """
         customer = so.customer
         inquiries = self._line_inquiries(so) if line_planning else {}
+        # Which revision decided each line, what it decided, and what the engine had
+        # suggested (AC-D4). Off by default: the list prints none of it and would pay the
+        # read across a page of 50 orders.
         decided = self._decided_lines(so) if line_planning else {}
+        # WHERE each line's Buy sits (AC-I9). Same gate, same reason: the list has no
+        # column for it.
+        links = self._line_links(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -422,7 +429,18 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
-                "decision_revision": decided.get(str(ln.id)),
+                # AC-I9: WHERE this line's Buy sits, off the SAME reader the order
+                # inquiry worklist's "Linked to" column and the PO occupancy panel use.
+                # `None` when no inquiry row covers the line at all, `[]` when one does
+                # and holds no link: "nobody was told" and "told, nothing linked" are
+                # different answers and the column says so.
+                "linked_to": links.get(str(ln.id)),
+                "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
+                # The two compositions in the planning board's vocabulary. Both null on a
+                # line no active revision covers; `supply_proposed` also null on a revision
+                # frozen before the proposal was recorded (AC-D1).
+                "supply_decided": (decided.get(str(ln.id)) or {}).get("decided"),
+                "supply_proposed": (decided.get(str(ln.id)) or {}).get("proposed"),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -527,14 +545,102 @@ class SalesOrderService:
             for core_id, inquiry_no, state in rows
         }
 
-    def _decided_lines(self, so: SalesOrder) -> dict[str, int]:
-        """Which of this order's lines the ACTIVE revision covers, and at what revision.
+    def _line_links(self, so: SalesOrder) -> dict[str, list[dict]]:
+        """Every document each of this order's lines is linked to, keyed by CORE line id.
+
+        The chain is the mirror the inquiry column already walks -
+        `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
+        `core_sales_order_line_id` - and then the row's own links. ONE call into
+        `ProjectOrderInquiryService.links_for_rows`, which is the single reader of
+        `projects.order_inquiry_links` for a screen, so this column, the worklist's
+        "Linked to" and the PO occupancy panel cannot come to three different answers
+        (section 3.I: "Same data as the worklist and the PO occupancy panel, one reader").
+
+        A core line with an inquiry row and no link answers `[]`; one with no row at all is
+        simply absent from the dict, and the serializer sends `None`.
+        """
+        from app.models.project_so import OrderInquiryRow
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.core_sales_order_line_id, OrderInquiryRow.id
+            )
+            .select_from(OrderInquiryRow)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .all()
+        )
+        if not rows:
+            return {}
+        links_by_row = ProjectOrderInquiryService(self.db).links_for_rows(
+            [row_id for _core_id, row_id in rows]
+        )
+        out: dict[str, list[dict]] = {}
+        for core_id, row_id in rows:
+            entries = out.setdefault(str(core_id), [])
+            for link in links_by_row.get(row_id, []):
+                entries.append(
+                    {
+                        "kind": link["kind"],
+                        "document": link["document"],
+                        "line_label": link["line_label"],
+                        "qty": link["qty"],
+                        "location": link["location"],
+                        # ISO strings, like every other date this schema states: the SCM
+                        # order contract spells dates as text and a `date` object would
+                        # not validate against it.
+                        "expected_date": (
+                            link["expected_date"].isoformat()
+                            if link["expected_date"]
+                            else None
+                        ),
+                    }
+                )
+        return out
+
+    @staticmethod
+    def _supply_components(components) -> list[dict]:
+        """A frozen composition in the board's own vocabulary (PLAN section 2).
+
+        The components, never a sentence: the words are written once, on the screen
+        (`supplyVocabulary.ts`), and composing them here would be a second implementation of
+        the same vocabulary free to drift against the board's.
+        """
+        return [
+            {
+                "kind": (component or {}).get("kind"),
+                "qty": str((component or {}).get("qty") or "0"),
+                "source_location": (component or {}).get("source_location"),
+                "rung": (component or {}).get("rung"),
+                "donor_so_number": (component or {}).get("donor_so_number"),
+            }
+            for component in components or []
+        ]
+
+    def _decided_lines(self, so: SalesOrder) -> dict[str, dict]:
+        """What the ACTIVE revision froze for each of this order's lines: the revision that
+        decided it, the composition it decided, and the one the engine had suggested (AC-D4).
 
         A line is covered iff `line_snapshots` holds an object naming it - the same rule
         `scm.committed_v` and the planning board's `_frozen_decisions` read, and the reason
         that JSONB is load-bearing rather than display evidence. A line INSIDE an order
         that has an active decision but absent from its snapshots is not decided (13.4),
         and reads exactly like a line on an order nobody has planned.
+
+        ONE query and ONE parse for all three facts. They came off two identical queries,
+        which is not only a wasted read: two parses of one JSONB column are two chances for
+        the revision number and the composition beside it to describe different rows.
+
+        `proposed` is `None` (not `[]`) when the snapshot carries no `proposed_components`:
+        the revision predates the frozen proposal (AC-D1), and "not recorded" is a different
+        statement from "the engine suggested nothing".
 
         At most one row can answer: `uq_projects_so_core_order` makes one planning record
         per core order and `uq_so_supply_decisions_active` one active revision per record.
@@ -556,11 +662,20 @@ class SalesOrderService:
         if decision is None:
             return {}
         revision_no, snapshots = decision
-        return {
-            str((snapshot or {}).get("core_line_id")): int(revision_no)
-            for snapshot in (snapshots or [])
-            if (snapshot or {}).get("core_line_id")
-        }
+        out: dict[str, dict] = {}
+        for snapshot in snapshots or []:
+            core_line_id = (snapshot or {}).get("core_line_id")
+            if not core_line_id:
+                continue
+            proposed = (snapshot or {}).get("proposed_components")
+            out[str(core_line_id)] = {
+                "revision_no": int(revision_no),
+                "decided": self._supply_components((snapshot or {}).get("components")),
+                "proposed": (
+                    None if proposed is None else self._supply_components(proposed)
+                ),
+            }
+        return out
 
     def with_links(self, rows: list[dict]) -> list[dict]:
         """Attach each order's purchase-order claims, in ONE query for the whole page.

@@ -21,6 +21,7 @@ no prices in them - worse than refusing the file and naming what is missing.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
@@ -87,6 +88,26 @@ class ProformaLine:
     brand: Optional[str] = None
     cartons: Optional[float] = None
     spec: Optional[str] = None
+    #: How much room one unit takes, and how much the whole line takes. The pre-loading list
+    #: states both (体积(cbm) / 总体积(cbm)); Kailu's proforma states neither, and then both
+    #: stay None - "not measured" and "takes no room" are different answers to "will this
+    #: fit", and only one of them is honest (AC-D1).
+    cbm_per_unit: Optional[float] = None
+    cbm_total: Optional[float] = None
+    #: What the line weighs, when the supplier prints it (净重 / 毛重, N.W. / G.W.). Neither
+    #: is derived from the other and neither is invented: a document that states no weight
+    #: leaves both None, which reads as unstated rather than as weightless.
+    net_weight: Optional[float] = None
+    gross_weight: Optional[float] = None
+    #: What it is made of and how it is boxed (材质 / 装箱数 / 外箱尺寸). The container
+    #: workbook derives its carton count and its volume from the last two, so a document
+    #: that prints them is the only place they can come from without being re-typed.
+    #: Centimetres, as the documents state them - not converted on the way in.
+    material: Optional[str] = None
+    pcs_per_carton: Optional[float] = None
+    carton_length_cm: Optional[float] = None
+    carton_width_cm: Optional[float] = None
+    carton_height_cm: Optional[float] = None
 
 
 @dataclass
@@ -201,6 +222,30 @@ def _stated_total(raw: list) -> Optional[float]:
     return None
 
 
+#: What a supplier puts between the three figures of a combined carton-size cell. `62*53*40`
+#: is the common one; `62x53x40` and `62 × 53 × 40` are the same sentence in other hands.
+_SIZE_SPLIT = re.compile(r"[*xX×✕✖×/,]+")
+
+
+def _carton_size(value: Any) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Three lengths out of one `外箱尺寸` cell, or nothing at all.
+
+    A cell that does not hold exactly three readable numbers is left alone rather than
+    guessed at: `730*370` is a face measurement and `730*370*690*2` is a note, and either
+    read as a carton would put a made-up volume on the container's total.
+    """
+    text = _text(value)
+    if not text:
+        return (None, None, None)
+    parts = [p for p in _SIZE_SPLIT.split(text) if p.strip()]
+    if len(parts) != 3:
+        return (None, None, None)
+    numbers = [_number(p) for p in parts]
+    if any(n is None for n in numbers):
+        return (None, None, None)
+    return (numbers[0], numbers[1], numbers[2])
+
+
 def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optional[ProformaLine]:
     """One priced line, or None when this row is not one.
 
@@ -219,6 +264,26 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
 
     unit_price = _number(vals.get("unit_price"))
     amount = _number(vals.get("amount"))
+
+    # Whichever volume the supplier stated, the other is derived from it, same as the
+    # packing-list reader does. The per-unit figure is what has to survive Sorento trimming
+    # the quantity to fit the box (AC-E3), and the total is what the fill bar sums - so a
+    # document stating only one of them still answers both questions. Neither is invented
+    # when the document states neither.
+    cbm_total = _number(vals.get("cbm_total"))
+    cbm_per_unit = _number(vals.get("cbm_per_unit"))
+    if cbm_per_unit is None and cbm_total is not None and qty:
+        cbm_per_unit = round(cbm_total / qty, 6)
+    elif cbm_total is None and cbm_per_unit is not None:
+        cbm_total = round(cbm_per_unit * qty, 4)
+    # The carton either has three columns of its own (`L` / `W` / `H`) or one cell holding
+    # all three (`外箱尺寸`). Separate columns win where both are present: they are what the
+    # supplier typed as numbers, and the combined cell is a sentence about them.
+    length, width, height = _carton_size(vals.get("carton_size"))
+    length = _number(vals.get("carton_length_cm")) or length
+    width = _number(vals.get("carton_width_cm")) or width
+    height = _number(vals.get("carton_height_cm")) or height
+
     # The supplier fills one of the two about as often as both. Neither is derived onto the
     # line here: the document of record says what it says, and the service sums whichever is
     # present. Deriving would make a wrong price look like a stated one.
@@ -235,6 +300,15 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
         brand=_text(vals.get("brand")),
         cartons=_number(vals.get("cartons")),
         spec=_text(vals.get("spec")),
+        cbm_per_unit=cbm_per_unit,
+        cbm_total=cbm_total,
+        net_weight=_number(vals.get("net_weight")),
+        gross_weight=_number(vals.get("gross_weight")),
+        material=_text(vals.get("material")),
+        pcs_per_carton=_number(vals.get("pcs_per_carton")),
+        carton_length_cm=length,
+        carton_width_cm=width,
+        carton_height_cm=height,
     )
 
 

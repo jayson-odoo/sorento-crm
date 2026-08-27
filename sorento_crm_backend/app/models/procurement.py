@@ -165,6 +165,22 @@ class InboundShipment(Base, CompanyScopedMixin):
     # derive status (A2).
     source_sheet = Column(String(100), nullable=True)
 
+    # ---- The container workbook's own header and costs ---------------------
+    # `FSCU8103365.xlsx` prints a twelve-line header block above the lines, and three of
+    # its lines had nowhere to live: SEAL NO, SHIPPER, and the forwarder's `SO :` booking
+    # reference (`forwarder_order_ref` - "SO" in this codebase is a sales order).
+    seal_number = Column(String(50), nullable=True)
+    shipper = Column(String(255), nullable=True)
+    forwarder_order_ref = Column(String(100), nullable=True)
+
+    # Typed per container, never per line (the captain's ruling, 27 Aug): the sheet's
+    # footer apportions clearance and China freight by each company's share of the VOLUME
+    # and insurance by its share of the AMOUNT, so one figure covers the whole container.
+    # `insurance_rate` is a rate the share is multiplied by, not a cost.
+    clearance_cost = Column(Numeric(15, 2), nullable=True)
+    china_freight_cost = Column(Numeric(15, 2), nullable=True)
+    insurance_rate = Column(Numeric(15, 4), nullable=True)
+
     # Every ETA revision writes an `audit_logs` row with old_values/new_values,
     # which is what replaces a revisions table (D5).
     __audit_track__ = True
@@ -315,6 +331,25 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # The supplier's own note on the line (`备注`). Kept separate from the discrepancies the
     # system derives, which are computed at read time and never stored.
     remarks = Column(Text, nullable=True)
+
+    # ---- What the container workbook measures the line by -------------------
+    # Read off the supplier's proforma / packing list, editable on the packing list
+    # afterwards. The sheet derives CTN QTY from `quantity_shipped / pcs_per_carton`,
+    # CBM / CTN from the carton's L x W x H, and TOTAL NW / TOTAL GW from the per-carton
+    # weights times the carton count - so none of those five is stored, only its inputs.
+    #
+    # Centimetres, as the sheet's `SIZE (CM)` block states them: converting on the way in
+    # would make the stored number disagree with the paper the supplier sent.
+    material = Column(String(255), nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+    # `weight_per_carton` above stays and is READ AS GROSS when this pair is null: it is
+    # the only weight the line has ever had, and rewriting the rows that carry it would
+    # lose the one figure some containers hold.
+    net_weight_per_carton = Column(Numeric(10, 3), nullable=True)
+    gross_weight_per_carton = Column(Numeric(10, 3), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
@@ -347,13 +382,34 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
 
 
 class SPOAllocation(Base, CompanyScopedMixin):
+    """A shipping-order LINE: what one SPO promises, of one product, to one location.
+
+    Since migration 420 (`PLAN-scm-cs-planning-uat.md` section K, captain's Q6 ruling of
+    25 Aug 2026) this table holds the SPO DOCUMENT itself, not only the allocation of an
+    inbound shipment. Both writers meet on one shape: the purchase-history import files
+    every `SPO-` document here, and `spo_conversion_service` files the SPO it raises from a
+    draft shipment here. `scm.on_order_v` reads this table and nothing else, so an SPO is
+    incoming supply for the first time.
+
+    Two columns are nullable because of that, and each says something:
+
+      * `inbound_shipment_id` - a shipping order exists before anybody books a container
+        for it. NULL means "promised, not yet on a named shipment".
+      * `warehouse_id` - the book names a stock location we do not hold on 6,520 of the
+        captain's own SPO lines. The raw code is kept in `location_code` so nothing is lost,
+        and a row with no warehouse counts as incoming supply NOWHERE (`on_order_v` requires
+        a warehouse); a location we cannot place cannot cover a line standing at one.
+    """
     __tablename__ = "spo_allocations"
-    
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
     spo_line_number = Column(Integer, nullable=True)
-    inbound_shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=False)
-    warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False)
+    inbound_shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=True)
+    warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
+    #: The stock location exactly as the book spelled it, whether or not we hold it. The
+    #: only record of where an unheld-location line was meant to go.
+    location_code = Column(String(50), nullable=True)
     storage_zone_id = Column(UUID(as_uuid=False), ForeignKey("storage_zones.id", ondelete="SET NULL"), nullable=True)
     allocated_quantity = Column(Integer, nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
@@ -384,8 +440,29 @@ class SPOAllocation(Base, CompanyScopedMixin):
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    
+    # --- the document the line belongs to (migration 420) ----------------------------
+    #: Which feed wrote it: `scm_spo_history` / `scm_po_history` / `scm_upload` for an
+    #: imported document, NULL for a row this system raised itself. The migration's
+    #: downgrade moves exactly the stamped rows back into `purchase_orders`.
+    source_system = Column(String(50), nullable=True)
+    #: The SPO's own document date, and the line's promised arrival. `expected_date` is what
+    #: rung 1 of the fulfilment ladder compares against a sales line's required date, so a
+    #: shipping order with no shipment booked can still be read as timely incoming supply.
+    issue_date = Column(Date, nullable=True)
+    expected_date = Column(Date, nullable=True)
+    supplier_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("suppliers.id", ondelete="SET NULL", name="fk_spo_allocations_supplier_id"),
+        nullable=True,
+    )
+    unit_cost = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(3), nullable=True)
+    #: `open` / `closed`, the same word the purchase-order line carries. History lands
+    #: closed, so it can never read as supply however its receipt status is later edited.
+    line_status = Column(String(50), nullable=False, server_default="open", default="open")
+
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
     po_line = relationship("PurchaseOrderLine", foreign_keys=[po_line_id])
     warehouse = relationship("Warehouse", back_populates="spo_allocations")
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
@@ -397,7 +474,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
         Index("ix_spo_allocations_inbound_shipment_id", "inbound_shipment_id"),
         Index("ix_spo_allocations_warehouse_id", "warehouse_id"),
         Index("ix_spo_allocations_product_id", "product_id"),
-        UniqueConstraint("spo_number", "product_id", "warehouse_id", name="uk_spo_allocations_spo_number_product_warehouse"),
+        # The LINE is the identity, not the (document, product, location) triple: the
+        # captain's book states the same product on one SPO 13,305 times over - two
+        # containers of one item - and the old triple key forbade every one of them.
+        UniqueConstraint(
+            "company_id", "spo_number", "spo_line_number",
+            name="uk_spo_allocations_company_spo_line",
+        ),
+        # What the triple key was also doing, kept as a plain lookup: every reader that
+        # asks "what is coming for this product, here" hits these three columns.
+        Index("ix_spo_allocations_spo_product_warehouse", "spo_number", "product_id", "warehouse_id"),
     )
 
 

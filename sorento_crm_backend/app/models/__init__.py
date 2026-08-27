@@ -157,6 +157,7 @@ from app.models.project_so import (  # noqa: F401
     OrderInquiry,
     OrderInquiryRow,
 )
+from app.models.stock_transfer import StockTransfer  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
@@ -189,6 +190,7 @@ __all__ = [
     "OrderLine",
     "SalesOrder",
     "SalesOrderLine",
+    "StockTransfer",
     "SalesAgent",
     "Warehouse",
     "StorageZone",

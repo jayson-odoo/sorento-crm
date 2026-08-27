@@ -32,6 +32,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
+    UnlinkRequest,
     UnplaceAllPreview,
     UnplaceAllRequest,
     UnplaceAllResult,
@@ -41,6 +42,7 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ WorklistSort = Literal[
     "po_number",
     "state",
     "raised_at",
+    "raised_by_name",
     "location",
     "agent",
 ]
@@ -79,6 +82,8 @@ def _worklist_filters(
     state: Optional[str],
     project_id: Optional[str],
     supplier_id: Optional[str],
+    raised_by: Optional[str] = None,
+    linked: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
@@ -91,6 +96,9 @@ def _worklist_filters(
         "state": state,
         "project_id": project_id,
         "supplier_id": supplier_id,
+        # `users.id` is a plain string, not a UUID column - it is never validated as one.
+        "raised_by": raised_by,
+        "linked": linked,
     }
 
 
@@ -100,7 +108,8 @@ def list_order_inquiry_worklist(
         None,
         description=(
             "One box. Matches the sales-order number, the item code, the product name or "
-            "code, the customer and the project."
+            "code, the customer, the project, and the name of the person who raised it "
+            "(or the front of their email address)."
         ),
     ),
     delivery_month: Optional[str] = Query(
@@ -111,9 +120,24 @@ def list_order_inquiry_worklist(
     ),
     # A closed set for the same reason `sort` is: a filter nothing can equal reads on
     # screen as "no work to do" when the truth is "that is not a state".
-    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
+    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(
+        None,
+        description=(
+            "The person who raised the rows, by id, off the summary's own list. Matches a "
+            "row's supply revision confirmer, or its inquiry header when it has none."
+        ),
+    ),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(
+        None,
+        description=(
+            "WHERE the row is linked (AC-I5). `po` / `spo` mean it holds at least one "
+            "link of that kind; `none` means no link at all, which is the buyer's own "
+            "worklist. A closed set for the same reason `state` is."
+        ),
+    ),
     sort: Optional[WorklistSort] = Query(
         None, description="Defaults to delivery_date. Nulls always last."
     ),
@@ -144,7 +168,14 @@ def list_order_inquiry_worklist(
             sort=sort,
             direction=direction,
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
+                linked,
             ),
         )
     except Exception as exc:
@@ -156,9 +187,11 @@ def order_inquiry_worklist_summary(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
+    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -166,7 +199,14 @@ def order_inquiry_worklist_summary(
     try:
         return OrderInquiryWorklistService(db).summary(
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
+                linked,
             ),
         )
     except Exception as exc:
@@ -178,9 +218,11 @@ def export_order_inquiry_worklist(
     query: Optional[str] = Query(None),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
-    state: Optional[Literal["raised", "actioned", "cancelled", "placed"]] = Query(None),
+    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -193,13 +235,20 @@ def export_order_inquiry_worklist(
     try:
         filename, body = OrderInquiryWorklistService(db).export_xlsx(
             **_worklist_filters(
-                query, delivery_month, raised_date, state, project_id, supplier_id
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
+                linked,
             )
         )
         return Response(
             content=body,
             media_type=WORKLIST_XLSX,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -311,7 +360,7 @@ async def export_order_inquiry(
             media_type=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -387,23 +436,35 @@ async def place_order_inquiry_row_on_po(
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Tag a raised row to an outstanding PO line - "the quantity to be ordered is
-    deducted" (the captain, section G). The original single-line shape (`po_line_id`)
-    is unchanged; `allocations` is the G2 cascade override, one or more
-    `{po_line_id, qty}` lines in one call - the row may split (see
-    `ProjectOrderInquiryService.place_on_po_allocations`), so the response is the FIRST
-    row the call touched (the reused row on full coverage, the first new split row on a
-    partial one); every row it wrote is visible on the next listing refresh."""
+    """Link a row to one or more document lines (PLAN-scm-cs-planning-uat.md section 3.I).
+
+    The PATH is deliberately unchanged - the plan renames the verb, not the URLs - so this
+    is "Link PO" / "Link SPO" on every screen. `po_line_id` links one purchase order line
+    for the row's whole unlinked remainder; `allocations` links across several, each naming
+    a `po_line_id` OR an `spo_allocation_id` (an SPO only on an ORDER BACK row, part 2
+    section 4b). The row is NEVER split (AC-I6): it keeps its full quantity and gains one
+    link per allocation, so the response is that same row with its links on it."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")
         service = ProjectOrderInquiryService(db)
         if payload.allocations:
             for allocation in payload.allocations:
-                validate_uuid_path(allocation.po_line_id, resource="Purchase order line")
+                if allocation.po_line_id:
+                    validate_uuid_path(
+                        allocation.po_line_id, resource="Purchase order line"
+                    )
+                if allocation.spo_allocation_id:
+                    validate_uuid_path(
+                        allocation.spo_allocation_id, resource="SPO allocation"
+                    )
             written = service.place_on_po_allocations(
                 row_id,
                 [
-                    {"po_line_id": allocation.po_line_id, "qty": allocation.qty}
+                    {
+                        "po_line_id": allocation.po_line_id,
+                        "spo_allocation_id": allocation.spo_allocation_id,
+                        "qty": allocation.qty,
+                    }
                     for allocation in payload.allocations
                 ],
                 actor_user_id=current_user["id"],
@@ -427,10 +488,12 @@ async def auto_place_order_inquiries(
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Run the cascade now (G2 rule 4, the worklist's "Auto-place"): every raised
-    ORDER/RESERVE & ORDER row of the named products - or of every product carrying one,
-    when `product_ids` is omitted - tagged to its own open PO lines, earliest expected
-    date first. Idempotent: a second call with the same products places nothing more."""
+    """Run the cascade now (the worklist's "Auto-link"): every raised or partly linked
+    ORDER / RESERVE & ORDER / ORDER BACK row of the named products - or of every product
+    carrying one, when `product_ids` is omitted - linked to its own open document lines in
+    the walk's order (cited document, then SPO before PO on an order back, then location
+    tier, then the purchase order's issue date, then the line's expected date). Idempotent:
+    a second call links nothing more."""
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
@@ -449,14 +512,19 @@ async def auto_place_order_inquiries(
 )
 async def unplace_order_inquiry_row(
     row_id: str,
+    payload: UnlinkRequest = UnlinkRequest(),
     current_user: dict = Depends(require_permission(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Untag: the row goes back to raised and the reorder engine sees it again."""
+    """Unlink. With a `link_id` that ONE link goes and the row keeps its others; without
+    one every link on the row goes. Either way the quantity that comes back counts as
+    demand again, and the row's state is re-derived from what is left."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")
+        if payload.link_id:
+            validate_uuid_path(payload.link_id, resource="Order inquiry link")
         body = ProjectOrderInquiryService(db).unplace(
-            row_id, actor_user_id=current_user["id"]
+            row_id, actor_user_id=current_user["id"], link_id=payload.link_id
         )
         db.commit()
         return body
@@ -474,6 +542,7 @@ def order_inquiry_unplace_all_preview(
     raised_date: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
 ):
@@ -485,7 +554,7 @@ def order_inquiry_unplace_all_preview(
     not a browse."""
     try:
         filters = _worklist_filters(
-            query, delivery_month, raised_date, None, project_id, supplier_id
+            query, delivery_month, raised_date, None, project_id, supplier_id, raised_by
         )
         filters.pop("state", None)
         return OrderInquiryWorklistService(db).unplace_all_preview(**filters)
@@ -516,6 +585,7 @@ async def unplace_order_inquiry_rows_in_scope(
             raised_date=payload.raised_date,
             project_id=payload.project_id,
             supplier_id=payload.supplier_id,
+            raised_by=payload.raised_by,
         )
         db.commit()
         return {"unplaced": unplaced}

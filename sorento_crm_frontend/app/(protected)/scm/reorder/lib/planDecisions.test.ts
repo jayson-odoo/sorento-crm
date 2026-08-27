@@ -287,7 +287,10 @@ describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it
           { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', qty: 1 },
         ],
       },
-      reason: 'Trend: orders rose 12%',
+      // A reason string that still has a producer: the ledger's forecast add-on writes
+      // exactly this shape (`PlanOrderQtyLedger`). The trend advisory that used to write
+      // "Trend: orders rose 12%" was removed with the decision cell's advice line (P6).
+      reason: 'Forecast: +12 (next 30d demand at 0.4/day - sales orders)',
     };
     expect(toRecordPlanRowDecisionPayload(d)).toEqual({
       kind: 'mixture',
@@ -297,7 +300,7 @@ describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it
         { location: 'PJ-SR', qty: 1 },
       ],
       po_qty: undefined,
-      reason_text: 'Trend: orders rose 12%',
+      reason_text: 'Forecast: +12 (next 30d demand at 0.4/day - sales orders)',
     });
   });
 

@@ -529,6 +529,17 @@ export interface ConfirmResult {
   review_state: string;
   inquiry_rows_created: number;
   exceptions: ConfirmException[];
+  /**
+   * The physical movements this confirmation raised, and how many it could NOT write
+   * (`PLAN-scm-cs-planning-uat.md` section E).
+   *
+   * The transfer write is best-effort on the server so a failure cannot fail a promise
+   * already made, but a movement nobody was told about is a movement nobody makes - so a
+   * non-zero `transfers_failed` is said out loud. Optional, because a revision confirmed
+   * against a server that predates the field carries neither.
+   */
+  transfers_written?: number | null;
+  transfers_failed?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -816,6 +827,9 @@ export interface BoardLineDecision {
   buy_reason?: string | null;
   /** Why the composition was not the engine's, in the planner's own words. */
   amend_reason?: string | null;
+  /** The frozen Buy was an ORDER BACK, and the document CS cited for it (part 2 4b). */
+  order_back?: boolean;
+  cited_document?: string | null;
 }
 
 /**
@@ -958,6 +972,17 @@ export interface BoardContribution {
   /** The default rule's proposal for this row, in the order the engine proposes them. */
   sources: BoardSource[];
   /**
+   * What the ENGINE suggested for this line, beside what was decided (AC-D2).
+   *
+   * The live ladder on an undecided line - the same list as `sources` there - and the
+   * composition FROZEN at confirm on a covered one, where `sources` states the decision and
+   * the suggestion would otherwise be lost the moment somebody amended it.
+   *
+   * `null` on a revision written before the proposal was frozen. "Not recorded" and "the
+   * engine suggested nothing" are different answers and the screen says which.
+   */
+  proposed?: BoardProposed | null;
+  /**
    * HOW that proposal was arrived at: the ladder, rung by rung, in the order it was walked.
    *
    * The sources say what the answer is; this says what was checked to get there, including the
@@ -999,6 +1024,28 @@ export interface BoardContribution {
    * been told about this line" and "told, about nothing" are different answers.
    */
   order_inquiry?: BoardLineOrderInquiry | null;
+  /**
+   * What ANOTHER sales order borrowed OFF this line (AC-L6). The captain, 25 August 2026:
+   * the donor's cell reads "71 lent to SO415472".
+   *
+   * An empty list when nothing was lent, never absent, so the cell has one shape to read.
+   */
+  lent_to?: BoardLineLending[];
+}
+
+/** What the engine suggested for one line, in the same shape a source is stated in. */
+export interface BoardProposed {
+  components: BoardSource[];
+}
+
+/** One borrow taken OFF a board row by another sales order (AC-L6). */
+export interface BoardLineLending {
+  /** How much was taken. */
+  qty: string;
+  /** The order that took it, by its document number - never a UUID. */
+  so_number?: string | null;
+  /** Its line on that order, so two lines of one order are told apart. */
+  line_no?: number | null;
 }
 
 /** The order inquiry a board row belongs to, in the two words a person reads it by. */
@@ -1163,6 +1210,14 @@ export interface BoardCellLocation {
   so_qty?: string | null;
   spo_qty?: string | null;
   available_qty?: string | null;
+  /**
+   * The open PURCHASE-order balance here, less what an order-inquiry row already claims off
+   * those lines. SPO documents are excluded - they are `spo_qty` already.
+   *
+   * INFORMATION ONLY and outside `available_qty` on purpose: a purchase order reaches a
+   * project line through a link, never by sitting at the location.
+   */
+  po_open_qty?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -1362,6 +1417,13 @@ export interface BoardReserveComponent {
   /** The warehouse CODE, for the pill and the editor. Never the id. */
   location?: string | null;
   qty: string;
+  /**
+   * Which rung the confirmation froze this share under. Server-supplied on a FROZEN
+   * decision only; the Amend editor never sets it, and the confirmation ignores it coming
+   * back. Read rather than inferred: `BRW-BB` and the pool `BRW` share a site prefix and are
+   * not the same kind of supply, so the code cannot answer this question.
+   */
+  rung?: string | null;
 }
 
 /** One donor an amendment borrows from. The confirm body's borrow component, plus its code. */
@@ -1417,6 +1479,22 @@ export interface BoardDecision {
    * person made by hand has to say why, or the snapshot cannot explain itself later.
    */
   reason?: string;
+  /**
+   * This Buy is an ORDER BACK, not a fresh purchase (part 2 section 4b, captain 25 Aug):
+   * the quantity is a shortfall against something already ordered or already shipped. The
+   * order inquiry row is raised with verb `ORDER_BACK`, which is the ONE verb whose links
+   * may name an SPO allocation as well as a purchase order line.
+   *
+   * Only meaningful with `buy_qty > 0`; an amendment that buys nothing has no row to mark.
+   */
+  order_back?: boolean;
+  /**
+   * The document CS named on the order back, if they named one. It is not a link by
+   * itself - it is what the auto-link walk tries FIRST, before any tier or date
+   * (`ProjectOrderInquiryService` candidate order). Free text on purpose: CS types what
+   * the form says, and a document we do not hold is recorded rather than refused.
+   */
+  cited_document?: string | null;
 }
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
@@ -1467,6 +1545,15 @@ export interface StockDetailIncoming {
   supplier_name?: string | null;
   expected_date?: string | null;
   spo_qty: string;
+  /**
+   * How many days late the promised arrival is; 0 when it is today, ahead or unstated.
+   *
+   * The quantity is counted either way (captain, 26 August 2026: trust the book - the goods
+   * are owed until a re-uploaded book says they arrived). This is what stops that being
+   * read as a fresh promise: an overdue row is named as overdue, so the buyer can see which
+   * supplier to chase instead of wondering why the cover never lands.
+   */
+  overdue_days?: number | null;
 }
 
 /**

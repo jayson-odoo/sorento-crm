@@ -489,12 +489,10 @@ def test_free_stock_is_what_the_supply_service_computes_not_a_second_opinion():
 
 
 def test_the_loser_of_a_contest_is_reported_as_contested_and_named_who_took_it():
-    """Ladder v2: the own location is never a Reserve source, so NEITHER order ever reserves
-    there any more - both end up buying while stock sits idle at the shared location, which
-    is exactly what `contested` now means (section E rule 7: "somebody got there first,
-    whether ... one of the earlier-dated orders in the book"). What survives, and what this
-    test still pins, is the SENTENCE: the loser's Buy still names the order that outranked it,
-    even though that order no longer walks away with a Reserve either."""
+    """Ladder v3, section 1b rung 2: the own location is a group source again, so the
+    WINNER reserves the 10 that are there and the loser is left with nothing to reserve and
+    buys. That is what `contested` means at its plainest - somebody got there first - and
+    the loser's Buy still names the order that outranked it."""
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -516,11 +514,11 @@ def test_the_loser_of_a_contest_is_reported_as_contested_and_named_who_took_it()
         ], "contributions are served in rank order, highest first"
         won, lost = cell["contributions"]
         assert won["rank_score"] > lost["rank_score"]
-        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("buy", "10")]
+        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("reserve", "10")]
         assert [(s["kind"], s["qty"]) for s in lost["sources"]] == [("buy", "10")]
         assert lost["contested"] is True
-        assert won["contested"] is True, "free stock sits idle at the shared location too"
-        assert cell["contested_count"] == 2
+        assert won["contested"] is False, "the winner took the stock, so nothing beat it"
+        assert cell["contested_count"] == 1
         # A ranking nobody can inspect is a ranking nobody will trust: the reason names the
         # order that took the stock, and the row carries the factors behind its score.
         assert "ZZT-SO-WIN" in lost["sources"][0]["reason"]
@@ -1047,11 +1045,10 @@ def test_moving_the_day_window_does_not_change_the_board_totals():
 def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
     """The window is a display bound, so it must not change what anybody is proposed.
 
-    Two lines at one location, neither of them ever a Reserve there under ladder v2 (the own
-    location is never a source), so both end up buying while free stock sits idle - `contested`
-    on both. Look at that through a day window containing neither of them, and the contest
-    still has to be reported - the board's totals describe the selection, not the columns that
-    happen to be on screen.
+    Two lines at one location: under ladder v3 the sooner one reserves what is there and the
+    later one is contested out of it. Look at that through a day window containing neither of
+    them, and the contest still has to be reported - the board's totals describe the
+    selection, not the columns that happen to be on screen.
     """
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
@@ -1073,11 +1070,11 @@ def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
             day_window_start=date(2029, 1, 1),
         )
 
-        assert week["contested_line_count"] == 2
+        assert week["contested_line_count"] == 1
         assert [c for c in far["cells"] if c["bucket_key"] != "no_date"] == [], (
             "the window shows nothing of the timeline"
         )
-        assert far["contested_line_count"] == 2, "and the contest is still reported"
+        assert far["contested_line_count"] == 1, "and the contest is still reported"
 
 
 def test_top_level_contributions_carry_every_line_even_outside_the_day_window():
@@ -2290,8 +2287,8 @@ def test_every_reserve_the_board_proposes_is_accepted_by_the_confirmation():
     """The contract, extended to the case that broke: a crowded OWN location and a pool that
     covers the line whole.
 
-    Ladder v2 (section E rule 7): `own` is crowded by an earlier order and is never a Reserve
-    source in any case, so the whole 40 has to come from the pool alone, or nothing - the
+    Ladder v3: `own` is crowded by an earlier order that claims all 30 of it, so it offers
+    this line nothing and the whole 40 has to come from the pool alone, or nothing - the
     whole-line rule leaves no room for a mixed "reserve part, buy part" composition, so the
     pool here holds enough to cover it completely.
 
@@ -2311,6 +2308,9 @@ def test_every_reserve_the_board_proposes_is_accepted_by_the_confirmation():
         # never a Reserve source anyway - and a pool that covers the whole of it.
         _stock(db, product, own, on_hand=30)
         _stock(db, product, pool, on_hand=40)
+        # A year of lead time, so the December line is INSIDE its reserve window and the
+        # ladder actually runs: v3 buys a line beyond the window whole (section 1b rung 0).
+        _lead_time(db, product, 365)
         mine = _order(db, so_number=f"ZZT-SO-M{_uid()[:6]}", order_date=date(2026, 1, 1))
         _line(db, mine, product, qty="40", required_date=date(2026, 12, 29), warehouse=own)
         crowd = _order(db, so_number=f"ZZT-SO-T{_uid()[:6]}", order_date=date(2026, 1, 1))
@@ -2916,16 +2916,17 @@ def test_a_line_behind_more_demand_than_the_pile_holds_reserves_nothing():
 def test_the_line_ranked_first_at_a_pile_still_gets_its_whole_reserve():
     """Fair share is a queue, not a ban: the queue still names who is first in line.
 
-    Ladder v2 (section E rule 7): the own location is never a Reserve source, so what "gets"
-    the stock is no longer a physical Reserve - both lines below are bought whole. What
-    survives, and is still worth pinning, is the read-only queue arithmetic behind them:
-    `so_qty_ahead` / `lines_ahead` / `available_to_this_line` are computed exactly as before,
-    off the SAME fair-share queue, even though the ladder no longer draws on it."""
+    Ladder v3 (section 1b rung 2): the own location is a group source again, so the line at
+    the front of the queue reserves its whole 80, and the line behind it - asking for 9000
+    against the 935 the queue leaves - falls to the whole-line rule and buys the lot. The
+    queue arithmetic (`so_qty_ahead` / `lines_ahead` / `available_to_this_line`) is what
+    sizes both answers."""
     with blank_session() as db:
         _policy(db, dict(priority.FAIR_WEIGHTS), dict(priority.FAIR_CLASS_WEIGHTS))
         product = _product(db, f"ZZT-{_uid()[:6]}")
         warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
         _stock(db, product, warehouse, on_hand=1015)
+        _lead_time(db, product, 365)
         first = _order(db, so_number="ZZT-SO-FIRST", order_date=date(2026, 1, 1))
         _line(db, first, product, qty="80", required_date=date(2026, 3, 1), warehouse=warehouse)
         later = _order(db, so_number="ZZT-SO-LATER", order_date=date(2026, 1, 1))
@@ -2940,8 +2941,8 @@ def test_the_line_ranked_first_at_a_pile_still_gets_its_whole_reserve():
         assert earliest["so_qty_ahead"] == "0"
         assert earliest["lines_ahead"] == 0
         assert earliest["available_to_this_line"] == "1015"
-        assert earliest["qty_proposed_reserve"] == "0"
-        assert earliest["qty_proposed_buy"] == "80"
+        assert earliest["qty_proposed_reserve"] == "80"
+        assert earliest["qty_proposed_buy"] == "0"
         # And the queue still names what is left of the pile for the line behind it.
         behind = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
         assert behind["so_qty_ahead"] == "80"
@@ -3030,7 +3031,7 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
 def test_the_pool_is_netted_against_its_own_book_too():
     """The shared pool is a pile like any other: its own outstanding demand claims it first.
 
-    Ladder v2's whole-line rule (section E rule 6): our own ask is sized to exactly what the
+    Ladder v3's whole-line rule (section 1b rung 5): our own ask is sized to exactly what the
     pool's own book leaves (5), so it is still proposed as a pure Reserve - a bigger ask here
     would collapse to a single Buy instead of a partial "reserve 5, buy the rest" mix.
     """
@@ -3040,6 +3041,7 @@ def test_the_pool_is_netted_against_its_own_book_too():
         own, pool = _pooled_warehouses(db)
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=50)
+        _lead_time(db, product, 365)
         # The pool's own book wants 45 of its 50, and wants it sooner than we do.
         pool_demand = _order(db, so_number="ZZT-SO-POOLBOOK", order_date=date(2026, 1, 1))
         _line(db, pool_demand, product, qty="45", required_date=date(2026, 3, 1),
@@ -3133,9 +3135,10 @@ def _step(contribution, kind: str) -> dict:
 
 
 def test_the_trail_walks_every_source_in_ladder_order_even_when_one_gives_nothing():
-    """Ladder v2 (section E): seven rungs. The own-location Reserve rung is gone as a
-    SOURCE (rule 7), but stays as a READ-ONLY first rung - it is the one place the queue
-    ahead of this line at its own pile is named (S4 of the 19 Aug follow-ups)."""
+    """Ladder v3 (section 1b): seven rungs, with the group drawn BEFORE the pool. The
+    own-location strip stays as a READ-ONLY first rung - it is the one place the queue ahead
+    of this line at its own pile is named (S4 of the 19 Aug follow-ups) - and the group rung
+    two places below it is where the own location is actually drawn on."""
     with blank_session() as db:
         order, product, _warehouse = _quantity_world(db)
 
@@ -3145,8 +3148,8 @@ def test_the_trail_walks_every_source_in_ladder_order_even_when_one_gives_nothin
         assert [step["kind"] for step in _trail(contribution)] == [
             "reserve_own",
             "incoming",
-            "pool",
             "group_take",
+            "pool",
             "group_borrow",
             "cross_group_borrow",
             "buy",
@@ -3213,9 +3216,9 @@ def test_the_trail_adds_up_to_the_proposal_it_explains():
 
 
 def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
-    """Ladder v2: full cover now comes from the POOL (own is never a source), so it is the
-    `pool` rung that takes, and every rung after it - group take, group/cross-group borrow,
-    buy - is walked and reported unnecessary, never omitted."""
+    """Ladder v3: the group holds nothing here, so full cover comes from the POOL, and every
+    rung after it - group/cross-group borrow, buy - is walked and reported unnecessary, never
+    omitted."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own, pool = _pooled_warehouses(db)
@@ -3229,11 +3232,17 @@ def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
 
         assert _step(contribution, "pool")["outcome"] == "took"
         # Everything after the cover is walked and reported as unnecessary, never omitted.
-        for kind in ("group_take", "group_borrow", "cross_group_borrow", "buy"):
+        for kind in ("cross_group_borrow", "buy"):
             step = _step(contribution, kind)
             assert step["taken"] == "0"
             assert step["outcome"] == "none_needed", kind
             assert step["remaining_after"] == "0"
+        # Group borrow is stated too, and states the rule rather than an empty search: it is
+        # never auto-composed under ladder v3 (ruled 25 August 2026), covered or not.
+        borrowed = _step(contribution, "group_borrow")
+        assert borrowed["taken"] == "0"
+        assert borrowed["outcome"] == "not_eligible"
+        assert "a person's decision" in borrowed["why"]
 
 
 # `test_the_trail_says_a_hot_selling_line_reserves_its_own_location_and_no_pool` DELETED
@@ -3836,8 +3845,9 @@ def _confirm(db, pso_id: str, actor_user_id: str, lines: list) -> None:
 def _covered_world(db):
     """One order with two lines at one pile, one line of an earlier order ahead of both.
 
-    Quantities are the live ones: line 1 owes 43 and is decided as borrow 10 + buy 33, line 2
-    owes 21 and is left undecided. The queue in front of them is a third order's line for 15,
+    Quantities are the live ones: line 1 owes 43 and is decided as a whole-line borrow of 43
+    from the donor (AC-L5: a line is met wholly from stock or wholly bought, never a mix),
+    line 2 owes 21 and is left undecided. The queue in front of them is a third order's line for 15,
     dated earlier, so the sibling's share of the pile is a real number rather than the whole
     of it.
 
@@ -3849,7 +3859,7 @@ def _covered_world(db):
     own = _warehouse(db, f"ZZTO{_uid()[:6]}"[:20])
     donor = _warehouse(db, f"ZZTD{_uid()[:6]}"[:20])
     _stock(db, product, own, on_hand=20)
-    _stock(db, product, donor, on_hand=10)
+    _stock(db, product, donor, on_hand=43)
 
     ahead = _order(db, so_number="ZZT-SO-AHEAD", order_date=date(2026, 1, 1))
     _line(db, ahead, product, qty="15", required_date=date(2026, 8, 30), warehouse=own)
@@ -3884,7 +3894,7 @@ def _covered_world(db):
 
 
 def _decide_line_one(db, world) -> None:
-    """Borrow 10 from the donor, buy the other 33, with a reason - the live composition."""
+    """Borrow the whole 43 from the donor, with a reason - the live composition."""
     _confirm(
         db,
         world["pso_id"],
@@ -3898,11 +3908,11 @@ def _decide_line_one(db, world) -> None:
                     {
                         "source": "other_location",
                         "warehouse_id": str(world["donor"].id),
-                        "qty": "10",
+                        "qty": "43",
                         "reason": "The other site can wait a week.",
                     }
                 ],
-                "buy_qty": "33",
+                "buy_qty": "0",
                 "amend_reason": "Borrowed rather than bought, agreed with the other site.",
             }
         ],
@@ -3943,7 +3953,7 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
         assert decision["confirmed_at"] is not None
         assert decision["timely_spo_qty"] == "0"
         assert decision["reserve"] == []
-        assert decision["buy_qty"] == "33"
+        assert decision["buy_qty"] == "0"
         assert decision["amend_reason"] == (
             "Borrowed rather than bought, agreed with the other site."
         )
@@ -3953,7 +3963,7 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
                 "warehouse_id": str(world["donor"].id),
                 "location": world["donor"].warehouse_code,
                 "donor_project_id": None,
-                "qty": "10",
+                "qty": "43",
                 # The person's own reason, not the rule's sentence: it is what the
                 # confirmation demands back when this composition is re-posted.
                 "reason": "The other site can wait a week.",
@@ -4098,12 +4108,11 @@ def test_a_covered_line_is_not_run_through_the_ladder_again():
             (source["kind"], source["qty"], source["location"])
             for source in contribution["sources"]
         ] == [
-            ("borrow", "10", world["donor"].warehouse_code),
-            ("buy", "33", None),
+            ("borrow", "43", world["donor"].warehouse_code),
         ]
         assert contribution["qty_proposed_reserve"] == "0"
         assert contribution["qty_proposed_incoming"] == "0"
-        assert contribution["qty_proposed_buy"] == "33"
+        assert contribution["qty_proposed_buy"] == "0"
         # No ladder was walked for it, so it carries none - rather than an invented one whose
         # first rung reads "had 20, offered 0", which is what a queue it is not in produces.
         assert contribution["trail"] == []
@@ -4164,9 +4173,9 @@ def test_covering_a_line_does_not_move_what_is_left_for_the_lines_behind_it():
 
 
 def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
-    """Ladder v2: the own location is never a Reserve SOURCE and `_covered_world` has no
-    pool, so the sibling's whole 21 is bought - the seven-rung trail (the read-only own
-    location first) is still walked in full."""
+    """Ladder v3: the own location holds 5 against the sibling's 21, so the whole-line rule
+    buys the lot - the seven-rung trail (the read-only own-location strip first) is still
+    walked in full."""
     with blank_session() as db:
         world = _covered_world(db)
         _decide_line_one(db, world)
@@ -4179,7 +4188,7 @@ def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
         assert sibling["qty_proposed_reserve"] == "0"
         assert sibling["qty_proposed_buy"] == "21"
         assert [step["kind"] for step in sibling["trail"]] == [
-            "reserve_own", "incoming", "pool", "group_take", "group_borrow",
+            "reserve_own", "incoming", "group_take", "pool", "group_borrow",
             "cross_group_borrow", "buy",
         ]
 
@@ -4200,10 +4209,10 @@ def test_a_cell_totals_the_frozen_numbers_for_a_covered_line():
             entry for entry in cell["locations"]
             if entry["location"] == world["own"].warehouse_code
         )
-        # Ladder v2: nothing is ever reserved at the own location, so the frozen 33 plus the
-        # sibling's whole 21 are both bought.
+        # Line 1's whole 43 is borrowed from another location, so the only Buy at the own
+        # location is the sibling's 21; nothing is reserved (its 20 are owed to the queue).
         assert location["qty_proposed_reserve"] == "0"
-        assert location["qty_proposed_buy"] == "54"
+        assert location["qty_proposed_buy"] == "21"
         # Only the sibling is in a contest. A decided line is not competing for anything.
         assert cell["contested_count"] == 1
 
@@ -4232,9 +4241,9 @@ def test_the_covered_state_reaches_the_wire():
         contribution = _covered_contribution(response.json(), world)
         assert contribution["covered"] is True
         assert contribution["decision"]["revision_no"] == 1
-        assert contribution["decision"]["buy_qty"] == "33"
-        assert contribution["decision"]["borrow"][0]["qty"] == "10"
-        assert [source["kind"] for source in contribution["sources"]] == ["borrow", "buy"]
+        assert contribution["decision"]["buy_qty"] == "0"
+        assert contribution["decision"]["borrow"][0]["qty"] == "43"
+        assert [source["kind"] for source in contribution["sources"]] == ["borrow"]
         assert contribution["so_qty_ahead"] is None
 
 
@@ -4874,9 +4883,10 @@ def test_a_reserve_met_line_still_carries_its_donors():
         assert borrow_step["taken"] == "0"
 
 
-def test_a_covered_line_carries_its_donors_ranked_against_its_frozen_buy():
-    """F6. Line 1 is decided as borrow 10 from the donor + buy 33. A third location holds
-    7 free, so it is offered on the covered line, ranked against the 33 still being bought."""
+def test_a_covered_line_still_carries_the_donors_it_could_be_amended_to():
+    """F6. Line 1 is decided as a whole-line borrow of 43 from the donor. A third location
+    holds 7 free, so it is still offered on the covered line - a decision can be amended, and
+    a covered line that offered nothing would say the stock exists nowhere."""
     with blank_session() as db:
         world = _covered_world(db)
         spare = _warehouse(db, f"ZZTX{_uid()[:6]}"[:20])
@@ -4893,13 +4903,15 @@ def test_a_covered_line_carries_its_donors_ranked_against_its_frozen_buy():
         assert contribution["trail"] == []
         assert contribution["so_qty_ahead"] is None
         candidates = contribution["borrow_candidates"]
-        # The frozen donor's 10 is now a confirmed hold and out of its free stock, so it is
+        # The frozen donor's 43 is now a confirmed hold and out of its free stock, so it is
         # not offered again; the spare location is. The line's own location is inside its
         # Reserve reach and is never a donor.
         assert [c["warehouse_code"] for c in candidates] == [spare.warehouse_code]
         assert candidates[0]["warehouse_id"] == str(spare.id)
         assert candidates[0]["free_qty"] == "7"
-        assert candidates[0]["need_qty"] == "33"
+        # Nothing is still being bought on a wholly borrowed line, so the ranking has no
+        # residual to measure damage against - stated as 0, never invented.
+        assert candidates[0]["need_qty"] == "0"
         assert contribution["qty_borrow_available"] == "7"
 
 
@@ -4974,6 +4986,7 @@ def _pool_with_its_own_queue(db, *, ask_qty="4"):
     own, pool = _pooled_warehouses(db)
     _stock(db, product, own, on_hand=0)
     _stock(db, product, pool, on_hand=7)
+    _lead_time(db, product, 365)
     dealer = _customer(db, f"{MARKER} dealer", terms=30)
     ours = _customer(db, f"{MARKER} project customer", terms=30)
 
@@ -4994,7 +5007,7 @@ def _pool_with_its_own_queue(db, *, ask_qty="4"):
 
 
 def test_the_confirm_accepts_the_pool_reserve_the_board_proposed():
-    """The ask (4) is sized to exactly what the pool's own book leaves, so ladder v2's
+    """The ask (4) is sized to exactly what the pool's own book leaves, so ladder v3's
     whole-line rule still proposes it as a pure Reserve - the case where the board's own
     proposal and the confirm's recheck have to agree stays exercisable without a partial mix.
     """
@@ -5039,19 +5052,20 @@ def test_the_confirm_never_accepts_more_at_the_pool_than_the_board_proposed():
     """The reverse: asking the pool for one more than it has left is refused, and by
     quantity, not by location - the pool IS this line's pool, it simply has 4 left for it.
 
-    The line owes 6 here (more than the pool's 4), so ladder v2's whole-line rule would
-    auto-propose a plain Buy for the whole of it - the mixed composition below is hand-composed
+    The line owes 5 here (more than the pool's 4), so ladder v3's whole-line rule proposes a
+    plain Buy for the whole of it - the wholly-from-stock composition below is hand-composed
     (an Amend), which is exactly the case `_check_line`'s recheck exists to police."""
     from app.services.project_supply_service import SupplyLinesRefused
 
     with blank_session() as db:
-        world = _pool_with_its_own_queue(db, ask_qty="6")
+        world = _pool_with_its_own_queue(db, ask_qty="5")
         pool = world["pool"]
 
         board = _service(db).build(["ZZT-SO-ASK"], granularity="week", as_of=TODAY)
         pso_id, lines = _board_payload_for(board, "ZZT-SO-ASK")
+        # Wholly from stock (AC-L5), and one unit more than the pool's own book leaves.
         lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "5"}]
-        lines[0]["buy_qty"] = "1"
+        lines[0]["buy_qty"] = "0"
 
         with pytest.raises(SupplyLinesRefused) as refused:
             _confirm(db, pso_id, world["actor"], lines)
@@ -5069,18 +5083,19 @@ def _order_already_holding_at_the_pool(db):
     server's), so un-netting it because it belongs to "the order being composed" hands the
     sibling stock its own order is still holding.
 
-    The sibling owes 6, more than the 4 left at the pool, so ladder v2's whole-line rule would
-    auto-propose a plain Buy for the whole of it - the mixed compositions below are hand
-    composed (an Amend), which is exactly the case `_check_line`'s recheck exists to police.
+    The sibling owes 5, more than the 4 left at the pool, so ladder v3's whole-line rule
+    auto-proposes a plain Buy for the whole of it - which is itself the proof that the hold is
+    netted on the READ side, since an un-netted pool would show 7 and cover the line.
     """
     actor = _user(db, f"{MARKER} planner")
     product = _product(db, f"ZZT-{_uid()[:6]}")
     own, pool = _pooled_warehouses(db)
     _stock(db, product, own, on_hand=0)
     _stock(db, product, pool, on_hand=7)
+    _lead_time(db, product, 365)
     order = _order(db, so_number="ZZT-SO-HOLDS", order_date=date(2026, 5, 15))
-    first = _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
-    _line(db, order, product, qty="6", required_date=date(2026, 12, 28), warehouse=own)
+    first = _line(db, order, product, qty="3", required_date=date(2026, 9, 3), warehouse=own)
+    _line(db, order, product, qty="5", required_date=date(2026, 12, 28), warehouse=own)
     pso_id = _adopt(db, str(order.id))
     db.flush()
 
@@ -5094,8 +5109,8 @@ def _order_already_holding_at_the_pool(db):
         )
         .first()
     )
-    # Line 1 reserves 3 of the pool's 7 and buys the rest - less than it could take, so the
-    # sibling has something left to be offered.
+    # Line 1 owes 3 and reserves all 3 at the pool - wholly from stock (AC-L5) - so the
+    # sibling has the pool's other 4 left to be offered.
     _confirm(
         db,
         pso_id,
@@ -5105,7 +5120,7 @@ def _order_already_holding_at_the_pool(db):
                 "project_line_id": str(mirror.id),
                 "timely_spo_qty": "0",
                 "reserve": [{"warehouse_id": str(pool.id), "qty": "3"}],
-                "buy_qty": "7",
+                "buy_qty": "0",
             }
         ],
     )
@@ -5122,29 +5137,599 @@ def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_b
         board = _service(db).build(["ZZT-SO-HOLDS"], granularity="week", as_of=TODAY)
         sibling = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
         assert sibling["covered"] is False
-        # Ladder v2's whole-line rule: 4 of the sibling's 6 is all the pool has left, so the
-        # auto-ladder proposes a plain Buy for the whole line - the pool figure the trail
-        # states is still the one `_check_line`'s own recheck has to agree with below.
+        # Ladder v3's whole-line rule: 4 of the sibling's 5 is all the pool has left, so the
+        # auto-ladder proposes a plain Buy for the whole line. An un-netted pool would show 7
+        # and reserve the lot, so this assertion IS the read-side proof.
         assert [
             (s["kind"], s["qty"], s["location"]) for s in sibling["sources"]
-        ] == [("buy", "6", None)]
+        ] == [("buy", "5", None)]
         pile = _step(sibling, "pool")["pool"]
         assert pile["left"] == "4"
 
         pso_id, lines = _board_payload_for(board, "ZZT-SO-HOLDS")
         assert len(lines) == 1, "the covered line is carried, not re-posted"
 
-        # A hand-composed Amend using exactly what the pool has left (4) is accepted ...
-        lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "4"}]
-        lines[0]["buy_qty"] = "2"
-        _confirm(db, pso_id, world["actor"], lines)
-
-        # ... and one more is not, because line 1's 3 are still held under the revision
-        # this confirmation carries them into.
+        # And the write side agrees: a hand-composed Amend taking the whole 5 from the pool
+        # is refused BY QUANTITY, naming the 4 that line 1's carried hold leaves.
         lines[0]["reserve"] = [{"warehouse_id": str(pool.id), "qty": "5"}]
-        lines[0]["buy_qty"] = "1"
+        lines[0]["buy_qty"] = "0"
         with pytest.raises(SupplyLinesRefused) as refused:
             _confirm(db, pso_id, world["actor"], lines)
         assert refused.value.status_code == 409
         [failing] = refused.value.detail["failing_lines"]
         assert "free for this line" in failing["reason"], failing["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# what a donor line lost (AC-L6)
+#
+# The captain, 25 August 2026: the donor's board cell reads "71 lent to SO415472". A borrow
+# is visible on the borrowing side and was invisible on the giving side, so the agent whose
+# stock moved found out when the delivery did not.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTL{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=100)
+
+        donor = _order(db, so_number="ZZT-SO-DONOR", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="71", required_date=date(2026, 9, 4), warehouse=own
+        )
+        borrower = _order(db, so_number="ZZT-SO-TAKER", order_date=date(2026, 1, 1))
+        borrow_line = _line(
+            db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
+        )
+        pso_id = _adopt(db, str(borrower.id))
+        db.flush()
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == borrow_line.id,
+            )
+            .first()
+        )
+        _confirm(
+            db,
+            pso_id,
+            actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [
+                        {
+                            "source": "other_location",
+                            "warehouse_id": str(own.id),
+                            "qty": "71",
+                            "reason": "Authorised by agent CYNDI: the site is waiting.",
+                            "donor_core_line_id": str(donor_line.id),
+                            "donor_so_number": "ZZT-SO-DONOR",
+                            "donor_line_no": 1,
+                        }
+                    ],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-DONOR", "ZZT-SO-TAKER"], granularity="week", as_of=TODAY
+        )
+
+        contributions = [
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+        ]
+        given = next(c for c in contributions if c["so_number"] == "ZZT-SO-DONOR")
+        assert given["lent_to"] == [
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+        ]
+        # The borrowing line lent nothing; the field is an empty list, never absent, so the
+        # cell has one shape to read.
+        taken = next(c for c in contributions if c["so_number"] == "ZZT-SO-TAKER")
+        assert taken["lent_to"] == []
+
+        # And it reaches the wire: a field the service returns and the response model does
+        # not declare is dropped silently.
+        from app.models.base import company_scope
+
+        company_id = _sorento(db)
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": "ZZT-SO-DONOR,ZZT-SO-TAKER", "granularity": "week"},
+                )
+        finally:
+            _restore(originals)
+        assert response.status_code == 200, response.text
+        on_the_wire = [
+            contribution
+            for cell in response.json()["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-DONOR"
+        ]
+        assert on_the_wire and on_the_wire[0]["lent_to"] == [
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+        ]
+
+
+# --------------------------------------------------------------------------- #
+# rung 1 on a line beyond its reserve window (section 1b, AC-L1 / AC-K4)
+#
+# Ladder v3 walks no STOCK rung for a far line. Rung 1 is NOT a stock rung: incoming supply
+# is already bought, and a blanket "beyond the window means Buy" bought it a second time.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_line_beyond_its_window_is_covered_by_the_spo_already_on_its_way():
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTIW{_uid()[:5]}-BB"[:20])
+        elsewhere = _warehouse(db, f"ZZTIE{_uid()[:5]}-IR"[:20])
+        # Plenty of stock next door, none of which a far line may take.
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, elsewhere, on_hand=900)
+        _lead_time(db, product, 90)
+        far = TODAY + timedelta(days=174)
+        _incoming(
+            db, product, own,
+            spo_number="ZZT-SPO-FAR1", allocated=441, received=0, arrives=far - timedelta(days=5),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="441", required_date=far, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
+        assert contribution["qty_proposed_incoming"] == "441"
+        assert contribution["qty_proposed_buy"] == "0"
+        assert [(s["kind"], s["qty"]) for s in contribution["sources"]] == [
+            ("timely_spo", "441")
+        ]
+        assert "ZZT-SPO-FAR1" in contribution["sources"][0]["reason"]
+
+        # And the trail says so: the incoming rung RAN and took, rather than being reported
+        # as skipped by a rule it is not subject to.
+        incoming = _step(contribution, "incoming")
+        assert incoming["offered"] == "441"
+        assert incoming["taken"] == "441"
+        assert incoming["outcome"] == "took"
+        assert "ZZT-SPO-FAR1" in incoming["why"]
+        # Every STOCK rung below it is still refused by the window.
+        for kind in ("group_take", "pool", "group_borrow", "cross_group_borrow"):
+            step = _step(contribution, kind)
+            assert step["taken"] == "0", kind
+            assert "lead time window" in step["why"], kind
+
+
+def test_a_far_line_whose_incoming_falls_short_is_bought_whole_and_the_trail_says_why():
+    """The whole-line rule holds beyond the window: 200 arriving against 441 owed is a Buy
+    of the whole 441, and the incoming rung reports what it offered and that it gave
+    nothing - never a partial "incoming 200, buy 241"."""
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTIS{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=0)
+        _lead_time(db, product, 90)
+        far = TODAY + timedelta(days=174)
+        _incoming(
+            db, product, own,
+            spo_number="ZZT-SPO-FAR2", allocated=200, received=0, arrives=far - timedelta(days=5),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="441", required_date=far, warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, far.isoformat())["contributions"][0]
+        assert contribution["qty_proposed_buy"] == "441"
+        assert contribution["qty_proposed_incoming"] == "0"
+
+        incoming = _step(contribution, "incoming")
+        assert incoming["offered"] == "200"
+        assert incoming["taken"] == "0"
+        assert incoming["outcome"] != "not_eligible", "rung 1 RUNS beyond the window"
+        assert incoming["why"] == (
+            "The supply on its way does not cover the whole line, and the delivery date is "
+            "beyond the lead time window, so the whole line is bought rather than "
+            "part-covered."
+        )
+
+
+def test_a_superseded_revisions_borrow_is_not_reported_as_lent():
+    """`lent_to` reads the ACTIVE revision only. A borrow that was superseded is a record
+    of what was once promised, not of stock that is gone - reporting it would tell the
+    donor's agent their stock had moved when the order that took it has since given it
+    back."""
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTS{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=200)
+
+        donor = _order(db, so_number="ZZT-SO-GAVE", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="71", required_date=date(2026, 9, 4), warehouse=own
+        )
+        borrower = _order(db, so_number="ZZT-SO-TOOK", order_date=date(2026, 1, 1))
+        borrow_line = _line(
+            db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
+        )
+        pso_id = _adopt(db, str(borrower.id))
+        db.flush()
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == borrow_line.id,
+            )
+            .first()
+        )
+        # Revision 1 borrows the whole line off the donor ...
+        _confirm(
+            db, pso_id, actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [
+                        {
+                            "source": "other_location",
+                            "warehouse_id": str(own.id),
+                            "qty": "71",
+                            "reason": "The site is waiting.",
+                            "donor_core_line_id": str(donor_line.id),
+                            "donor_so_number": "ZZT-SO-GAVE",
+                            "donor_line_no": 1,
+                        }
+                    ],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        # ... and revision 2 gives it back, buying the line instead.
+        _confirm(
+            db, pso_id, actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "borrow": [],
+                    "buy_qty": "71",
+                    "amend_reason": "The other site needs its stock back.",
+                }
+            ],
+        )
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-GAVE", "ZZT-SO-TOOK"], granularity="week", as_of=TODAY
+        )
+
+        given = next(
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-GAVE"
+        )
+        assert given["lent_to"] == []
+
+
+def test_two_orders_borrowing_off_one_donor_line_both_appear_on_its_cell():
+    """One donor line can lend to several orders, and the cell has to name each of them:
+    "40 lent to ZZT-SO-A · 20 lent to ZZT-SO-B" is the whole of what left."""
+    with blank_session() as db:
+        actor = _user(db, f"{MARKER} planner")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTT{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=300)
+
+        donor = _order(db, so_number="ZZT-SO-LENDER", order_date=date(2026, 1, 1))
+        donor_line = _line(
+            db, donor, product, qty="100", required_date=date(2026, 9, 25), warehouse=own
+        )
+
+        from app.models.project_so import ProjectSalesOrderLine
+
+        def borrow(so_number: str, qty: str, required: date) -> None:
+            taker = _order(db, so_number=so_number, order_date=date(2026, 1, 1))
+            core = _line(db, taker, product, qty=qty, required_date=required, warehouse=own)
+            pso_id = _adopt(db, str(taker.id))
+            db.flush()
+            mirror = (
+                db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                    ProjectSalesOrderLine.core_sales_order_line_id == core.id,
+                )
+                .first()
+            )
+            _confirm(
+                db, pso_id, actor,
+                [
+                    {
+                        "project_line_id": str(mirror.id),
+                        "timely_spo_qty": "0",
+                        "reserve": [],
+                        "borrow": [
+                            {
+                                "source": "other_location",
+                                "warehouse_id": str(own.id),
+                                "qty": qty,
+                                "reason": "The site is waiting.",
+                                "donor_core_line_id": str(donor_line.id),
+                                "donor_so_number": "ZZT-SO-LENDER",
+                                "donor_line_no": 1,
+                            }
+                        ],
+                        "buy_qty": "0",
+                    }
+                ],
+            )
+
+        borrow("ZZT-SO-TAKER-A", "40", date(2026, 9, 1))
+        borrow("ZZT-SO-TAKER-B", "20", date(2026, 9, 2))
+        db.commit()
+
+        board = _service(db).build(
+            ["ZZT-SO-LENDER", "ZZT-SO-TAKER-A", "ZZT-SO-TAKER-B"],
+            granularity="week", as_of=TODAY,
+        )
+
+        given = next(
+            contribution
+            for cell in board["cells"]
+            for contribution in cell["contributions"]
+            if contribution["so_number"] == "ZZT-SO-LENDER"
+        )
+        assert [(row["qty"], row["so_number"]) for row in given["lent_to"]] == [
+            ("40", "ZZT-SO-TAKER-A"),
+            ("20", "ZZT-SO-TAKER-B"),
+        ]
+
+
+# --------------------------------------------------------------------------- #
+# AC-D1 / AC-D2: suggested BESIDE decided
+#
+# The board could only ever say what was DECIDED for a covered line - the frozen
+# composition is what `_apply_frozen` prints as its sources - so "what did the engine
+# suggest before somebody changed it" had no answer on screen. The snapshot now freezes
+# the proposal too, and the contribution carries it under `proposed`.
+# --------------------------------------------------------------------------- #
+
+
+def _suggested_world(db):
+    """One order, two lines at one pooled location: one to decide, one to leave alone."""
+    actor = _user(db, f"{MARKER} planner")
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own, pool = _pooled_warehouses(db)
+    _stock(db, product, pool, on_hand=80)
+    order = _order(db, so_number=f"ZZT-SO-SUGG-{_uid()[:6]}", order_date=date(2026, 1, 1))
+    decided = _line(db, order, product, qty="10", required_date=date(2026, 9, 3),
+                    warehouse=own)
+    _line(db, order, product, qty="7", required_date=date(2026, 9, 3), warehouse=own)
+    pso_id = _adopt(db, str(order.id))
+
+    from app.models.project_so import ProjectSalesOrderLine
+
+    mirror = (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+            ProjectSalesOrderLine.core_sales_order_line_id == decided.id,
+        )
+        .first()
+    )
+    return {
+        "actor": actor,
+        "product": product,
+        "own": own,
+        "pool": pool,
+        "order": order,
+        "pso_id": pso_id,
+        "mirror_line_id": str(mirror.id),
+    }
+
+
+def _contribution(board, qty: str) -> dict:
+    return next(
+        contribution
+        for cell in board["cells"]
+        for contribution in cell["contributions"]
+        if contribution["qty"] == qty
+    )
+
+
+def test_a_covered_line_says_what_the_engine_had_suggested_beside_what_was_decided():
+    """AC-D1/AC-D2: the frozen proposal reaches the board under `proposed`, rung and all,
+    while `decision` goes on being the decided side. The planner bought a line the pool
+    could have covered; a day later the board still shows both halves of that."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "10",
+                    "amend_reason": "Site asked for new stock.",
+                }
+            ],
+        )
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "10")
+
+        assert contribution["covered"] is True
+        assert contribution["decision"]["buy_qty"] == "10"
+        # The engine had the pool, and says so, on the rung it drew from.
+        assert [
+            (c["kind"], c["qty"], c["location"], c["rung"])
+            for c in contribution["proposed"]["components"]
+        ] == [("reserve", "10", world["pool"].warehouse_code, "pool")]
+
+
+def test_an_undecided_line_proposes_the_live_ladder_under_the_same_key():
+    """One key, both states: the strip sums `proposed` over every contribution and must not
+    have to ask which of two fields to read per line."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "7")
+
+        assert contribution["covered"] in (False, None)
+        assert contribution["proposed"]["components"] == contribution["sources"]
+        assert [c["rung"] for c in contribution["proposed"]["components"]] == ["pool"]
+
+
+def test_a_covered_lines_frozen_reserve_carries_the_rung_it_was_drawn_from():
+    """The board used to rebuild a covered line's composition WITHOUT the rung, so every
+    reserve row of a decided line arrived as `rung: null` and the screen had to guess the
+    vocabulary back from the warehouse code. The rung is frozen; it travels."""
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": str(world["pool"].id), "qty": "10"}],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "10")
+
+        assert contribution["decision"]["reserve"] == [
+            {
+                "warehouse_id": str(world["pool"].id),
+                "location": world["pool"].warehouse_code,
+                "qty": "10",
+                "rung": "pool",
+            }
+        ]
+        assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
+            ("reserve", "pool")
+        ]
+
+
+def test_a_revision_written_before_the_field_existed_says_not_recorded_not_nothing():
+    """An absent key is not an empty proposal. The board answers `null`, and the screen
+    says "not recorded" rather than claiming the engine suggested nothing."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.project_so import SOSupplyDecision
+
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": str(world["pool"].id), "qty": "10"}],
+                    "buy_qty": "0",
+                }
+            ],
+        )
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == world["pso_id"])
+            .first()
+        )
+        decision.line_snapshots = [
+            {k: v for k, v in snapshot.items() if k != "proposed_components"}
+            for snapshot in decision.line_snapshots
+        ]
+        flag_modified(decision, "line_snapshots")
+        db.flush()
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        assert _contribution(board, "10")["proposed"] is None
+
+
+def test_the_suggested_side_reaches_the_wire():
+    """A field the service returns and the response model does not declare is dropped."""
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "10",
+                    "amend_reason": "Site asked for new stock.",
+                }
+            ],
+        )
+        db.commit()
+
+        client, originals = _client(db, world["actor"], [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={
+                        "orders": world["order"].so_number,
+                        "granularity": "week",
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        contribution = _contribution(response.json(), "10")
+        assert contribution["proposed"] is not None
+        proposed = contribution["proposed"]["components"]
+        assert [(c["kind"], c["qty"], c["rung"]) for c in proposed] == [
+            ("reserve", "10", "pool")
+        ]
+        assert proposed[0]["location"] == world["pool"].warehouse_code

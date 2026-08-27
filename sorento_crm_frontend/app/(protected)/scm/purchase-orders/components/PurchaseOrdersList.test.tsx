@@ -543,3 +543,55 @@ describe('PurchaseOrdersList - null-supplier rows', () => {
     expect(screen.queryByText('Brickfields DC')).not.toBeInTheDocument();
   });
 });
+
+// --------------------------------------------------------- Allocated column + filter (G)
+
+describe('PurchaseOrdersList - Allocated (section 3.G, AC-G4)', () => {
+  it('prints what an order has allocated, and a dash when nothing is on it', async () => {
+    mockList([
+      po({ id: 'po-a', po_number: 'PO-2026/07-0029', allocated_qty: 500 }),
+      po({ id: 'po-b', po_number: 'PO-2026/07-0030', allocated_qty: 0 }),
+    ]);
+    await act(async () => {
+      render(<PurchaseOrdersList />);
+    });
+
+    expect(screen.getByRole('columnheader', { name: /Allocated/i })).toBeTruthy();
+    expect(screen.getByText('500')).toBeTruthy();
+    // 0 and "nothing is linked to it" are one answer here, and a column of zeros reads as a
+    // figure somebody has to check.
+    const busy = screen.getByText('PO-2026/07-0029').closest('tr') as HTMLElement;
+    const idle = screen.getByText('PO-2026/07-0030').closest('tr') as HTMLElement;
+    expect(within(busy).getByText('500')).toBeTruthy();
+    expect(within(idle).queryByText('0')).toBeNull();
+  });
+
+  it('asks the server for the allocated side the buyer picked, and can unset it', async () => {
+    mockList([po({ allocated_qty: 12 })]);
+    await act(async () => {
+      render(<PurchaseOrdersList />);
+    });
+
+    // Default: every order, so the filter is absent rather than false.
+    expect(usePurchaseOrders).toHaveBeenCalledWith(
+      expect.objectContaining({ allocated: null }),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
+    });
+    const select = screen.getByLabelText('Allocated');
+    await act(async () => {
+      fireEvent.click(select);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText('Not allocated'));
+    });
+
+    await waitFor(() =>
+      expect(usePurchaseOrders).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allocated: false }),
+      ),
+    );
+  });
+});

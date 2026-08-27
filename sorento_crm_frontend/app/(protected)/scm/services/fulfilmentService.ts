@@ -372,6 +372,18 @@ export interface SupplierNotice {
   last_error: string | null;
   document_filename: string | null;
   has_document: boolean;
+  /** The supplier's own stock list with the quantity to load filled in (F4). Container
+   *  requests only - a loading notice carries no spreadsheet. */
+  xlsx_filename: string | null;
+  has_xlsx: boolean;
+  /** The read-only page the supplier opens (F8). Built server-side because it has to match
+   *  what went out in the email; null once it has expired, been retired by a resend, or when
+   *  no public base URL is configured. Both channel rows of one send carry it (R23) - one
+   *  credential, delivered two ways. */
+  public_url: string | null;
+  /** This send HAD a link and it has run out - which is not the same as never having had
+   *  one, and is why an older row reads "Link retired" rather than nothing at all. */
+  link_retired: boolean;
   container_type: string | null;
   container_count: number | null;
   planned_cbm: number | null;
@@ -396,8 +408,11 @@ export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> 
 
 export async function getNoticeDocumentUrl(
   noticeId: string,
+  kind: 'pdf' | 'xlsx' = 'pdf',
 ): Promise<{ url: string; filename: string | null }> {
-  const res = await apiFetch(`/api/v1/scm/supplier-notices/${noticeId}/document`);
+  const res = await apiFetch(
+    `/api/v1/scm/supplier-notices/${noticeId}/document?kind=${kind}`,
+  );
   return readJson(res, 'Failed to open the notice document');
 }
 
@@ -434,7 +449,25 @@ export async function getNoticeDocumentUrl(
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
 export interface ContainerRequestRow {
+  /** Whose FIGURES this row shows. On a set row that is the driver member's id (R19), which
+   *  is what the SO drill and the twelve-month history are keyed on. */
   product_id: string;
+  /** What the GRID keys its rows on: the product id, or the set's own key. Two sets may
+   *  share a driver, and a grid keyed on the product id would silently drop one of them. */
+  row_key: string;
+  /** `set` when the supplier's statement named one of our product sets (R19). Every figure
+   *  below is then the DRIVER member's - the member in the fewest sets. */
+  row_kind: 'product' | 'set';
+  product_set_id: string | null;
+  set_code: string | null;
+  set_name: string | null;
+  /** The member the figures come from, named so the cell can say whose they are. Null on an
+   *  ordinary product row. */
+  driver_product_id: string | null;
+  driver_item_code: string | null;
+  driver_product_name: string | null;
+  /** The set code on a set row, the product code on a product row - what the supplier is
+   *  asked for either way. */
   item_code: string | null;
   product_name: string | null;
   /** Gross outstanding SO need, all classes - what the Need column shows. */
@@ -443,17 +476,47 @@ export interface ContainerRequestRow {
    *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
    *  20 Aug follow-up - see the module docstring). */
   suggested_qty: number;
+  /** SITE POOLS ONLY (`warehouses.segment <> 'project'`), the reorder engine's own predicate.
+   *  Stock sitting in a group location is real, but it is spoken for, so it can neither be
+   *  asked against nor netted off the ask; it travels beside this as `on_hand_group` and is
+   *  shown muted in the row popover. */
   on_hand: number;
+  on_hand_group: number;
+  /** Open SPO allocations landing at a site pool. Same split, same reason. */
   incoming_spo: number;
+  incoming_spo_group: number;
+  /** Unreceived packing-list quantity on shipments that have not arrived, any destination.
+   *  A REFERENCE beside the ask, never subtracted from it (Q1): a packing list is not
+   *  location-specific, so it cannot be netted against a pool the way an SPO can. */
+  incoming_pl: number;
+  incoming_pl_shipments: ContainerRequestIncomingShipment[];
   /** Placed with a supplier but not yet allocated to a shipment - real context, never
-   *  deducted from `suggested_qty`. */
+   *  deducted from `suggested_qty`. Company-wide, not pool-only: a PO carries no landing
+   *  location until it is allocated. */
   outstanding_po: number;
-  /** Gross split - explains the NEED, not the netted `suggested_qty`. */
+  outstanding_po_lines: ContainerRequestPoLine[];
+  /** On hand and SPO per site pool, zero rows included - a site with nothing in it is a fact
+   *  the reader needs, not an absence. */
+  sites: ContainerRequestSite[];
+  /** Everything the pool predicate excluded, as one muted line. */
+  group_locations: ContainerRequestGroupLocations;
+  /** Gross split - explains the NEED, not the netted `suggested_qty`. `project_qty` is the
+   *  open project SO book net of what CS placed on a PO or an SPO (R15). */
   project_qty: number;
   retail_qty: number;
   unclassified_qty: number;
   earliest_required_date: string | null;
   so_count: number;
+  /** WHICH document says what they hold (F1). `stock_list` reads packed / unfinished;
+   *  `proforma` is the newest un-converted PI standing in for a missing stock list (Q2);
+   *  `none` means neither exists and the plan is built on demand alone. */
+  holding_source: 'stock_list' | 'proforma' | 'none';
+  /** The one figure the "They hold" cell shows: packed on a stock-list row, the invoiced
+   *  quantity on a proforma row. Null - never 0 - when neither document names it. */
+  holding_qty: number | null;
+  holding_as_of: string | null;
+  /** The stock list's own two figures. Both 0 on a proforma row: a proforma states one
+   *  quantity per line and there is no unfinished half of it to report. */
   qty_packed: number;
   qty_unfinished: number;
   cbm_per_unit: number | null;
@@ -467,9 +530,43 @@ export interface ContainerRequestRow {
   has_demand: boolean;
 }
 
+/** One site pool (BRW / MWH / WH3 / DC1 / RSW), for the row popover's location table. */
+export interface ContainerRequestSite {
+  warehouse_code: string;
+  on_hand: number;
+  incoming_spo: number;
+}
+
+/** What the pool predicate left out, aggregated: the group locations feeding project orders. */
+export interface ContainerRequestGroupLocations {
+  count: number;
+  on_hand: number;
+  incoming_spo: number;
+  /** A few codes to name the group, longest-holding first - never the whole list. */
+  warehouse_codes: string[];
+}
+
+/** One packing-list shipment carrying this product, unreceived. `shipment_number` is null on
+ *  a draft that has not been numbered yet. */
+export interface ContainerRequestIncomingShipment {
+  shipment_id: string;
+  shipment_number: string | null;
+  estimated_arrival_date: string | null;
+  qty: number;
+}
+
+/** One outstanding PO line for this product - context in the popover, never netted. */
+export interface ContainerRequestPoLine {
+  po_number: string | null;
+  expected_date: string | null;
+  qty: number;
+}
+
 /** One open SO line behind a demand row - `include_lines=true` on the build. Flat, so the FE
  *  can bucket them into a schedule matrix or answer "which order does this cover" without a
- *  second fetch. `sum(qty per product) === that row's open_so_need`. */
+ *  second fetch. `sum(qty per product) === that row's open_so_need`: since R15 both channels
+ *  are the sales-order BOOK, told apart by `demand_class`, and a project line is listed at the
+ *  remainder left after what CS already placed on a PO or an SPO. */
 export interface ContainerRequestSoLine {
   product_id: string;
   item_code: string | null;
@@ -487,12 +584,17 @@ export interface ContainerRequestSources {
   po_book_as_of: string | null;
   spo_as_of: string | null;
   stock_list_as_of: string | null;
+  /** The proforma standing in for a missing stock list, so the strip can say "PI 31/07"
+   *  (AC-A2). Null whenever a stock list exists - it is then not consulted. */
+  proforma_as_of: string | null;
+  proforma_pi_number: string | null;
 }
 
 export interface ContainerRequestBuild {
   supplier_id: string;
-  /** Null when this supplier has no stock list applied yet - the FE's cue for the "upload a
-   *  stock list first" empty state. */
+  /** Null when this supplier has no stock list applied yet. NOT an empty state since F1: the
+   *  plan builds from `product_suppliers` and the open order book regardless, and "They hold"
+   *  reads the stand-in proforma or a dash. */
   stock_list_as_of: string | null;
   rows: ContainerRequestRow[];
   sources: ContainerRequestSources;
@@ -519,10 +621,72 @@ export async function buildContainerRequest(
   return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
 }
 
-export interface ContainerRequestLine {
-  product_id: string;
+/**
+ * Sales history behind a loading-plan row: what was ORDERED, per product, per month, over the
+ * last 12 full months, in two series (project and retail).
+ *
+ * A SIDECAR rather than a column on the build, because it is asked for the visible page's
+ * products only - a supplier with 120 products would otherwise pay 240 monthly series on every
+ * refresh for the 25 rows anybody is looking at.
+ *
+ * "Ordered", never "sold": the source is the sales-order book (`sales_order_lines.qty_ordered`
+ * by `sales_orders.order_date`), so a booked order counts from the day it was booked whether
+ * or not it has shipped.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
+ *  GET /api/v1/scm/container-requests/history?supplier_id=&product_ids=&product_ids=
+ *      -> 200 ContainerRequestHistory. Auth: `scm.dashboard.view`.
+ */
+export interface ContainerRequestHistoryPoint {
+  /** `YYYY-MM`. Twelve of them, zero-filled, oldest first. */
+  month: string;
   qty: number;
 }
+
+export interface ContainerRequestHistorySeries {
+  months: ContainerRequestHistoryPoint[];
+  total: number;
+  /** Mean over the twelve buckets, zeros included. */
+  avg: number;
+  /** Null when the series is empty - there is no peak of nothing. */
+  peak_month: string | null;
+  peak_qty: number;
+}
+
+export interface ContainerRequestHistoryProduct {
+  product_id: string;
+  project: ContainerRequestHistorySeries;
+  retail: ContainerRequestHistorySeries;
+}
+
+export interface ContainerRequestHistory {
+  /** First and last bucket, so the FE never has to work out which twelve months these are. */
+  from_month: string;
+  to_month: string;
+  products: ContainerRequestHistoryProduct[];
+}
+
+export async function getContainerRequestHistory(
+  supplierId: string,
+  productIds: string[],
+): Promise<ContainerRequestHistory> {
+  const params = new URLSearchParams({ supplier_id: supplierId });
+  for (const id of productIds) params.append('product_ids', id);
+  const res = await apiFetch(`/api/v1/scm/container-requests/history?${params.toString()}`);
+  return readJson<ContainerRequestHistory>(res, 'Failed to load the sales history');
+}
+
+/**
+ * One reviewed line. It names a product OR one of our product sets, never both (R19).
+ *
+ * A set line carries no product id at all: the supplier sells the whole WC under a code our
+ * catalogue does not hold, so the ask goes out under the set code, and naming one member
+ * here would make the document disagree with the row it came from.
+ */
+export type ContainerRequestLine = { qty: number } & (
+  | { product_id: string; product_set_id?: undefined }
+  | { product_set_id: string; product_id?: undefined }
+);
 
 export async function sendContainerRequest(
   supplierId: string,
@@ -534,6 +698,32 @@ export async function sendContainerRequest(
     body: JSON.stringify({ supplier_id: supplierId, lines }),
   });
   return readJson(res, 'Failed to send the request to the supplier');
+}
+
+/**
+ * The request as a file for the quantities currently on screen, WITHOUT sending it (R23).
+ *
+ * The gear menu's "Download XLSX" / "Download PDF". `POST` because the lines are the body -
+ * they are Ms Tee's edits, not a stored plan the server could re-derive - and because nothing
+ * is created it sits behind the same read permission the build does. The name comes off the
+ * server's `Content-Disposition` so the file and the sheet inside it agree on which supplier
+ * and which day this is.
+ */
+export async function downloadContainerRequestDocument(
+  supplierId: string,
+  lines: ContainerRequestLine[],
+  format: 'xlsx' | 'pdf',
+): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/container-requests/document?format=${format}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supplier_id: supplierId, lines }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to build the document'));
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `container-request.${format}`;
+  saveBlobAs(await res.blob(), filename);
 }
 
 /** Every notice this supplier has ever been sent, across both stages - filtered client-side
@@ -920,6 +1110,10 @@ export interface SpoPoTake {
   /** The PO's OWN supplier - can differ from the shipment line's own supplier on a pinned
    *  match resolved to a differently-spelled book entry (fourth amendment). */
   supplier_name: string | null;
+  /** What this PO LINE has open, not what the cascade took from it. Unticking another take
+   *  re-runs the walk over the lines still ticked, and `qty` alone cannot answer that: a
+   *  line that gave 40 while its neighbour was ticked may have 150 to give without it. */
+  open_qty: number;
 }
 
 /** One open SO line behind a location's `outstanding_so` - "what SO am I covering"
@@ -931,6 +1125,32 @@ export interface SpoDemandLine {
   required_date: string | null;
   order_date: string | null;
   qty: number;
+}
+
+/**
+ * One piece of demand this SPO could cover, tickable (Q4, AC-G3).
+ *
+ * Two families, because they are two different records: PROJECT demand is an unlinked
+ * order-inquiry row (part 2 P3), and RETAIL demand is a line of the sales-order book. Only
+ * the project side can carry a link afterwards - the links table hangs off the inquiry row -
+ * so `kind` is not decoration, it is which half of the pipeline this line lives in.
+ */
+export interface SpoCoverageLine {
+  /** `project:<row id>` / `retail:<so line id>` - stable, and what `so_line_ids` sends. */
+  key: string;
+  kind: 'project' | 'retail';
+  document: string | null;
+  customer_name: string | null;
+  required_date: string | null;
+  /** What this piece of demand still needs. */
+  qty: number;
+  /** Where it is needed. Null on a project row whose stock location names no warehouse we
+   *  hold - it still ticks, it just cannot steer the split. */
+  warehouse_id: string | null;
+  warehouse_code: string | null;
+  /** Pre-ticked by the default walk: project by required date, then retail by required
+   *  date, until the packed quantity is used up (Q4). */
+  default_ticked: boolean;
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */
@@ -986,6 +1206,9 @@ export interface SpoSuggestionLine {
    *  convert. */
   location_options: SpoLocationOption[];
   suggested_warehouse_id: string | null;
+  /** The demand this SPO can be pointed at, in the order the default ticks walk it: project
+   *  by required date, then retail by required date (Q4, AC-G3). */
+  so_coverage: SpoCoverageLine[];
 }
 
 export interface SpoRef {
@@ -1023,6 +1246,12 @@ export interface SpoConfirmLine {
   /** Zero, one or several destinations (fourth amendment) - empty writes no allocation for
    *  this line, same as every call before this ask. */
   location_splits?: SpoLocationSplit[];
+  /** Which PO takes to draw from (AC-G1). Absent means every take the server re-derives;
+   *  present means ONLY these, and the SPO quantity falls to what they cover (AC-G2). */
+  po_take_ids?: string[];
+  /** Which demand this SPO is being pointed at - `SpoCoverageLine.key`s (AC-G3). Drives the
+   *  location split on screen, and the link rows the create writes for the project half. */
+  so_line_ids?: string[];
 }
 
 export interface CreatedSpo extends SpoRef {
@@ -1039,12 +1268,24 @@ export interface SpoAllocationWritten {
   qty: number;
 }
 
+/** One link the create wrote from a ticked project row to the SPO allocation covering it. */
+export interface SpoDemandLink {
+  key: string;
+  document: string | null;
+  spo_number: string | null;
+  qty: number;
+}
+
 export interface SpoCreateResult {
   shipment_id: string;
   shipment_number: string | null;
   created_spos: CreatedSpo[];
   skipped: { shipment_line_id: string; item_code: string | null; reason: string }[];
   allocations: SpoAllocationWritten[];
+  /** The project rows this SPO was tied to (AC-G6). Retail ticks steer the split and the
+   *  clamp but write no link: the links table hangs off an order-inquiry row, and a retail
+   *  sales-order line has none. */
+  demand_links: SpoDemandLink[];
 }
 
 export async function getSpoSuggestion(shipmentId: string): Promise<SpoSuggestion> {

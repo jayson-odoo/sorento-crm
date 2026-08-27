@@ -17,11 +17,24 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { StatCard } from '@/components/scm/StatCard';
+import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
-import { suggestionBreakdown } from '../../_shared/lib/boardSuggestion';
+import {
+  SHORT_LABELS,
+  contributionSuggestion,
+  decisionBreakdown,
+  movesOf,
+  movesText,
+  rowOf,
+  rowText,
+  suggestionBreakdown,
+  takenByLocation,
+} from '../../_shared/lib/supplyVocabulary';
+import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardAmendDialog } from './BoardAmendDialog';
@@ -99,6 +112,39 @@ export function BoardCellBreakdownDialog({
   );
   /** What the ladder proposes for the whole cell, by kind of source. */
   const suggestion = React.useMemo(() => suggestionBreakdown(cell), [cell]);
+  /**
+   * What was DECIDED for it, in the same rows and the same words (AC-D3).
+   *
+   * Empty until somebody decides something - confirmed on the order, or ticked into this
+   * session's draft - and the card is not rendered then: a Decision card reading nothing
+   * claims a decision was taken to do nothing.
+   */
+  const decision = React.useMemo(() => decisionBreakdown(cell, draft), [cell, draft]);
+  /**
+   * What has to physically MOVE for that decision, before Approve is pressed (section E).
+   *
+   * Derived from the same decision the card above renders, so the planner sees the
+   * transfers their tick is about to raise rather than discovering them on another page.
+   */
+  const moves = React.useMemo(() => movesText(movesOf(cell, draft)), [cell, draft]);
+  /**
+   * How much the cell draws from each location, for the Taken column of the table above
+   * (AC-B3). The decision when there is one and the suggestion otherwise, which is the same
+   * switch the cell's colour bar uses.
+   */
+  const taken = React.useMemo(() => takenByLocation(cell, draft), [cell, draft]);
+  /**
+   * Did ANY contributing line record what the engine suggested?
+   *
+   * A revision frozen before `proposed_components` existed (AC-D1) recorded none, and an
+   * empty Suggestion card would then read as "the engine proposed nothing for this" - which
+   * is a claim about the ladder rather than about the record. Verified live on SO324132 rev
+   * 1, whose four lines all predate the field.
+   */
+  const suggestionRecorded = React.useMemo(
+    () => cell.contributions.some((entry) => contributionSuggestion(entry) !== null),
+    [cell.contributions],
+  );
   /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
   const [amending, setAmending] = React.useState<BoardContribution | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -324,7 +370,9 @@ export function BoardCellBreakdownDialog({
           const strip = row.original.sources
             .map(
               (source) =>
-                `${sourceLabel(source.kind, source.rung)} ${source.qty}${sourceAt(source)}`,
+                `${sourceLabel(source, row.original.fulfilment_location)} ${source.qty}${sourceAt(
+                  source,
+                )}`,
             )
             .join(' · ');
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
@@ -487,54 +535,45 @@ export function BoardCellBreakdownDialog({
           <DialogDescription className="sr-only">
             {`${cell.total_qty} outstanding, ${decided} decided`}
           </DialogDescription>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div
-              data-testid="cell-quantity-needed"
-              className="rounded-lg border border-border p-3"
-            >
-              <p className="text-xs text-muted-foreground">Quantity needed</p>
-              <p className="text-2xl font-semibold tabular-nums">{cell.total_qty}</p>
-              <p className="text-xs text-muted-foreground">
-                {`${decided} decided`}
-              </p>
-            </div>
+          <div
+            className={cn(
+              'grid grid-cols-1 gap-3',
+              decision.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
+            )}
+          >
+            <StatCard
+              testId="cell-quantity-needed"
+              label="Quantity needed"
+              value={cell.total_qty}
+              sub={`${decided} decided`}
+            />
 
-            <div data-testid="cell-suggestion" className="rounded-lg border border-border p-3">
-              <p className="mb-1.5 text-xs text-muted-foreground">Suggestion</p>
-              {/* Only the kinds the ladder actually proposes something for, in one fixed order
-                  (`suggestionBreakdown`), so Buy still sits above the stock rows wherever it
-                  appears. The empty ones used to be listed and muted, and on a real cell that
-                  was three lines of nothing around the one line that said what to do. */}
-              <div className="space-y-1">
-                {suggestion.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Nothing proposed for this cell
-                  </p>
-                ) : null}
-                {suggestion.map((row) => (
-                  <div
-                    key={row.key}
-                    data-testid={`suggestion-${row.key}`}
-                    className="flex flex-wrap items-center gap-1.5 text-sm"
-                  >
-                    <Badge variant="primary" appearance="light" size="sm">
-                      {row.label}
-                    </Badge>
-                    <span className="min-w-0 break-words tabular-nums">
-                      {row.qty}
-                      {row.locations.length > 0 && ` from ${row.locations.join(', ')}`}
-                    </span>
-                    {/* The engine's own sentence, and only when every source on the row
-                        gives the same one: a Buy for "nothing free anywhere" and a Buy for
-                        "beyond the lead time window" are the same number for opposite
-                        reasons, and this card is where that is decided. */}
-                    {row.note ? (
-                      <span className="w-full text-xs text-muted-foreground">{row.note}</span>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
+            <CompositionCard
+              testId="cell-suggestion"
+              rowTestId="suggestion"
+              title="Suggestion"
+              rows={suggestion}
+              empty={
+                suggestionRecorded
+                  ? 'Nothing proposed for this cell'
+                  : 'Not recorded for this revision'
+              }
+            />
+
+            {/* Beside the suggestion, never instead of it (AC-D3). SAME component, two
+                inputs: two cards that merely resembled each other would drift, and the whole
+                point is that a planner compares them at a glance. Rendered only once
+                something IS decided. */}
+            {decision.length > 0 ? (
+              <CompositionCard
+                testId="cell-decision"
+                rowTestId="decision"
+                title="Decision"
+                rows={decision}
+                empty=""
+                moves={moves}
+              />
+            ) : null}
           </div>
 
           {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
@@ -557,6 +596,7 @@ export function BoardCellBreakdownDialog({
             locations={cell.locations}
             itemCode={cell.item_code}
             groupNote={cell.location_group_note}
+            taken={taken}
           />
         </DialogHeader>
 
@@ -665,6 +705,79 @@ const VERDICT_PALETTE: Record<string, string> = {
  * and writes only what it is sent), and Undo undoes a draft entry that does not exist. The row
  * states which revision decided it and what that revision froze.
  */
+/**
+ * ONE composition, as the dialog's header states it: a badge per kind and the quantity per
+ * location beside it (AC-D3).
+ *
+ * One component for BOTH the suggestion and the decision, because the two are read against
+ * each other: a second card that merely looked like this one would drift the first time
+ * either changed, and the comparison is the whole reason they sit side by side.
+ *
+ * Only the kinds with a quantity, in one fixed order, so Buy sits above the stock rows
+ * wherever it appears. The empty kinds used to be listed and muted, and on a real cell that
+ * was three lines of nothing around the one line that said what to do.
+ */
+function CompositionCard({
+  testId,
+  rowTestId,
+  title,
+  rows,
+  empty,
+  moves,
+}: {
+  testId: string;
+  /** Prefix for the per-kind rows: `suggestion-buy`, `decision-shared`. */
+  rowTestId: string;
+  title: string;
+  rows: SuggestionRow[];
+  empty: string;
+  /**
+   * The movements this composition implies ("454 DC1-BB -> BRW-BB"), on the Decision card
+   * only. Empty when nothing has to move, and the line is not drawn then: a Moves row
+   * reading nothing claims a decision was taken to carry nothing.
+   */
+  moves?: string;
+}) {
+  return (
+    <div data-testid={testId} className="rounded-lg border border-border p-3">
+      <p className="mb-1.5 text-xs text-muted-foreground">{title}</p>
+      <div className="space-y-1">
+        {rows.length === 0 && empty ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : null}
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            data-testid={`${rowTestId}-${row.key}`}
+            className="flex flex-wrap items-center gap-1.5 text-sm"
+          >
+            <Badge variant="primary" appearance="light" size="sm">
+              {row.label}
+            </Badge>
+            {/* The quantity PER LOCATION ("454 from DC1-BB, 267 from MWH-BB"), not a total
+                beside a bare list of codes: the split IS the instruction, and somebody has
+                to key each movement of it. */}
+            <span className="min-w-0 break-words tabular-nums">{rowText(row)}</span>
+            {/* The rule's own sentence, and only when every source on the row gives the same
+                one: a Buy for "nothing free anywhere" and a Buy for "beyond the lead time
+                window" are the same number for opposite reasons, and this card is where that
+                is decided. */}
+            {row.note ? (
+              <span className="w-full text-xs text-muted-foreground">{row.note}</span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      {moves ? (
+        <p data-testid={`${rowTestId}-moves`} className="mt-2 border-t border-border pt-1.5 text-xs">
+          <span className="text-muted-foreground">Moves: </span>
+          <span className="break-words tabular-nums">{moves}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function DecisionCell({
   contribution,
   decision,
@@ -705,7 +818,7 @@ function DecisionCell({
           )}`}
           title={contribution.decision.amend_reason ?? ''}
         >
-          {confirmedSummary(contribution.decision)}
+          {confirmedSummary(contribution.decision, contribution.fulfilment_location)}
         </span>
         <Button type="button" size="sm" variant="outline" onClick={onAmend}>
           <Pencil className="size-4" aria-hidden />
@@ -729,7 +842,7 @@ function DecisionCell({
           {decision.verdict === 'approved'
             ? 'Approved'
             : decision.verdict === 'amended'
-              ? amendSummary(decision)
+              ? amendSummary(decision, contribution.fulfilment_location)
               : 'Rejected'}
         </span>
         {/* Amend stays offered on a decided row. Undo-then-Amend is two presses that throw
@@ -814,48 +927,59 @@ function shareNote(contribution: BoardContribution): string | null {
  * renderings of one composition is how they come to disagree.
  */
 /**
- * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
- * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
- * second sentence-builder that drifts from this one.
+ * PRIVATE since AC-D4. It was exported for the board's list view, whose single Proposal
+ * column became Suggested and Decided - and the Decided column states the composition alone
+ * (`describe`), because the revision is already on the Verdict column and on the row's tick.
+ * The one remaining caller is the row strip below.
  */
-export function confirmedSummary(decision: NonNullable<BoardContribution['decision']>): string {
-  return `Confirmed rev ${decision.revision_no} · ${amendSummary({
-    verdict: 'amended',
-    timely_spo_qty: decision.timely_spo_qty,
-    reserve: decision.reserve,
-    borrow: decision.borrow.map((row) => ({
-      source: row.source,
-      warehouse_id: row.warehouse_id ?? '',
-      warehouse_code: row.location ?? null,
-      donor_project_id: row.donor_project_id ?? null,
-      qty: row.qty,
-      reason: row.reason,
-    })),
-    buy_qty: decision.buy_qty,
-  })}`;
+function confirmedSummary(
+  decision: NonNullable<BoardContribution['decision']>,
+  ownLocation?: string | null,
+): string {
+  return `Confirmed rev ${decision.revision_no} · ${amendSummary(
+    {
+      verdict: 'amended',
+      timely_spo_qty: decision.timely_spo_qty,
+      reserve: decision.reserve,
+      borrow: decision.borrow.map((row) => ({
+        source: row.source,
+        warehouse_id: row.warehouse_id ?? '',
+        warehouse_code: row.location ?? null,
+        donor_project_id: row.donor_project_id ?? null,
+        qty: row.qty,
+        reason: row.reason,
+        // Carried, not dropped: it is what tells "Borrow (order)" from "Borrow (other)"
+        // on a frozen composition, which arrives with no rung at all.
+        donor_so_number: row.donor_so_number ?? null,
+      })),
+      buy_qty: decision.buy_qty,
+    },
+    ownLocation,
+  )}`;
 }
 
 /**
- * Exported for the same reason `confirmedSummary` is - see its comment.
+ * Exported so the planning-changes batch page (`PLAN-so-book-diff-replanning.md`) can print a
+ * replan/qty_up row's proposal in the same words the board's own breakdown does, rather than a
+ * second sentence-builder that drifts from this one.
  *
- * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): a rung, when the source
- * carries one, reads by its own name (Pool / Group take / Group borrow / Cross-group
- * borrow) rather than the bare `kind` the balance invariant uses - group borrow and
- * cross-group borrow are now AUTO-PROPOSED, not only a person's decision on a covered row.
+ * SECTION 2'S WORDS, off `SHORT_LABELS`. This strip used to print ladder v2's rung names
+ * (Pool / Group take / Group borrow / Cross-group borrow) inside a popover whose Suggestion
+ * card, colour bar and legend all said Shared / Own / Borrow for the same quantities. One
+ * composition may not be described twice: the plan's table is the only vocabulary.
+ *
+ * `ownLocation` is the line's own warehouse code, which is what tells the agent's own group
+ * from the shared pool for a source that carries no rung.
  */
 export function sourceLabel(
-  kind: BoardContribution['sources'][number]['kind'],
-  rung?: string | null,
+  source: BoardContribution['sources'][number],
+  ownLocation?: string | null,
 ): string {
-  if (rung === 'pool') return 'Pool';
-  if (rung === 'group_take') return 'Group take';
-  if (rung === 'group_borrow') return 'Group borrow';
-  if (rung === 'cross_group_borrow') return 'Cross-group borrow';
-  if (kind === 'reserve') return 'Reserve';
-  if (kind === 'timely_spo') return 'Incoming';
-  if (kind === 'buy') return 'Buy';
-  if (kind === 'borrow') return 'Borrow';
-  return 'Cannot be sourced';
+  // The WHOLE source, never a kind and a rung pulled out of it: the location is what tells
+  // the agent's own group from the shared pool when the source carries no rung, and passing
+  // the pieces by hand is how it came to be left out.
+  const row = rowOf(source, ownLocation);
+  return row ? SHORT_LABELS[row] : 'Cannot be sourced';
 }
 
 /**
@@ -866,7 +990,7 @@ export function sourceLabel(
  * borrow names its donor SO line instead, when one was stated - "from SO371334 line 2" is
  * the identity that matters, the location is secondary.
  */
-/** Exported for the same reason `confirmedSummary` is - see its comment. */
+/** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
   if (source.kind === 'borrow' && source.rung === 'group_borrow' && source.donor_so_number) {
     const line =

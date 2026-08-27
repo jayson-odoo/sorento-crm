@@ -122,19 +122,84 @@ describe('BoardAmendDialog: what it is and what it holds', () => {
     renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }));
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(40);
-    expect(screen.getByLabelText('Buy')).toHaveValue(60);
+    // A composition carrying stock is not "the whole line bought", so the switch is off -
+    // and `lineBlockers` says the mix cannot be saved (AC-L5).
+    expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
+    expect(
+      screen.getByText(/either met wholly from stock or wholly bought/),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Buy is a WHOLE-LINE SWITCH (AC-L5, the captain 25 August 2026): "a line is either wholly
+ * covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy". A free
+ * Buy box could only ever be typed into a composition the confirmation refuses.
+ */
+describe('BoardAmendDialog: the Buy switch', () => {
+  it('opens ON, with no stock rows, for a line the engine proposed as a whole-line Buy', () => {
+    renderDialog(contributionOf({}));
+
+    expect(screen.getByLabelText('Buy the whole line')).toBeChecked();
+    expect(screen.queryByLabelText('Reserve at BRW-BB')).not.toBeInTheDocument();
+    expect(screen.getAllByText('The whole line is being bought.')).toHaveLength(2);
+  });
+
+  it('gives the stock rows back when it is switched off, with nothing bought', () => {
+    renderDialog(contributionOf({}));
+
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
+    expect(screen.getByTestId('amend-balance').textContent).toBe(
+      '100 outstanding = 0 incoming + 0 reserve + 0 borrow + 0 buy',
+    );
+  });
+
+  it('clears the stock rows and buys the whole quantity when it is switched on', () => {
+    const { onSave } = renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '100' }));
+
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(100);
+
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+
+    expect(screen.queryByLabelText('Reserve at BRW-BB')).not.toBeInTheDocument();
+    expect(screen.getByTestId('amend-balance').textContent).toBe(
+      '100 outstanding = 0 incoming + 0 reserve + 0 borrow + 100 buy',
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The site wants new stock, not what is standing there.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ reserve: [], borrow: [], buy_qty: '100' }),
+    );
+  });
+
+  it('restores the composition it cleared, rather than an empty form', () => {
+    renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '100' }));
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '70' } });
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(70);
+    expect(screen.getByTestId('amend-balance').textContent).toBe(
+      '100 outstanding = 0 incoming + 70 reserve + 0 borrow + 0 buy',
+    );
   });
 });
 
 describe('BoardAmendDialog: the Reserve', () => {
-  it('offers no Reserve row at all when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
-    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the whole
-    // quantity is bought, and the line's own location is never a Reserve row any more -
-    // unlike the old ladder, which always offered it at zero.
+  it('offers the line’s own location at zero once Buy is switched off (ladder v3 rung 2)', () => {
+    // Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2) gives the own location back
+    // as a group source, so "reserve it at my own warehouse instead" is reachable again on a
+    // line the engine bought whole.
     renderDialog(contributionOf({}));
 
-    expect(screen.queryByLabelText('Reserve at BRW-BB')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Buy')).toHaveValue(100);
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+    expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
   });
 
   it('states what was left for this line at its own location', () => {
@@ -195,6 +260,11 @@ describe('BoardAmendDialog: the Borrow', () => {
       contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }, { borrow_candidates: [DONOR] }),
     );
 
+    // Off the proposal's stock-and-Buy mix and onto a stock-only composition (AC-L5): the
+    // switch on clears the stock, off gives it back with nothing bought.
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+
     fireEvent.click(screen.getByRole('button', { name: 'Add a borrow' }));
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '10' } });
     fireEvent.change(screen.getByLabelText(/^Reason/), {
@@ -204,8 +274,8 @@ describe('BoardAmendDialog: the Borrow', () => {
 
     expect(screen.getByLabelText('Borrow from BRW-IB')).toHaveValue(10);
 
-    // 100 owed = 40 reserve + 10 borrow + 60 buy is 10 over, so the Buy comes down by 10.
-    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '50' } });
+    // Wholly from stock (AC-L5): 40 reserved plus the 60 borrowed meets the whole 100.
+    fireEvent.change(screen.getByLabelText('Borrow from BRW-IB'), { target: { value: '60' } });
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'Borrowing rather than buying what is already in the group.' },
     });
@@ -218,11 +288,11 @@ describe('BoardAmendDialog: the Borrow', () => {
           expect.objectContaining({
             source: 'other_location',
             warehouse_id: 'wh-ib',
-            qty: '10',
+            qty: '60',
             reason: 'The site next door can wait a week.',
           }),
         ],
-        buy_qty: '50',
+        buy_qty: '0',
       }),
     );
   });
@@ -235,7 +305,7 @@ describe('BoardAmendDialog: the Borrow', () => {
     );
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(100);
-    expect(screen.getByLabelText('Buy')).toHaveValue(0);
+    expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Add a borrow' })).toBeInTheDocument();
     expect(
       screen.queryByText('No other location or project holds free stock of this item.'),
@@ -282,41 +352,41 @@ describe('BoardAmendDialog: the balance, and what it stops', () => {
   });
 
   it('demands a reason the moment the composition displaces the rule', () => {
-    const { onSave } = renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }));
+    const { onSave } = renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '100' }));
 
-    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '10' } });
-    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '90' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '40' } });
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
 
     const save = screen.getByRole('button', { name: 'Save the amendment' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
-      target: { value: 'Keeping 30 for the site that is already late.' },
+      target: { value: 'Keeping what is standing there for the site that is already late.' },
     });
     expect(save).toBeEnabled();
     fireEvent.click(save);
 
     expect(onSave).toHaveBeenCalledWith({
       verdict: 'amended',
-      reserve_qty: '10',
+      reserve_qty: '0',
       timely_spo_qty: '0',
-      reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '10' }],
+      reserve: [],
       borrow: [],
-      buy_qty: '90',
-      reason: 'Keeping 30 for the site that is already late.',
+      buy_qty: '100',
+      reason: 'Keeping what is standing there for the site that is already late.',
     });
   });
 
   it('takes the proposal as it stands without demanding a reason for agreeing', () => {
-    const { onSave } = renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '40' }));
+    const { onSave } = renderDialog(contributionOf({ 'B2155-NL-BLUE|BRW-BB': '100' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
 
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         verdict: 'amended',
-        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' }],
-        buy_qty: '60',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+        buy_qty: '0',
         reason: undefined,
       }),
     );
@@ -401,11 +471,11 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
         warehouse_id: 'wh-mwh-ib',
         location: 'MWH-IB',
         donor_project_id: null,
-        qty: '10',
+        qty: '43',
         reason: 'The other site can wait a week.',
       },
     ],
-    buy_qty: '33',
+    buy_qty: '0',
     amend_reason: 'Borrowed rather than bought, agreed with the other site.',
   };
 
@@ -416,13 +486,14 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
     renderDialog(coveredContribution());
 
     expect(screen.getByTestId('amend-owed').textContent).toBe('43');
-    expect(screen.getByLabelText('Borrow from MWH-IB')).toHaveValue(10);
-    expect(screen.getByLabelText('Buy')).toHaveValue(33);
+    expect(screen.getByLabelText('Borrow from MWH-IB')).toHaveValue(43);
+    // Met wholly from stock (AC-L5), so the switch reads off.
+    expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
     // The line's own location is still a row, at zero, because "reserve it at my own warehouse
     // instead" is the amendment a planner most often wants to make.
     expect(screen.getByLabelText('Reserve at BRW-BB')).toHaveValue(0);
     expect(screen.getByTestId('amend-balance').textContent).toBe(
-      '43 outstanding = 0 incoming + 0 reserve + 10 borrow + 33 buy',
+      '43 outstanding = 0 incoming + 0 reserve + 43 borrow + 0 buy',
     );
   });
 
@@ -463,8 +534,8 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
     fireEvent.click(save);
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
-        borrow: [expect.objectContaining({ warehouse_id: 'wh-mwh-ib', qty: '10' })],
-        buy_qty: '33',
+        borrow: [expect.objectContaining({ warehouse_id: 'wh-mwh-ib', qty: '43' })],
+        buy_qty: '0',
         reason: undefined,
       }),
     );
@@ -474,8 +545,8 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
     renderDialog(coveredContribution());
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Borrow from MWH-IB'), { target: { value: '15' } });
-    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '28' } });
+    fireEvent.change(screen.getByLabelText('Borrow from MWH-IB'), { target: { value: '40' } });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '3' } });
 
     const save = screen.getByRole('button', { name: 'Save the amendment' });
     expect(save).toBeDisabled();
@@ -489,7 +560,7 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
     const { onSave } = renderDialog(coveredContribution());
 
     fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), { target: { value: '5' } });
-    fireEvent.change(screen.getByLabelText('Buy'), { target: { value: '28' } });
+    fireEvent.change(screen.getByLabelText('Borrow from MWH-IB'), { target: { value: '38' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save the amendment' }));
 
     expect(onSave).toHaveBeenCalledWith(
@@ -499,11 +570,11 @@ describe('BoardAmendDialog: a line a decision already covers', () => {
         borrow: [
           expect.objectContaining({
             warehouse_id: 'wh-mwh-ib',
-            qty: '10',
+            qty: '38',
             reason: 'The other site can wait a week.',
           }),
         ],
-        buy_qty: '28',
+        buy_qty: '0',
         reason: 'Borrowed rather than bought, agreed with the other site.',
       }),
     );

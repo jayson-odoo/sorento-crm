@@ -14,8 +14,6 @@ import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../li
 import { roundBuyQty } from '../lib/orderQtyLedger';
 import { CoverBreakdownTable } from './CoverBreakdownTable';
 import { describePoBook, poOffset, type PoReceipt } from '../lib/poCover';
-import { trendAdvice, type TrajectoryEntry } from '../lib/trajectory';
-import { marginOf, type ProductEconomics } from '../lib/productHealth';
 
 /**
  * The decision AND the suggestion, in ONE place (user markup, 2026-08-12).
@@ -34,9 +32,8 @@ import { marginOf, type ProductEconomics } from '../lib/productHealth';
  * "Stock 15 (BRW-BB) + PO 120"), because that button IS the decision - clicking it takes the
  * suggestion exactly as offered. Adjust and Skip sit beside it, smaller, for the two other
  * things a buyer does with a suggestion. Whatever else there is to know about the suggestion
- * (stock crossing a segment boundary, CS being superseded, an SPO already counted, a trend
- * argument for more or fewer) sits underneath in quiet type - present, but never competing with
- * the button for attention.
+ * (stock crossing a segment boundary, CS being superseded, an SPO already counted) sits
+ * underneath in quiet type - present, but never competing with the button for attention.
  *
  * A DECIDED row goes quiet: a check (or an X for a skip) and the mix actually taken, in the
  * PAST tense ("Bought 1,100" - the tense itself is the "this one is done" signal, since the
@@ -62,9 +59,6 @@ export function PlanLineDecisionCell({
   mixed = false,
   cover,
   poReceipts = [],
-  trend,
-  economics,
-  healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   onDecide,
   onClear,
 }: {
@@ -78,22 +72,13 @@ export function PlanLineDecisionCell({
   cover: CoverProposal;
   /** S15: the open PO lines already carrying this product here. */
   poReceipts?: PoReceipt[];
-  /** The order-trend verdict behind the "consider more/fewer" advisory. Undefined = no
-   *  opinion, so the advisory line is simply absent. */
-  trend?: TrajectoryEntry;
-  /** What the product sells for and how fast it turns, so a "buy more" advisory can carry
-   *  its thin-margin caveat in the same breath. Undefined = no opinion. */
-  economics?: ProductEconomics;
-  /** The policy's lines for "thin margin". */
-  healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   onDecide: (next: PlanDecision) => Promise<void> | void;
   /** Put the line back to undecided. Its own callback rather than a decision field,
    *  because undecided is the ABSENCE of a decision and must not become one. */
   onClear: () => Promise<void> | void;
 }) {
   // Both writes go through here so a rejection always toasts, whichever control fired it
-  // (the Accept button, the advisory link, Adjust's own Record, or a grouped fan-out that
-  // partly failed).
+  // (the Accept button, Adjust's own Record, or a grouped fan-out that partly failed).
   const decide = async (next: PlanDecision) => {
     try {
       await onDecide(next);
@@ -211,20 +196,12 @@ export function PlanLineDecisionCell({
 
   // What used to be the separate "Suggested action" column: the notes a buyer needs beyond
   // the mix itself. Quiet, underneath the button, never a second place to look for them.
-  const advice = trendAdvice(trend, suggestedBuy);
-  // The advisory records a decision like any other control, so its figure is rounded like any
-  // other - stated once here and used by both the tooltip and the click.
-  const advisedBuy = advice
-    ? roundBuyQty(
-        advice.direction === 'more' ? suggestedBuy + advice.delta : suggestedBuy - advice.delta,
-        line.order_qty_inputs,
-      )
-    : 0;
-  const margin = economics ? marginOf(line.unit_cost_base, economics, healthThresholds.margin_floor_pct) : null;
-  const thinMargin =
-    advice?.direction === 'more' &&
-    (margin?.tone === 'thin' || margin?.tone === 'negative') &&
-    margin?.pct !== null;
+  //
+  // P6 (captain, 25 Aug): the trend advisory ("Consider 490 more - orders rose 3233%") is NOT
+  // one of them. A percentage off a tiny base shouts a number nobody would act on, next to the
+  // button that IS the decision. The trend still has its say, in the trajectory popover on the
+  // SO column, where the demand it judges lives and the whole series is there to read it with.
+  //
   // A cover offer on a project line is purchasing superseding CS: the inquiry said buy it
   // all, and the engine found stock CS did not use. Said out loud, because a quiet
   // disagreement with CS reads as the engine miscounting.
@@ -296,38 +273,6 @@ export function PlanLineDecisionCell({
           ) : null}
           {crossing ? <span className="block text-scm-overstock">crosses segment</span> : null}
           {supersede ? <span className="block truncate">{supersede}</span> : null}
-          {/* The forecast advisory: the trend's own %-change applied to the buy, applied by a
-              CLICK, never silently - committed demand stays the driver. */}
-          {advice ? (
-            <button
-              type="button"
-              className="block truncate text-scm-incoming underline decoration-dotted underline-offset-2 hover:text-primary"
-              title={`Apply: adjust the buy to ${fmtInt(advisedBuy)}`}
-              onClick={() =>
-                void decide({
-                  ...(stockQty > 0
-                    ? {
-                        stock: {
-                          qty: stockQty,
-                          sources: cover.sources.map((s) => ({
-                            warehouse_id: s.warehouse_id,
-                            warehouse_code: s.warehouse_code,
-                            qty: s.qty,
-                          })),
-                        },
-                      }
-                    : {}),
-                  ...(suggestedPo > 0 ? { po: suggestedPo } : {}),
-                  buy: advisedBuy,
-                  reason: `Trend: orders ${advice.direction === 'more' ? 'rose' : 'fell'} ${advice.pct}%`,
-                })
-              }
-            >
-              {`Consider ${fmtInt(advice.delta)} ${advice.direction} - orders ${
-                advice.direction === 'more' ? 'rose' : 'fell'
-              } ${advice.pct}%${thinMargin ? `, but margin only ${margin!.pct}%` : ''}`}
-            </button>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -407,16 +352,22 @@ function AdjustMixture({
               aria-label="Units from stock"
             />
           </label>
-          <label className="flex items-center justify-between gap-2">
-            <span>From PO book (max {fmtInt(poMax)})</span>
-            <Input
-              type="number" min={0} max={poMax} inputMode="numeric"
-              className="h-7 w-20 text-right tabular-nums"
-              value={po} onChange={(e) => setPo(e.target.value)}
-              disabled={poMax <= 0}
-              aria-label="Units from the PO book"
-            />
-          </label>
+          {/* Only where there IS a PO to use. A project row never has one (P8: its purchase
+              order is consumed by the Order Inquiry's links, so offering it here would net
+              the same quantity twice), and a retail row with an empty book has nothing to
+              offer either - both used to render an input that could only ever read 0 and
+              could not be typed into. */}
+          {poMax > 0 ? (
+            <label className="flex items-center justify-between gap-2">
+              <span>From PO book (max {fmtInt(poMax)})</span>
+              <Input
+                type="number" min={0} max={poMax} inputMode="numeric"
+                className="h-7 w-20 text-right tabular-nums"
+                value={po} onChange={(e) => setPo(e.target.value)}
+                aria-label="Units from the PO book"
+              />
+            </label>
+          ) : null}
           <label className="flex items-center justify-between gap-2">
             <span>Buy</span>
             <Input

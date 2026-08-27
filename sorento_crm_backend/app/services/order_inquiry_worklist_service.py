@@ -22,9 +22,10 @@ rather than the product's usual supplier, because purchasing reads that column a
 statement that an order exists.
 
 **Each of the screen's own controls is computed ignoring its own filter** (the month
-strip, the supplier list, the project list). A control that empties itself the moment it
-is used cannot be used a second time. The visible TOTALS honour every filter, month
-included, because that strip is a statement about what is on screen.
+strip, the supplier list, the project list, the people who raised them). A control that
+empties itself the moment it is used cannot be used a second time. The visible TOTALS
+honour every filter, month included, because that strip is a statement about what is on
+screen.
 """
 from __future__ import annotations
 
@@ -47,14 +48,19 @@ from app.models.project_so import (
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    INQUIRY_PARTLY_LINKED,
     IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
+from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
@@ -65,11 +71,17 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
-#: The states pre-seeded at zero on the summary strip. `placed` (section G) is
-#: deliberately NOT one of them: `summary()` adds it to the dict dynamically the moment a
-#: placed row actually exists (same as any state would), so a company with none yet keeps
-#: reporting the exact four keys this screen has always reported.
-INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
+#: The states pre-seeded at zero on the summary strip: every state a row can be in,
+#: `partly_linked` and `placed` included (section 3.I). Declared on the schema too
+#: (`OrderInquiryStateCounts`), because `response_model` silently drops a key it has not
+#: been told about - the strip reported four states while the rows carried six.
+INQUIRY_STATES = (
+    INQUIRY_RAISED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
+)
 
 #: Every column the list renders is sortable, and this is the CLOSED SET. An unknown
 #: value is a 422 rather than a silent fall back to the default, for the same reason it
@@ -92,6 +104,7 @@ SORTABLE_FIELDS = frozenset(
         "po_number",
         "state",
         "raised_at",
+        "raised_by_name",
         "location",
         "agent",
     }
@@ -147,14 +160,44 @@ EXPORT_HEADINGS = (
 # outright ("invalid reference to FROM-clause entry").
 _CUSTOMER_ID = func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id)
 
-# The two links the schema holds from an inquiry row to a PLACED purchase order, tried in
-# order: "Place on PO" (section G) names the PO line DIRECTLY on the row, which is the
-# more certain of the two and is tried first; failing that, the row names an SPO, the
-# allocation for that SPO names the PO line, the line names the order (unchanged for
-# every row this feature has not touched). Correlated EXPLICITLY - an auto-correlated
-# `exists`/scalar subquery loses its FROM clauses the moment this query is reshaped (the
-# `shipment_supplier_predicate` lesson).
-_SPO_PLACED_PO_ID = (
+# The purchase order this row's FIRST link sits on - what the Supplier column reads and
+# what the row's `po_id` addresses. Off the LINKS since section 3.I: a row holds many now,
+# and `order_inquiry_rows.po_line_id` is the derived display of the first one rather than
+# the record. Ordered by when the link was made, so "first" is an order in time.
+#
+# Correlated EXPLICITLY - an auto-correlated `exists`/scalar subquery loses its FROM
+# clauses the moment this query is reshaped (the `shipment_supplier_predicate` lesson).
+_LINKED_PO_ID = (
+    select(PurchaseOrderLine.purchase_order_id)
+    .select_from(OrderInquiryLink)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+# The row's OWN link on an SPO, and through it the purchase order that shipping order
+# draws down (when the book ever names one - `po_line_id` is NULL on every migrated SPO
+# allocation, so this is the path a system-raised SPO takes and no other).
+_SPO_LINKED_PO_ID = (
+    select(PurchaseOrderLine.purchase_order_id)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == SPOAllocation.po_line_id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+# The row's OWN `spo_ref` - the coverage reference the netting engine writes on an
+# ALREADY INBOUND / PRE-ORDERED row (`ProjectOrderInquiryService._write`), which is not a
+# placement at all and never became a link. Kept as the last leg: those rows are traceable
+# to a purchase order through the shipping order that covers them, and dropping the leg
+# when placements moved to the links table would have blanked their Supplier and PO no
+# columns for a reason that has nothing to do with linking.
+_SPO_REF_PLACED_PO_ID = (
     select(PurchaseOrderLine.purchase_order_id)
     .select_from(SPOAllocation)
     .join(PurchaseOrderLine, PurchaseOrderLine.id == SPOAllocation.po_line_id)
@@ -163,14 +206,37 @@ _SPO_PLACED_PO_ID = (
     .correlate(OrderInquiryRow)
     .scalar_subquery()
 )
-_TAGGED_PLACED_PO_ID = (
-    select(PurchaseOrderLine.purchase_order_id)
-    .where(PurchaseOrderLine.id == OrderInquiryRow.po_line_id)
-    .limit(1)
-    .correlate(OrderInquiryRow)
-    .scalar_subquery()
+_PLACED_PO_ID = func.coalesce(
+    _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
-_PLACED_PO_ID = func.coalesce(_TAGGED_PLACED_PO_ID, _SPO_PLACED_PO_ID)
+
+#: Does this row hold a link of each kind? The "Linked" filter's own predicates (AC-I5),
+#: stated once so the filter and the column cannot disagree about what "linked to a PO"
+#: means.
+_HAS_PO_LINK = (
+    select(OrderInquiryLink.id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        OrderInquiryLink.po_line_id.isnot(None),
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+)
+_HAS_SPO_LINK = (
+    select(OrderInquiryLink.id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        OrderInquiryLink.spo_allocation_id.isnot(None),
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+)
+_HAS_ANY_LINK = (
+    select(OrderInquiryLink.id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .correlate(OrderInquiryRow)
+    .exists()
+)
 
 # `SO DATE` is the date on the DOCUMENT. For an adopted order that is the core sales
 # order's own order date; an authored one that has never been to AutoCount falls back to
@@ -196,6 +262,23 @@ _RAISED_AT = OrderInquiryRow.created_at
 _RAISED_DAY = cast(
     func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", _RAISED_AT)), Date
 )
+# WHO told purchasing to buy THIS ROW. Per ROW, not per header, and the difference is the
+# whole point: the header's `raised_by` is RE-STAMPED on every reconfirm (AC-H4), so
+# reading it here would print the latest reconfirmer's name beside an older row's own
+# clock - a row A raised on 12 Aug would read "B, 12/08 10:25" the moment B reconfirmed
+# one other line. The row's own answer is the revision that raised it:
+# `supply_decision_id` -> `so_supply_decisions.confirmed_by`, the same person the header
+# stamps at that moment (PLAN section 3.H).
+#
+# An amendment-born row (`ProjectOrderInquiryService._write`) carries NO decision at all -
+# it is raised off the amendment, not off a supply revision - so it falls back to its
+# header's `raised_by`, which for that inquiry is the person who published the amendment
+# and is never re-stamped (an amendment raises its OWN inquiry).
+#
+# The id never leaves the service: a screen printing a UUID at a buyer is a screen they
+# cannot use, so the filter takes an id and every read gives a name.
+_RAISED_BY_ID = func.coalesce(SOSupplyDecision.confirmed_by, OrderInquiry.raised_by)
+_RAISED_BY_NAME = User.name
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
 # row, or the confirmed allocation's warehouse for a plan/confirmed row
@@ -218,6 +301,7 @@ _SORT_EXPRESSIONS = {
     "po_number": PurchaseOrder.po_number,
     "state": OrderInquiryRow.state,
     "raised_at": _RAISED_AT,
+    "raised_by_name": _RAISED_BY_NAME,
     "location": _LOCATION,
     "agent": SalesAgent.sales_agent,
 }
@@ -235,7 +319,9 @@ _COLUMNS = (
     OrderInquiryRow.state.label("state"),
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
+    OrderInquiryRow.cited_document.label("cited_document"),
     _RAISED_AT.label("raised_at"),
+    _RAISED_BY_NAME.label("raised_by_name"),
     _SO_DATE.label("so_date"),
     _SO_NUMBER.label("so_number"),
     Product.id.label("product_id"),
@@ -322,6 +408,8 @@ class OrderInquiryWorklistService:
         state: Optional[str] = None,
         project_id: Optional[str] = None,
         supplier_id: Optional[str] = None,
+        raised_by: Optional[str] = None,
+        linked: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -338,6 +426,15 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
+            # The revision that raised this row, and the person who confirmed it. Both
+            # OUTER and both on a primary key, so a row with no decision (the amendment
+            # path) or a decision whose user has since been removed still reaches the
+            # list rather than dropping out of it.
+            .outerjoin(
+                SOSupplyDecision,
+                SOSupplyDecision.id == OrderInquiryRow.supply_decision_id,
+            )
+            .outerjoin(User, User.id == _RAISED_BY_ID)
             .outerjoin(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
@@ -383,6 +480,33 @@ class OrderInquiryWorklistService:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
+        if raised_by:
+            # By id, off the ROW's own raiser (its revision's confirmer, the header only
+            # when there is no revision). The screen picks the person from the summary's
+            # own list, so this never has to guess which "Cindy" was meant.
+            base = base.filter(_RAISED_BY_ID == raised_by)
+        if linked:
+            # WHERE the row is linked (AC-I5), which is a different question from what
+            # STATE it is in: a buyer asking "what have I still not put on anything"
+            # wants `none`, and one chasing shipping orders wants `spo`. `po` and `spo`
+            # mean "holds at least one link of that kind", so a row split across both
+            # answers to either - it genuinely is on both.
+            # `any` is internal - "Unlink all" asks for every row that holds a link, and
+            # the route's own whitelist offers po / spo / none to a caller.
+            if linked == "any":
+                base = base.filter(_HAS_ANY_LINK)
+            elif linked == "po":
+                base = base.filter(_HAS_PO_LINK)
+            elif linked == "spo":
+                base = base.filter(_HAS_SPO_LINK)
+            elif linked == "none":
+                base = base.filter(~_HAS_ANY_LINK)
+            else:
+                raise AppException(
+                    422,
+                    f"'{linked}' is not a link filter. Use po, spo or none.",
+                    code="invalid_linked_filter",
+                )
         if query:
             like = f"%{query.strip()}%"
             base = base.filter(
@@ -398,6 +522,12 @@ class OrderInquiryWorklistService:
                     Customer.customer_name.ilike(like),
                     Project.title.ilike(like),
                     Project.project_code.ilike(like),
+                    # The CS who raised it. By name, and by the FRONT of the email
+                    # address rather than anywhere inside it: a buyer types "cindy",
+                    # and matching `%cindy%` across a whole address would also return
+                    # every row whose raiser happens to work at cindy.com.
+                    User.name.ilike(like),
+                    User.email.ilike(f"{query.strip()}%"),
                 )
             )
         return base
@@ -453,21 +583,27 @@ class OrderInquiryWorklistService:
             .limit(limit)
             .all()
         )
-        product_by_row, open_products = self._open_po_line_context(rows)
+        product_by_row, link_candidates = self._link_candidate_context(rows)
         flow = self._quantity_flow_by_so_line(rows)
+        links = ProjectOrderInquiryService(self.db).links_for_rows(
+            [row.id for row in rows]
+        )
         return {
             "data": [
-                self._serialize(row, product_by_row, open_products, flow) for row in rows
+                self._serialize(row, product_by_row, link_candidates, flow, links)
+                for row in rows
             ],
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
 
-    def _open_po_line_context(self, rows) -> Tuple[Dict[str, Optional[str]], set]:
-        """`has_open_po_line` for a whole PAGE, bulk-answered once. Row id -> product id
+    def _link_candidate_context(
+        self, rows
+    ) -> Tuple[Dict[str, Optional[str]], Dict[str, set]]:
+        """`has_link_candidate` for a whole PAGE, bulk-answered once. Row id -> product id
         (the line's own reconciled product first, the item code second - the same
         precedence `ProjectOrderInquiryService._resolve_product_id` uses per row), and the
-        SET of those products that still have an outstanding PO line."""
+        and the products that still have something to link to, by kind."""
         by_code = {row.item_code for row in rows if not row.product_id and row.item_code}
         code_products = (
             dict(
@@ -481,71 +617,85 @@ class OrderInquiryWorklistService:
         product_by_row: Dict[str, Optional[str]] = {
             row.id: row.product_id or code_products.get(row.item_code) for row in rows
         }
-        open_products = ProjectOrderInquiryService(self.db).open_po_line_product_ids(
+        candidates = ProjectOrderInquiryService(self.db).link_candidate_products(
             set(product_by_row.values())
         )
-        return product_by_row, open_products
+        return product_by_row, candidates
 
     def _quantity_flow_by_so_line(self, rows) -> Dict[str, Dict[str, Decimal]]:
         """"Taken from PO" and "Remaining" for a whole PAGE, bulk-answered once (the
         captain, 20 Aug: "show the quantity, quantity taken from PO, and the remaining
         quantity, cause this is what flows to reorder planning").
 
-        The G2 cascade SPLITS a line's rows: a placed row's own `qty` is its allocation,
-        and the raised remainder row keeps whatever is still uncovered. So per `so_line_id`
-        this sums TWO separate things, both restricted to `verb = 'ORDER'` - the verb
-        `committed_v`'s confirmed leg counts, and the only one "taken off a PO" or "still
-        flowing to reorder" means anything for:
+        Read off the LINKS since section 3.I, which is what makes the two figures true
+        again. Before it, a cascade SPLIT a line's rows and the pair was "sum the placed
+        siblings" against "sum the raised siblings" - correct only because the split had
+        moved the arithmetic into the row count. A row now keeps its full quantity and
+        carries links, so per `so_line_id`:
 
-        * `taken` - every PLACED sibling's `qty`, the quantity actually taken off a PO;
-        * `remaining` - every RAISED sibling's `qty`, which is exactly `committed_v`'s own
-          predicate (`state = 'raised'`) - what still counts as demand. On a raised row
-          this includes the row itself, because a row that has not been placed IS the
-          uncovered remainder.
+        * `taken` - the sum of every LINK on the line's rows, whatever document it names;
+        * `remaining` - the sum of `qty - linked` across them, which is exactly
+          `scm.committed_v`'s own confirmed leg (migration 422) and therefore exactly what
+          still flows to reorder planning.
 
-        A PLACED row a planning change REDIRECTED to replenish the shared pool
+        Scoped to the verbs `committed_v` counts: `ORDER` and, since part 2 section 4b,
+        `ORDER_BACK`. Rows in `actioned` / `cancelled` are out, as they always were.
+
+        A row a planning change REDIRECTED to replenish the shared pool
         (`planning_change_service._apply_placed_redirect`, the captain's ruling 21 Aug
-        2026) is excluded from `taken`: it is still real placed quantity, just not this
+        2026) is excluded from both: it is still real linked quantity, just not this
         line's anymore, and counting it here would read as this line's need being covered
-        by a PO that is actually bound for the pool.
+        by a purchase order that is actually bound for the pool.
 
-        One `GROUP BY (so_line_id, state)` query, not one query per row.
+        One grouped query plus one aggregate over the links, not one query per row.
         """
         so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
         if not so_line_ids:
             return {}
+        linked = (
+            func.coalesce(
+                select(func.sum(OrderInquiryLink.qty))
+                .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+                .correlate(OrderInquiryRow)
+                .scalar_subquery(),
+                0,
+            )
+        ).label("linked")
         agg = (
             self.db.query(
                 OrderInquiryRow.so_line_id,
-                OrderInquiryRow.state,
-                func.coalesce(func.sum(OrderInquiryRow.qty), 0),
+                func.coalesce(func.sum(linked), 0),
+                func.coalesce(
+                    func.sum(func.greatest(OrderInquiryRow.qty - linked, 0)), 0
+                ),
             )
             .filter(
                 OrderInquiryRow.so_line_id.in_(so_line_ids),
-                OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.state.in_((INQUIRY_PLACED, INQUIRY_RAISED)),
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+                OrderInquiryRow.state.in_(
+                    (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED, INQUIRY_RAISED)
+                ),
                 OrderInquiryRow.redirected_to_pool.is_(False),
             )
-            .group_by(OrderInquiryRow.so_line_id, OrderInquiryRow.state)
+            .group_by(OrderInquiryRow.so_line_id)
             .all()
         )
-        flow: Dict[str, Dict[str, Decimal]] = {}
-        for so_line_id, state, qty in agg:
-            entry = flow.setdefault(so_line_id, {"taken": _ZERO, "remaining": _ZERO})
-            if state == INQUIRY_PLACED:
-                entry["taken"] = _dec(qty)
-            elif state == INQUIRY_RAISED:
-                entry["remaining"] = _dec(qty)
-        return flow
+        return {
+            so_line_id: {"taken": _dec(taken), "remaining": _dec(remaining)}
+            for so_line_id, taken, remaining in agg
+        }
 
     def _serialize(
         self,
         row,
         product_by_row: Optional[Dict[str, Optional[str]]] = None,
-        open_products: Optional[set] = None,
+        link_candidates: Optional[Dict[str, set]] = None,
         flow: Optional[Dict[str, Dict[str, Decimal]]] = None,
+        links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         line_flow = (flow or {}).get(row.so_line_id, {})
+        row_links = (links or {}).get(row.id, [])
+        linked_qty = sum((_dec(link["qty"]) for link in row_links), _ZERO)
         return {
             "id": row.id,
             "inquiry_no": row.inquiry_no,
@@ -565,13 +715,23 @@ class OrderInquiryWorklistService:
             "location": row.location,
             "taken_from_po": _qty_str(line_flow.get("taken", _ZERO)),
             "remaining_open": _qty_str(line_flow.get("remaining", _ZERO)),
-            "has_open_po_line": bool(
-                product_by_row and open_products and product_by_row.get(row.id) in open_products
+            # WHERE this row's quantity sits (AC-I5), off the ONE reader the per-project
+            # list and the SCM sales-order detail also use.
+            "links": row_links,
+            "linked_qty": _qty_str(linked_qty),
+            "cited_document": row.cited_document,
+            "has_link_candidate": (
+                ProjectOrderInquiryService.has_link_candidate(
+                    row.verb, product_by_row.get(row.id), link_candidates
+                )
+                if product_by_row and link_candidates
+                else False
             ),
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,
             "state": row.state,
             "raised_at": row.raised_at,
+            "raised_by_name": row.raised_by_name,
             "verb": row.verb,
             "note": row.note,
             "project_id": row.project_id,
@@ -647,11 +807,11 @@ class OrderInquiryWorklistService:
     # ---------------------------------------------------------------- summary
 
     def summary(self, **filters) -> Dict[str, Any]:
-        """The strip above the list, and the three controls beside it.
+        """The strip above the list, and the controls beside it.
 
         Totals honour EVERY filter, month included, because they describe what is on
-        screen. The three axes each drop their own filter, because a control that empties
-        itself the moment you use it cannot be used a second time.
+        screen. Each axis drops its OWN filter, because a control that empties itself the
+        moment you use it cannot be used a second time.
         """
         visible = self._base(**filters)
         state_rows = (
@@ -679,6 +839,7 @@ class OrderInquiryWorklistService:
             "by_month": self._by_month({**filters, "delivery_month": None}),
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
             "projects": self._projects({**filters, "project_id": None}),
+            "raised_by": self._raised_by({**filters, "raised_by": None}),
         }
 
     def _by_month(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -735,14 +896,40 @@ class OrderInquiryWorklistService:
             for project_id, title, count in rows
         ]
 
+    def _raised_by(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """The people who have actually raised an inquiry, and how many rows each.
+
+        Scoped to the rows in view rather than to `users`, deliberately: a picker built
+        from the user table would list hundreds of names, almost all of which return
+        nothing, and the one question this filter answers is "show me what CS raised".
+        Bounded by the same fact - a company has a handful of people who confirm supply -
+        so it ships whole with the summary rather than as a searched endpoint.
+        """
+        rows = (
+            self._base(**filters)
+            .with_entities(
+                _RAISED_BY_ID, User.name, func.count(OrderInquiryRow.id)
+            )
+            .filter(_RAISED_BY_ID.isnot(None))
+            .group_by(_RAISED_BY_ID, User.name)
+            .order_by(User.name.asc().nulls_last())
+            .all()
+        )
+        return [
+            {"id": user_id, "label": name or "Unnamed user", "rows": int(count)}
+            for user_id, name, count in rows
+        ]
+
     # ------------------------------------------------------------- unplace all
 
     def unplace_all_preview(self, **filters) -> Dict[str, Any]:
         """The confirm dialog's own numbers (the captain, 21 Aug: "why i cannot unplace
         all" - the answer was the count and the scope were wrong, not that the action
         should be blocked), resolved server-side against the SAME filters `list_rows`
-        reads - `state` is never one of them, because this is always about placed rows,
-        whatever else is filtered.
+        reads - `state` is never one of them, because this is always about LINKED rows,
+        whatever else is filtered. Since section 3.I that is a link test rather than a
+        state test: a partly linked row holds links too, and leaving it out would have made
+        "Unlink all" quietly refuse to give back the half a cascade had covered.
 
         `product_code`/`product_name` are best-effort labelling only, not a second scope:
         when every matching row resolves to the SAME product, the dialog can say which
@@ -750,7 +937,13 @@ class OrderInquiryWorklistService:
         one arbitrarily. `LIMIT 2` is enough to tell "one" from "more than one" without
         pulling the whole matching set.
         """
-        visible = self._base(**filters, state=INQUIRY_PLACED)
+        # `linked` is forced, so whatever the caller sent for it is dropped rather than
+        # passed twice - the same treatment `state` gets at the route, and for the same
+        # reason: this action is about LINKED rows however the list happens to be
+        # filtered. Sending both is a TypeError, which the route turns into a 500 and the
+        # dialog into "could not check linked rows".
+        filters.pop("linked", None)
+        visible = self._base(**filters, linked="any")
         count = int(
             visible.with_entities(func.count(OrderInquiryRow.id)).order_by(None).scalar()
             or 0
@@ -777,14 +970,15 @@ class OrderInquiryWorklistService:
         reads, forced to placed. Resolved as a fresh id list against the full matching
         set, never against whatever page happened to be loaded: the worklist paginates
         server-side (`list_rows`'s own `offset`/`limit`), so a client-derived scope would
-        silently miss every row behind page 1. No filters at all means every placed row
-        in the company - "unplace all" with nothing narrowing it is exactly that.
+        silently miss every row behind page 1. No filters at all means every linked row
+        in the company - "unlink all" with nothing narrowing it is exactly that.
 
         The actual write is `ProjectOrderInquiryService.unplace_rows` - this method's own
         job stops at resolving WHICH rows are in scope; the two can never disagree about
-        what a placed row is because both read off the same `state = placed` predicate.
+        what a linked row is because both read off the same "holds a link" predicate.
         """
-        visible = self._base(**filters, state=INQUIRY_PLACED)
+        filters.pop("linked", None)
+        visible = self._base(**filters, linked="any")
         row_ids = [row_id for (row_id,) in visible.all()]
         return ProjectOrderInquiryService(self.db).unplace_rows(row_ids)
 

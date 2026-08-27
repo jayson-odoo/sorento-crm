@@ -748,52 +748,6 @@ function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
 }
 
 /**
- * The proposal, as one line of text - the same summary a cell's own composition strip shows,
- * read off a single contribution rather than a cell (D2, the board's List view).
- *
- * A line with no proposal reads what it IS rather than a blank cell: unplannable states the
- * reason, and a line that is neither unplannable nor holds a source is "Nothing proposed",
- * never an empty string a table would render as a gap nobody can explain.
- */
-export function proposalSummaryFor(contribution: BoardContribution): string {
-  if (contribution.unplannable) return 'Needs a location';
-  const parts = contribution.sources
-    .filter((source) => toMinor(source.qty) > 0)
-    .map((source) => `${sourceLabel(source)} ${source.qty}${sourceSuffix(source)}`);
-  return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
-}
-
-/**
- * The word a source reads as, ladder v2's own rung vocabulary
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E) where it names one: Pool / Group
- * take / Group borrow / Cross-group borrow, rather than the bare "Reserve" / "Borrow" the
- * balance-invariant `kind` carries. A source with no rung (incoming, buy, a pre-v2 row)
- * reads by its kind, unchanged.
- */
-function sourceLabel(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'pool') return 'Pool';
-  if (source.rung === 'group_take') return 'Group take';
-  if (source.rung === 'group_borrow') return 'Group borrow';
-  if (source.rung === 'cross_group_borrow') return 'Cross-group borrow';
-  if (source.kind === 'reserve') return 'Reserve';
-  if (source.kind === 'timely_spo') return 'Incoming';
-  if (source.kind === 'buy') return 'Buy';
-  if (source.kind === 'borrow') return 'Borrow';
-  return 'Cannot be sourced';
-}
-
-/** "at MWH-BB", or "from SO371334 line 2" for a group borrow, which names a donor SO. */
-function sourceSuffix(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'group_borrow' && source.donor_so_number) {
-    const line = source.donor_line_no !== null && source.donor_line_no !== undefined
-      ? ` line ${source.donor_line_no}`
-      : '';
-    return ` from ${source.donor_so_number}${line}`;
-  }
-  return source.location ? ` at ${source.location}` : '';
-}
-
-/**
  * Whether a row survives the board's search box.
  *
  * The captain asked for all four: "i also need sales order search, project search, customer

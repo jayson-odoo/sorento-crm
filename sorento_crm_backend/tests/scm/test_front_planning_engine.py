@@ -289,7 +289,7 @@ def test_an_spo_arriving_exactly_on_the_required_date_counts_as_timely_coverage(
     assert len(line) == 1
     assert line[0].kind == "timely_spo"
     assert line[0].qty == Decimal("15")
-    assert line[0].reason == "SPO 202703-S0099 arrives on 2027-03-01, by the required date"
+    assert line[0].reason == "SPO 202703-S0099 arrives on 1 Mar 2027, by the required date"
 
 
 def test_an_spo_arriving_the_day_after_the_required_date_contributes_zero_coverage():
@@ -448,17 +448,18 @@ def test_attribute_sources_gives_the_same_answer_with_three_lines_reversed():
 
 
 # ============================================================================
-# Ladder v2 (PLAN-demo-followups-19aug-ladder-v2.md section E)
+# Ladder v3 (PLAN-scm-cs-planning-uat.md section 1b, captain 25 August 2026)
 # ============================================================================
 
 GROUP_CODE = "BB"
 
 
-# --------------------------------------------------------------- rung 0: coverage date
+# ------------------------------------------------- rung 0: beyond the window, buy it all
 
 
-def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_nothing_else_runs():
-    """Section E rule 0: "a far-future line ... is Buy all. No partial decision"."""
+def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_is_taken():
+    """Section 1b rung 0: "a far-future line ... is Buy all. No partial decision" - with a
+    pool holding three times what it needs and nothing on the water."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -470,7 +471,7 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_nothing_e
             pools=[
                 {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
-            timely_spo_qty=Decimal("999"),
+            timely_spo_qty=Decimal("0"),
         )
     )
 
@@ -518,20 +519,19 @@ def test_no_coverage_date_set_never_gates_a_line():
         )
     )
 
+    assert len(proposed) == 1
     assert proposed[0].kind == "reserve"
 
 
-# ------------------------------------------------- rung 0b: the ATP reserve window
+def test_a_line_beyond_the_lead_time_window_takes_no_stock_but_still_takes_incoming():
+    """AC-L1, the captain's own words: "if delivery date exceed lead time, directly buy" -
+    and section 1b's rung 1 is UNCHANGED, so the one thing a far line still takes is supply
+    already on its way.
 
-
-def test_a_line_beyond_its_reserve_window_never_borrows_stock_another_order_holds():
-    """A line due long after purchasing could simply buy for it must not take stock a
-    nearer-dated order is already holding.
-
-    The borrow rungs are exactly that: rung 4 takes another sales order's committed quantity
-    and rung 5 takes free stock outside the group that its own book expects. Neither is
-    surplus, so a line outside its window is not offered them at all, and the whole-line rule
-    turns what is left into a Buy.
+    v2 walked the two surplus rungs for such a line and refused it only the borrow rungs.
+    v3 walks no STOCK rung at all: the pool, the group and every donor beside it are never
+    consulted, however much they hold. But incoming supply is already bought, and buying it
+    a second time is a double purchase, not a conservative one.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -542,24 +542,56 @@ def test_a_line_beyond_its_reserve_window_never_borrows_stock_another_order_hold
             fulfilment_location=OWN_LOCATION,
             group_code=GROUP_CODE,
             outside_reserve_window=True,
-            group_borrow_candidates=[
-                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
+            timely_spo_qty=Decimal("40"),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
             ],
-            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("40")}],
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("400")}],
+            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("400")}],
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["timely_spo"]
+    assert [c.rung for c in proposed] == ["incoming"]
+    assert proposed[0].qty == Decimal("40")
+    assert proposed[0].source_location == OWN_LOCATION
+
+
+def test_a_line_beyond_the_window_is_bought_whole_when_the_incoming_falls_short():
+    """The whole-line rule stands beyond the window too: 40 arriving against 71 owed is not
+    "incoming 40, buy 31", it is a Buy of the whole 71 with the window named as the reason.
+
+    A partial incoming beside a Buy would be exactly the mix AC-L5 refuses at confirm, and
+    the reason has to name the window rather than the arithmetic - the window is why the
+    stock rungs were never walked.
+    """
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("71"),
+            required_date=date(2027, 6, 1),
+            fulfilment_location=OWN_LOCATION,
+            group_code=GROUP_CODE,
+            outside_reserve_window=True,
+            timely_spo_qty=Decimal("40"),
+            pools=[
+                {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
+            ],
         )
     )
 
     assert [c.kind for c in proposed] == ["buy"]
-    assert proposed[0].qty == Decimal("40")
-    assert "beyond the lead time window" in proposed[0].reason
-    assert "kept for nearer orders" in proposed[0].reason
+    assert proposed[0].qty == Decimal("71")
+    assert proposed[0].rung == "buy"
+    assert proposed[0].reason == (
+        "Delivery date beyond the lead time window; stock kept for nearer orders"
+    )
 
 
-def test_a_line_beyond_its_window_still_takes_stock_that_is_genuinely_surplus():
-    """The pool and group-take rungs are already capped at the location's SIGNED availability
-    (`on hand - SO qty + SPO qty`), so what they offer is what nothing else at that location
-    is owed. A far line may have that: refusing it would buy stock the business already holds
-    and nobody needs."""
+def test_incoming_beyond_the_window_names_the_spo_it_comes_from():
+    """Named is the useful form on a far line too: "SPO 202703-S0011 arrives on ..." is
+    something CS can look up, and the reason is the one rung 1 always writes."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -567,47 +599,62 @@ def test_a_line_beyond_its_window_still_takes_stock_that_is_genuinely_surplus():
             open_qty=Decimal("40"),
             required_date=date(2027, 6, 1),
             fulfilment_location=OWN_LOCATION,
-            group_code=GROUP_CODE,
             outside_reserve_window=True,
-            pools=[
-                {"location": POOL_LOCATION, "free": Decimal("40"), "available": Decimal("40")}
+            timely_spo_qty=Decimal("40"),
+            timely_spo_refs=[
+                {
+                    "spo_number": "202703-S0011",
+                    "spo_line_no": 1,
+                    "arrival_date": date(2027, 5, 1),
+                    "qty": Decimal("40"),
+                }
             ],
         )
     )
 
-    assert [c.kind for c in proposed] == ["reserve"]
-    assert proposed[0].qty == Decimal("40")
+    assert [c.kind for c in proposed] == ["timely_spo"]
+    assert proposed[0].reason == (
+        "SPO 202703-S0011 arrives on 1 May 2027, by the required date"
+    )
 
 
-def test_a_line_beyond_its_window_buys_the_whole_of_it_when_the_surplus_falls_short():
-    """The whole-line rule, unchanged: 25 of surplus against 40 owed is not "reserve 25, buy
-    15", it is a Buy - and the reason names the window rather than the arithmetic, because the
-    window is why the other rungs were not tried."""
+def test_a_line_beyond_purchasings_coverage_date_takes_its_incoming_too():
+    """The two bounds share one rule: rung 1 runs for either, and only rung 1."""
     from app.services.scm.front_planning_engine import propose_line
 
-    proposed = _components(
+    covered = _components(
         propose_line(
-            open_qty=Decimal("40"),
-            required_date=date(2027, 6, 1),
+            open_qty=Decimal("358"),
+            required_date=date(2029, 1, 1),
             fulfilment_location=OWN_LOCATION,
-            group_code=GROUP_CODE,
-            outside_reserve_window=True,
+            reorder_coverage_until=date(2026, 10, 31),
+            timely_spo_qty=Decimal("358"),
             pools=[
-                {"location": POOL_LOCATION, "free": Decimal("25"), "available": Decimal("25")}
-            ],
-            group_borrow_candidates=[
-                {"location": "MWH-BB", "qty": Decimal("15"), "donor_so_number": "SO-9"},
+                {"location": POOL_LOCATION, "free": Decimal("999"), "available": Decimal("999")}
             ],
         )
     )
 
-    assert [c.kind for c in proposed] == ["buy"]
-    assert proposed[0].qty == Decimal("40")
-    assert "beyond the lead time window" in proposed[0].reason
+    assert [c.rung for c in covered] == ["incoming"]
+    assert covered[0].qty == Decimal("358")
+
+    short = _components(
+        propose_line(
+            open_qty=Decimal("358"),
+            required_date=date(2029, 1, 1),
+            fulfilment_location=OWN_LOCATION,
+            reorder_coverage_until=date(2026, 10, 31),
+            timely_spo_qty=Decimal("100"),
+        )
+    )
+
+    assert [c.kind for c in short] == ["buy"]
+    assert short[0].qty == Decimal("358")
+    assert short[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
 
 
 def test_a_line_inside_its_window_is_untouched_by_the_rule():
-    """The near line keeps every rung it always had, borrow included."""
+    """The near line keeps every rung it has."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -617,13 +664,11 @@ def test_a_line_inside_its_window_is_untouched_by_the_rule():
             fulfilment_location=OWN_LOCATION,
             group_code=GROUP_CODE,
             outside_reserve_window=False,
-            group_borrow_candidates=[
-                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
-            ],
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("40")}],
         )
     )
 
-    assert [c.kind for c in proposed] == ["borrow"]
+    assert [c.rung for c in proposed] == ["group_take"]
     assert proposed[0].qty == Decimal("40")
 
 
@@ -655,21 +700,18 @@ def test_a_line_with_no_date_is_never_outside_its_window():
             fulfilment_location=OWN_LOCATION,
             group_code=GROUP_CODE,
             outside_reserve_window=False,
-            group_borrow_candidates=[
-                {"location": "MWH-BB", "qty": Decimal("40"), "donor_so_number": "SO-9"},
-            ],
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("40")}],
         )
     )
 
-    assert [c.kind for c in proposed] == ["borrow"]
+    assert [c.rung for c in proposed] == ["group_take"]
 
 
-# --------------------------------------------------------------- rung 3: group take
+# ----------------------------------------------------------------- rung 2: the own group
 
 
-def test_group_take_covers_the_line_from_a_sibling_location_never_its_own():
-    """Section E rule 3: "sibling locations of G at other sites with POSITIVE Available ->
-    take from them. The own location L is never a source"."""
+def test_group_take_covers_the_line_from_a_group_location():
+    """Section 1b rung 2: "consider the group location first (only available quantity)"."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -690,11 +732,10 @@ def test_group_take_covers_the_line_from_a_sibling_location_never_its_own():
     assert proposed[0].reason == "MWH-BB has 50 available in the BB group"
 
 
-def test_group_take_never_offers_the_lines_own_location_even_if_passed_one():
-    """Belt and braces: the CALLER must never include `fulfilment_location` in the
-    candidate list, and this pins that a same-code candidate is still consumed - the
-    exclusion is the caller's job (`_group_take_candidates`), proven by the service test;
-    this only proves the engine draws down whatever it is handed, in order."""
+def test_the_group_rung_draws_its_locations_in_the_order_the_caller_gave_them():
+    """The line's OWN location is a group location again under v3, and the caller hands it
+    over first (`_group_take_candidates`). The engine never re-sorts: it walks what it is
+    given, which is what makes the service the single place the order is decided."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -704,92 +745,78 @@ def test_group_take_never_offers_the_lines_own_location_even_if_passed_one():
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
             group_take_candidates=[
-                {"location": "MWH-BB", "qty": Decimal("10")},
+                {"location": "BRW-BB", "qty": Decimal("10")},
                 {"location": "DC1-BB", "qty": Decimal("20")},
             ],
         )
     )
 
-    assert [c.source_location for c in proposed] == ["MWH-BB", "DC1-BB"]
+    assert [c.source_location for c in proposed] == ["BRW-BB", "DC1-BB"]
     assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("30")
 
 
-# --------------------------------------------------------------- rung 4: group borrow
+def test_the_group_is_drawn_before_the_pool():
+    """AC-L2, and the whole point of v3's reordering: "if group location don't have then
+    consider the pool". 100 owed against 40 at the line's own location, 30 at a sibling and
+    1000 in the pool draws 40 + 30 from the group and only the last 30 from the pool.
 
-
-def test_group_borrow_from_a_lower_ranked_donor_raises_an_order_back():
-    """Section E rule 4: donors ranked lower are proposed automatically, and every borrow
-    carries an order-back (equal to what was taken, at the donor's own required date)."""
+    Under v2 the pool went first and swallowed the lot, so a group that held the stock sat
+    untouched while the shared pile paid for the line.
+    """
     from app.services.scm.front_planning_engine import propose_line
 
-    proposed = _components(
-        propose_line(
-            open_qty=Decimal("145"),
-            required_date=REQUIRED_DATE,
-            fulfilment_location="BRW-BB",
-            group_code=GROUP_CODE,
-            group_borrow_candidates=[
-                {
-                    "location": "MWH-BB",
-                    "qty": Decimal("145"),
-                    "donor_so_number": "SO371334",
-                    "donor_line_no": 2,
-                    "donor_agent_code": "JEREMY",
-                    "same_agent": False,
-                }
-            ],
-        )
-    )
-
-    assert len(proposed) == 1
-    component = proposed[0]
-    assert component.kind == "borrow"
-    assert component.rung == "group_borrow"
-    assert component.qty == Decimal("145")
-    assert component.source_location == "MWH-BB"
-    assert component.donor_so_number == "SO371334"
-    assert component.donor_line_no == 2
-    assert component.donor_agent_code == "JEREMY"
-    assert component.same_agent is False
-    assert component.order_back_qty == Decimal("145")
-    assert component.reason == (
-        "SO371334 line 2 (agent JEREMY) holds 145 at MWH-BB; it is ranked below this "
-        "line; order-back raised"
-    )
-
-
-def test_a_same_agent_donor_is_never_auto_composed_only_offered():
-    """Section 8 / E rule 4: "the SAME AGENT's other SOs (even higher ranked)" are
-    OFFERED, never auto-proposed - so `propose_line` never sees one unless the caller put
-    it in `group_borrow_candidates`, which the service only does for a lower-ranked donor.
-    This pins the engine side of that split: the engine composes whatever it is handed and
-    has no opinion of its own about rank or agent."""
-    from app.services.scm.front_planning_engine import propose_line
-
-    # The caller (the service) decided this same-agent donor is HIGHER ranked and so did
-    # not include it here at all - the whole-line rule then falls back to Buy.
     proposed = _components(
         propose_line(
             open_qty=Decimal("100"),
             required_date=REQUIRED_DATE,
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
-            group_borrow_candidates=[],
+            group_take_candidates=[
+                {"location": "BRW-BB", "qty": Decimal("40")},
+                {"location": "DC1-BB", "qty": Decimal("30")},
+            ],
+            pools=[
+                {"location": "BRW", "free": Decimal("1000"), "available": Decimal("1000")}
+            ],
         )
     )
 
-    assert len(proposed) == 1
-    assert proposed[0].kind == "buy"
-    assert proposed[0].qty == Decimal("100")
+    assert [(c.rung, c.source_location, c.qty) for c in proposed] == [
+        ("group_take", "BRW-BB", Decimal("40")),
+        ("group_take", "DC1-BB", Decimal("30")),
+        ("pool", "BRW", Decimal("30")),
+    ]
 
 
-# --------------------------------------------------------------- rung 5: cross-group borrow
+# ----------------------------------------------------------------- rung 3: the site pools
+
+
+def test_the_pool_rung_still_runs_when_the_group_holds_nothing():
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("71"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_take_candidates=[],
+            pools=[
+                {"location": "BRW", "free": Decimal("71"), "available": Decimal("71")}
+            ],
+        )
+    )
+
+    assert [(c.rung, c.source_location) for c in proposed] == [("pool", "BRW")]
+
+
+# ----------------------------------------- rung 4: borrowing another location's free stock
 
 
 def test_cross_group_borrow_completes_the_line_within_the_cap():
-    """Section E rule 5: free stock outside the group, offered only within the cap - the
-    service is the one that decides the cap; this pins that the engine draws whatever
-    candidate list it is handed, after the group rungs, before falling back to Buy."""
+    """Section 1b rung 4: "if pool also don't have then consider borrowing from other
+    location's available quantity" - the cap is the service's decision; this pins that the
+    engine draws whatever candidate list it is handed, after the group and the pool."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -812,12 +839,37 @@ def test_cross_group_borrow_completes_the_line_within_the_cap():
     assert "cross-group borrow limit" in component.reason
 
 
-# --------------------------------------------------------------- rung 6: whole-line rule
+def test_borrowing_from_another_sales_order_is_never_proposed_automatically():
+    """AC-L3, ruled 25 August 2026: group borrow "stays as a manual pick in Amend /
+    BorrowAddDialog". So the engine has no rung for it at all - it takes no donor list, and
+    a line the group and the pool cannot cover falls to Buy rather than quietly taking
+    another customer's committed quantity and raising an order-back nobody asked for.
+    """
+    import inspect
+
+    from app.services.scm.front_planning_engine import propose_line
+
+    assert "group_borrow_candidates" not in inspect.signature(propose_line).parameters
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("100"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+        )
+    )
+
+    assert [c.kind for c in proposed] == ["buy"]
+    assert proposed[0].qty == Decimal("100")
+
+
+# --------------------------------------------------------------- rung 5: whole-line rule
 
 
 def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
-    """Section E rule 6: "cover Q entirely in rung order" - a case that needs incoming,
-    pool, group take AND group borrow together to reach the whole of Q."""
+    """Section 1b rung 5: "cover Q entirely in rung order" - a case that needs incoming, the
+    group, the pool AND a cross-group borrow together to reach the whole of Q."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -827,32 +879,25 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
             timely_spo_qty=Decimal("10"),
+            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("30")}],
             pools=[
                 {"location": "BRW", "free": Decimal("20"), "available": Decimal("20")}
             ],
-            group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("30")}],
-            group_borrow_candidates=[
-                {
-                    "location": "DC1-BB",
-                    "qty": Decimal("40"),
-                    "donor_so_number": "SO400001",
-                    "donor_line_no": 1,
-                    "donor_agent_code": "TERA",
-                    "same_agent": False,
-                }
+            cross_group_borrow_candidates=[
+                {"location": "BRW-HP", "qty": Decimal("40")},
             ],
         )
     )
 
     assert [c.rung for c in proposed] == [
-        "incoming", "pool", "group_take", "group_borrow",
+        "incoming", "group_take", "pool", "cross_group_borrow",
     ]
     assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("100")
     assert not any(c.kind == "buy" for c in proposed)
 
 
 def test_whole_line_rule_drops_every_partial_component_when_the_line_falls_short():
-    """Section E rule 6, the other side: 213 of 358 covered is not the whole line, so
+    """Section 1b rung 5, the other side: 213 of 358 covered is not the whole line, so
     NONE of the partial components survive and the whole 358 is bought instead."""
     from app.services.scm.front_planning_engine import propose_line
 

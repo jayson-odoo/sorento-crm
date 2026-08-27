@@ -64,6 +64,10 @@ import type {
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
+import { SupplyLegend } from './SupplyLegend';
+import { DecisionStrip } from './DecisionStrip';
+import { cellCarriesKind, contributionCarriesKind } from '../../_shared/lib/decisionStrip';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 
 /** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
 type BoardView = 'grid' | 'list';
@@ -168,6 +172,14 @@ export function FulfilmentBoardPanel({
    */
   const [view, setView] = React.useState<BoardView>(() => boardViewFrom(searchParams.get('view')));
   const [draft, setDraft] = React.useState<BoardDraft>({});
+  /**
+   * The decision-strip card currently narrowing the grid, or null (AC-D2).
+   *
+   * Deliberately NOT in the URL, unlike the dials above: it is a way of reading the board in
+   * front of you while you work, not a state of the board worth sending to somebody else, and
+   * a shared link that arrived pre-filtered would hide the rest of the plan without saying so.
+   */
+  const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
@@ -235,8 +247,6 @@ export function FulfilmentBoardPanel({
       return next;
     });
   }, []);
-
-  const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
 
   const { confirm } = useReconciliationMutations();
   const { adopt } = useFulfilmentPlanningMutations();
@@ -651,27 +661,75 @@ export function FulfilmentBoardPanel({
     return boardAxis(rowAxis, cells);
   }, [board.data, rowAxis]);
 
+  /**
+   * What the decision strip is summed over: THE LINES THE CURRENT VIEW CAN SHOW.
+   *
+   * The grid renders cells, and at day granularity those are a 30-day window; the list renders
+   * the whole selection. Summing the strip over the selection while filtering the grid over
+   * its cells let a card read "Shared 71" off lines three months out and then empty the board
+   * when it was pressed - a figure the view cannot produce, acted on. So the population
+   * follows the view, and the card and the figures above it can never disagree.
+   */
+  const stripContributions = React.useMemo<BoardContribution[]>(() => {
+    if (view === 'list') return listContributions;
+    // Keyed, because a pivoted axis regroups the same cells and a line must not be counted
+    // twice for landing in two of them.
+    const seen = new Map<string, BoardContribution>();
+    for (const cell of axis.cells) {
+      for (const contribution of cell.contributions) seen.set(contribution.key, contribution);
+    }
+    return [...seen.values()];
+  }, [view, listContributions, axis]);
+
+  /**
+   * The cells a decision-strip card leaves on screen (AC-D2): the ones carrying that kind on
+   * EITHER side, suggested or decided.
+   *
+   * A filter over the axis's own cells, so the rows follow: a row every one of whose cells is
+   * filtered out drops out with them, and the "N of M" fraction below counts it.
+   */
+  const visibleCells = React.useMemo(
+    () =>
+      kindFilter
+        ? axis.cells.filter((cell) => cellCarriesKind(cell, draft, kindFilter))
+        : axis.cells,
+    [axis, draft, kindFilter],
+  );
+
+  /** The same card, obeyed by the list. Both views answer to one press or neither should. */
+  const visibleListContributions = React.useMemo(
+    () =>
+      kindFilter
+        ? listContributions.filter((contribution) =>
+            contributionCarriesKind(contribution, draft[contribution.key] ?? null, kindFilter),
+          )
+        : listContributions,
+    [listContributions, draft, kindFilter],
+  );
+
   /** Lines per row, so the search can ask whether ANY of a row's lines matches. */
   const linesByRow = React.useMemo(() => {
     const map = new Map<string, BoardContribution[]>();
-    for (const cell of axis.cells) {
+    for (const cell of visibleCells) {
       const key = cell.row_key ?? cell.item_code;
       const held = map.get(key);
       if (held) held.push(...cell.contributions);
       else map.set(key, [...cell.contributions]);
     }
     return map;
-  }, [axis]);
+  }, [visibleCells]);
 
   const visibleProductRows = React.useMemo(
     () =>
-      axis.rows.filter((row) =>
-        rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
+      axis.rows.filter(
+        (row) =>
+          (!kindFilter || linesByRow.has(row.key)) &&
+          rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
       ),
-    [axis, linesByRow, productSearch],
+    [axis, linesByRow, productSearch, kindFilter],
   );
 
-  const filtering = productSearch.trim().length > 0;
+  const filtering = productSearch.trim().length > 0 || kindFilter !== null;
 
   /**
    * Orders the link asked for that the board came back without.
@@ -999,12 +1057,28 @@ export function FulfilmentBoardPanel({
               popover on a row names the policy above its factor table, which is where somebody
               IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
+          {/* What the colours mean, above whichever view is on screen and never behind a
+              scroll (AC-C5). One instance, so the grid and the list cannot drift apart. */}
+          <SupplyLegend />
+
+          {/* Suggested vs decided across the selection, card per kind (AC-D2). Under the
+              legend, because the legend is what says what each colour means and the cards
+              are the first thing read in those colours. */}
+          <DecisionStrip
+            contributions={stripContributions}
+            draft={draft}
+            active={kindFilter}
+            onToggle={(kind) =>
+              setKindFilter((current) => (current === kind ? null : kind))
+            }
+          />
+
           {view === 'list' ? (
             /* D2: one row per contributing line across every cell of the WHOLE selection, not
                the pivoted/windowed rows the grid shows - the point is an overview, so the row
                axis and product search that shape the grid do not narrow it. */
             <FulfilmentBoardListView
-              contributions={listContributions}
+              contributions={visibleListContributions}
               draft={draft}
               onDecide={decide}
               isLoading={board.isFetching}
@@ -1035,8 +1109,8 @@ export function FulfilmentBoardPanel({
                   rowHeader={
                     ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
                   }
-                  cells={axis.cells}
-                  decidedKeys={decidedKeys}
+                  cells={visibleCells}
+                  draft={draft}
                   onOpenCell={(cell) => setOpenCell(cell)}
                 />
               )}

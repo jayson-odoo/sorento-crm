@@ -43,8 +43,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { AutoPlaceOrderInquiryDialog } from '../../_shared/components/AutoPlaceOrderInquiryDialog';
-import { UnplaceAllOrderInquiryDialog } from '../../_shared/components/UnplaceAllOrderInquiryDialog';
+import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
+import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import {
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
@@ -65,9 +65,22 @@ import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 
 const STATE_OPTIONS = [
   { value: 'raised', label: 'Raised' },
+  { value: 'partly_linked', label: 'Partly linked' },
   { value: 'actioned', label: 'Actioned' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'placed', label: 'Placed' },
+  // Stored as `placed`; read as Linked everywhere (AC-I1).
+  { value: 'placed', label: 'Linked' },
+];
+
+/**
+ * WHERE the row is linked (AC-I5), which is a different question from what state it is
+ * in: a buyer asking "what have I still not put on anything" wants `none`, and one
+ * chasing shipping orders wants `spo`.
+ */
+const LINKED_OPTIONS = [
+  { value: 'po', label: 'A purchase order' },
+  { value: 'spo', label: 'An SPO' },
+  { value: 'none', label: 'Nothing yet' },
 ];
 
 type OrderInquiryView = 'list' | 'schedule';
@@ -165,6 +178,8 @@ export function OrderInquiriesClient() {
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
+  const [raisedByFilter, setRaisedByFilter] = React.useState('');
+  const [linkedFilter, setLinkedFilter] = React.useState('');
   const [exporting, setExporting] = React.useState(false);
   const [autoPlacing, setAutoPlacing] = React.useState(false);
   const [unplacingAll, setUnplacingAll] = React.useState(false);
@@ -215,7 +230,16 @@ export function OrderInquiriesClient() {
   // the new one.
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, month, stateFilter, supplierFilter, projectFilter, raisedDate]);
+  }, [
+    debounced,
+    month,
+    stateFilter,
+    supplierFilter,
+    projectFilter,
+    raisedDate,
+    raisedByFilter,
+    linkedFilter,
+  ]);
 
   const filters = React.useMemo(
     () => ({
@@ -225,8 +249,19 @@ export function OrderInquiriesClient() {
       state: stateFilter || undefined,
       supplier_id: supplierFilter || undefined,
       project_id: projectFilter || undefined,
+      raised_by: raisedByFilter || undefined,
+      linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
     }),
-    [debounced, month, raisedDate, stateFilter, supplierFilter, projectFilter],
+    [
+      debounced,
+      month,
+      raisedDate,
+      stateFilter,
+      supplierFilter,
+      projectFilter,
+      raisedByFilter,
+      linkedFilter,
+    ],
   );
 
   // "Unplace all"'s own scope (the captain, 20-21 Aug): the SAME filters as `filters`,
@@ -239,8 +274,9 @@ export function OrderInquiriesClient() {
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
       project_id: projectFilter || undefined,
+      raised_by: raisedByFilter || undefined,
     }),
-    [debounced, month, raisedDate, supplierFilter, projectFilter],
+    [debounced, month, raisedDate, supplierFilter, projectFilter, raisedByFilter],
   );
 
   const params = React.useMemo(
@@ -278,7 +314,14 @@ export function OrderInquiriesClient() {
   const total = list.data?.total ?? 0;
   const months = summary.data?.by_month ?? [];
   const filtered = Boolean(
-    debounced || month || stateFilter || supplierFilter || projectFilter || raisedDate,
+    debounced ||
+      month ||
+      stateFilter ||
+      supplierFilter ||
+      projectFilter ||
+      raisedDate ||
+      raisedByFilter ||
+      linkedFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -300,8 +343,20 @@ export function OrderInquiriesClient() {
       const project = (summary.data?.projects ?? []).find((p) => p.id === projectFilter);
       if (project) parts.push(`for ${project.label}`);
     }
+    if (raisedByFilter) {
+      const person = (summary.data?.raised_by ?? []).find((p) => p.id === raisedByFilter);
+      if (person) parts.push(`raised by ${person.label}`);
+    }
     return parts;
-  }, [debounced, month, raisedDate, supplierFilter, projectFilter, summary.data]);
+  }, [
+    debounced,
+    month,
+    raisedDate,
+    supplierFilter,
+    projectFilter,
+    raisedByFilter,
+    summary.data,
+  ]);
 
   // "Unplace all" (the captain, 20-21 Aug) operates on the CURRENT worklist scope - one
   // product when the filters happen to narrow to it, every placed row when they name
@@ -355,7 +410,9 @@ export function OrderInquiriesClient() {
     (stateFilter ? 1 : 0) +
     (supplierFilter ? 1 : 0) +
     (projectFilter ? 1 : 0) +
-    (raisedDate ? 1 : 0);
+    (raisedDate ? 1 : 0) +
+    (raisedByFilter ? 1 : 0) +
+    (linkedFilter ? 1 : 0);
 
   const openCellRow = openCell
     ? matrix.rows.find((row) => row.key === openCell.row_key)
@@ -369,9 +426,6 @@ export function OrderInquiriesClient() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">Order inquiries</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Every project and every adopted sales order, by delivery month.
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">
@@ -381,7 +435,7 @@ export function OrderInquiriesClient() {
             {`${formatInquiryQty(summary.data?.total_qty) || '0'} qty`}
           </Badge>
           <Badge variant="warning" appearance="light">
-            {`${(summary.data?.by_state.raised ?? 0).toLocaleString()} still to place`}
+            {`${(summary.data?.by_state.raised ?? 0).toLocaleString()} still to link`}
           </Badge>
         </div>
       </header>
@@ -545,7 +599,7 @@ export function OrderInquiriesClient() {
                     <Input
                       value={search}
                       onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search S/O, item, product or customer…"
+                      placeholder="Search S/O, item, product, customer or CS name…"
                       className="ps-9"
                       aria-label="Search order inquiry rows"
                     />
@@ -594,6 +648,16 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Linked</Label>
+                        <SearchableSelect
+                          value={linkedFilter}
+                          onChange={setLinkedFilter}
+                          clearable
+                          options={LINKED_OPTIONS}
+                          placeholder="Anywhere"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">Supplier</Label>
                         <SearchableSelect
                           value={supplierFilter}
@@ -620,6 +684,19 @@ export function OrderInquiriesClient() {
                         />
                       </div>
                       <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Raised by</Label>
+                        <SearchableSelect
+                          value={raisedByFilter}
+                          onChange={setRaisedByFilter}
+                          clearable
+                          options={(summary.data?.raised_by ?? []).map((entry) => ({
+                            value: entry.id,
+                            label: entry.label,
+                          }))}
+                          placeholder="Everyone"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
                           Raised on
                         </Label>
@@ -641,6 +718,8 @@ export function OrderInquiriesClient() {
                             setSupplierFilter('');
                             setProjectFilter('');
                             setRaisedDate('');
+                            setRaisedByFilter('');
+                            setLinkedFilter('');
                           }}
                         >
                           Clear filters
@@ -656,13 +735,13 @@ export function OrderInquiriesClient() {
                 secondaryActions={[
                   {
                     key: 'auto-place',
-                    label: 'Auto-place',
+                    label: 'Auto-link',
                     icon: Wand2,
                     onClick: () => setAutoPlacing(true),
                   },
                   {
                     key: 'unplace-all',
-                    label: 'Unplace all',
+                    label: 'Unlink all',
                     icon: Undo2,
                     onClick: () => setUnplacingAll(true),
                     // N1: a lacking action grant, or the preview call failing for any
@@ -671,11 +750,11 @@ export function OrderInquiriesClient() {
                     disabled:
                       !canActOnOrderInquiry || unplacePreview.isError || unplaceCount === 0,
                     disabledReason: !canActOnOrderInquiry
-                      ? "You don't have permission to unplace rows"
+                      ? "You don't have permission to unlink rows"
                       : unplacePreview.isError
-                        ? 'Could not check placed rows - try again'
+                        ? 'Could not check linked rows - try again'
                         : unplaceCount === 0
-                          ? 'No placed rows to unplace'
+                          ? 'No linked rows to unlink'
                           : undefined,
                   },
                 ]}
@@ -716,8 +795,8 @@ export function OrderInquiriesClient() {
         </DataGrid>
       )}
 
-      <AutoPlaceOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
-      <UnplaceAllOrderInquiryDialog
+      <AutoLinkOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
+      <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}
         filters={unplaceAllFilters}

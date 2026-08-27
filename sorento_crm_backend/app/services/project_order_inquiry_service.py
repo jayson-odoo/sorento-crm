@@ -58,24 +58,27 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product
+from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
-    IV_BORROW_SHORTFALL,
     IV_CANCEL_BALANCE,
     IV_CHANGE_SO,
     IV_DELAY,
     IV_ORDER,
+    IV_ORDER_BACK,
     IV_PRE_ORDERED,
     IV_RESERVE_AND_ORDER,
     SO_STATUS_AMENDED,
     SO_STATUS_PUBLISHED,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -92,7 +95,7 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
-from app.services.scm import order_link_service, priority
+from app.services.scm import order_link_service, priority, spo_supply
 from app.services.project_order_inquiry_engine import (
     CHANGE_DATE_EARLIER,
     CHANGE_DATE_LATER,
@@ -110,6 +113,11 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 
+#: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
+#: upload names thousands of documents in one call, and one `IN` list that long is a bad
+#: plan and, on some drivers, a refused statement.
+_RELINK_BATCH = 200
+
 #: The states pre-seeded at zero on the header strip. `placed` (section G) is
 #: deliberately NOT one of them - `summary()` adds it to the dict dynamically the moment a
 #: placed row actually exists, so a project with none yet keeps reporting the exact four
@@ -120,11 +128,21 @@ INQUIRY_STATES = (INQUIRY_RAISED, INQUIRY_ACTIONED, INQUIRY_CANCELLED)
 # the next publish nets against the same pool again.
 _COVERING_VERBS = (IV_PRE_ORDERED, IV_ALREADY_INBOUND)
 
-# Section G: only a row that still costs money and is still undecided can be tagged onto
-# an outstanding PO. `RESERVE_AND_ORDER` is buying work exactly like `ORDER` (BUYING_VERBS
-# on the frontend groups them the same way); the rest are either informational or already
-# closed off.
-_PLACEABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER)
+# Only a row that still costs money and is not yet covered can be LINKED to a document.
+# `RESERVE_AND_ORDER` is buying work exactly like `ORDER` (`BUYING_VERBS` on the frontend
+# groups them the same way); the rest are either informational or already closed off.
+#
+# `ORDER_BACK` joined the set in section 3.I. It was kept off it while a link meant a
+# purchase order and nothing else - an order back is a shortfall against something already
+# ORDERED, so pointing it at a fresh purchase order said the wrong thing. Now that a link
+# may name an `spo_allocations` row (part 2 section 4b) that objection is answered: an
+# order back is exactly the row that should be able to name the shipping order it is owed
+# against, and it is the ONLY verb allowed to.
+_LINKABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK)
+#: The verbs whose links may name an SPO allocation. Only the order back (4b).
+_SPO_LINKABLE_VERBS = (IV_ORDER_BACK,)
+#: The old name, for the readers that have not been renamed yet. Same tuple.
+_PLACEABLE_VERBS = _LINKABLE_VERBS
 
 # How the client spells each verb in the order inquiry they send today. `ALREADY_INBOUND`
 # is deliberately absent: their file writes the SPO reference itself in that column
@@ -139,7 +157,7 @@ REMARK_SPELLING = {
     IV_PRE_ORDERED: "PRE-ORDERED, DO NOT ORDER",
     IV_ALREADY_INBOUND: "ALREADY INBOUND",
     # Not a spelling of theirs: this row is new to them, and it says what it is.
-    IV_BORROW_SHORTFALL: "BORROW SHORTFALL",
+    IV_ORDER_BACK: "ORDER BACK",
 }
 
 # The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
@@ -237,11 +255,100 @@ def _as_date(value: Any) -> Optional[date]:
         return None
 
 
+#: The location tiers a link candidate is ranked by (Q5, ruled 25 August 2026). NEVER a
+#: filter: "candidate lines are ranked by location fit, never filtered out", because a
+#: purchase order that lands at the pool still covers a line standing at BRW-IB - it just
+#: has to be moved, and the tier is what tells the buyer which split to key into AutoCount.
+TIER_SAME_LOCATION = 1
+TIER_SAME_GROUP = 2
+TIER_POOL = 3
+TIER_SIBLING = 4
+TIER_ELSEWHERE = 5
+
+
+def _also_cited(note: Optional[str]) -> List[str]:
+    """The EXTRA documents a form remark named, read back off the row's note.
+
+    `order_inquiry_rows` has one `cited_document` column and a remark routinely names two,
+    so the rest are written behind a fixed prefix
+    (`project_order_inquiry_import_service.ALSO_CITED_PREFIX`) and read back here.
+
+    ONLY that segment is parsed, never the whole note. The note also carries the cascade's
+    own "Linked to 202607-S0031 (...)" stamp and the relocation a book re-upload wrote, and
+    reading a document out of those would make an already-linked row cite the document it is
+    already sitting on - pinning the walk to its own past, which is the exact trap
+    `cited_document` was given its own column to avoid.
+
+    Uses the READER's document-number pattern rather than a second copy of it, so the two
+    cannot come to disagree about what a document number looks like.
+    """
+    from app.services.project_order_inquiry_import_service import ALSO_CITED_PREFIX
+    from app.services.project_order_inquiry_reader import _PO_NUMBER
+
+    text_value = str(note or "")
+    at = text_value.find(ALSO_CITED_PREFIX)
+    if at < 0:
+        return []
+    segment = text_value[at + len(ALSO_CITED_PREFIX):].split(";")[0]
+    return [str(found).strip().upper() for found in _PO_NUMBER.findall(segment)]
+
+
+def link_location_tier(
+    row_location: Optional[str],
+    candidate_location: Optional[str],
+    pool_codes: set,
+) -> Tuple[int, int]:
+    """How well a document line's location fits the row's own, as `(tier, sub-rank)`.
+
+    For a row at `BRW-IB`: `BRW-IB` is tier 1; `DC1-IB` / `MWH-IB` (the same ownership
+    group at another site) tier 2; a POOL - `BRW` first, then the others - tier 3; a
+    sibling at the same site such as `BRW-BB` tier 4; anything else tier 5.
+
+    The sub-rank exists for tier 3 alone and orders the row's OWN site pool ahead of the
+    others, which is the "(3) the site pool (BRW, then the other pools)" of the ruling. It
+    is a second element rather than a fourth tier so the tier a person reads stays the four
+    the plan names.
+
+    Whether a code is a POOL is decided by the FK - the set of warehouses that are some
+    location's `pool_warehouse_id` - not by the code's shape. Every pool on the live book
+    happens to be a plain site code with no hyphen, but that is a naming convention the
+    data does not enforce, and `_pool_codes` reads the same authority the ladder does.
+
+    A row that names NO location can be ranked by nothing, so every candidate is tier 5 and
+    the dates decide - which is honest, rather than pretending a fit nobody stated.
+    """
+    if not row_location or not candidate_location:
+        return TIER_ELSEWHERE, 0
+    own = str(row_location).strip().upper()
+    other = str(candidate_location).strip().upper()
+    if own == other:
+        return TIER_SAME_LOCATION, 0
+    own_site, _, own_group = own.partition("-")
+    other_site, _, other_group = other.partition("-")
+    if own_group and other_group and own_group == other_group:
+        return TIER_SAME_GROUP, 0
+    if other in pool_codes:
+        return TIER_POOL, 0 if other == own_site else 1
+    if other_site and other_site == own_site:
+        return TIER_SIBLING, 0
+    return TIER_ELSEWHERE, 0
+
+
 class ProjectOrderInquiryService:
     """Derives, serves, exports and closes off what purchasing is told to do."""
 
     def __init__(self, db: Session):
         self.db = db
+        # Which warehouses are somebody's pool, read once per service instance: the link
+        # tier asks it for every candidate of every row, and it does not change inside one
+        # request.
+        self._pool_codes_cache: Optional[set] = None
+        # What every link already claims, per target. `auto_place_for_products` asks for
+        # it once per ROW through `_candidates_for_row`, which on a full pass is two
+        # aggregate queries per row over the whole link table. Cached here and dropped by
+        # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
+        # has already changed.
+        self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
 
     # ------------------------------------------------------------- derivation
 
@@ -311,6 +418,15 @@ class ProjectOrderInquiryService:
             )
             self.db.add(inquiry)
             self.db.flush()
+        elif actor_user_id:
+            # A reconfirm RE-STAMPS the header (PLAN section H, AC-H4). The inquiry is
+            # deliberately reused so purchasing keeps quoting one number, which means
+            # without this the screen would name whoever confirmed revision 1 forever,
+            # long after somebody else decided what purchasing is actually holding. The
+            # rows keep their own `actioned_by` - that is purchasing's answer, not CS's
+            # instruction.
+            inquiry.raised_by = actor_user_id
+            inquiry.raised_at = datetime.utcnow()
 
         created = 0
         raised = 0
@@ -319,6 +435,18 @@ class ProjectOrderInquiryService:
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))
             carried = bool(entry.get("carried"))
+            # Is THIS line's Buy an order back (part 2 section 4b)? Only then does this
+            # loop own the line's `ORDER_BACK` rows; on any other line such a row is a
+            # DONOR hole raised by `_raise_borrow_shortfalls`, which supersedes and nets it
+            # by its own rule. The two writers never meet on one line - the whole-line rule
+            # (AC-L5) makes a line either wholly stock or wholly Buy - and this is what
+            # keeps them apart.
+            order_back = bool(entry.get("order_back")) and need > _ZERO
+            owned_verbs = (
+                (IV_ORDER, IV_ORDER_BACK, IV_CANCEL_BALANCE)
+                if order_back
+                else (IV_ORDER, IV_CANCEL_BALANCE)
+            )
             # This sales order's OWN inquiry only. An amendment raises its exception verbs
             # under its own inquiry (`amendment_id`), and cancelling those here would
             # delete an instruction purchasing is still working from.
@@ -327,7 +455,7 @@ class ProjectOrderInquiryService:
                 .filter(
                     OrderInquiryRow.order_inquiry_id == inquiry.id,
                     OrderInquiryRow.so_line_id == line.id,
-                    OrderInquiryRow.verb.in_((IV_ORDER, IV_CANCEL_BALANCE)),
+                    OrderInquiryRow.verb.in_(owned_verbs),
                 )
                 .all()
             )
@@ -343,26 +471,59 @@ class ProjectOrderInquiryService:
             # placed / 0 actioned, live, 20 Aug), so a qty-up reconfirm re-raised the FULL
             # new need on top of supply that was already there (SO349754 WESERP10B: placed
             # 5 untouched, a fresh 10 raised, 15 against a 10 line).
+            #
+            # A PARTLY LINKED row is the case the links table added, and it is netted
+            # HALF: the quantity that sits on a document is real supply and counts, and
+            # the remainder is demand this revision is about to restate, so the row is
+            # shrunk to what is linked rather than cancelled. Cancelling it would have
+            # taken the links down with it; leaving it whole would have counted the
+            # unlinked half twice, once here and once on the row raised below.
+            linked = self._linked_qty_by_row([row.id for row in rows])
             placed = _ZERO
             for row in rows:
                 if row.state == INQUIRY_RAISED:
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
-                elif (
-                    row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED)
-                    and row.verb == IV_ORDER
-                    # A planning change already REDIRECTED this row to replenish the
-                    # pool it drew on (`planning_change_service._apply_placed_redirect`,
-                    # the captain's ruling 21 Aug 2026) - it is still real placed
-                    # quantity, just not this line's anymore, so it must not net off
-                    # this line's need a second time or the new Buy would be silently
-                    # short.
-                    and not row.redirected_to_pool
-                ):
+                    continue
+                if row.verb not in owned_verbs or row.verb == IV_CANCEL_BALANCE:
+                    continue
+                # A planning change already REDIRECTED this row to replenish the pool it
+                # drew on (`planning_change_service._apply_placed_redirect`, the captain's
+                # ruling 21 Aug 2026) - it is still real placed quantity, just not this
+                # line's anymore, so it must not net off this line's need a second time or
+                # the new Buy would be silently short.
+                if row.redirected_to_pool:
+                    continue
+                if row.state == INQUIRY_ACTIONED:
+                    # `mark_rows` is the only writer of this state and it carries no
+                    # links, so the row's own quantity is what purchasing dealt with.
                     placed += _dec(row.qty)
+                elif row.state == INQUIRY_PLACED:
+                    placed += _dec(row.qty)
+                elif row.state == INQUIRY_PARTLY_LINKED:
+                    covered = linked.get(row.id, _ZERO)
+                    placed += covered
+                    row.qty = covered
+                    # Through the one writer, not by hand: the row's derived display
+                    # (`po_ref` / `po_line_id` / `spo_ref`) is restated with the state, and
+                    # setting `placed` here alone would have left them saying whatever the
+                    # last link change happened to leave.
+                    self._refresh_link_state([row])
+                    row.note = (
+                        f"{row.note}; Remainder superseded by revision "
+                        f"{decision.revision_no}"
+                        if row.note
+                        else f"Remainder superseded by revision {decision.revision_no}"
+                    )
 
             outstanding = need - placed
             if outstanding > _ZERO:
+                # An ORDER BACK is the same Buy said differently: the quantity is owed
+                # against something already ordered or already shipped (part 2 section
+                # 4b). CS marks it in Amend, optionally naming the document, and the two
+                # facts travel to the row: the verb decides that an SPO allocation is a
+                # legal link target, and `cited_document` is what the walk tries first.
+                order_back = bool(entry.get("order_back"))
                 self.db.add(
                     OrderInquiryRow(
                         company_id=order.company_id,
@@ -372,7 +533,10 @@ class ProjectOrderInquiryService:
                         qty=outstanding,
                         delivery_date=entry.get("required_date"),
                         stock_location=entry.get("stock_location"),
-                        verb=IV_ORDER,
+                        verb=IV_ORDER_BACK if order_back else IV_ORDER,
+                        cited_document=(
+                            entry.get("cited_document") if order_back else None
+                        ),
                         # No netting on this path, so nothing covers this row: the coverage
                         # decision was CS's and is recorded on the supply decision.
                         covered_by=None,
@@ -412,7 +576,21 @@ class ProjectOrderInquiryService:
 
         self._retire_uncovered_rows(inquiry, decision, buy_lines)
         shortfalls = self._raise_borrow_shortfalls(
-            order, inquiry, decision, borrow_shortfalls
+            order,
+            inquiry,
+            decision,
+            borrow_shortfalls,
+            # The lines whose ORDER BACK rows the loop above already owns: a Buy CS
+            # marked "Order back". NOT every confirmed line - a line with no Buy at all
+            # appears in `buy_lines` too, and excluding it would have stopped the donor's
+            # own hole being netted against what purchasing had already placed.
+            buy_line_ids={
+                str(entry["line"].id)
+                for entry in buy_lines
+                if entry.get("line")
+                and entry.get("order_back")
+                and _dec(entry.get("buy_qty")) > _ZERO
+            },
         )
         created += shortfalls
         raised += shortfalls
@@ -427,6 +605,7 @@ class ProjectOrderInquiryService:
         inquiry: OrderInquiry,
         decision: Any,
         shortfalls: Sequence[Dict[str, Any]],
+        buy_line_ids: Optional[set] = None,
     ) -> int:
         """One row per donor location this confirmation left oversold (PLAN 13.11).
 
@@ -451,27 +630,53 @@ class ProjectOrderInquiryService:
         the key (rather than decrementing it as each entry consumes it) under-raised every
         entry after the first by the SAME amount, as if purchasing had placed it twice.
         """
-        rows = (
-            self.db.query(OrderInquiryRow)
+        # `ORDER_BACK` is written by TWO paths since part 2 section 4b: this one, for the
+        # hole a borrow left at the donor's location, and the Buy line CS marked "Order
+        # back" in Amend. The two never meet on one sales-order LINE - the whole-line rule
+        # (AC-L5) makes a line either wholly stock or wholly Buy - so the line is what
+        # tells them apart, and this method leaves the Buy-line rows to
+        # `refresh_for_decision`, which supersedes and nets them exactly as it does an
+        # ORDER. Without the exclusion every board order-back would be cancelled on the
+        # next confirm and never re-raised.
+        rows = [
+            row
+            for row in self.db.query(OrderInquiryRow)
             .filter(
                 OrderInquiryRow.order_inquiry_id == inquiry.id,
-                OrderInquiryRow.verb == IV_BORROW_SHORTFALL,
+                OrderInquiryRow.verb == IV_ORDER_BACK,
             )
             .all()
-        )
+            if not (buy_line_ids and str(row.so_line_id) in buy_line_ids)
+        ]
+        # A PARTLY LINKED row is netted HALF, exactly as an ORDER row is one method up:
+        # the quantity sitting on a document is real supply and counts against the hole,
+        # and the remainder is a hole this revision is about to restate, so the row is
+        # SHRUNK to what is linked rather than cancelled. Cancelling it would have taken
+        # its links down with it; leaving it whole would have counted the unlinked half
+        # twice, once here and once on the row raised below; and re-raising the FULL hole
+        # on top of it - which is what a plain `raised` test does to it - would have told
+        # purchasing to buy the covered part a second time.
+        linked = self._linked_qty_by_row([row.id for row in rows])
         placed: Dict[Tuple[Optional[str], Optional[str]], Decimal] = {}
         for row in rows:
+            key = (row.item_code or None, row.stock_location or None)
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = f"Superseded by revision {decision.revision_no}"
-            # Same widening as the ORDER-row netting above, for the same reason: `placed`
-            # (section G) is a real, distinct state from `actioned` and a shortfall row
-            # purchasing already dealt with must net off just as an actioned one does. A
-            # borrow shortfall row is not one of `_PLACEABLE_VERBS` today, so this state
-            # is not reachable through the current UI - kept in step with the vocabulary
-            # rather than left to silently disagree with it.
+            elif row.state == INQUIRY_PARTLY_LINKED:
+                covered = linked.get(row.id, _ZERO)
+                placed[key] = placed.get(key, _ZERO) + covered
+                row.qty = covered
+                row.state = INQUIRY_PLACED
+                row.note = (
+                    f"{row.note}; Remainder superseded by revision {decision.revision_no}"
+                    if row.note
+                    else f"Remainder superseded by revision {decision.revision_no}"
+                )
+            # `placed` (section G) is a real, distinct state from `actioned` and a
+            # shortfall row purchasing already dealt with must net off just as an actioned
+            # one does.
             elif row.state in (INQUIRY_ACTIONED, INQUIRY_PLACED):
-                key = (row.item_code or None, row.stock_location or None)
                 placed[key] = placed.get(key, _ZERO) + _dec(row.qty)
 
         created = 0
@@ -496,7 +701,7 @@ class ProjectOrderInquiryService:
                     delivery_date=entry.get("required_date"),
                     #: The DONOR's location, which is where the hole is.
                     stock_location=entry.get("stock_location"),
-                    verb=IV_BORROW_SHORTFALL,
+                    verb=IV_ORDER_BACK,
                     note=entry.get("note"),
                     covered_by=None,
                     supply_decision_id=decision.id,
@@ -792,24 +997,39 @@ class ProjectOrderInquiryService:
         ]
 
     def _inbound_pools(self, product_ids: set) -> List[CoveringPool]:
-        """SPO allocations on shipments that have not landed: stock already on the water."""
+        """Open SPO lines that have not landed: stock already on the water.
+
+        Outer-joined to the shipment since migration 420: an SPO document exists before
+        anybody books a container for it, and an inner join here counted only the ones that
+        had one. A row with no shipment offers its own `expected_date` as the arrival, and a
+        CLOSED line offers nothing - history is written closed for exactly that reason.
+
+        `spo_supply.open_incoming_clauses` is the shared rule. A promise whose date has
+        passed is still a pool (captain, 26 Aug: trust the book) - the goods are owed until
+        the book says they arrived - so what a past date changes is the wording elsewhere,
+        not whether this pool exists.
+        """
         rows = (
             self.db.query(
                 SPOAllocation.spo_number,
                 SPOAllocation.product_id,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
-                InboundShipment.estimated_arrival_date,
+                func.coalesce(
+                    InboundShipment.estimated_arrival_date, SPOAllocation.expected_date
+                ).label("eta"),
             )
-            .join(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
             .filter(
                 SPOAllocation.product_id.in_(list(product_ids)),
                 SPOAllocation.spo_number.isnot(None),
-                InboundShipment.actual_arrival_date.is_(None),
-                or_(
-                    SPOAllocation.receipt_status.is_(None),
-                    SPOAllocation.receipt_status != "received",
-                ),
+                # Supply we cannot place is cover for nobody: the pool this fills is read
+                # per location, so a row naming a location we do not hold counts nowhere,
+                # exactly as `on_order_v` treats it.
+                SPOAllocation.warehouse_id.isnot(None),
+                *spo_supply.open_incoming_clauses(),
             )
             .all()
         )
@@ -1011,7 +1231,7 @@ class ProjectOrderInquiryService:
                 # A borrow shortfall is buying work too: the donor is oversold and
                 # somebody has to buy the hole (PLAN 13.11).
                 OrderInquiryRow.verb.in_(
-                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_BORROW_SHORTFALL]
+                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK]
                 ),
             )
             .scalar()
@@ -1144,7 +1364,9 @@ class ProjectOrderInquiryService:
         context, names = self._context_for(rows)
         traces = self._decision_traces(rows)
         product_by_row = self._resolve_product_ids_bulk(rows)
-        open_products = self.open_po_line_product_ids(set(product_by_row.values()))
+        candidates = self.link_candidate_products(set(product_by_row.values()))
+        links_by_row = self.links_for_rows([row.id for row in rows])
+        linked_by_row = self._linked_qty_by_row([row.id for row in rows])
         out: List[Dict[str, Any]] = []
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
@@ -1174,13 +1396,128 @@ class ProjectOrderInquiryService:
                     "spo_ref": row.spo_ref,
                     "po_ref": row.po_ref,
                     "po_line_id": row.po_line_id,
-                    "has_open_po_line": product_by_row.get(row.id) in open_products,
+                    "cited_document": row.cited_document,
+                    # WHERE the quantity actually sits (AC-I5/AC-I9). `po_ref` above is the
+                    # first of these, kept for the older readers that print one number.
+                    "links": links_by_row.get(row.id, []),
+                    "linked_qty": _qty_str(linked_by_row.get(row.id, _ZERO)),
+                    "has_link_candidate": self.has_link_candidate(
+                        row.verb, product_by_row.get(row.id), candidates
+                    ),
                     "covered_by": row.covered_by,
                     "note": row.note,
                     "state": row.state,
                     "actioned_at": row.actioned_at,
                     "actioned_by_name": names.get(row.actioned_by),
                     "created_at": row.created_at,
+                }
+            )
+        return out
+
+    def links_for_rows(self, row_ids: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Every link on these rows, serialized, keyed by row - one query for a page.
+
+        The ONE reader of `projects.order_inquiry_links` for a screen, used by the
+        per-project list, the cross-project worklist and the SCM sales-order detail, so the
+        three surfaces answer "where is this linked" with one voice (section 3.I: "Same
+        data as the worklist and the PO occupancy panel, one reader").
+
+        Everything a person reads comes off the link itself or off the document it names -
+        never an id: `document` is denormalised on the link precisely so a purchase order
+        line that has since been re-imported cannot make the answer disappear. `po_id`
+        addresses the PO popover and is null on an SPO link, because there is no purchase
+        order to open.
+        """
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
+        rows = (
+            self.db.query(
+                OrderInquiryLink,
+                OrderInquiryRow.stock_location,
+                PurchaseOrder.id,
+                PurchaseOrder.po_number,
+                PurchaseOrder.issue_date,
+                PurchaseOrderLine.expected_date,
+                PurchaseOrderLine.source_ref,
+                Warehouse.warehouse_code,
+                SPOAllocation.spo_number,
+                SPOAllocation.spo_line_number,
+                SPOAllocation.issue_date,
+                SPOAllocation.expected_date,
+                SPOAllocation.location_code,
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .outerjoin(
+                PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id
+            )
+            .outerjoin(
+                SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+            )
+            .outerjoin(
+                Warehouse,
+                Warehouse.id
+                == func.coalesce(
+                    PurchaseOrderLine.warehouse_id, SPOAllocation.warehouse_id
+                ),
+            )
+            .filter(
+                OrderInquiryLink.row_id.in_(wanted),
+                # A cancelled row's links are history, not an answer to "where does this
+                # quantity sit": the quantity is not owed any more. A superseded revision
+                # would otherwise keep printing its documents on the SO detail beside the
+                # revision that replaced it.
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+        pools = self._pool_codes()
+        from app.services.project_service import resolve_user_names
+
+        names = resolve_user_names(
+            self.db, [link.linked_by for link, *_rest in rows if link.linked_by]
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for (
+            link,
+            stock_location,
+            po_id,
+            po_number,
+            po_issue_date,
+            po_expected_date,
+            po_source_ref,
+            warehouse_code,
+            spo_number,
+            spo_line_number,
+            spo_issue_date,
+            spo_expected_date,
+            spo_location_code,
+        ) in rows:
+            is_spo = link.spo_allocation_id is not None
+            location = warehouse_code or (spo_location_code if is_spo else None)
+            tier, _sub = link_location_tier(stock_location, location, pools)
+            out.setdefault(link.row_id, []).append(
+                {
+                    "id": link.id,
+                    "kind": "spo" if is_spo else "po",
+                    # The link's own copy first: the document it was made against, even
+                    # when the line it named has since been deleted out from under it.
+                    "document": link.document or spo_number or po_number,
+                    "line_label": self._line_label(
+                        spo_line_number if is_spo else po_source_ref
+                    ),
+                    "qty": _qty_str(_dec(link.qty)),
+                    "location": location,
+                    "issue_date": spo_issue_date if is_spo else po_issue_date,
+                    "expected_date": spo_expected_date if is_spo else po_expected_date,
+                    "tier": tier,
+                    "auto": bool(link.auto),
+                    "linked_at": link.linked_at,
+                    # WHO linked it, by name. Null on a cascade link, which nobody did.
+                    "linked_by_name": names.get(link.linked_by),
+                    "po_id": None if is_spo else po_id,
                 }
             )
         return out
@@ -1408,7 +1745,10 @@ class ProjectOrderInquiryService:
                 .distinct()
                 .all()
             }
-            if not states or INQUIRY_RAISED in states:
+            # A PARTLY LINKED row is still waiting on somebody, so its inquiry is open -
+            # exactly as a raised one is. Reading it as "actioned" would have closed a
+            # header whose own rows still carry unlinked demand.
+            if not states or states & {INQUIRY_RAISED, INQUIRY_PARTLY_LINKED}:
                 inquiry.state = INQUIRY_RAISED
             elif states == {INQUIRY_CANCELLED}:
                 inquiry.state = INQUIRY_CANCELLED
@@ -1416,111 +1756,456 @@ class ProjectOrderInquiryService:
                 inquiry.state = INQUIRY_ACTIONED
         self.db.flush()
 
-    # --------------------------------------------------- tag an outstanding PO (section G)
+    # ------------------------------------------------- Link PO / Link SPO (section 3.I)
     #
     # "identify which outstanding PO has quantity to fulfil this order inquiry, tag it,
-    # and the quantity to be ordered is deducted" (the captain, 20 Aug). A deliberate,
-    # evidence-carrying exception on the DEMAND side only: tagging never makes the PO
-    # supply (`on_order_v` still reads `spo_allocations` only). The lever is the existing
-    # one - `committed_v`'s confirmed leg counts `state = 'raised'` rows only - so moving
-    # a row to `placed` is what removes it from the reorder engine's suggestion, with no
-    # view change and no silent hole where "mark actioned" used to cover it with nothing
-    # to show for it.
+    # and the quantity to be ordered is deducted" (the captain, 20 Aug), reworked twice
+    # since. What it is today, and why each half is the way it is:
     #
-    # G2 (the captain, 20 Aug, live-testing the shipped feature): "we need to link
-    # already at first already instead of suggesting and needing the users to click 1 by
-    # 1" - placements now happen AUTOMATICALLY (`auto_place_for_products`, cascading from
-    # the earliest expected-date PO line, ties by document sequence, partial coverage
-    # allowed, POs only - never SPO-). The dialog survives as override + audit, not as
-    # the workflow: `place_on_po` (one line) and `place_on_po_allocations` (a cascade,
-    # possibly several lines) are both still here for a human to use by exception.
+    # **A row keeps its full quantity and carries LINKS.** The captain, 25 August, walking
+    # SO414285: "1 line here should correspond to 1 line in sales order, so 1 line can be
+    # placed by multiple PO and SPO". `order_inquiry_rows` held exactly one `po_line_id`,
+    # so a cascade needing two lines SPLIT the row - and nine sales-order lines read as
+    # eleven instructions. `projects.order_inquiry_links` (migration 421) is one row per
+    # placement; the row's `state` and `po_ref` are DERIVED from them, never written by
+    # hand (`_refresh_link_state`).
+    #
+    # **The lever on the reorder engine is netting, not a state test.** `committed_v`'s
+    # confirmed leg counts `qty - sum(links.qty)` (migration 422), so a fully linked row
+    # leaves confirmed demand exactly as `placed` did and a half-linked one leaves half.
+    # Linking never makes the document SUPPLY - `on_order_v` still reads `spo_allocations`
+    # alone - it retires the DEMAND that document is already covering.
+    #
+    # **An SPO allocation is a candidate for an ORDER BACK row and for nothing else**
+    # (captain, 25 August; `PLAN-scm-purchasing-uat-journey.md` section 4b). A normal ORDER
+    # is a NEW purchase and links to purchase order lines; an order back is a shortfall
+    # against something already ordered or already shipped, and may name either.
+    #
+    # **Location ranks a candidate, it never filters one out** (Q5, ruled 25 August). Same
+    # location, then the same ownership group at another site, then the site pools, then a
+    # sibling location at the site. A link outside tier 1 is not a mistake - it is the
+    # split instruction the buyer keys into AutoCount, and the PO occupancy panel marks it.
+    #
+    # **Then the PO's own date, then the line's** (Q7, ruled): `purchase_orders.issue_date`
+    # ascending, then `expected_date`, then the document number. Before Q7 the key was the
+    # line's expected date alone, which dealt a January line of an August purchase order
+    # ahead of an August line of an April one.
+    #
+    # **A cited document comes before all of it.** CS naming "202604-S0083" on the form is
+    # the most specific thing anybody knows about the row, and a walk that ignored it would
+    # be answering a question nobody asked.
 
-    def _open_po_lines_for_product(
-        self, product_id: str
-    ) -> List[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]]:
-        """Open PO lines of one product, in CASCADE ORDER - soonest `expected_date`
-        first, ties broken by document sequence (the PO's own number, then the line's
-        own id) - netted for what other PLACED rows already tagged. The ONE query both
-        the dialog's candidates and the auto-place cascade walk, so the two can never
-        disagree (G2 rule 1).
+    def _refresh_link_state(self, rows: Sequence[OrderInquiryRow]) -> None:
+        """Set each row's state and its derived display from its own links.
 
-        SPO- prefixed documents are never candidates here (G2 rule 3, "those are SPO,
-        not PO" - the captain, live-testing): "Place on PO" tags an outstanding PURCHASE
-        ORDER, never a scheduled purchase order. SPO coverage stays the ladder engine's
-        job (`net_demand` / `_pools` above), untouched by this feature.
+        The ONE writer of `state` / `po_ref` / `po_line_id` / `spo_ref` on a linkable row,
+        so the four cannot come to disagree. `actioned` and `cancelled` are a person's word
+        about the row and are left exactly as they are: a link change is not an opinion
+        about whether purchasing dealt with it.
 
-        ``PurchaseOrder.status`` is also gated to active/partial (code review, 21 Aug,
-        B3, same family as G2 rule 3 above): a ``draft_recommendation`` PO is not yet an
-        outstanding order - it is OUTSIDE `scm.on_order_v` for exactly that reason
-        (M4-D5) - and its lines are also not the ones a re-decision at
-        ``decision_service._remove_product_lines`` may delete out from under a tag
-        without ceremony. Without this gate, auto-place could tag an order-inquiry row
-        onto an unconfirmed draft's line; the buyer edits the decision before
-        confirming; the draft line is deleted; and the row is left ``state='placed'``
-        with a NULL ``po_line_id`` - the exact stranding
-        ``purchase_order_service.bulk_delete`` already guards a PO's own delete against.
+        The stored value for "wholly covered" stays `placed` and reads "Linked" on screen.
+        Renaming the column value would have rewritten `scm.committed_v`, the worklist's
+        own filter and every saved column preference to say the same thing in a different
+        word, which buys nothing and breaks a bookmark.
         """
-        tagged = self._tagged_by_po_line()
+        for row in rows:
+            if row.state in (INQUIRY_ACTIONED, INQUIRY_CANCELLED):
+                # The STATE is a person's word and is left alone, but the derived display
+                # is not a word - it is a reading of the links, and a row whose links have
+                # gone must stop naming a document it no longer sits on.
+                if not self._links_of(row.id):
+                    row.po_ref = None
+                    row.po_line_id = None
+                    row.spo_ref = None
+                continue
+            links = self._links_of(row.id)
+            linked = sum((_dec(link.qty) for link in links), _ZERO)
+            need = _dec(row.qty)
+            if linked <= _ZERO:
+                row.state = INQUIRY_RAISED
+            elif linked < need:
+                row.state = INQUIRY_PARTLY_LINKED
+            else:
+                row.state = INQUIRY_PLACED
+            first = links[0] if links else None
+            # The FIRST link's document, by when it was made. `po_ref` has carried a PO
+            # number since section G and several readers still print it; it is a display of
+            # the links now, so it is restated here rather than left holding whatever the
+            # last single-line placement happened to set.
+            row.po_ref = first.document if first is not None else None
+            row.po_line_id = first.po_line_id if first is not None else None
+            row.spo_ref = (
+                first.document
+                if first is not None and first.spo_allocation_id is not None
+                else None
+            )
+
+    def _links_of(self, row_id: str) -> List[OrderInquiryLink]:
+        """This row's links, oldest first - the order "the first link" means."""
+        return (
+            self.db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.row_id == row_id)
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+
+    def _linked_qty_by_row(self, row_ids: Sequence[str]) -> Dict[str, Decimal]:
+        """How much of each row already sits on a document. One query for a whole page."""
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
         rows = (
-            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
+            self.db.query(OrderInquiryLink.row_id, func.sum(OrderInquiryLink.qty))
+            .filter(OrderInquiryLink.row_id.in_(wanted))
+            .group_by(OrderInquiryLink.row_id)
+            .all()
+        )
+        return {row_id: _dec(qty) for row_id, qty in rows}
+
+    def _linked_by_target(self) -> Tuple[Dict[str, Decimal], Dict[str, Decimal]]:
+        """What every link already claims, per PO line and per SPO allocation.
+
+        The netting that stops two rows claiming the same purchase-order quantity. Read off
+        the LINKS rather than off the rows' own `po_line_id`, which is derived display now:
+        a row linked to two lines claims quantity on both, and the scalar names one.
+        """
+        if self._linked_by_target_cache is not None:
+            return self._linked_by_target_cache
+        by_po = {
+            str(po_line_id): _dec(qty)
+            for po_line_id, qty in self.db.query(
+                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
+            )
+            .filter(OrderInquiryLink.po_line_id.isnot(None))
+            .group_by(OrderInquiryLink.po_line_id)
+            .all()
+        }
+        by_spo = {
+            str(allocation_id): _dec(qty)
+            for allocation_id, qty in self.db.query(
+                OrderInquiryLink.spo_allocation_id, func.sum(OrderInquiryLink.qty)
+            )
+            .filter(OrderInquiryLink.spo_allocation_id.isnot(None))
+            .group_by(OrderInquiryLink.spo_allocation_id)
+            .all()
+        }
+        self._linked_by_target_cache = (by_po, by_spo)
+        return by_po, by_spo
+
+    def _invalidate_link_cache(self) -> None:
+        """Every writer of a link calls this. A stale total is a double-claim."""
+        self._linked_by_target_cache = None
+
+    def _pool_codes(self) -> set:
+        """Every warehouse that is SOME location's pool, by code.
+
+        The authoritative test is the FK, not the code's shape - the same reading
+        `project_supply_service._site_pool_warehouses` uses, and for the same reason: on the
+        live book every pool happens to be a plain site code with no hyphen, but that is a
+        naming convention the data does not enforce.
+        """
+        if self._pool_codes_cache is None:
+            pool_ids = {
+                str(row[0])
+                for row in self.db.query(Warehouse.pool_warehouse_id)
+                .filter(Warehouse.pool_warehouse_id.isnot(None))
+                .distinct()
+                .all()
+            }
+            self._pool_codes_cache = {
+                str(code).upper()
+                for (code,) in self.db.query(Warehouse.warehouse_code).filter(
+                    Warehouse.id.in_(list(pool_ids)), Warehouse.is_active.is_(True)
+                )
+                if code
+            } if pool_ids else set()
+        return self._pool_codes_cache
+
+    def _cited_documents(self, row: OrderInquiryRow) -> Dict[str, int]:
+        """Every document this row NAMES, upper-cased, RANKED in the order CS wrote them.
+
+        `cited_document` is the column CS writes into (the Amend "Order back" field, and
+        the Order Inquiry Form's remark) and it holds the FIRST document. A form remark
+        routinely names more than one - `SPO-2026/08-0061 & 202606-S0082` - and the second
+        is not decoration: it is the answer when the first cannot cover the quantity. One
+        column cannot hold two, so the rest are written onto the NOTE behind a fixed prefix
+        (`project_order_inquiry_import_service.ALSO_CITED_PREFIX`) and read back here.
+        Parsed with the reader's own document-number pattern rather than a second one, so
+        the two cannot come to disagree about what a document number looks like.
+
+        A RANK rather than a set, because "cited" is not one bucket: the walk must try the
+        first document CS named before the second, or a row whose first citation is short
+        lands on the wrong one and reads as a rule that ignored the form.
+
+        `spo_ref` is read after them for the rows raised before `cited_document` existed.
+        `po_ref` is NOT read: since section 3.I it is the derived display of the first link,
+        so reading it would make every already-linked row cite the document it is already on
+        and pin the walk to its own past.
+        """
+        ordered: List[str] = []
+
+        def _add(value: Any) -> None:
+            key = str(value or "").strip().upper()
+            if key and key not in ordered:
+                ordered.append(key)
+
+        _add(row.cited_document)
+        for document in _also_cited(row.note):
+            _add(document)
+        _add(row.spo_ref)
+        return {document: rank for rank, document in enumerate(ordered)}
+
+    def _candidates_for_row(
+        self, row: OrderInquiryRow, *, manual: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Every open document line this row could be linked to, in the walk's own order.
+
+        `manual` widens it to a purchase order that is not yet ACTIVE. The automatic walk
+        refuses one deliberately - a `draft_recommendation` order is not an outstanding
+        order (it is outside `scm.on_order_v` for exactly that reason), and its lines are
+        the ones a re-decision may delete out from under a link. A PERSON naming a line by
+        hand has always been allowed to, because the dialog is override and audit rather
+        than the workflow, and taking that away would have been a narrowing nobody asked
+        for.
+
+        ONE query pair feeding both the dialog's candidate list and the auto-link cascade,
+        so the preview and the pass can never disagree. `remaining` is already net of every
+        OTHER link on the same line, which is why two rows can never be pointed at the same
+        quantity.
+
+        SPO allocations are read only for an ORDER BACK row. Their open test is the one
+        copy in `app.services.scm.spo_supply` (`open_incoming_clauses`): open line status, a
+        receipt status that is not received, no landed shipment - and, per the captain's
+        26 August ruling, a promised date in the PAST does not remove a row. The book is
+        the record of what is still owed; a supplier being late is not evidence the goods
+        stopped existing.
+        """
+        product_id = self._resolve_product_id(row)
+        if not product_id:
+            return []
+        by_po, by_spo = self._linked_by_target()
+        pools = self._pool_codes()
+        cited = self._cited_documents(row)
+        own_location = (row.stock_location or "").strip().upper() or None
+        spo_allowed = row.verb in _SPO_LINKABLE_VERBS
+
+        candidates: List[Dict[str, Any]] = []
+
+        po_rows = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
             .filter(
                 PurchaseOrderLine.product_id == product_id,
                 PurchaseOrderLine.line_status == "open",
-                PurchaseOrder.status.in_(("active", "partial")),
                 PurchaseOrder.po_number.notlike("SPO-%"),
-            )
-            .order_by(
-                PurchaseOrderLine.expected_date.asc().nulls_last(),
-                PurchaseOrder.po_number.asc(),
-                PurchaseOrderLine.id.asc(),
+                *(
+                    ()
+                    if manual
+                    else (PurchaseOrder.status.in_(("active", "partial")),)
+                ),
             )
             .all()
         )
-        out: List[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]] = []
-        for line, po, supplier in rows:
-            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
-            remaining = balance - tagged.get(line.id, _ZERO)
-            if remaining > _ZERO:
-                out.append((line, po, supplier, remaining))
-        return out
+        for line, po, supplier, warehouse in po_rows:
+            remaining = (
+                _dec(line.qty_ordered)
+                - _dec(line.qty_received)
+                - by_po.get(str(line.id), _ZERO)
+            )
+            if remaining <= _ZERO:
+                continue
+            location = warehouse.warehouse_code if warehouse else None
+            candidates.append(
+                self._candidate(
+                    kind="po",
+                    target_id=str(line.id),
+                    document=po.po_number,
+                    line_label=self._line_label(line.source_ref),
+                    location=location,
+                    issue_date=po.issue_date,
+                    expected_date=line.expected_date,
+                    remaining=remaining,
+                    qty_ordered=_dec(line.qty_ordered),
+                    qty_received=_dec(line.qty_received),
+                    supplier_name=supplier.supplier_name if supplier else None,
+                    unit_cost=line.unit_cost,
+                    currency=line.currency,
+                    own_location=own_location,
+                    pools=pools,
+                    cited=cited,
+                )
+            )
+
+        if spo_allowed:
+            spo_rows = (
+                self.db.query(SPOAllocation, Supplier, Warehouse)
+                .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+                .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+                .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+                .filter(
+                    SPOAllocation.product_id == product_id,
+                    SPOAllocation.spo_number.isnot(None),
+                    *spo_supply.open_incoming_clauses(),
+                )
+                .all()
+            )
+            for allocation, supplier, warehouse in spo_rows:
+                remaining = (
+                    _dec(allocation.allocated_quantity)
+                    - _dec(allocation.quantity_received)
+                    - by_spo.get(str(allocation.id), _ZERO)
+                )
+                if remaining <= _ZERO:
+                    continue
+                location = (
+                    warehouse.warehouse_code if warehouse else allocation.location_code
+                )
+                candidates.append(
+                    self._candidate(
+                        kind="spo",
+                        target_id=str(allocation.id),
+                        document=allocation.spo_number,
+                        line_label=self._line_label(allocation.spo_line_number),
+                        location=location,
+                        issue_date=allocation.issue_date,
+                        expected_date=allocation.expected_date,
+                        remaining=remaining,
+                        qty_ordered=_dec(allocation.allocated_quantity),
+                        qty_received=_dec(allocation.quantity_received),
+                        supplier_name=supplier.supplier_name if supplier else None,
+                        unit_cost=allocation.unit_cost,
+                        currency=allocation.currency,
+                        own_location=own_location,
+                        pools=pools,
+                        cited=cited,
+                    )
+                )
+
+        candidates.sort(key=lambda candidate: candidate["sort"])
+        return candidates
+
+    @staticmethod
+    def _line_label(raw: Any) -> Optional[str]:
+        """`L3`, when the book numbered the line. `None` when it did not.
+
+        The purchase book carries its line number in `purchase_order_lines.source_ref` and
+        the shipping book in `spo_allocations.spo_line_number`; plenty of documents on the
+        dev copy carry neither, and a made-up ordinal beside a document with six open lines
+        would name the wrong one. The reader falls back to the LOCATION, which is a fact.
+        """
+        if raw is None:
+            return None
+        text_value = str(raw).strip()
+        if not text_value:
+            return None
+        return f"L{text_value}"
+
+    def _candidate(
+        self,
+        *,
+        kind: str,
+        target_id: str,
+        document: Optional[str],
+        line_label: Optional[str],
+        location: Optional[str],
+        issue_date: Optional[date],
+        expected_date: Optional[date],
+        remaining: Decimal,
+        qty_ordered: Decimal,
+        qty_received: Decimal,
+        supplier_name: Optional[str],
+        unit_cost: Any,
+        currency: Optional[str],
+        own_location: Optional[str],
+        pools: set,
+        cited: Dict[str, int],
+    ) -> Dict[str, Any]:
+        """One candidate, with the sort key that IS the walk (Q5 then Q7).
+
+        The key, outermost first: WHICH document CS cited, in the order they wrote them -
+        `SPO-2026/08-0061 & 202606-S0082` tries the allocation before the purchase order,
+        and a rank rather than a flag is what makes that true (a flag puts both in one
+        bucket and lets the date decide between two documents the form already ordered);
+        then an SPO before a purchase order (an order back is owed against what is already
+        shipped before it is owed against a new purchase); then the location tier; then the
+        pool sub-rank inside tier 3 (the row's own site pool before the others); then the
+        PO's own issue date, then the line's expected date, then the document number, then
+        the id so a tie breaks the same way twice.
+        """
+        tier, sub = link_location_tier(own_location, location, pools)
+        # Uncited sorts after every citation, however many there are.
+        citation_rank = cited.get(str(document or "").strip().upper(), len(cited) + 1)
+        is_cited = bool(document) and citation_rank <= len(cited)
+        return {
+            "kind": kind,
+            "po_line_id": target_id if kind == "po" else None,
+            "spo_allocation_id": target_id if kind == "spo" else None,
+            "target_id": target_id,
+            "document": document,
+            "line_label": line_label,
+            "location": location,
+            "tier": tier,
+            "issue_date": issue_date,
+            "expected_date": expected_date,
+            "remaining": remaining,
+            "qty_ordered": qty_ordered,
+            "qty_received": qty_received,
+            "supplier_name": supplier_name,
+            "unit_cost": unit_cost,
+            "currency": currency,
+            "cited": is_cited,
+            "sort": (
+                citation_rank,
+                0 if kind == "spo" else 1,
+                tier,
+                sub,
+                (issue_date is None, issue_date or date.min),
+                (expected_date is None, expected_date or date.min),
+                document or "",
+                target_id,
+            ),
+        }
 
     @staticmethod
     def _cascade_take(
-        lines: Sequence[Tuple[PurchaseOrderLine, PurchaseOrder, Optional[Supplier], Decimal]],
-        need: Decimal,
-    ) -> List[Tuple[str, Decimal]]:
-        """G2 rule 2, "take from the earliest PO, then subsequently from subsequent PO":
-        `min(remaining balance, still needed)` off each line in the order it is given,
-        until the need is covered or the candidates run out. Partial coverage is allowed
-      - a `need` bigger than every line's remaining balance combined simply returns
-        less than `need`, and it is the CALLER's job to decide what an unfinished walk
-        means for the row (the uncovered remainder stays a raised Buy).
+        candidates: Sequence[Dict[str, Any]], need: Decimal
+    ) -> List[Tuple[Dict[str, Any], Decimal]]:
+        """`min(what is left on this line, what is still needed)` off each candidate in the
+        order it was given, until the need is covered or the candidates run out.
+
+        Partial coverage is allowed and is not a failure: a `need` bigger than every
+        candidate's remaining balance combined simply returns less than `need`, and the row
+        is left PARTLY LINKED with the rest still counting as demand. Before the links
+        table there was nowhere to record that, so the row had to be split for the
+        arithmetic to work.
         """
         still = need
-        takes: List[Tuple[str, Decimal]] = []
-        for line, _po, _supplier, remaining in lines:
+        takes: List[Tuple[Dict[str, Any], Decimal]] = []
+        for candidate in candidates:
             if still <= _ZERO:
                 break
+            remaining = candidate["remaining"]
             take = remaining if remaining < still else still
             if take > _ZERO:
-                takes.append((line.id, take))
+                takes.append((candidate, take))
                 still -= take
         return takes
 
     def po_candidates_for_row(self, row_id: str) -> List[Dict[str, Any]]:
-        """Open PO lines of this row's own product, soonest `expected_date` first.
+        """The candidate list the Link dialog shows, in the walk's own order.
 
-        `remaining` already nets what OTHER placed rows have tagged onto the same line -
-        the reason two rows can never be pointed at the same PO quantity - so `covers`
-        and `recommended` are both answered against what is ACTUALLY left, not the line's
-        raw balance. `default_take` is the cascade's own preview (G2): what
-        `auto_place_for_products` would take off THIS line for THIS row, computed by the
-        SAME walk - the dialog's starting point, not a second opinion.
+        `remaining` already nets what every OTHER link claims on the same line, so `covers`
+        and `default_take` are answered against what is ACTUALLY left. `default_take` is
+        the cascade's own preview computed by the SAME walk `auto_place_for_products` runs,
+        which is what stops the dialog and the automatic pass being two opinions.
+
+        The need is the row's UNLINKED remainder, not its whole quantity: a row already
+        linked 5 of 8 opens the dialog looking for 3.
         """
         row = self._row_or_404(row_id)
-        self._assert_placeable(row)
+        self._assert_linkable(row)
         product_id = self._resolve_product_id(row)
         if not product_id:
             raise AppException(
@@ -1528,95 +2213,298 @@ class ProjectOrderInquiryService:
                 message="This row names no product to match a purchase order line against.",
                 code="order_inquiry_no_product",
             )
-        need = _dec(row.qty)
-        lines = self._open_po_lines_for_product(product_id)
-        cascade = dict(self._cascade_take(lines, need))
-        claims_by_line = self._placed_claims_by_po_line([line.id for line, _po, _s, _r in lines])
-        candidates: List[Dict[str, Any]] = []
-        for line, po, supplier, remaining in lines:
-            already = _dec(line.qty_ordered) - _dec(line.qty_received) - remaining
-            candidates.append(
+        need = self._unlinked_need(row)
+        candidates = self._candidates_for_row(row)
+        cascade = {
+            candidate["target_id"]: take
+            for candidate, take in self._cascade_take(candidates, need)
+        }
+        claims_by_line = self._linked_claims_by_target(candidates)
+        out: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            already = (
+                candidate["qty_ordered"] - candidate["qty_received"] - candidate["remaining"]
+            )
+            out.append(
                 {
-                    "po_line_id": line.id,
-                    "po_number": po.po_number,
-                    "supplier_name": supplier.supplier_name if supplier else None,
-                    "expected_date": line.expected_date,
-                    "qty_ordered": _qty_str(_dec(line.qty_ordered)),
-                    "qty_received": _qty_str(_dec(line.qty_received)),
+                    "kind": candidate["kind"],
+                    "po_line_id": candidate["po_line_id"],
+                    "spo_allocation_id": candidate["spo_allocation_id"],
+                    "po_number": candidate["document"],
+                    "line_label": candidate["line_label"],
+                    "location": candidate["location"],
+                    "tier": candidate["tier"],
+                    "cited": candidate["cited"],
+                    "supplier_name": candidate["supplier_name"],
+                    "issue_date": candidate["issue_date"],
+                    "expected_date": candidate["expected_date"],
+                    "qty_ordered": _qty_str(candidate["qty_ordered"]),
+                    "qty_received": _qty_str(candidate["qty_received"]),
                     "already_tagged": _qty_str(already),
-                    "remaining": _qty_str(remaining),
-                    "covers": remaining >= need,
+                    "remaining": _qty_str(candidate["remaining"]),
+                    "covers": candidate["remaining"] >= need,
                     "recommended": False,
-                    "default_take": _qty_str(cascade.get(line.id, _ZERO)),
+                    "default_take": _qty_str(cascade.get(candidate["target_id"], _ZERO)),
                     "unit_cost": (
-                        _qty_str(_dec(line.unit_cost)) if line.unit_cost is not None else None
+                        _qty_str(_dec(candidate["unit_cost"]))
+                        if candidate["unit_cost"] is not None
+                        else None
                     ),
-                    "currency": line.currency,
-                    "claims": claims_by_line.get(line.id, []),
+                    "currency": candidate["currency"],
+                    "claims": claims_by_line.get(candidate["target_id"], []),
                 }
             )
-        recommended = next((c for c in candidates if c["covers"]), None)
+        recommended = next((entry for entry in out if entry["covers"]), None)
         if recommended is not None:
             recommended["recommended"] = True
-        return candidates
+        return out
 
-    def _apply_placement(
+    def _unlinked_need(self, row: OrderInquiryRow) -> Decimal:
+        """What is still to be linked on this row: its quantity, less its links."""
+        linked = sum((_dec(link.qty) for link in self._links_of(row.id)), _ZERO)
+        return max(_dec(row.qty) - linked, _ZERO)
+
+    def _write_link(
         self,
         row: OrderInquiryRow,
-        line: PurchaseOrderLine,
-        po: Optional[PurchaseOrder],
-        supplier: Optional[Supplier],
+        candidate: Dict[str, Any],
+        qty: Decimal,
         *,
         actor_user_id: str,
         auto_trigger: Optional[str] = None,
-    ) -> None:
-        """The write half of a placement, shared by a single manual tag, a cascade split
-        row and an auto placement: stamp the note, set the tag, write the audit claim.
+    ) -> OrderInquiryLink:
+        """One link, plus the audit claim behind it.
 
-        `auto_trigger` names WHY this happened without a person clicking it (G2 rule 4:
-        "every auto placement writes the same OrderLinkClaim evidence with an auto
-        marker") - appended to the row's OWN note, which is already this feature's
-        evidence field (`"Placed on <po> (<supplier>), expected <date>"`), rather than a
-        new column: `OrderLinkClaim` carries no free-text field to reuse instead
-        (`source` is a closed 30-char vocabulary another feed also writes), so the note a
-        person already reads on the row is where "how did this happen" is answered.
+        `auto_trigger` names WHY this happened without a person clicking it - appended to
+        the ROW's own note, which is already this feature's evidence field, rather than a
+        new column. The claim is written for a PO link only: `order_link_service` keys a
+        claim on (SO number, PO number, item), and an SPO number resolves through the same
+        function since migration 420, so both families are claimable - but the claim's
+        `source = 'order_inquiry'` delete-on-unlink rule is what makes it safe, and it is
+        written for whichever document the link names.
         """
-        po_number = po.po_number if po else "an unnamed purchase order"
-        supplier_name = supplier.supplier_name if supplier else "unknown supplier"
-        expected = line.expected_date.isoformat() if line.expected_date else "no date"
-        stamp = f"Placed on {po_number} ({supplier_name}), expected {expected}"
+        document = candidate["document"]
+        supplier = candidate["supplier_name"] or "unknown supplier"
+        expected = (
+            candidate["expected_date"].isoformat() if candidate["expected_date"] else "no date"
+        )
+        stamp = (
+            f"Linked to {document or 'an unnamed document'} ({supplier}), "
+            f"expected {expected}"
+        )
         if auto_trigger:
             stamp = f"{stamp}; auto: {auto_trigger}"
         row.note = f"{row.note}; {stamp}" if row.note else stamp
-        row.po_ref = po_number if po else None
-        row.po_line_id = line.id
-        row.state = INQUIRY_PLACED
         row.actioned_by = actor_user_id
         row.actioned_at = datetime.utcnow()
 
-        if po:
+        claim_id = None
+        if document:
             so_number, item_code, core_line_id = self._claim_identity(row)
-            order_link_service.claim_placed_on_po(
+            claim = order_link_service.claim_placed_on_po(
                 self.db,
                 company_id=row.company_id,
                 so_number=so_number,
-                po_number=po.po_number,
+                po_number=document,
                 item_code=item_code,
                 so_line_id=core_line_id,
-                po_line_id=line.id,
+                po_line_id=candidate["po_line_id"],
+                spo_allocation_id=candidate["spo_allocation_id"],
             )
+            claim_id = claim.id if claim is not None else None
+
+        link = OrderInquiryLink(
+            company_id=row.company_id,
+            row_id=row.id,
+            po_line_id=candidate["po_line_id"],
+            spo_allocation_id=candidate["spo_allocation_id"],
+            document=document,
+            qty=qty,
+            linked_by=actor_user_id,
+            linked_at=datetime.utcnow(),
+            auto=bool(auto_trigger),
+            claim_id=claim_id,
+        )
+        self.db.add(link)
+        self.db.flush()
+        self._invalidate_link_cache()
+        return link
 
     def place_on_po(
         self, row_id: str, po_line_id: str, *, actor_user_id: str
     ) -> Dict[str, Any]:
-        """Tag this row to ONE open PO line. The captain's "quantity to be ordered is
-        deducted" - the deduction IS the row leaving `state = 'raised'`.
+        """Link this row to ONE open PO line, for its whole unlinked remainder.
 
-        The single-line shape section G shipped with, kept byte-for-byte: a row a human
-        places on one line that covers it whole never becomes a split.
+        The single-target shape the feature shipped with, kept: a person who names one line
+        that covers the row is not asked to compose an allocation.
         """
         row = self._row_or_404(row_id)
-        self._assert_placeable(row)
+        # THE ROW, not a list. `place_on_po_allocations` answers with a list because it
+        # once split the row into several; this one has always answered with the single
+        # row a caller named, and changing that quietly would have handed every existing
+        # caller a list where it indexes a dict.
+        written = self.place_on_po_allocations(
+            row_id,
+            [{"po_line_id": po_line_id, "qty": self._unlinked_need(row)}],
+            actor_user_id=actor_user_id,
+        )
+        return written[0]
+
+    def place_on_po_allocations(
+        self,
+        row_id: str,
+        allocations: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: str,
+        auto_trigger: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Link this row across one or more document lines, in one call.
+
+        **The row is never split** (AC-I6). It keeps its full quantity and gains one link
+        per allocation; what the allocations do not cover stays demand and the row reads
+        partly linked. `sum(links) <= row.qty` is held here, and `qty > 0` per link is held
+        by the table's own CHECK.
+
+        Refuses, in the words the buyer needs: a line that is no longer open, a line for a
+        different product, an SPO allocation named by a row whose verb is not ORDER BACK,
+        an allocation bigger than what the line has left, and a total bigger than what the
+        row still needs.
+        """
+        row = self._row_or_404(row_id)
+        self._assert_linkable(row)
+        if not allocations:
+            raise AppException(
+                status_code=422,
+                message="Name at least one document line.",
+                code="order_inquiry_no_allocations",
+            )
+        product_id = self._resolve_product_id(row)
+        if not product_id:
+            raise AppException(
+                status_code=409,
+                message="This row names no product to match a purchase order line against.",
+                code="order_inquiry_no_product",
+            )
+
+        need = self._unlinked_need(row)
+        by_target = {
+            candidate["target_id"]: candidate
+            for candidate in self._candidates_for_row(row, manual=auto_trigger is None)
+        }
+
+        resolved: List[Tuple[Dict[str, Any], Decimal]] = []
+        taken_within_call: Dict[str, Decimal] = {}
+        total = _ZERO
+        for entry in allocations:
+            spo_allocation_id = str(entry.get("spo_allocation_id") or "") or None
+            po_line_id = str(entry.get("po_line_id") or "") or None
+            qty = _dec(entry.get("qty"))
+            if qty <= _ZERO:
+                continue
+            if spo_allocation_id and row.verb not in _SPO_LINKABLE_VERBS:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        "Only an ORDER BACK row can be linked to an SPO allocation - an "
+                        "ORDER is a new purchase, and it goes on a purchase order."
+                    ),
+                    code="order_inquiry_spo_not_order_back",
+                )
+            target_id = spo_allocation_id or po_line_id
+            if not target_id:
+                raise AppException(
+                    status_code=422,
+                    message="Each line must name a purchase order line or an SPO allocation.",
+                    code="order_inquiry_no_target",
+                )
+            candidate = by_target.get(target_id)
+            if candidate is None:
+                # Not a candidate, and WHY matters: "that line is for a different product"
+                # and "that line is closed" send a person to different places, and one
+                # message covering both sends them to neither.
+                self._refuse_absent_target(
+                    po_line_id=po_line_id, spo_allocation_id=spo_allocation_id,
+                    product_id=product_id,
+                )
+            left = candidate["remaining"] - taken_within_call.get(target_id, _ZERO)
+            if left < qty:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        f"{candidate['document'] or 'That line'} has {_qty_str(left)} "
+                        f"left, {_qty_str(qty - left)} short of the {_qty_str(qty)} "
+                        "allocated to it."
+                    ),
+                    code="order_inquiry_po_line_short",
+                )
+            taken_within_call[target_id] = taken_within_call.get(target_id, _ZERO) + qty
+            resolved.append((candidate, qty))
+            total += qty
+
+        if not resolved:
+            raise AppException(
+                status_code=422,
+                message="Name at least one document line.",
+                code="order_inquiry_no_allocations",
+            )
+        if total > need:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{_qty_str(total)} allocated is more than the {_qty_str(need)} "
+                    "this row still needs."
+                ),
+                code="order_inquiry_over_allocated",
+            )
+
+        for candidate, qty in resolved:
+            self._write_link(
+                row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
+            )
+
+        self._refresh_link_state([row])
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows([row])
+
+    def _refuse_absent_target(
+        self,
+        *,
+        po_line_id: Optional[str],
+        spo_allocation_id: Optional[str],
+        product_id: str,
+    ) -> None:
+        """Say WHICH of the four reasons a named line is not a candidate.
+
+        Only reached when the candidate walk did not offer it, so the row is always one of:
+        gone, someone else's product, closed, or fully claimed. Each sends a person
+        somewhere different, and one message covering all four sends them nowhere.
+        """
+        if spo_allocation_id:
+            allocation = (
+                self.db.query(SPOAllocation)
+                .filter(SPOAllocation.id == spo_allocation_id)
+                .first()
+            )
+            if allocation is None:
+                raise AppException(
+                    status_code=404,
+                    message="That SPO allocation no longer exists.",
+                    code="po_line_not_found",
+                )
+            if str(allocation.product_id) != str(product_id):
+                raise AppException(
+                    status_code=409,
+                    message="That SPO allocation is not for this row's product.",
+                    code="order_inquiry_product_mismatch",
+                )
+            raise AppException(
+                status_code=409,
+                message=(
+                    "That SPO allocation is closed, received, or already fully claimed."
+                ),
+                code="order_inquiry_po_line_closed",
+            )
 
         line = (
             self.db.query(PurchaseOrderLine)
@@ -1629,210 +2517,195 @@ class ProjectOrderInquiryService:
                 message="That purchase order line no longer exists.",
                 code="po_line_not_found",
             )
+        if str(line.product_id) != str(product_id):
+            raise AppException(
+                status_code=409,
+                message="That purchase order line is not for this row's product.",
+                code="order_inquiry_product_mismatch",
+            )
         if line.line_status != "open":
             raise AppException(
                 status_code=409,
                 message="That purchase order line is no longer open.",
                 code="order_inquiry_po_line_closed",
             )
-        product_id = self._resolve_product_id(row)
-        if not product_id or str(line.product_id) != str(product_id):
-            raise AppException(
-                status_code=409,
-                message="That purchase order line is not for this row's product.",
-                code="order_inquiry_product_mismatch",
-            )
-
-        po = (
-            self.db.query(PurchaseOrder)
-            .filter(PurchaseOrder.id == line.purchase_order_id)
-            .first()
+        raise AppException(
+            status_code=409,
+            message=(
+                "That purchase order line has nothing left on it - every unit of it is "
+                "already linked to another row."
+            ),
+            code="order_inquiry_po_line_short",
         )
-        balance = _dec(line.qty_ordered) - _dec(line.qty_received)
-        already = self._tagged_by_po_line().get(line.id, _ZERO)
-        remaining = balance - already
-        need = _dec(row.qty)
-        if remaining < need:
-            raise AppException(
-                status_code=409,
-                message=(
-                    f"{po.po_number if po else 'That line'} has {_qty_str(remaining)} "
-                    f"left, {_qty_str(need - remaining)} short of the {_qty_str(need)} "
-                    "this row needs."
-                ),
-                code="order_inquiry_po_line_short",
-            )
 
-        supplier = (
-            self.db.query(Supplier).filter(Supplier.id == po.supplier_id).first()
-            if po and po.supplier_id
-            else None
-        )
-        self._apply_placement(row, line, po, supplier, actor_user_id=actor_user_id)
+    def _linked_claims_by_target(
+        self, candidates: Sequence[Dict[str, Any]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Every OTHER row already linked onto these lines - a candidate's expand.
 
-        self.db.flush()
-        self._refresh_inquiry_states({row.order_inquiry_id})
-        return self.serialize_rows([row])[0]
-
-    def place_on_po_allocations(
-        self,
-        row_id: str,
-        allocations: Sequence[Dict[str, Any]],
-        *,
-        actor_user_id: str,
-        auto_trigger: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Tag this row across ONE OR MORE outstanding PO lines - the cascade shape (G2
-        rule 2), used by both the reworked dialog (a person adjusting the cascade's own
-        preview) and `auto_place_for_products` (nobody adjusting it at all).
-
-        **Multi-line coverage shape: SPLIT, one row per allocation.**
-        `order_inquiry_rows` holds exactly one `po_line_id` (migration 400) - a row a
-        single PO line cannot cover whole has nowhere to hold a second tag, so it is
-        split into one row per PO line taken, the same way this module already treats a
-        quantity that outgrows one instruction (`_write`/`net_demand` writing one row per
-        `DemandPlan`, never packing several coverages onto one row). The FIRST allocation
-        reuses the row that was already raised - the ordinary single-line case, still the
-        common one, therefore changes nothing about the row's own identity or the ids
-        anything else already points at (`supply_decision_id`, an existing claim); every
-        FURTHER allocation is a brand-new row carrying the same `so_line_id` / item code /
-        delivery date / `supply_decision_id` as the row it split from.
-
-        **Partial coverage keeps the netting honest.** `committed_v`'s confirmed leg
-        counts a `raised` ORDER row and nothing else (demand.py); a `placed` row leaves
-        it. So when the allocations do not cover the row's whole quantity, the ORIGINAL
-        row is left `raised` at the REMAINING quantity instead of being reused for an
-        allocation - every placed allocation becomes its own new `placed` row, and the
-        genuinely still-needed remainder never quietly leaves the confirmed leg. Either
-        way `sum(qty of every row this call touches) == the row's qty before the call`.
+        Read straight off the links: the link IS the evidence, and reading the rows' own
+        `po_line_id` would miss every second link a row holds.
         """
-        row = self._row_or_404(row_id)
-        self._assert_placeable(row)
-        if not allocations:
-            raise AppException(
-                status_code=422,
-                message="Name at least one purchase order line.",
-                code="order_inquiry_no_allocations",
+        target_ids = [candidate["target_id"] for candidate in candidates]
+        if not target_ids:
+            return {}
+        rows = (
+            self.db.query(OrderInquiryLink, OrderInquiryRow, ProjectSalesOrder)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
-        product_id = self._resolve_product_id(row)
-        if not product_id:
-            raise AppException(
-                status_code=409,
-                message="This row names no product to match a purchase order line against.",
-                code="order_inquiry_no_product",
+            .filter(
+                or_(
+                    OrderInquiryLink.po_line_id.in_(target_ids),
+                    OrderInquiryLink.spo_allocation_id.in_(target_ids),
+                )
             )
-
-        need = _dec(row.qty)
-        tagged = self._tagged_by_po_line()
-        line_ids = [str(entry["po_line_id"]) for entry in allocations if entry.get("po_line_id")]
-        lines = (
-            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier)
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-            .filter(PurchaseOrderLine.id.in_(line_ids))
+            .order_by(OrderInquiryLink.linked_at.asc())
             .all()
         )
-        by_id = {line.id: (line, po, supplier) for line, po, supplier in lines}
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for link, row, order in rows:
+            key = str(link.po_line_id or link.spo_allocation_id)
+            out.setdefault(key, []).append(
+                {
+                    "so_number": order.autocount_doc_no or order.provisional_ref,
+                    "item_code": row.item_code,
+                    "qty": _qty_str(_dec(link.qty)),
+                    "placed_date": link.linked_at,
+                }
+            )
+        return out
 
-        resolved: List[
-            Tuple[PurchaseOrderLine, Optional[PurchaseOrder], Optional[Supplier], Decimal]
-        ] = []
-        claimed_within_call: Dict[str, Decimal] = {}
-        total_alloc = _ZERO
-        for entry in allocations:
-            po_line_id = str(entry.get("po_line_id") or "")
-            qty = _dec(entry.get("qty"))
-            if qty <= _ZERO:
+    def _narrow_to_products(self, query, product_ids: Sequence[str]):
+        """`query`, narrowed to rows that could be FOR one of these products.
+
+        The same two arms `_resolve_product_id` reads a row's product through, in the same
+        order: the reconciled project line's `product_id`, and the row's own `item_code`.
+        `None` when neither arm names anything, which is the caller's cue that there is
+        nothing to do at all - distinct from "no narrowing", which would scan the book.
+        """
+        wanted = [pid for pid in product_ids if pid]
+        if not wanted:
+            return None
+        so_line_ids = [
+            line_id
+            for (line_id,) in self.db.query(ProjectSalesOrderLine.id).filter(
+                ProjectSalesOrderLine.product_id.in_(wanted)
+            )
+        ]
+        codes = [
+            code
+            for (code,) in self.db.query(Product.product_code).filter(
+                Product.id.in_(wanted)
+            )
+            if code
+        ]
+        conditions = []
+        if so_line_ids:
+            conditions.append(OrderInquiryRow.so_line_id.in_(so_line_ids))
+        if codes:
+            conditions.append(OrderInquiryRow.item_code.in_(codes))
+        if not conditions:
+            return None
+        return query.filter(or_(*conditions))
+
+    def rows_needed_at(
+        self, cells: Sequence[Tuple[str, Optional[str]]]
+    ) -> List[str]:
+        """The ids of raised rows whose demand sits at these `(product_id, warehouse_id)`
+        cells - the rows that SIZED a plan line, in other words.
+
+        `PLAN-scm-purchasing-uat-journey.md` P7. A purchase order confirmed off the plan is
+        a buy for particular plan rows, and a plan row is a `(product, location)` cell whose
+        Project figure is exactly the un-linked remainder of the inquiry rows this returns.
+        Handing those ids to `auto_place_for_products` first is what makes the confirm link
+        back to the rows that asked for it, rather than to whichever open row happens to
+        have the earliest date somewhere else in the country.
+
+        The "needed at" location is read the way `scm.committed_v` reads it, because that is
+        the figure the plan row shows:
+
+          * a row with a supply decision lands at the reconciled core line's warehouse -
+            except an ORDER BACK, which lands at the DONOR location its own
+            `stock_location` names (the row hangs off the borrowing line, so the core line's
+            warehouse would put the hole in a warehouse that never had one);
+          * a row with no decision (the CS form's own instructions) lands at the location
+            the ROW states, which is the only location it has.
+
+        A cell whose warehouse is None matches a row that resolves to no location at all -
+        the same NULL the view emits and no reader joins to.
+        """
+        wanted = {(str(pid), str(wid) if wid else None) for pid, wid in cells if pid}
+        if not wanted:
+            return []
+        # Narrowed to the confirmed lines' PRODUCTS before anything is fetched. Without it
+        # this walks every raised row in the book to answer a question about one purchase
+        # order, which on the live book is thousands of rows and their product lookups.
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+            OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
+        )
+        query = self._narrow_to_products(query, [pid for pid, _wid in wanted])
+        rows = query.all() if query is not None else []
+        if not rows:
+            return []
+        product_by_row = self._resolve_product_ids_bulk(rows)
+
+        # The core line's fulfilment warehouse, one query for the whole set.
+        so_line_ids = [row.so_line_id for row in rows if row.so_line_id]
+        core_warehouse: Dict[str, Optional[str]] = {}
+        if so_line_ids:
+            for psl_id, warehouse_id in (
+                self.db.query(ProjectSalesOrderLine.id, SalesOrderLine.warehouse_id)
+                .join(
+                    SalesOrderLine,
+                    SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+                )
+                .filter(ProjectSalesOrderLine.id.in_(so_line_ids))
+                .all()
+            ):
+                core_warehouse[str(psl_id)] = str(warehouse_id) if warehouse_id else None
+
+        # The warehouse each stated stock location names, keyed by (COMPANY, code).
+        # `warehouses.warehouse_code` is unique per company and not globally, so a bare
+        # code-to-id map keeps whichever company the query happened to return last - and
+        # this pass would then claim a row for a warehouse of the wrong company, which is
+        # the same mis-attribution the company scope exists to prevent.
+        codes = {
+            (row.stock_location or "").strip()
+            for row in rows
+            if (row.stock_location or "").strip()
+        }
+        warehouse_by_code: Dict[Tuple[Optional[str], str], str] = {}
+        if codes:
+            warehouse_by_code = {
+                (str(company_id) if company_id else None, str(code)): str(wid)
+                for code, wid, company_id in self.db.query(
+                    Warehouse.warehouse_code, Warehouse.id, Warehouse.company_id
+                ).filter(Warehouse.warehouse_code.in_(list(codes)))
+            }
+
+        out: List[str] = []
+        for row in rows:
+            product_id = product_by_row.get(row.id)
+            if not product_id:
                 continue
-            found = by_id.get(po_line_id)
-            if found is None:
-                raise AppException(
-                    status_code=404,
-                    message="That purchase order line no longer exists.",
-                    code="po_line_not_found",
-                )
-            line, po, supplier = found
-            if line.line_status != "open":
-                raise AppException(
-                    status_code=409,
-                    message="That purchase order line is no longer open.",
-                    code="order_inquiry_po_line_closed",
-                )
-            if str(line.product_id) != str(product_id):
-                raise AppException(
-                    status_code=409,
-                    message="That purchase order line is not for this row's product.",
-                    code="order_inquiry_product_mismatch",
-                )
-            balance = _dec(line.qty_ordered) - _dec(line.qty_received)
-            already = tagged.get(line.id, _ZERO) + claimed_within_call.get(line.id, _ZERO)
-            remaining = balance - already
-            if remaining < qty:
-                raise AppException(
-                    status_code=409,
-                    message=(
-                        f"{po.po_number if po else 'That line'} has {_qty_str(remaining)} "
-                        f"left, {_qty_str(qty - remaining)} short of the {_qty_str(qty)} "
-                        "allocated to it."
-                    ),
-                    code="order_inquiry_po_line_short",
-                )
-            claimed_within_call[line.id] = already + qty - tagged.get(line.id, _ZERO)
-            resolved.append((line, po, supplier, qty))
-            total_alloc += qty
-
-        if not resolved:
-            raise AppException(
-                status_code=422,
-                message="Name at least one purchase order line.",
-                code="order_inquiry_no_allocations",
-            )
-        if total_alloc > need:
-            raise AppException(
-                status_code=409,
-                message=(
-                    f"{_qty_str(total_alloc)} allocated is more than the {_qty_str(need)} "
-                    "this row needs."
-                ),
-                code="order_inquiry_over_allocated",
-            )
-
-        remainder = need - total_alloc
-        full_coverage = remainder <= _ZERO
-        written: List[OrderInquiryRow] = []
-        for index, (line, po, supplier, qty) in enumerate(resolved):
-            if full_coverage and index == 0:
-                target = row
-                target.qty = qty
+            stated = warehouse_by_code.get((
+                str(row.company_id) if row.company_id else None,
+                (row.stock_location or "").strip(),
+            ))
+            if row.supply_decision_id is None:
+                warehouse_id = stated
+            elif row.verb == IV_ORDER_BACK:
+                warehouse_id = stated or core_warehouse.get(str(row.so_line_id or ""))
             else:
-                target = OrderInquiryRow(
-                    company_id=row.company_id,
-                    order_inquiry_id=row.order_inquiry_id,
-                    so_line_id=row.so_line_id,
-                    item_code=row.item_code,
-                    qty=qty,
-                    delivery_date=row.delivery_date,
-                    stock_location=row.stock_location,
-                    verb=row.verb,
-                    covered_by=row.covered_by,
-                    supply_decision_id=row.supply_decision_id,
-                    state=INQUIRY_RAISED,
-                )
-                self.db.add(target)
-                self.db.flush()
-            self._apply_placement(
-                target, line, po, supplier, actor_user_id=actor_user_id, auto_trigger=auto_trigger
-            )
-            written.append(target)
-
-        if not full_coverage:
-            # `row` was never reused for an allocation above - it stays `raised`, only its
-            # quantity shrinks to what the cascade could not cover.
-            row.qty = remainder
-
-        self.db.flush()
-        self._refresh_inquiry_states({row.order_inquiry_id})
-        return self.serialize_rows(written)
+                warehouse_id = core_warehouse.get(str(row.so_line_id or ""))
+            if (str(product_id), warehouse_id) in wanted:
+                out.append(str(row.id))
+        return out
 
     def auto_place_for_products(
         self,
@@ -1840,6 +2713,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: str,
         trigger: str,
+        row_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """The bulk, idempotent cascade pass (G2 rule 1: "we need to link already at
         first already instead of suggesting and needing the users to click 1 by 1").
@@ -1868,32 +2742,28 @@ class ProjectOrderInquiryService:
         note - never a silent placement with nothing to show for it.
         """
         query = self.db.query(OrderInquiryRow).filter(
-            OrderInquiryRow.state == INQUIRY_RAISED,
-            OrderInquiryRow.verb.in_(_PLACEABLE_VERBS),
+            # PARTLY LINKED rows are in scope too, which is new with the links table: a row
+            # the last pass could only half cover is exactly the row a fresh purchase order
+            # should finish, and before this it left the query the moment it was touched.
+            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+            OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
         )
-        if product_ids:
-            wanted = [pid for pid in product_ids if pid]
-            so_line_ids = [
-                line_id
-                for (line_id,) in self.db.query(ProjectSalesOrderLine.id).filter(
-                    ProjectSalesOrderLine.product_id.in_(wanted)
-                )
-            ]
-            codes = [
-                code
-                for (code,) in self.db.query(Product.product_code).filter(
-                    Product.id.in_(wanted)
-                )
-                if code
-            ]
-            conditions = []
-            if so_line_ids:
-                conditions.append(OrderInquiryRow.so_line_id.in_(so_line_ids))
-            if codes:
-                conditions.append(OrderInquiryRow.item_code.in_(codes))
-            if not conditions:
+        if row_ids is not None:
+            # The NAMED rows and nothing else. A product scope is right for "this purchase
+            # order was just confirmed, who was waiting for this item" and wrong for "this
+            # upload raised these instructions": the Order Inquiry Form's rows name items
+            # half the company's open orders also name, and one CS spreadsheet must not
+            # re-cascade somebody else's instructions. Wins over `product_ids`, which a
+            # caller passing both would be asking two different questions with.
+            wanted_rows = [row_id for row_id in row_ids if row_id]
+            if not wanted_rows:
                 return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
-            query = query.filter(or_(*conditions))
+            query = query.filter(OrderInquiryRow.id.in_(wanted_rows))
+        elif product_ids:
+            narrowed = self._narrow_to_products(query, product_ids)
+            if narrowed is None:
+                return {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+            query = narrowed
 
         rows = self._rank_raised_rows(query.all())
 
@@ -1904,22 +2774,31 @@ class ProjectOrderInquiryService:
             product_id = self._resolve_product_id(row)
             if not product_id:
                 continue
-            need = _dec(row.qty)
+            need = self._unlinked_need(row)
             if need <= _ZERO:
                 continue
-            lines = self._open_po_lines_for_product(product_id)
-            if not lines:
+            candidates = self._candidates_for_row(row)
+            if not candidates:
                 continue
-            takes = self._cascade_take(lines, need)
+            takes = self._cascade_take(candidates, need)
             if not takes:
                 continue
-            written = self.place_on_po_allocations(
+            self.place_on_po_allocations(
                 row.id,
-                [{"po_line_id": line_id, "qty": qty} for line_id, qty in takes],
+                [
+                    {
+                        "po_line_id": candidate["po_line_id"],
+                        "spo_allocation_id": candidate["spo_allocation_id"],
+                        "qty": qty,
+                    }
+                    for candidate, qty in takes
+                ],
                 actor_user_id=actor_user_id,
                 auto_trigger=trigger,
             )
-            placed_rows += len(written)
+            # One ROW touched, however many documents it took: the row is never split any
+            # more, so counting the rows the call returned would always have said 1.
+            placed_rows += 1
             allocation_count += len(takes)
             products_touched.add(str(product_id))
 
@@ -2081,85 +2960,275 @@ class ProjectOrderInquiryService:
         )
         return {pso_id: customer_id for pso_id, customer_id in rows}
 
-    def unplace(self, row_id: str, *, actor_user_id: str) -> Dict[str, Any]:
-        """Untag: the row goes back to `raised` and the reorder engine sees it again."""
+    def relink_to_matching_lines(
+        self,
+        po_ids: Sequence[str],
+        *,
+        actor_user_id: Optional[str],
+        trigger: str,
+    ) -> int:
+        """Move each placement onto the line of ITS OWN purchase order whose warehouse fits.
+
+        Section 3.G, AC-G3. The occupancy panel exists to show the buyer that a PO line says
+        DC1 while the demand is at BRW-BB; acting on that finding means re-keying the split
+        in AutoCount and uploading the book again. The book then states BRW-BB 487 + BRW 13,
+        and the placements are still sitting on the line that used to be DC1 - so the finding
+        the buyer just acted on is still on the screen, and the split reads as if it never
+        happened. This is the step that finishes the loop: "keeps every placement attached to
+        the line whose warehouse matches; none is orphaned or unplaced".
+
+        Deliberately narrow, in four ways, because a book upload runs over thousands of
+        documents and a relocation nobody asked for is worse than no relocation at all:
+
+        * **within ONE purchase order.** A link already names this document; moving it
+          between two of the document's own lines re-reads what the buyer restated. Moving it
+          to a DIFFERENT document would be buying decision, and that is Link PO's job.
+        * **exact location only.** The target line's warehouse must be the row's own
+          `stock_location`, not a tier-2 group sibling or a pool. Anything looser would move a
+          placement to a line that reads "location differs" just the same, for no gain.
+        * **never off a line that already fits.** A row sitting at tier 1 is left exactly
+          where it is, or every upload would churn the link audit for nothing.
+        * **whole links, never split ones.** A target with less room than the placement needs
+          is passed over: half a placement on a line the book has closed is the very state
+          this is fixing.
+
+        Capacity is `qty_ordered` less what OTHER links already claim, not `outstanding`. The
+        history channel writes its lines closed and fully received, and this is a relocation
+        rather than a promise of fresh supply - the quantity was always against this document.
+        Open lines are preferred over closed ones, then the earliest expected date.
+
+        Answers how many links moved. Idempotent: a second run finds every placement already
+        at tier 1 and moves nothing.
+        """
+        wanted = [str(po_id) for po_id in (po_ids or []) if po_id]
+        if not wanted:
+            return 0
+        if len(wanted) > _RELINK_BATCH:
+            # A purchase-history upload names thousands of documents, and an `IN` list that
+            # long is a query plan nobody wants and a parameter list some drivers refuse.
+            # Chunked rather than capped: every document the upload touched is still walked.
+            moved = 0
+            for start in range(0, len(wanted), _RELINK_BATCH):
+                moved += self.relink_to_matching_lines(
+                    wanted[start:start + _RELINK_BATCH],
+                    actor_user_id=actor_user_id,
+                    trigger=trigger,
+                )
+            return moved
+
+        lines = (
+            self.db.query(PurchaseOrderLine, Warehouse.warehouse_code)
+            .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
+            .filter(PurchaseOrderLine.purchase_order_id.in_(wanted))
+            .all()
+        )
+        if not lines:
+            return 0
+        location_of = {
+            str(line.id): (code or "").strip().upper() for line, code in lines
+        }
+        by_order: Dict[str, List[Any]] = {}
+        for line, code in lines:
+            by_order.setdefault(str(line.purchase_order_id), []).append((line, code))
+
+        links = (
+            self.db.query(OrderInquiryLink, OrderInquiryRow, PurchaseOrderLine)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(list(location_of)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        )
+        if not links:
+            return 0
+
+        # What every link claims per line, as this pass sees it - kept in step as links move,
+        # so two placements cannot both be given the same 13 units. Tallied off the rows
+        # already fetched above rather than fetching them again: the two queries would be
+        # the same query, and a second one that drifted from the first is how a line comes
+        # to be promised twice.
+        claimed: Dict[str, Decimal] = {}
+        for link, _row, _line in links:
+            key = str(link.po_line_id)
+            claimed[key] = claimed.get(key, _ZERO) + _dec(link.qty)
+
+        moved = 0
+        touched: List[OrderInquiryRow] = []
+        for link, row, current in links:
+            wants = (row.stock_location or "").strip().upper()
+            if not wants or location_of.get(str(current.id)) == wants:
+                continue
+            qty = _dec(link.qty)
+            candidates = [
+                line
+                for line, code in by_order.get(str(current.purchase_order_id), [])
+                if (code or "").strip().upper() == wants
+                and str(line.id) != str(current.id)
+                and str(line.product_id) == str(current.product_id)
+                and _dec(line.qty_ordered) - claimed.get(str(line.id), _ZERO) >= qty
+            ]
+            if not candidates:
+                continue
+            candidates.sort(
+                key=lambda line: (
+                    0 if line.line_status == "open" else 1,
+                    line.expected_date is None,
+                    line.expected_date or date.min,
+                    str(line.id),
+                )
+            )
+            target = candidates[0]
+            claimed[str(current.id)] = claimed.get(str(current.id), _ZERO) - qty
+            claimed[str(target.id)] = claimed.get(str(target.id), _ZERO) + qty
+            link.po_line_id = str(target.id)
+            # The document has not changed - only which of its lines this sits on - so the
+            # link's denormalised `document` stays as it is and the claim it put up is still
+            # true. What DOES need saying is why the row moved, on the row's own note, which
+            # is already this feature's evidence field.
+            stamp = (
+                f"Moved to the {wants} line of {link.document or 'the same document'} "
+                f"after the book was re-uploaded; auto: {trigger}"
+            )
+            row.note = f"{row.note}; {stamp}" if row.note else stamp
+            # `actioned_by` / `actioned_at` are NOT touched. They say who in purchasing
+            # dealt with this instruction, and a book upload is not a person dealing with
+            # it - stamping the uploader there would erase the buyer who linked it and put
+            # a name against work they did not do. The note is where "why did this move"
+            # belongs, and it already carries the cascade's own stamp.
+            touched.append(row)
+            moved += 1
+
+        if moved:
+            self.db.flush()
+            self._invalidate_link_cache()
+            # The derived display (`po_ref` / `po_line_id`) is read off the links, so it has
+            # to be restated or the row keeps naming the line it has just left.
+            self._refresh_link_state(touched)
+            self.db.flush()
+        return moved
+
+    def unplace(
+        self, row_id: str, *, actor_user_id: str, link_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Unlink. With a `link_id` that ONE link goes; without one every link on the row
+        goes, which is what the whole-row action means.
+
+        A partly linked row can therefore give back one of its documents and keep the
+        other, which is the point of the child table: before it, "unplace" was the only
+        move and it took the whole placement with it.
+        """
         row = self._row_or_404(row_id)
-        if row.state != INQUIRY_PLACED:
+        links = self._links_of(row.id)
+        if link_id:
+            links = [link for link in links if str(link.id) == str(link_id)]
+            if not links:
+                raise AppException(
+                    status_code=404,
+                    message="That link no longer exists.",
+                    code="order_inquiry_link_not_found",
+                )
+        if not links:
             raise AppException(
                 status_code=409,
-                message="This row is not placed on a purchase order.",
+                message="This row is not linked to anything.",
                 code="order_inquiry_not_placed",
             )
-        self._unplace_row(row)
+        self._remove_links(row, links)
+        self._refresh_link_state([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])[0]
 
     def unplace_rows(self, row_ids: Sequence[str]) -> int:
-        """Bulk untag by explicit row id - the WRITE half of "Unplace all" (the captain,
-        20/21 Aug). Which ids are in scope is entirely the caller's job
+        """Bulk unlink by explicit row id - the WRITE half of "Unlink all".
+
+        Which ids are in scope is entirely the caller's job
         (`OrderInquiryWorklistService.unplace_all` resolves them off the worklist's own
         filters, the same `_base()` the list and the summary already read, so the count a
         person confirmed and the rows this actually touches can never disagree); this
-        method only ever writes, via the same `_unplace_row` a single Untag uses.
+        method only ever writes, through the same `_remove_links` a single Unlink uses.
 
-        **Split-row decision: leave each split row raised at its own quantity, do not
-        merge siblings back into one row.** A cascade placement (`place_on_po_allocations`)
-        may have split one raised row into several PLACED rows across different PO lines
-        (migration 400 - one `po_line_id` per row), and by the time this runs there is no
-        reliable join key that says two rows were ever "the same row": they share
-        `so_line_id` / `item_code` / `delivery_date` at split time, but so does any other
-        still-open row of the same line, and a person may since have acted on one sibling
-        (marked it cancelled, changed its note) while another stayed placed. Merging would
-        either invent a merge rule this module does not otherwise have, or silently
-        overwrite something a person already touched. Leaving every row raised at its own
-        quantity is the simplest thing that is still correct: the sum of open quantity on
-        the line is unchanged, and the next Auto-place cascades every one of them exactly
-        as it would any other raised row - which is the whole point of the round trip.
+        **No merging problem left to solve.** Before the links table this had to state a
+        policy about split rows - "leave each split row raised at its own quantity, do not
+        merge siblings back" - because a cascade had turned one instruction into several
+        and there was no reliable key that said they had ever been one. A row is never
+        split now, so unlinking it simply returns it to the quantity it always had.
 
-        Idempotent: an empty `row_ids`, or a set none of which is still placed (a second
-        click after the first already ran), returns 0. Re-filtered to `state = placed`
-        here as well as by the caller - this method never touches a row on the caller's
-        say-so alone.
+        Idempotent: an empty `row_ids`, or a set none of which holds a link (a second click
+        after the first already ran), returns 0.
         """
         wanted = [row_id for row_id in (row_ids or []) if row_id]
         if not wanted:
             return 0
         rows = (
             self.db.query(OrderInquiryRow)
-            .filter(
-                OrderInquiryRow.id.in_(wanted), OrderInquiryRow.state == INQUIRY_PLACED
-            )
+            .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
+            .filter(OrderInquiryRow.id.in_(wanted))
+            .distinct()
             .all()
         )
         for row in rows:
-            self._unplace_row(row)
+            self._remove_links(row, self._links_of(row.id))
         if rows:
+            self._refresh_link_state(rows)
             self.db.flush()
             self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
         return len(rows)
 
-    def _unplace_row(self, row: OrderInquiryRow) -> None:
-        """The write half of an untag, shared by the single-row action and the
-        per-product bulk pass: stamp the note, drop the tag, release the audit claim."""
-        po_ref = row.po_ref
-        so_number, item_code, _core_line_id = self._claim_identity(row)
-        stamp = f"Unplaced from {po_ref}" if po_ref else "Unplaced"
-        row.note = f"{row.note}; {stamp}" if row.note else stamp
-        row.po_ref = None
-        row.po_line_id = None
-        row.state = INQUIRY_RAISED
-        row.actioned_by = None
-        row.actioned_at = None
+    def _remove_links(
+        self, row: OrderInquiryRow, links: Sequence[OrderInquiryLink]
+    ) -> None:
+        """Delete these links and the audit claim each one put up.
 
-        if po_ref:
-            order_link_service.delete_own_claim(
-                self.db,
-                company_id=row.company_id,
-                so_number=so_number,
-                po_number=po_ref,
-                item_code=item_code,
-            )
+        The claim goes only when THIS link is what wrote it (`source = 'order_inquiry'`,
+        held by `order_link_service.delete_own_claim`): a claim at the same identity that
+        the PO history import is the source of was never this row's to make, and unlinking
+        must not take somebody else's evidence down with it.
+        """
+        going = {str(link.id) for link in links}
+        for link in links:
+            document = link.document
+            stamp = f"Unlinked from {document}" if document else "Unlinked"
+            row.note = f"{row.note}; {stamp}" if row.note else stamp
+            # By ID, not by identity. `delete_own_claim` matches on (SO number, PO number,
+            # item) and would have taken down the claim behind a SIBLING link on the same
+            # document - a row linked to two lines of one purchase order lost both claims
+            # when one line was given back. The link records which claim it wrote, so this
+            # removes exactly that one and nothing else.
+            if link.claim_id:
+                claim = (
+                    self.db.query(OrderLinkClaim)
+                    .filter(
+                        OrderLinkClaim.id == link.claim_id,
+                        OrderLinkClaim.source == "order_inquiry",
+                    )
+                    .first()
+                )
+                # Only when no OTHER surviving link leans on the same claim: two links on
+                # one document share the one claim, because the claim's identity is the
+                # document and not the line.
+                if claim is not None and not (
+                    self.db.query(OrderInquiryLink)
+                    .filter(
+                        OrderInquiryLink.claim_id == claim.id,
+                        OrderInquiryLink.id.notin_(list(going)),
+                    )
+                    .first()
+                ):
+                    self.db.delete(claim)
+            self.db.delete(link)
+        self.db.flush()
+        self._invalidate_link_cache()
+        # WHO acted on this row, and when: still true while ANY link stands. Blanking it
+        # on a partial unlink would have said nobody had ever touched a row that is still
+        # half covered.
+        if not self._links_of(row.id):
+            row.actioned_by = None
+            row.actioned_at = None
+        self.db.flush()
 
     def _row_or_404(self, row_id: str) -> OrderInquiryRow:
         row = self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).first()
@@ -2171,19 +3240,31 @@ class ProjectOrderInquiryService:
             )
         return row
 
-    def _assert_placeable(self, row: OrderInquiryRow) -> None:
-        if row.verb not in _PLACEABLE_VERBS:
+    def _assert_linkable(self, row: OrderInquiryRow) -> None:
+        """Refuse a row that cannot hold a link, in the words the buyer needs.
+
+        A PARTLY LINKED row is linkable, which is the change the child table brought: it
+        still has quantity nobody has covered, and refusing it would leave that quantity
+        with no way of ever reaching a document.
+        """
+        if row.verb not in _LINKABLE_VERBS:
             raise AppException(
                 status_code=409,
-                message="Only an ORDER or RESERVE & ORDER row can be placed on a purchase order.",
+                message=(
+                    "Only an ORDER, RESERVE & ORDER or ORDER BACK row can be linked to a "
+                    "document."
+                ),
                 code="order_inquiry_not_placeable_verb",
             )
-        if row.state != INQUIRY_RAISED:
+        if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED):
             raise AppException(
                 status_code=409,
-                message="Only a raised row can be placed on a purchase order.",
+                message="Only a raised or partly linked row can be linked to a document.",
                 code="order_inquiry_not_raised",
             )
+
+    #: The name this check carried before section 3.I. Same call.
+    _assert_placeable = _assert_linkable
 
     def _resolve_product_id(self, row: OrderInquiryRow) -> Optional[str]:
         """The product this row is FOR: the reconciled line's product first, the item
@@ -2242,19 +3323,34 @@ class ProjectOrderInquiryService:
             out[row.id] = product_id
         return out
 
-    def open_po_line_product_ids(self, product_ids: Sequence[Optional[str]]) -> set:
-        """Which of these products still has an outstanding PO line left, once every
-        OTHER placed row's tag is netted off - the exact predicate `po_candidates_for_row`
-        answers per row, computed ONCE for a whole listing (`has_open_po_line`) so the
-        flag and the dialog can never disagree. SPO- prefixed documents are excluded here
-        too (G2 rule 3) - the same join `_open_po_lines_for_product` filters on, so this
-        flag can never promise a candidate the cascade would refuse.
+    def link_candidate_products(
+        self, product_ids: Sequence[Optional[str]]
+    ) -> Dict[str, set]:
+        """Which of these products still has something to link to, by KIND.
+
+        The exact predicate `po_candidates_for_row` answers per row, computed ONCE for a
+        whole listing, so the row action's offer and the dialog can never disagree.
+
+        Two sets, because the answer depends on the ROW's verb and not only on its
+        product: an ORDER row may link to a purchase order line, and an ORDER BACK row may
+        link to either that or an `spo_allocations` row (part 2 section 4b). Answering with
+        one set left an order back whose ONLY open cover was a shipping order reading "no
+        candidate", and the screen then offered no Link at all on the one row the feature
+        was built for.
+
+        SPO- prefixed PURCHASE orders are excluded from the `po` set as they are in the
+        walk: since migration 420 a shipping order is an `spo_allocations` row, and one
+        still sitting in `purchase_orders` is a document nobody migrated rather than a
+        candidate. The `spo` set applies `spo_supply.open_incoming_clauses`, the one copy
+        of "what counts as incoming", so this flag and rung 1 cannot come to disagree.
         """
         wanted = {pid for pid in product_ids if pid}
         if not wanted:
-            return set()
-        tagged = self._tagged_by_po_line()
-        lines = (
+            return {"po": set(), "spo": set()}
+        by_po, by_spo = self._linked_by_target()
+
+        po_products: set = set()
+        for line_id, product_id, qty_ordered, qty_received in (
             self.db.query(
                 PurchaseOrderLine.id,
                 PurchaseOrderLine.product_id,
@@ -2265,64 +3361,57 @@ class ProjectOrderInquiryService:
             .filter(
                 PurchaseOrderLine.product_id.in_(list(wanted)),
                 PurchaseOrderLine.line_status == "open",
+                PurchaseOrder.status.in_(("active", "partial")),
                 PurchaseOrder.po_number.notlike("SPO-%"),
             )
             .all()
-        )
-        open_products: set = set()
-        for line_id, product_id, qty_ordered, qty_received in lines:
-            remaining = _dec(qty_ordered) - _dec(qty_received) - tagged.get(line_id, _ZERO)
+        ):
+            remaining = (
+                _dec(qty_ordered) - _dec(qty_received) - by_po.get(str(line_id), _ZERO)
+            )
             if remaining > _ZERO:
-                open_products.add(str(product_id))
-        return open_products
+                po_products.add(str(product_id))
 
-    def _tagged_by_po_line(self) -> Dict[str, Decimal]:
-        """What every currently PLACED row already claims, per PO line - the netting
-        that stops two rows tagging the same purchase-order quantity."""
-        rows = (
-            self.db.query(OrderInquiryRow.po_line_id, func.sum(OrderInquiryRow.qty))
-            .filter(
-                OrderInquiryRow.state == INQUIRY_PLACED,
-                OrderInquiryRow.po_line_id.isnot(None),
+        spo_products: set = set()
+        for allocation_id, product_id, allocated, received in (
+            self.db.query(
+                SPOAllocation.id,
+                SPOAllocation.product_id,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
             )
-            .group_by(OrderInquiryRow.po_line_id)
-            .all()
-        )
-        return {po_line_id: _dec(qty) for po_line_id, qty in rows}
-
-    def _placed_claims_by_po_line(
-        self, po_line_ids: Sequence[str]
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """Every OTHER row already tagged onto these lines - the nested table a candidate's
-        expand shows (section G, the row's own expand). Read straight off the placed rows
-        themselves: the tag IS the evidence."""
-        if not po_line_ids:
-            return {}
-        rows = (
-            self.db.query(OrderInquiryRow, ProjectSalesOrder)
-            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-            .join(
-                ProjectSalesOrder,
-                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
             )
             .filter(
-                OrderInquiryRow.po_line_id.in_(list(po_line_ids)),
-                OrderInquiryRow.state == INQUIRY_PLACED,
+                SPOAllocation.product_id.in_(list(wanted)),
+                SPOAllocation.spo_number.isnot(None),
+                *spo_supply.open_incoming_clauses(),
             )
-            .order_by(OrderInquiryRow.actioned_at.asc())
             .all()
-        )
-        out: Dict[str, List[Dict[str, Any]]] = {}
-        for row, order in rows:
-            out.setdefault(row.po_line_id, []).append(
-                {
-                    "so_number": order.autocount_doc_no or order.provisional_ref,
-                    "item_code": row.item_code,
-                    "qty": _qty_str(_dec(row.qty)),
-                    "placed_date": row.actioned_at,
-                }
+        ):
+            remaining = (
+                _dec(allocated) - _dec(received) - by_spo.get(str(allocation_id), _ZERO)
             )
-        return out
+            if remaining > _ZERO:
+                spo_products.add(str(product_id))
+
+        return {"po": po_products, "spo": spo_products}
+
+    @staticmethod
+    def has_link_candidate(
+        verb: Optional[str], product_id: Optional[str], candidates: Dict[str, set]
+    ) -> bool:
+        """Does THIS row have anywhere to link to? Verb and product together.
+
+        Stated once, so the per-project list, the cross-project worklist and anything else
+        that prints the flag cannot each decide it differently.
+        """
+        if not product_id:
+            return False
+        if product_id in candidates.get("po", ()):
+            return True
+        return verb in _SPO_LINKABLE_VERBS and product_id in candidates.get("spo", ())
 
     def _claim_identity(
         self, row: OrderInquiryRow

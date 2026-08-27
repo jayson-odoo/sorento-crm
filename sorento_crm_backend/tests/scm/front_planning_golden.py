@@ -7,8 +7,9 @@ so the expected answers cannot quietly drift to match whatever the implementatio
 doing, and so the same cases can be read by a route test, a service test or a fixture
 builder later without any of them owning the numbers.
 
-Four cases, each traced to the criterion it comes from in
-`documentation/plans/scm/UAC-scm-front-planning.md`:
+Seven cases, each traced to the criterion it comes from in
+`documentation/plans/scm/UAC-scm-front-planning.md` and, for the last two, in
+`documentation/plans/scm/scm-cs-planning-uat-acceptance-criteria.md`:
 
 * **AC-B08** the hot-selling worked case, exactly as PLAN section 3.3 writes it: dealer
   stock is untouchable and the BRW pool is only usable above its own reorder level.
@@ -21,6 +22,13 @@ Four cases, each traced to the criterion it comes from in
 * **AC-B12** the balance invariant, with the reason string PLAN section 3.2 requires beside
   every proposed component - a quantity shown with raw evidence and no stated reason does
   not satisfy AC-B14.
+* **AC-L2** ladder v3's reordering (25 August 2026): the ownership group, this line's own
+  location included, is drawn BEFORE the shared pool. Under v2 the pool went first and a
+  group that held the stock sat untouched while the shared pile paid for the line.
+* **AC-L1** ladder v3's rung 0, both sides: a line due beyond the lead-time window walks no
+  STOCK rung however much sits beside it, but rung 1 is unchanged, so supply already on its
+  way still covers it; incoming short of the whole line is dropped and the line is bought
+  entire. Under v2 such a line still walked the two surplus rungs.
 
 Quantities are `Decimal`, never float: these numbers are compared for exact equality and a
 binary-float 0.1 does not survive that.
@@ -56,6 +64,10 @@ REQUIRED_DATE = date(2027, 3, 1)
 DEALER_LOCATION = "DLR-KL"
 POOL_LOCATION = "BRW"
 OWN_LOCATION = "SRT-KL"
+#: Ladder v3's group rung talks in ownership-group codes: a `*-BB` location and its sibling
+#: at another site. The line's OWN location is a group source again (section 1b rung 2).
+GROUP_OWN_LOCATION = "BRW-BB"
+GROUP_SIBLING_LOCATION = "DC1-BB"
 
 
 def qty_text(value: Decimal) -> str:
@@ -312,7 +324,7 @@ TWO_LINE_ATTRIBUTION_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0011 arrives on 2027-03-01, by the required date",
+                reason="SPO 202703-S0011 arrives on 1 Mar 2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),
@@ -368,7 +380,7 @@ CONFIRMED_COVER_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0012 arrives on 2027-03-01, by the required date",
+                reason="SPO 202703-S0012 arrives on 1 Mar 2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),
@@ -390,9 +402,126 @@ CONFIRMED_COVER_RETAIL_KEY = ("SO-201", 10)
 CONFIRMED_COVER_RETAIL_NEED = Decimal("10")
 
 
+GROUP_BEFORE_POOL_CASE = ProposalCase(
+    ac="AC-L2",
+    title=(
+        "ladder v3: the ownership group is drawn before the shared pool, this line's own "
+        "location first"
+    ),
+    inputs={
+        "open_qty": Decimal("100"),
+        "line_no": 14,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_LOCATION,
+        "group_code": "BB",
+        # The caller hands the group over in draw order: own location, then the siblings by
+        # site. The engine walks what it is given and never re-sorts.
+        "group_take_candidates": [
+            {"location": GROUP_OWN_LOCATION, "qty": Decimal("40")},
+            {"location": GROUP_SIBLING_LOCATION, "qty": Decimal("30")},
+        ],
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("1000"), "available": Decimal("1000")}
+        ],
+        "timely_spo_qty": Decimal("0"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("40"),
+            reason="BRW-BB has 40 available in the BB group",
+            source_location=GROUP_OWN_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("30"),
+            reason="DC1-BB has 30 available in the BB group",
+            source_location=GROUP_SIBLING_LOCATION,
+        ),
+        # Only what the group could not meet reaches the shared pile.
+        Component(
+            kind=RESERVE,
+            qty=Decimal("30"),
+            reason="Pool BRW has 1000 available",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+)
+
+
+BEYOND_THE_WINDOW_CASE = ProposalCase(
+    ac="AC-L1",
+    title=(
+        "ladder v3 rung 0: a line due beyond the lead-time window takes no STOCK however "
+        "much sits beside it, but still takes the supply already on its way"
+    ),
+    inputs={
+        "open_qty": Decimal("40"),
+        "line_no": 16,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_LOCATION,
+        "group_code": "BB",
+        "outside_reserve_window": True,
+        # 400 in the group and 400 in the pool, neither of them touched.
+        "group_take_candidates": [
+            {"location": GROUP_SIBLING_LOCATION, "qty": Decimal("400")},
+        ],
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
+        ],
+        # Already bought and on the water: buying it a second time is a double purchase.
+        "timely_spo_qty": Decimal("40"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=TIMELY_SPO,
+            qty=Decimal("40"),
+            reason="incoming supply arrives by the required date",
+            source_location=GROUP_OWN_LOCATION,
+        ),
+    ),
+)
+
+
+BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
+    ac="AC-L1",
+    title=(
+        "ladder v3 rung 0, the other side: incoming that does not reach the whole line is "
+        "dropped rather than mixed with a Buy, and the reason names the window"
+    ),
+    inputs={
+        "open_qty": Decimal("71"),
+        "line_no": 18,
+        "required_date": REQUIRED_DATE,
+        "fulfilment_location": GROUP_OWN_LOCATION,
+        "group_code": "BB",
+        "outside_reserve_window": True,
+        "pools": [
+            {"location": POOL_LOCATION, "free": Decimal("400"), "available": Decimal("400")}
+        ],
+        # 40 of the 71 arrives in time. "Incoming 40, Buy 31" is the mix AC-L5 refuses at
+        # confirm, so the whole-line rule takes the lot.
+        "timely_spo_qty": Decimal("40"),
+        "is_discontinued": False,
+    },
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("71"),
+            reason="Delivery date beyond the lead time window; stock kept for nearer orders",
+        ),
+    ),
+)
+
+
 PROPOSAL_CASES = (
     HOT_SELLING_WORKED_CASE,
     PROJECT_HOT_SELLING_WORKED_CASE,
     BALANCE_INVARIANT_CASE,
+    GROUP_BEFORE_POOL_CASE,
+    BEYOND_THE_WINDOW_CASE,
+    BEYOND_THE_WINDOW_SHORT_CASE,
 )
 ATTRIBUTION_CASES = (TWO_LINE_ATTRIBUTION_CASE, CONFIRMED_COVER_CASE)

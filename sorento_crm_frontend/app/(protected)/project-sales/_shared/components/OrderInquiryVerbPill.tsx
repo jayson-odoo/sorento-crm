@@ -18,7 +18,14 @@ export const VERB_LABEL: Record<string, string> = {
   CANCEL_BALANCE: 'CANCEL BALANCE',
   PRE_ORDERED_DO_NOT_ORDER: 'PRE-ORDERED, DO NOT ORDER',
   ALREADY_INBOUND: 'ALREADY INBOUND',
-  BORROW_SHORTFALL: 'BORROW SHORTFALL',
+  // `ORDER BACK` since migration 421 renamed the stored value (PLAN-scm-cs-planning-uat.md
+  // section 1c + PLAN-scm-purchasing-uat-journey.md 4b): it is the order the donor's own
+  // line now needs raising for it, or the quantity CS wrote ORDER BACK against on the
+  // inquiry form. The old spelling stays in this map alone, so a row written before the
+  // migration - or an export somebody kept - still reads as words rather than as a
+  // constant.
+  ORDER_BACK: 'ORDER BACK',
+  BORROW_SHORTFALL: 'ORDER BACK',
   RELEASE: 'RELEASE',
 };
 
@@ -37,6 +44,7 @@ export const VERB_PALETTE_KEY: Record<string, string> = {
   CHANGE_SO: 'submitted',
   CANCEL_BALANCE: 'rejected',
   // Money about to be spent, like an ORDER: the donor is short and somebody must buy it.
+  ORDER_BACK: 'pending',
   BORROW_SHORTFALL: 'pending',
   // A planning-change release moved the Buy off this line's own location onto the pool -
   // still money about to be spent, just no longer for this line (PLAN-so-book-diff
@@ -45,18 +53,22 @@ export const VERB_PALETTE_KEY: Record<string, string> = {
 };
 
 /**
- * The verbs that still cost money. `BORROW_SHORTFALL` is one of them: a borrow left its
- * donor location oversold, and the hole has to be bought (PLAN-fulfilment-planning 13.11).
+ * The verbs that still cost money. `ORDER_BACK` is one of them: a borrow left its donor
+ * location oversold, or CS wrote ORDER BACK on the form, and either way the hole has to
+ * be bought (PLAN-fulfilment-planning 13.11).
  */
-export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'BORROW_SHORTFALL'];
+export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK', 'BORROW_SHORTFALL'];
 
 /**
- * Which raised rows "Place on PO" (section G) can tag - the same set the backend's
- * `_assert_placeable` checks. Narrower than `BUYING_VERBS`: a `BORROW_SHORTFALL` row
- * belongs to the DONOR location, not to a purchase order this line names, so it stays
- * off this list even though it still costs money.
+ * Which raised rows can be linked to a document - the same set the backend's
+ * `_assert_linkable` checks. `ORDER_BACK` joined it in section 3.I: an order back is a
+ * shortfall against something already ordered or already shipped, so it is the ONE verb
+ * that may name an SPO allocation as well as a purchase order line (captain, 25 Aug).
  */
-export const PLACEABLE_VERBS = ['ORDER', 'RESERVE_AND_ORDER'];
+export const PLACEABLE_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK'];
+
+/** The verbs whose links may name an SPO allocation. Only the order back (4b). */
+export const SPO_LINKABLE_VERBS = ['ORDER_BACK'];
 
 export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   const label = VERB_LABEL[verb] ?? verb;
@@ -74,10 +86,13 @@ const STATE_LABEL: Record<string, string> = {
   raised: 'Raised',
   actioned: 'Actioned',
   cancelled: 'Cancelled',
-  // Tagged to an outstanding PO (section G) - its own colour, distinct from `actioned`,
-  // because the two answer different questions: `actioned` is "purchasing dealt with
-  // this somehow", `placed` names the exact PO the quantity was deducted against.
-  placed: 'Placed',
+  // The whole quantity sits on documents (AC-I1). The stored value is still `placed`,
+  // because renaming it would rewrite `scm.committed_v`, the worklist filter and every
+  // saved column preference to say the same thing in a different word.
+  placed: 'Linked',
+  // Some of it does, the rest is still demand - the middle the links table made
+  // expressible, and exactly what `committed_v` now nets.
+  partly_linked: 'Partly linked',
 };
 
 const STATE_PALETTE: Record<string, string> = {
@@ -85,6 +100,7 @@ const STATE_PALETTE: Record<string, string> = {
   actioned: 'processed_by_cs',
   cancelled: 'voided',
   placed: 'approved',
+  partly_linked: 'submitted',
 };
 
 export function OrderInquiryStatePill({ state }: { state: string }) {

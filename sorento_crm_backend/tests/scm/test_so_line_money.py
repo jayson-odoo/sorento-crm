@@ -28,20 +28,26 @@ from app.services.import_alias_service import AliasResolver
 from app.services.scm import outstanding_import_service as svc
 from app.services.scm.outstanding_reader import SO, read_workbook
 from tests._pg_fixture import pg_session
-from tests.scm._outstanding_workbooks import Codes, make_codes, seed_catalogue
+from tests.scm._outstanding_workbooks import (
+    Codes,
+    DEALER_ORDER_TYPE,
+    make_codes,
+    seed_catalogue,
+    so_headers,
+)
 
 MARKER = "ZZTMON"
 
 #: The document, the line, and every money-shaped column the AutoCount detail listing
 #: carries. `UOM` is here for the same reason the two money columns are: it resolves, and
 #: the line has a per-line override column waiting for it.
-HEADERS = ("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "UOM", "UNIT PRICE", "DISCOUNT",
-           "TOTAL (INC)", "DELIVERY DATE", "STOCK LOCATION")
+HEADERS = so_headers("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "UOM", "UNIT PRICE",
+                     "DISCOUNT", "TOTAL (INC)", "DELIVERY DATE", "STOCK LOCATION")
 
 #: The same file with none of the three, so an absent figure is absent rather than
 #: blank-in-a-column-that-exists.
-HEADERS_BARE = ("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
-                "STOCK LOCATION")
+HEADERS_BARE = so_headers("S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
+                          "STOCK LOCATION")
 
 
 @pytest.fixture()
@@ -65,7 +71,9 @@ def _workbook(codes: Codes, *, uom="BOX", price=100, discount=15, total=985,
     row = [codes.project_so, f"{MARKER}-{uuid.uuid4().hex[:6]}".upper(), codes.item_rl, qty]
     if headers is HEADERS:
         row += [uom, price, discount, total]
-    row += [date(2026, 7, 1), codes.loc_project]
+    # The class the file has to state since QP1, or the whole upload is refused - this
+    # file's debtor code is invented per run and resolves to no customer.
+    row += [date(2026, 7, 1), codes.loc_project, DEALER_ORDER_TYPE]
     ws.append(row)
     buf = BytesIO()
     wb.save(buf)

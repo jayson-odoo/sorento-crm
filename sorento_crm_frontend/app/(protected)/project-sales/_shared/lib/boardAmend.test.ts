@@ -63,14 +63,21 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
     expect(draft.buy_qty).toBe('60');
   });
 
-  it('opens with no Reserve row when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
-    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's
-    // own location is never a Reserve source any more, so there is nothing left to
-    // invent a row for - unlike the old ladder, whose own-location rung this used to
-    // fall back onto.
+  it('opens with the line’s own location at zero when the proposal reserved nothing', () => {
+    // Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2): the own location is a
+    // location of the line's ownership group again, so it is always somewhere the planner
+    // may reserve from - and on a wholly-bought line it is the only row there would be.
     const draft = amendDraftFrom(contributionOf({}));
 
-    expect(draft.reserve).toEqual([]);
+    expect(draft.reserve).toEqual([
+      {
+        key: 'reserve-BRW-BB',
+        location: 'BRW-BB',
+        warehouse_id: 'wh-BRW-BB',
+        qty: '0',
+        reason: '',
+      },
+    ]);
     expect(draft.buy_qty).toBe('100');
   });
 
@@ -429,24 +436,76 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
 });
 
 describe('amendSummary: what the decided row reads', () => {
-  it('states the composition rather than one number of it', () => {
+  /**
+   * SECTION 2'S WORDS, the same table the bar under this pill is painted from: a reserve at
+   * the line's own group location is "Own", the shared pool is "Shared", and a borrow says
+   * which kind of borrow it is. It used to read "Reserve 20 BRW-BB · Borrow 10 · Buy 13"
+   * beside an emerald "Own" segment describing the identical quantity.
+   */
+  it('states the composition in the vocabulary the bar beside it is drawn from', () => {
     expect(
-      amendSummary({
-        verdict: 'amended',
-        reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '20' }],
-        borrow: [
-          {
-            source: 'other_location',
-            warehouse_id: 'wh-ib',
-            warehouse_code: 'BRW-IB',
-            qty: '10',
-            reason: 'Agreed with the other site.',
-          },
-        ],
-        buy_qty: '13',
-        timely_spo_qty: '0',
-      }),
-    ).toBe('Reserve 20 BRW-BB · Borrow 10 · Buy 13');
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '20' }],
+          borrow: [
+            {
+              source: 'other_location',
+              warehouse_id: 'wh-ib',
+              warehouse_code: 'BRW-IB',
+              qty: '10',
+              reason: 'Agreed with the other site.',
+            },
+          ],
+          buy_qty: '13',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Buy 13 · Own 20 BRW-BB · Borrow (other) 10 BRW-IB');
+  });
+
+  it('splits a reserve that draws on two different kinds of stock', () => {
+    // The pool and the agent's own group are two different answers, and the bar already
+    // draws them as two segments. One "Reserve" word over both said neither.
+    expect(
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [
+            { warehouse_id: 'wh-pool', location: 'BRW', qty: '71' },
+            { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454' },
+          ],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Shared 71 BRW · Own 454 DC1-BB');
+  });
+
+  it('names a borrow that states its donor order as a borrow from another order', () => {
+    expect(
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [],
+          borrow: [
+            {
+              source: 'other_location',
+              warehouse_id: 'wh-own',
+              warehouse_code: 'BRW-BB',
+              qty: '71',
+              reason: 'Authorised by the agent.',
+              donor_so_number: 'SO415472',
+            },
+          ],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Borrow (order) 71 BRW-BB');
   });
 
   it('falls back to the one number a decision taken before the editor carries', () => {

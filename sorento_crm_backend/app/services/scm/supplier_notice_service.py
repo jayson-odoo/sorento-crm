@@ -28,20 +28,26 @@ Frontend contract (Phase 1):
       recipient: str|null, status: 'pending'|'sent'|'failed'|'skipped',
       status_reason: str|null, sent_at: iso|null, attempt_count: int, last_error: str|null,
       document_filename: str|null, has_document: bool,
+      xlsx_filename: str|null, has_xlsx: bool,
+      public_url: str|null, link_retired: bool,
       container_type, container_count, planned_cbm, line_count, production_line_count,
       created_at: iso, created_by: str|null,
     }
+
+    POST /api/v1/scm/container-requests/document?format=xlsx|pdf -> the bytes, no notice
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope, set_company_scope
 from app.models.scm import LoadingPlan, LoadingPlanLine
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.services.company_scope_sql import company_sql_predicate
@@ -430,6 +436,124 @@ def _product_catalogue(db: Session, product_ids: list) -> dict[str, dict]:
     }
 
 
+def _set_catalogue(db: Session, set_ids: list) -> dict[str, dict]:
+    """`set_code` / `name` off our product sets, for a line that names a SET (F12, AC-F12.6).
+
+    Company-scoped for the same reason `_product_catalogue` is: without it a caller could
+    name a foreign company's set id and have its code copied into `supplier_notice_lines` and
+    the emailed document.
+    """
+    ids = [str(i) for i in set_ids if i]
+    if not ids:
+        return {}
+    predicate, params = company_sql_predicate(db, "company_id", param_prefix="sc")
+    rows = db.execute(
+        text(
+            "SELECT id, set_code, name FROM product_sets "
+            f"WHERE id = ANY(CAST(:ids AS uuid[])) AND {predicate or 'true'}"
+        ),
+        {"ids": ids, **params},
+    ).mappings().all()
+    return {
+        str(r["id"]): {"item_code": r["set_code"], "product_name": r["name"]}
+        for r in rows
+    }
+
+
+def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
+    """The reviewed lines with the catalogue's own words on them, or a 422 naming what is not ours.
+
+    A line names a product OR one of our product SETS (R19). A set line carries NO product
+    id: the supplier sells the whole WC and our catalogue holds only its parts, so the
+    document goes out under the set code, which is the code they wrote in the first place.
+    `supplier_notice_lines.product_id` is nullable, which is what makes that recordable.
+
+    B2: a line naming a malformed id ("nope") 500'd `_product_catalogue`'s
+    `CAST(:ids AS uuid[])`, and a line naming a well-formed but unknown product 500'd later,
+    on the `SupplierNoticeLine.product_id` foreign key at flush. Both are a form mistake, not
+    a server error: filter to id-shaped values BEFORE the cast, resolve the catalogue off that
+    filtered set, then refuse anything the catalogue could not name - which is exactly
+    `requested - catalogue`, whether the id never parsed or simply is not ours.
+    """
+    requested_ids = {str(ln.get("product_id")) for ln in lines if ln.get("product_id")}
+    catalogue = _product_catalogue(db, [pid for pid in requested_ids if is_uuid(pid)])
+    unknown = requested_ids - set(catalogue)
+    if unknown:
+        raise AppException(
+            422,
+            "These products do not exist: " + ", ".join(sorted(unknown)),
+            detail="product_id",
+        )
+
+    requested_sets = {str(ln.get("product_set_id")) for ln in lines if ln.get("product_set_id")}
+    sets = _set_catalogue(db, [sid for sid in requested_sets if is_uuid(sid)])
+    unknown_sets = requested_sets - set(sets)
+    if unknown_sets:
+        raise AppException(
+            422,
+            "These product sets do not exist: " + ", ".join(sorted(unknown_sets)),
+            detail="product_set_id",
+        )
+
+    def _named(ln: dict) -> dict:
+        if ln.get("product_set_id"):
+            return sets.get(str(ln["product_set_id"])) or {}
+        return catalogue.get(str(ln.get("product_id"))) or {}
+
+    return [
+        {
+            # None on a set line: the ask is the whole set, and naming one member on the
+            # record would make the document disagree with the row it came from.
+            "product_id": None if ln.get("product_set_id") else ln.get("product_id"),
+            "item_code": _named(ln).get("item_code"),
+            "product_name": _named(ln).get("product_name"),
+            "po_number": None,
+            "qty": ln.get("qty"),
+            "cbm": None,
+        }
+        for ln in lines
+    ]
+
+
+def _render_request_pdf(supplier: dict, pack: list[dict]) -> bytes:
+    return render_document(
+        _document_html(
+            supplier=supplier, plan=None, pack=pack, produce=[], notice_type="container_request"
+        )
+    )
+
+
+def request_document(
+    db: Session, *, supplier_id: str, lines: list[dict], fmt: str
+) -> tuple[bytes, str]:
+    """The request as a file, WITHOUT sending anything (R23).
+
+    The gear menu on "What to ask X for" hands Ms Tee the PDF or the supplier's sheet for the
+    quantities currently on her screen - to read, to check, to forward by hand. That is not a
+    send: no notice row, no token, no email, nothing the supplier has been told. So this
+    renders and returns, and stores nothing.
+
+    Same two builders `request_and_notify` uses, deliberately not forked: the moment the
+    downloaded sheet and the emailed one can differ, the download stops being worth having.
+    """
+    if fmt not in ("pdf", "xlsx"):
+        raise AppException(422, f"Unknown document format: {fmt}")
+
+    supplier = _supplier(db, supplier_id)
+    pack = _request_pack(db, lines)
+
+    if fmt == "xlsx":
+        from app.services.scm import container_request_xlsx
+
+        return (
+            container_request_xlsx.build(
+                db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
+            ),
+            container_request_xlsx.filename(supplier),
+        )
+    return _render_request_pdf(supplier, pack), _request_filename(supplier)
+
+
 def request_and_notify(
     db: Session,
     *,
@@ -446,42 +570,48 @@ def request_and_notify(
     (`_document_html` / `_EMAIL_COPY`, keyed on `notice_type`).
     """
     supplier = _supplier(db, supplier_id)
+    pack = _request_pack(db, lines)
 
-    # B2: a line naming a malformed id ("nope") 500'd `_product_catalogue`'s
-    # `CAST(:ids AS uuid[])`, and a line naming a well-formed but unknown product 500'd later,
-    # on the `SupplierNoticeLine.product_id` foreign key at flush. Both are a form mistake,
-    # not a server error: filter to id-shaped values BEFORE the cast, resolve the catalogue
-    # off that filtered set, then refuse anything the catalogue could not name - which is
-    # exactly `requested - catalogue`, whether the id never parsed or simply is not ours.
-    requested_ids = {str(ln.get("product_id")) for ln in lines if ln.get("product_id")}
-    catalogue = _product_catalogue(db, [pid for pid in requested_ids if is_uuid(pid)])
-    unknown = requested_ids - set(catalogue)
-    if unknown:
-        raise AppException(
-            422,
-            "These products do not exist: " + ", ".join(sorted(unknown)),
-            detail="product_id",
-        )
-
-    pack = [
-        {
-            "product_id": ln.get("product_id"),
-            "item_code": (catalogue.get(str(ln.get("product_id"))) or {}).get("item_code"),
-            "product_name": (catalogue.get(str(ln.get("product_id"))) or {}).get("product_name"),
-            "po_number": None,
-            "qty": ln.get("qty"),
-            "cbm": None,
-        }
-        for ln in lines
-    ]
-
-    document = render_document(
-        _document_html(
-            supplier=supplier, plan=None, pack=pack, produce=[], notice_type="container_request"
-        )
-    )
+    document = _render_request_pdf(supplier, pack)
     filename = _request_filename(supplier)
     provider, key = _store(document, filename)
+
+    # F4: their own sheet back to them, with the quantity to load filled in. Best-effort by
+    # design - `container_request_xlsx.build` never raises, and if the store below did, the
+    # request would fail for the sake of the SECOND copy of an ask the PDF already states.
+    xlsx_filename: Optional[str] = None
+    xlsx_provider: Optional[str] = None
+    xlsx_key: Optional[str] = None
+    try:
+        from app.services.scm import container_request_xlsx
+
+        sheet = container_request_xlsx.build(
+            db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
+        )
+        xlsx_filename = container_request_xlsx.filename(supplier)
+        xlsx_provider, xlsx_key = _store(sheet, xlsx_filename)
+    except Exception:  # noqa: BLE001 - the PDF and the notice still go
+        xlsx_filename = xlsx_provider = xlsx_key = None
+        logger.warning(
+            "container request for supplier %s: the stock-list xlsx could not be produced; "
+            "the notice and its PDF are unaffected",
+            supplier_id,
+            exc_info=True,
+        )
+
+    # F8/AC-C7: this send is the current ask, so every link already out there stops
+    # answering. Done BEFORE the new rows exist so the unique token index cannot see two
+    # live links for one supplier at any point.
+    _retire_public_tokens(db, str(supplier_id))
+
+    # ONE token per SEND, on BOTH channel rows (R23, captain 27 Aug: "email and chat need to
+    # both have link"). The supplier clicks it in the email; Ms Tee copies it off whichever
+    # row is in front of her and pastes it into WeChat, which is how she reaches the factories
+    # that never open email. Two tokens would be two live links to one ask, and every extra
+    # live link is another way for one to leak - so the credential is minted here, once, and
+    # the rows below merely carry it.
+    public_token = secrets.token_urlsafe(_PUBLIC_TOKEN_BYTES)
+    public_token_expires_at = datetime.utcnow() + timedelta(days=PUBLIC_TOKEN_TTL_DAYS)
 
     notices: list[SupplierNotice] = []
     for channel in CHANNELS:
@@ -493,9 +623,14 @@ def request_and_notify(
             document_filename=filename,
             storage_provider=provider,
             storage_key=key,
+            xlsx_filename=xlsx_filename,
+            xlsx_storage_provider=xlsx_provider,
+            xlsx_storage_key=xlsx_key,
             line_count=len(pack),
             production_line_count=0,
             created_by=actor,
+            public_token=public_token,
+            public_token_expires_at=public_token_expires_at,
         )
         db.add(notice)
         db.flush()
@@ -526,13 +661,200 @@ def request_and_notify(
     }
 
 
+# --------------------------------------------------------------------------- public link
+
+
+#: How long the supplier's link answers for (F8, AC-C7). Thirty days is the whole of its
+#: life; nothing renews it, and a resend replaces it rather than extending it.
+PUBLIC_TOKEN_TTL_DAYS = 30
+
+#: 32 random bytes, the same width as the quotation counter-sign token
+#: (`project_quotation_document_service.issue_sign_link`). The token IS the credential, so
+#: its only real property is being unguessable.
+_PUBLIC_TOKEN_BYTES = 32
+
+#: One answer for "no such token", "expired" and "superseded by a resend". Saying which
+#: confirms to anybody guessing that a token exists, and this endpoint is public.
+_LINK_GONE = "This link is no longer available. Ask your contact at Sorento to resend it."
+
+
+def _retire_public_tokens(db: Session, supplier_id: str) -> None:
+    """Expire every live container-request link this supplier holds.
+
+    The token is KEPT, not cleared: a notice is the record of what left the building, and
+    "there was a link, it ran out on this date" is part of that record. Expiring it is what
+    stops it answering, which is all that is needed - and it means the old link and a token
+    that never existed fail through the same branch below.
+    """
+    now = datetime.utcnow()
+    (
+        db.query(SupplierNotice)
+        .filter(
+            SupplierNotice.supplier_id == supplier_id,
+            SupplierNotice.notice_type == "container_request",
+            SupplierNotice.public_token.isnot(None),
+            SupplierNotice.public_token_expires_at > now,
+        )
+        .update({"public_token_expires_at": now}, synchronize_session=False)
+    )
+    db.flush()
+
+
+def request_by_public_token(db: Session, token: str) -> SupplierNotice:
+    """Resolve a supplier link, refusing anything unknown or expired with the SAME message.
+
+    Resolved with the company scope OPEN, then pinned shut to the notice's own company -
+    exactly the shape `project_quotation_document_service.get_issue_by_sign_token` carries,
+    and for the same reason. The reader is a stranger with no session and no API key, so the
+    scope resolver leaves the request at UNSET, which is fail-closed and reads zero rows from
+    every owned table: without the open window a live link would answer "no longer available"
+    and a supplier would be told to ask for a resend of something that was never broken. The
+    token is what makes opening it safe, being globally unique and the whole credential.
+    Pinning afterwards is not optional: the lines and the supplier name read next must stay
+    inside the company the token belongs to.
+    """
+    if not token:
+        raise AppException(404, _LINK_GONE)
+    with company_scope(db, None):
+        notice = (
+            db.query(SupplierNotice)
+            .filter(SupplierNotice.public_token == token)
+            # Both channel rows of one send carry the token (R23) and hold the same lines and
+            # the same two files, so either answers identically - but a page that reads off
+            # whichever row the planner happened to return is a page that can change its mind.
+            # Descending puts `email` first: the row the link actually went out on.
+            .order_by(SupplierNotice.channel.desc())
+            .first()
+        )
+    if notice is not None and notice.company_id:
+        set_company_scope(db, frozenset({str(notice.company_id)}))
+    if (
+        notice is None
+        or notice.public_token_expires_at is None
+        or notice.public_token_expires_at <= datetime.utcnow()
+    ):
+        raise AppException(404, _LINK_GONE)
+    return notice
+
+
+def public_request_page(db: Session, token: str) -> dict:
+    """What the supplier sees: this request's lines, and their own figures beside them.
+
+    NARROW on purpose (AC-C6). No price, no cost, no supplier id, no notice id, no other
+    request - a leaked URL exposes one ask and nothing that would let its holder find a
+    second. The lines are the notice's own frozen copy, so the page says what was actually
+    sent rather than what the plan would compute today.
+
+    Their packed / unfinished come off the CURRENT stock-list snapshot rather than the
+    notice, which stores no holdings. That is their own latest statement about their own
+    warehouse, which is the honest thing to show them; a product they have never listed
+    reads as null rather than as zero.
+    """
+    notice = request_by_public_token(db, token)
+    lines = (
+        db.query(SupplierNoticeLine)
+        .filter(SupplierNoticeLine.notice_id == str(notice.id))
+        .order_by(SupplierNoticeLine.sort_order)
+        .all()
+    )
+    held = _held_by_item_code(db, str(notice.supplier_id))
+    return {
+        "supplier_name": _supplier_name(db, str(notice.supplier_id)),
+        "requested_at": notice.created_at.isoformat() if notice.created_at else None,
+        "line_count": len(lines),
+        "lines": [
+            {
+                "item_code": ln.item_code,
+                "product_name": ln.product_name,
+                "qty": _f(ln.qty) or 0.0,
+                "qty_packed": (held.get(str(ln.item_code)) or {}).get("qty_packed"),
+                "qty_unfinished": (held.get(str(ln.item_code)) or {}).get("qty_unfinished"),
+            }
+            for ln in lines
+        ],
+        "has_pdf": bool(notice.storage_key),
+        "has_xlsx": bool(notice.xlsx_storage_key),
+    }
+
+
+def _held_by_item_code(db: Session, supplier_id: str) -> dict[str, dict]:
+    from app.models.scm import SupplierInventory
+
+    rows = (
+        db.query(
+            SupplierInventory.item_code,
+            SupplierInventory.qty_packed,
+            SupplierInventory.qty_unfinished,
+        )
+        .filter(SupplierInventory.supplier_id == supplier_id)
+        .all()
+    )
+    return {
+        str(r.item_code): {
+            "qty_packed": _f(r.qty_packed),
+            "qty_unfinished": _f(r.qty_unfinished),
+        }
+        for r in rows
+    }
+
+
+def public_document_url(db: Session, token: str, kind: str) -> dict:
+    """One of the request's two files, off the same token and the same 404."""
+    notice = request_by_public_token(db, token)
+    return document_url(db, str(notice.id), kind=kind)
+
+
+def _public_base_url() -> Optional[str]:
+    """Where this CRM's public pages live, or None when nobody has configured it.
+
+    Its own function so the send path can be tested without an environment: a link is a
+    promise to a supplier, and "None/c/.../token" in front of one is worse than no link.
+    """
+    from app.config import settings
+
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    return base or None
+
+
+def public_request_url(db: Session, notice: SupplierNotice) -> Optional[str]:
+    """`{base}/c/{company_code}/supplier-request/{token}`, or None if it cannot be built.
+
+    The company segment is cosmetic - the token is globally unique and is the whole
+    credential - but every public page this system hands out has that shape, and one shape is
+    what makes them recognisable as ours.
+    """
+    base = _public_base_url()
+    if not base or not notice.public_token:
+        return None
+    code = _company_code(db, str(notice.company_id)) if notice.company_id else None
+    return f"{base}/c/{code or 'SRT'}/supplier-request/{notice.public_token}"
+
+
+def _company_code(db: Session, company_id: str) -> Optional[str]:
+    row = db.execute(
+        text("SELECT code FROM companies WHERE id = :i"), {"i": company_id}
+    ).first()
+    return row[0] if row else None
+
+
+#: What each file this module stores is served as. Taken off the extension rather than passed
+#: in, so `_store`'s two-argument shape (which every suite here monkeypatches) is unchanged.
+_CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
 def _store(data: bytes, filename: str) -> tuple[str, str]:
     from app.services.storage_router import default_provider, get_backend
 
     provider = default_provider()
     key = f"exports/supplier-notice/{datetime.utcnow():%Y/%m}/{_rand()}/{filename}"
+    ext = filename[filename.rfind(".") :].lower() if "." in filename else ""
     stored_key, _signed = get_backend(provider).upload_file(
-        file_content=data, file_path=key, content_type="application/pdf"
+        file_content=data,
+        file_path=key,
+        content_type=_CONTENT_TYPES.get(ext, "application/octet-stream"),
     )
     return provider, stored_key or key
 
@@ -574,8 +896,36 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
     subject = f"{copy['subject']} - {supplier.get('supplier_name') or ''}".strip()
     body = copy["body"]
 
+    # The third thing in the one email (AC-C1): a link to the same request, for the reader who
+    # will not open an attachment on a phone. Appended only when a URL can actually be built -
+    # an unconfigured base would otherwise put "None/c/..." in front of a supplier.
+    link = public_request_url(db, notice)
+    if link:
+        body = (
+            f"{body}\n\n"
+            f"在线查看 / View online:\n{link}\n"
+            f"此链接30天内有效。 / This link works for 30 days."
+        )
+
     try:
         from app.services import email_outbox_service
+
+        metadata: dict[str, Any] = {
+            "supplier_notice_id": str(notice.id),
+            "loading_plan_id": str(notice.loading_plan_id or ""),
+        }
+        # ONE email carrying both files (AC-C1). The outbox row's own attachment columns hold
+        # the PDF; the second file travels in the metadata the drainer already reads, because
+        # a notice has exactly two documents and a second set of columns on every outbox row
+        # would be three columns nothing else in the system fills.
+        if notice.xlsx_storage_key:
+            metadata["extra_attachments"] = [
+                {
+                    "filename": notice.xlsx_filename,
+                    "storage_provider": notice.xlsx_storage_provider,
+                    "storage_key": notice.xlsx_storage_key,
+                }
+            ]
 
         email_outbox_service.enqueue(
             db,
@@ -583,8 +933,7 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
             to=to,
             subject=subject,
             body_text=body,
-            metadata={"supplier_notice_id": str(notice.id),
-                      "loading_plan_id": str(notice.loading_plan_id or "")},
+            metadata=metadata,
             attachment_filename=notice.document_filename,
             attachment_storage_provider=notice.storage_provider,
             attachment_storage_key=notice.storage_key,
@@ -643,6 +992,13 @@ def _log_attempt(db: Session, notice: SupplierNotice, *, ok: bool, detail: str,
 # --------------------------------------------------------------------------- read
 
 
+def _link_live(notice: SupplierNotice) -> bool:
+    return bool(
+        notice.public_token_expires_at
+        and notice.public_token_expires_at > datetime.utcnow()
+    )
+
+
 def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
     return {
         "id": str(notice.id),
@@ -659,6 +1015,19 @@ def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
         "last_error": notice.last_error,
         "document_filename": notice.document_filename,
         "has_document": bool(notice.storage_key),
+        "xlsx_filename": notice.xlsx_filename,
+        "has_xlsx": bool(notice.xlsx_storage_key),
+        # Built here, never in the browser: the address of a public page is a server fact
+        # (it has to match what went out in the email), and null when it has run out or when
+        # no public base URL is configured - which is what hides the Copy link button. A dead
+        # URL is never handed to the browser: a copied dead link is worse than no button.
+        "public_url": (
+            public_request_url(db, notice) if _link_live(notice) else None
+        ),
+        # ...but "this send HAD a link and it has run out" is a different fact from "this
+        # send never had one", and only the first one earns the muted "Link retired" line on
+        # an older row (R23). One boolean, because `public_url` already answers the live case.
+        "link_retired": bool(notice.public_token) and not _link_live(notice),
         "container_type": notice.container_type,
         "container_count": notice.container_count,
         "planned_cbm": _f(notice.planned_cbm),
@@ -710,16 +1079,39 @@ def list_for_supplier(db: Session, supplier_id: str, *, limit: int = 50) -> list
     return [serialize(db, n) for n in rows]
 
 
-def document_url(db: Session, notice_id: str, *, expires_in: int = 3600) -> dict:
+#: The two files a notice can carry, and where each one's storage triple lives (F4).
+_DOCUMENT_KINDS = {
+    "pdf": ("storage_provider", "storage_key", "document_filename"),
+    "xlsx": ("xlsx_storage_provider", "xlsx_storage_key", "xlsx_filename"),
+}
+
+
+def document_url(
+    db: Session, notice_id: str, *, kind: str = "pdf", expires_in: int = 3600
+) -> dict:
+    """A short-lived link to one of the notice's files.
+
+    `kind` defaults to `pdf`, so every existing caller reads exactly as before; `xlsx` is the
+    stock list handed back with the quantity to load (F4), which only a container request has.
+    """
     notice = db.query(SupplierNotice).filter(SupplierNotice.id == notice_id).one_or_none()
     if notice is None:
         raise AppException(404, "Supplier notice not found")
-    if not notice.storage_key:
+    if kind not in _DOCUMENT_KINDS:
+        raise AppException(422, f"Unknown document kind: {kind}")
+
+    provider_attr, key_attr, name_attr = _DOCUMENT_KINDS[kind]
+    key = getattr(notice, key_attr, None)
+    if not key:
         raise AppException(409, "This notice has no document.")
 
     from app.services.storage_router import get_backend
 
-    url = get_backend(notice.storage_provider).get_signed_url(
-        notice.storage_key, expires_in=expires_in
+    url = get_backend(getattr(notice, provider_attr, None)).get_signed_url(
+        key, expires_in=expires_in
     )
-    return {"url": url, "filename": notice.document_filename, "expires_in": expires_in}
+    return {
+        "url": url,
+        "filename": getattr(notice, name_attr, None),
+        "expires_in": expires_in,
+    }

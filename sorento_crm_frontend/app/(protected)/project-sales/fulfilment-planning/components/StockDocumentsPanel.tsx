@@ -61,6 +61,7 @@ export function StockDocumentsPanel({
         project_label: order.project_label ?? null,
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
+        overdue_days: null,
         qty: order.so_qty,
         is_covered: Boolean(order.is_covered),
         line_id: order.line_id ?? null,
@@ -78,6 +79,7 @@ export function StockDocumentsPanel({
         project_label: null,
         doc_date: null,
         due_date: leg.expected_date ?? null,
+        overdue_days: leg.overdue_days ?? null,
         qty: leg.spo_qty,
         is_covered: false,
         line_id: null,
@@ -220,6 +222,12 @@ export function StockDocumentsPanel({
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.due_date ? formatDateInMalaysia(row.original.due_date) : 'Not stated'}
+            {row.original.overdue_days ? (
+              <span className="text-amber-600 ms-1">
+                (overdue {row.original.overdue_days}{' '}
+                {row.original.overdue_days === 1 ? 'day' : 'days'})
+              </span>
+            ) : null}
           </span>
         ),
         size: 150,
@@ -267,8 +275,6 @@ export function StockDocumentsPanel({
     [rows, policyName],
   );
 
-  const data = detail.data;
-
   return (
     <div
       data-testid="stock-documents-panel"
@@ -281,18 +287,9 @@ export function StockDocumentsPanel({
         {`${itemCode} · ${locationCode}`}
       </div>
 
-      {data && (
-        // The arithmetic IS the header, so the total below can be checked against it by eye.
-        // `available_qty` is signed and is printed as it arrives: a negative available is the
-        // shortfall, and clamping it would turn the one number that says "this cannot be met"
-        // into one that says it can.
-        <div
-          data-testid="stock-detail-arithmetic"
-          className="min-w-0 break-words text-sm font-medium tabular-nums"
-        >
-          {`On hand ${data.qty_on_hand} - SO ${data.so_qty} + SPO ${data.spo_qty} = Available ${data.available_qty}`}
-        </div>
-      )}
+      {/* NO ARITHMETIC HEADER. "On hand 241 - SO 3334 + SPO 0 = Available -3093" restated the
+          location row this panel expands from, which already carries all four figures, and the
+          captain's verdict on it was "redundant. Remove." (PLAN section 0 item 7, AC-A4). */}
 
       {detail.isError ? (
         <p className="py-6 text-center text-sm text-destructive">
@@ -339,6 +336,8 @@ interface StockDetailRow {
   project_label: string | null;
   doc_date: string | null;
   due_date: string | null;
+  /** Days late, on a purchase document whose promised arrival has passed. */
+  overdue_days: number | null;
   qty: string;
   is_covered: boolean;
   line_id: string | null;

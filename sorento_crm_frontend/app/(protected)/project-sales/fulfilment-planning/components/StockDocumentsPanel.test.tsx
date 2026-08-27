@@ -2,10 +2,12 @@
  * Stock Status with Detail: what the numbers on a location row are made of.
  *
  * AutoCount shows the position and then the documents that produce it, and the captain reads it
- * there before coming here. So this mirrors that shape: a header line that IS the arithmetic
- * ("On hand 478 - SO 47,009 + SPO 0 = Available -46,531"), the documents beneath it, and a total
- * that adds back up to the header. A detail view whose total disagrees with its own header is
- * the one thing that would make somebody stop trusting the board.
+ * there before coming here. So this mirrors that shape: the documents, and a total that adds up
+ * to the position on the row this panel expands from.
+ *
+ * The panel used to repeat that position as a header line of its own ("On hand 478 - SO 47,009
+ * + SPO 0 = Available -46,531") and the captain called it redundant: the row immediately above
+ * carries the same four figures (PLAN-scm-cs-planning-uat.md item 7, AC-A4).
  *
  * These tests were the `StockDetailDialog` suite. The captain asked for the documents to expand
  * UNDER the location row instead of opening a second dialog ("expandable details instead of
@@ -100,24 +102,65 @@ describe('StockDocumentsPanel', () => {
     await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
   });
 
-  it('heads the panel with the arithmetic itself', async () => {
+  it('does not head the panel with the arithmetic: the row it expands from already says it', async () => {
+    // Item 7 / AC-A4. "TPE-9204 . BRW  On hand 241 - SO 3334 + SPO 0 = Available -3093" sat
+    // directly under the location row that carries all four of those figures, and the
+    // captain's verdict was "redundant. Remove."
     getStockDetail.mockResolvedValue(captainsPosition());
 
     renderPanel();
 
-    expect(
-      await screen.findByText('On hand 478 - SO 47009 + SPO 0 = Available -46531'),
-    ).toBeInTheDocument();
+    await screen.findByText('Documents');
+    expect(screen.queryByTestId('stock-detail-arithmetic')).not.toBeInTheDocument();
+    expect(screen.queryByText(/On hand 478 - SO 47009/)).not.toBeInTheDocument();
   });
 
-  it('renders a negative available plainly, never clamped and never hidden', async () => {
-    getStockDetail.mockResolvedValue(captainsPosition());
+  it('names an overdue arrival as overdue, and still lists its quantity', async () => {
+    // TRUST THE BOOK (captain, 26 August 2026): a promised date that has passed does not
+    // remove the supply, it changes what the row SAYS. The buyer reading this is the person
+    // who can chase the supplier, and they cannot do that if the row reads as though the
+    // date were fine.
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/08-0061',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-08-01',
+            spo_qty: '332',
+            overdue_days: 25,
+          },
+        ],
+      }),
+    );
 
     renderPanel();
 
-    const header = await screen.findByTestId('stock-detail-arithmetic');
-    expect(header.textContent).toContain('-46531');
-    expect(header.textContent).not.toContain('Available 0');
+    const table = await screen.findByRole('table');
+    expect(table.textContent).toContain('SPO-2026/08-0061');
+    expect(table.textContent).toContain('(overdue 25 days)');
+    expect(table.textContent).toContain('332');
+  });
+
+  it('says nothing about overdue when the arrival is still ahead', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/09-0001',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-09-12',
+            spo_qty: '500',
+            overdue_days: 0,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(table.textContent).not.toContain('overdue');
   });
 
   it('lists every document behind the position, typed', async () => {

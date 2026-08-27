@@ -20,11 +20,12 @@ export type OrderInquiryVerb =
   | 'PRE_ORDERED_DO_NOT_ORDER'
   | 'ALREADY_INBOUND'
   /**
-   * A confirmed borrow left the DONOR location oversold, so the hole it opened is
-   * buying work at that location (PLAN-fulfilment-planning 13.11). Its own verb: the
-   * quantity belongs to the donor's location, not to the borrowing line's.
+   * The order back: a confirmed borrow left the DONOR location oversold, or CS wrote
+   * `ORDER BACK` on the inquiry form against a document already on its way. Its own verb
+   * because it is the only one that may be linked to an SPO allocation as well as to a
+   * purchase order line (PLAN-scm-purchasing-uat-journey.md section 4b).
    */
-  | 'BORROW_SHORTFALL'
+  | 'ORDER_BACK'
   /**
    * A planning-change batch released a line's whole claim: the reserve freed at its own
    * location, and this Buy is no longer for this line - it is now for the pool
@@ -32,7 +33,53 @@ export type OrderInquiryVerb =
    */
   | 'RELEASE';
 
-export type OrderInquiryState = 'raised' | 'actioned' | 'cancelled' | 'placed';
+/**
+ * `placed` reads "Linked" on every screen (AC-I1) and keeps its stored value: the row is
+ * covered by links whose quantities sum to its own. `partly_linked` is the middle the
+ * links table made expressible - some of the quantity is on a document, the rest is still
+ * demand - and it is counted by `scm.committed_v` for exactly the unlinked remainder.
+ */
+export type OrderInquiryState =
+  | 'raised'
+  | 'partly_linked'
+  | 'actioned'
+  | 'cancelled'
+  | 'placed';
+
+/**
+ * One placement: this row's quantity, or part of it, sitting on ONE purchase order line
+ * or ONE SPO allocation (`projects.order_inquiry_links`, PLAN section 3.I). A row keeps
+ * its FULL quantity and carries many links - never the split rows the cascade used to
+ * write, which turned nine sales-order lines into eleven instructions.
+ */
+export interface OrderInquiryLink {
+  id: string;
+  /** Which book the document lives in. `spo` is only ever offered to an ORDER BACK row. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. Never an id. */
+  document: string;
+  /** `L3` when the book numbered the line. Absent when it did not - never invented. */
+  line_label?: string | null;
+  qty: string;
+  /** Where that document line lands the goods. Blank when the book names none. */
+  location?: string | null;
+  /** The document's own date, and the line's promised arrival. */
+  issue_date?: string | null;
+  expected_date?: string | null;
+  /**
+   * Q5's location fit, 1 to 5: 1 the row's own location, 2 the same group at another
+   * site, 3 a site pool, 4 a sibling location at the site, 5 anywhere else. Never a
+   * filter, only a rank - a link outside tier 1 is the split instruction for AutoCount.
+   */
+  tier?: number | null;
+  /** Written by the cascade rather than by a person. */
+  auto?: boolean;
+  linked_at?: string | null;
+  /** WHO linked it, by name. Null on a cascade link, which nobody did by hand. */
+  linked_by_name?: string | null;
+  /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
+  po_id?: string | null;
+}
 
 export interface OrderInquiryRow {
   id: string;
@@ -68,17 +115,25 @@ export interface OrderInquiryRow {
   /** The date a DELAY moved from, the sales order a CHANGE SO points at. */
   note?: string | null;
   /**
-   * The outstanding supplier PO this row was tagged to ("Place on PO", section G).
-   * Blank until it is placed - never a guess at what would cover it.
+   * Every document this row is linked to, and how much of it sits there
+   * (`projects.order_inquiry_links`). Empty on a raised row. `po_ref` above is the FIRST
+   * link's document, kept as the one-word display the older screens read.
    */
+  links?: OrderInquiryLink[];
+  /** The sum of `links[].qty`. `qty - linked_qty` is what still flows to reorder planning. */
+  linked_qty?: string;
+  /** The document CS cited on an order back, which the cascade tries before any other. */
+  cited_document?: string | null;
   po_ref?: string | null;
   po_line_id?: string | null;
   /**
-   * Whether this row's own product still has an outstanding purchase-order line to tag
-   * (section G). The row action only offers "Place on PO" when this is true - no dead
-   * end where the dialog opens just to say there is nothing to tag.
+   * Whether this row has anywhere to link to at all. Verb AND product, not product alone:
+   * an ORDER BACK row may link to an SPO allocation as well as to a purchase order line
+   * (part 2 section 4b), so a flag that only counted purchase orders hid the Link action
+   * on the one row the feature was built for. The row action offers Link only when this
+   * is true - no dead end where the dialog opens to say there is nothing to link.
    */
-  has_open_po_line?: boolean;
+  has_link_candidate?: boolean;
 
   state: OrderInquiryState | string;
   actioned_at?: string | null;
@@ -175,8 +230,17 @@ export interface OrderInquiryWorklistRow {
    */
   taken_from_po?: string;
   remaining_open?: string;
-  /** Same as `OrderInquiryRow.has_open_po_line`, for this cross-project worklist. */
-  has_open_po_line?: boolean;
+  /**
+   * Where this row's quantity actually sits (AC-I5): one entry per link, PO or SPO. The
+   * "Linked to" column reads `linked_qty of qty` and then names each document. Empty on a
+   * row nobody has linked - which is what "still to link" looks like.
+   */
+  links?: OrderInquiryLink[];
+  linked_qty?: string;
+  /** The document CS cited on an order back. Named on the row so the walk can honour it. */
+  cited_document?: string | null;
+  /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
+  has_link_candidate?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */
@@ -185,6 +249,14 @@ export interface OrderInquiryWorklistRow {
   state: OrderInquiryState | string;
   /** When purchasing was told. The spreadsheet's per-day tabs are this date. */
   raised_at?: string | null;
+  /**
+   * WHO told them, by name: the person who confirmed the supply revision that raised
+   * THIS row, falling back to the inquiry header for an amendment-born row that has no
+   * revision. Per row, never off the header alone - the header is re-stamped on every
+   * reconfirm, so it would name the latest reconfirmer beside an older row's own clock.
+   * Never an id: the cell prints this as it comes. Null when nobody was recorded.
+   */
+  raised_by_name?: string | null;
   verb: OrderInquiryVerb | string;
   note?: string | null;
 
@@ -211,6 +283,13 @@ export interface OrderInquiryWorklistParams {
   state?: string;
   project_id?: string;
   supplier_id?: string;
+  /** The id of the person who raised the rows, picked off the summary's own list. */
+  raised_by?: string;
+  /**
+   * Where the row is linked (AC-I5). `po` and `spo` mean "has at least one link of that
+   * kind"; `none` means no link at all, which is the buyer's own worklist.
+   */
+  linked?: 'po' | 'spo' | 'none';
   page?: number;
   limit?: number;
   sort?: string;
@@ -245,18 +324,24 @@ export interface OrderInquiryWorklistSummary {
   total_qty: string;
   by_state: {
     raised: number;
+    /** Some of the quantity is on documents, the rest is still demand (section 3.I). */
+    partly_linked: number;
     actioned: number;
     cancelled: number;
+    /** Wholly covered by links. Stored as `placed`, read as "Linked" (AC-I1). */
+    placed: number;
     total: number;
   };
   /**
-   * The three axes the screen's own controls are built from. Each is computed with every
+   * The axes the screen's own controls are built from. Each is computed with every
    * filter EXCEPT its own, because a control that empties itself the moment you use it
    * cannot be used a second time.
    */
   by_month: OrderInquiryMonthTotal[];
   suppliers: OrderInquiryFacet[];
   projects: OrderInquiryFacet[];
+  /** The people who raised the rows in view, id + name. The "Raised by" filter's list. */
+  raised_by: OrderInquiryFacet[];
 }
 
 /* --------------------------------------------------------- the schedule matrix
@@ -330,10 +415,28 @@ export interface OrderInquiryPoCandidateClaim {
   placed_date?: string | null;
 }
 
-/** One open supplier PO line the row could be tagged to, soonest `expected_date` first. */
+/**
+ * One open document line the row could be linked to, in the walk's own order (Q5 + Q7):
+ * the cited document first, then SPO allocations before PO lines on an ORDER BACK row,
+ * then location tier, then the PO's issue date, then the line's expected date, then the
+ * document number. Location NEVER filters a candidate out, it only ranks it.
+ */
 export interface OrderInquiryPoCandidate {
-  po_line_id: string;
+  /** Which book. `spo` candidates are offered to an ORDER BACK row and to nothing else. */
+  kind: 'po' | 'spo';
+  /** The PO line's id, or the SPO allocation's. Exactly one of the two is set. */
+  po_line_id?: string | null;
+  spo_allocation_id?: string | null;
   po_number: string;
+  /** `L3` when the book numbered the line. */
+  line_label?: string | null;
+  /** Where that line lands the goods, and how well it fits the row's own location. */
+  location?: string | null;
+  tier: number;
+  /** The document's own date - the cascade's FIRST key (Q7). */
+  issue_date?: string | null;
+  /** CS named this document on the order back, so the walk tries it before any other. */
+  cited: boolean;
   /** Blank when the purchase order carries no supplier - never a guess. */
   supplier_name?: string | null;
   expected_date?: string | null;
@@ -360,9 +463,14 @@ export interface OrderInquiryPoCandidate {
   default_take: string;
 }
 
-/** One line of a cascade placement - this row takes `qty` off `po_line_id`. */
+/**
+ * One line of a link - this row takes `qty` off ONE document line. Exactly one of
+ * `po_line_id` / `spo_allocation_id` is set, the same rule the link row's own CHECK
+ * constraint holds.
+ */
 export interface OrderInquiryPoAllocation {
-  po_line_id: string;
+  po_line_id?: string;
+  spo_allocation_id?: string;
   qty: string;
 }
 
@@ -392,10 +500,20 @@ export interface UnplaceAllRequest {
   raised_date?: string;
   project_id?: string;
   supplier_id?: string;
+  raised_by?: string;
 }
 
 export interface UnplaceAllResult {
   unplaced: number;
+}
+
+/**
+ * `POST .../order-inquiry-rows/{rowId}/unplace` - Unlink. With a `link_id` it removes
+ * THAT link and leaves the rest; without one it removes every link the row holds, which
+ * is what the old whole-row untag meant and what "Unlink all" on a row still means.
+ */
+export interface UnlinkRequest {
+  link_id?: string;
 }
 
 /**

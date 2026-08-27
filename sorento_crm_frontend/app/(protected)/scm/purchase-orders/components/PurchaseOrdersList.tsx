@@ -67,6 +67,22 @@ const OUTSTANDING_TO_PARAM: Record<OutstandingFilter, boolean | null> = {
   completed: false,
 };
 
+/** Allocated = yes | no, or every order (AC-G4). A string rather than a tri-state boolean
+ *  because that is what `SearchableSelect` reads and writes, the same as the Status filter
+ *  beside it. */
+type AllocatedFilter = '' | 'yes' | 'no';
+
+const ALLOCATED_TO_PARAM: Record<AllocatedFilter, boolean | null> = {
+  '': null,
+  yes: true,
+  no: false,
+};
+
+const ALLOCATED_FILTER_OPTIONS = [
+  { value: 'yes', label: 'Allocated' },
+  { value: 'no', label: 'Not allocated' },
+];
+
 const isDraft = isDraftPurchaseOrder;
 
 export default function PurchaseOrdersList() {
@@ -83,6 +99,9 @@ export default function PurchaseOrdersList() {
   // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
   // book by line, and firing it on every character is a query per letter typed.
   const [productDraft, setProductDraft] = useState('');
+  // "Is this purchase order already spoken for" (section 3.G, AC-G4). '' = every order,
+  // 'yes' = something is linked to a line of it, 'no' = nothing is.
+  const [allocatedFilter, setAllocatedFilter] = useState<AllocatedFilter>('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Confirm-flow dialog state.
@@ -102,6 +121,7 @@ export default function PurchaseOrdersList() {
     supplier: null,
     productCode: productFilter || null,
     outstanding: OUTSTANDING_TO_PARAM[outstandingFilter],
+    allocated: ALLOCATED_TO_PARAM[allocatedFilter],
   });
 
   // `createGr` is deliberately not taken: recording what arrived is a receiving decision
@@ -113,7 +133,7 @@ export default function PurchaseOrdersList() {
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, statusFilter, productFilter, outstandingFilter]);
+  }, [searchQuery, statusFilter, productFilter, outstandingFilter, allocatedFilter]);
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
 
@@ -127,6 +147,7 @@ export default function PurchaseOrdersList() {
           status: statusFilter || undefined,
           product_code: productFilter || undefined,
           outstanding: OUTSTANDING_TO_PARAM[outstandingFilter] ?? undefined,
+          allocated: ALLOCATED_TO_PARAM[allocatedFilter] ?? undefined,
         },
       ),
     [
@@ -137,6 +158,7 @@ export default function PurchaseOrdersList() {
       statusFilter,
       productFilter,
       outstandingFilter,
+      allocatedFilter,
     ],
   );
 
@@ -244,6 +266,31 @@ export default function PurchaseOrdersList() {
         size: 80,
         meta: { headerTitle: 'Lines', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
       },
+      {
+        accessorKey: 'allocated_qty',
+        // How much of this order an order inquiry has already occupied (section 3.G,
+        // AC-G4). WHO is on it lives on the detail page's Allocated to panel - a list of
+        // 13,000 orders answers "is this one spoken for", not "by whom".
+        header: ({ column }) => <DataGridColumnHeader title="Allocated" column={column} />,
+        cell: ({ row }) =>
+          row.original.allocated_qty ? (
+            fmtInt(row.original.allocated_qty)
+          ) : (
+            // 0 and "nothing is linked to it" are the same answer here, and the dash is
+            // what stops a column of zeros reading as a figure somebody has to check.
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ),
+        // Not sortable: the figure is computed off the links table per page rather than
+        // being a column of `purchase_orders`, so an ORDER BY on it would need a join the
+        // list does not make. The filter beside it is what narrows on this fact.
+        enableSorting: false,
+        size: 110,
+        meta: {
+          headerTitle: 'Allocated',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
       // No per-row action column. "Create GR" lived here and is gone, the same day and for
       // the same reason "Create DO" came off the sales-order list: recording what arrived
       // is a receiving decision made against the delivery in hand, not a button beside a
@@ -273,7 +320,8 @@ export default function PurchaseOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = (statusFilter ? 1 : 0) + (productFilter ? 1 : 0);
+  const filtersActive =
+    (statusFilter ? 1 : 0) + (productFilter ? 1 : 0) + (allocatedFilter ? 1 : 0);
   const lastCost = data?.product_cost ?? null;
 
   // Confirm applies to the DRAFT subset of the selection (select-all can include actives);
@@ -470,6 +518,21 @@ export default function PurchaseOrdersList() {
                         placeholder="All statuses"
                       />
                     </div>
+                    <div>
+                      <Label htmlFor="po-allocated" className="mb-1 block">
+                        Allocated
+                      </Label>
+                      {/* Clearable, like every other optional select: the buyer has to be
+                          able to unset it, not only change it. */}
+                      <SearchableSelect
+                        id="po-allocated"
+                        value={allocatedFilter}
+                        onChange={(v) => setAllocatedFilter((v || '') as AllocatedFilter)}
+                        options={ALLOCATED_FILTER_OPTIONS}
+                        placeholder="Any"
+                        clearable
+                      />
+                    </div>
                     {filtersActive > 0 ? (
                       <div className="flex justify-end">
                         <Button
@@ -479,6 +542,7 @@ export default function PurchaseOrdersList() {
                             setStatusFilter('');
                             setProductFilter('');
                             setProductDraft('');
+                            setAllocatedFilter('');
                           }}
                         >
                           Clear filters

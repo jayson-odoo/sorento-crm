@@ -79,6 +79,10 @@ export interface DraftLine {
   buy_qty: string;
   buy_reason: string;
   is_discontinued: boolean;
+  /** This Buy is an order back against a document already on its way (part 2 4b). */
+  order_back: boolean;
+  /** The document CS cited for it, if any. Tried first by the auto-link walk. */
+  cited_document: string;
 }
 
 /** The proposal as CS first sees it: the engine's components, unedited. */
@@ -130,6 +134,10 @@ export function draftFromLine(line: SupplyLine): DraftLine {
     buy_qty: buy?.qty ?? '0',
     buy_reason: buy?.cs_reason ?? '',
     is_discontinued: line.is_discontinued,
+    // A fresh proposal is never an order back: the engine proposes a purchase, and only a
+    // person can say the quantity is owed against something already on its way.
+    order_back: false,
+    cited_document: '',
   };
 }
 
@@ -190,6 +198,20 @@ export function lineBlockers(draft: DraftLine): string[] {
       `${subject}: the components are ${over ? 'over' : 'short of'} the open quantity by ${fromMinor(
         Math.abs(balance.differenceMinor),
       )}.`,
+    );
+  }
+
+  // The whole-line rule, AC-L5 (the captain, 25 August 2026): "a line is either wholly
+  // covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy".
+  // Said only on a line that already ADDS UP: one refusal at a time, and a line short of
+  // its open quantity has not finished stating a composition to judge.
+  const fromStockMinor = balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
+  if (balance.balanced && fromStockMinor > 0 && balance.buyMinor > 0) {
+    blockers.push(
+      `${subject}: a line is either met wholly from stock or wholly bought. This one ` +
+        `mixes ${fromMinor(fromStockMinor)} from stock with a Buy of ${fromMinor(
+          balance.buyMinor,
+        )}.`,
     );
   }
 

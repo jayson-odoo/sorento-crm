@@ -408,3 +408,113 @@ def test_a_day_first_slash_date_reads_day_first():
     assert _parse_date("31/07/2026") == date(2026, 7, 31)
     assert _parse_date("2026/07/31") == date(2026, 7, 31)
     assert _parse_date("nonsense") is None
+
+
+# --------------------------------------------------------------------------------- #
+# AC-F3.5 - the measurements the container workbook is built from
+# --------------------------------------------------------------------------------- #
+
+
+def _measured_resolver() -> AliasResolver:
+    """The 375 mapping plus migration 436's measurement aliases, read off the migration.
+
+    Imported rather than copied: the point of the test is that the spellings the supplier
+    actually prints resolve, and a private copy here would pass against a mapping only this
+    file believes in.
+    """
+    import importlib.util
+
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "436_packing_list_workbook_fields.py"
+    )
+    spec = importlib.util.spec_from_file_location("m436", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.DOC_TYPE == DOC_TYPE
+
+    mapping: dict[str, str] = {}
+    for field, alias in list(_ALIASES) + list(m._ALIASES):
+        mapping.setdefault(normalize_header(alias), field)
+        mapping.setdefault(normalize_header(field), field)
+    return AliasResolver(DOC_TYPE, mapping)
+
+
+def test_the_reader_keeps_the_material_pack_size_and_carton_the_supplier_printed():
+    # The container workbook derives the carton count and the volume from these three, so a
+    # reader that drops them makes every one of its figures un-derivable.
+    out = read_workbook(
+        workbook(
+            [
+                ["型号", "品名", "材质", "数量", "装箱数", "外箱尺寸", "单价"],
+                ["SRTWT7443", "BASIN COLD TAP", "铜", 490, 10, "34*24*30", 65.5],
+            ]
+        ),
+        _measured_resolver(),
+    )
+
+    line = out.documents[0].lines[0]
+    assert line.material == "铜"
+    assert line.pcs_per_carton == 10
+    assert (line.carton_length_cm, line.carton_width_cm, line.carton_height_cm) == (
+        34,
+        24,
+        30,
+    )
+
+
+def test_three_carton_columns_are_read_the_same_as_one_combined_cell():
+    # Both shapes are real: the FSCU sheet has three columns under `SIZE (CM)`, the
+    # pre-loading list has one cell.
+    out = read_workbook(
+        workbook(
+            [
+                ["型号", "品名", "数量", "长", "宽", "高", "单价"],
+                ["SRTWT7443", "BASIN COLD TAP", 490, 34, 24, 30, 65.5],
+            ]
+        ),
+        _measured_resolver(),
+    )
+
+    line = out.documents[0].lines[0]
+    assert (line.carton_length_cm, line.carton_width_cm, line.carton_height_cm) == (
+        34,
+        24,
+        30,
+    )
+
+
+def test_a_carton_cell_that_is_not_three_numbers_is_left_alone():
+    """`730*370` is a face measurement, not a carton.
+
+    Read as one, it would put a volume nobody measured on the container's total, and the
+    sheet's `TOTAL CBM` is what a container is booked against.
+    """
+    out = read_workbook(
+        workbook(
+            [
+                ["型号", "品名", "数量", "外箱尺寸", "单价"],
+                ["SRTWT7443", "BASIN COLD TAP", 490, "730*370", 65.5],
+                ["SRTWT7444", "BASIN COLD TAP", 10, "see drawing", 65.5],
+            ]
+        ),
+        _measured_resolver(),
+    )
+
+    for line in out.documents[0].lines:
+        assert line.carton_length_cm is None
+        assert line.carton_width_cm is None
+        assert line.carton_height_cm is None
+
+
+def test_a_document_that_measures_nothing_states_nothing():
+    # Kailu's proforma prints no material and no carton at all, and a zero in their place
+    # would be read downstream as a measurement rather than as its absence.
+    out = read_workbook(kailu_proforma_workbook(), _measured_resolver())
+
+    line = out.documents[0].lines[0]
+    assert line.material is None
+    assert line.pcs_per_carton is None
+    assert line.carton_length_cm is None

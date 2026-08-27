@@ -280,6 +280,12 @@ class BoardDecisionReserve(BaseModel):
     #: The warehouse CODE, which is what the screen reads. The id beside it is addressing.
     location: Optional[str] = None
     qty: str
+    #: Which rung the confirmation froze this share under (`group_take` / `pool` / ...).
+    #: Carried rather than dropped: without it every reserve row of a covered line reached
+    #: the screen unrunged and the vocabulary had to be guessed back from the warehouse
+    #: code, which is the reading PLAN section 2 exists to replace. `None` on a revision
+    #: frozen before the rung was recorded.
+    rung: Optional[str] = None
 
 
 class BoardDecisionBorrow(BaseModel):
@@ -344,6 +350,27 @@ class BoardLineOrderInquiry(BaseModel):
     #: `OI-000123`. Null only on a row raised before inquiries were numbered.
     inquiry_no: Optional[str] = None
     state: str
+
+
+class BoardLineLending(BaseModel):
+    """One borrow taken OFF this line by another sales order (AC-L6)."""
+
+    #: How much was taken.
+    qty: str
+    #: The order that took it, by its document number - never a UUID.
+    so_number: Optional[str] = None
+    #: Its line on that order, so two lines of one order are told apart.
+    line_no: Optional[int] = None
+
+
+class BoardProposed(BaseModel):
+    """What the engine suggested for one line, in the same words a source is stated in.
+
+    A wrapper rather than a bare list, so the suggestion has somewhere to grow a fact ABOUT
+    itself (when it was frozen, which revision) without every reader re-shaping.
+    """
+
+    components: List[BoardSource] = []
 
 
 class BoardContribution(BaseModel):
@@ -440,6 +467,14 @@ class BoardContribution(BaseModel):
     rank_score: float
     rank_factors: List[BoardRankFactor] = []
     sources: List[BoardSource] = []
+    #: What the ENGINE suggested for this line, beside what was decided (AC-D2).
+    #:
+    #: The LIVE ladder on an undecided line (the same list as `sources`), and the composition
+    #: frozen at confirm on a covered one - where `sources` states the DECISION and the
+    #: suggestion would otherwise be lost the moment somebody amended it. Null, never an
+    #: empty object, on a revision written before the proposal was frozen: "not recorded" and
+    #: "the engine suggested nothing" are different answers and the screen says which.
+    proposed: Optional[BoardProposed] = None
     #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
@@ -468,6 +503,11 @@ class BoardContribution(BaseModel):
     #: an inquiry exists only once somebody has confirmed supply - and never an empty
     #: object, by the same rule `decision` follows.
     order_inquiry: Optional[BoardLineOrderInquiry] = None
+    #: What ANOTHER sales order borrowed off THIS line (AC-L6, the captain 25 August 2026:
+    #: the donor's cell reads "71 lent to SO415472"). A borrow used to be visible only on the
+    #: taking side, so the agent whose stock moved found out when the delivery did not.
+    #: An empty list when nothing was lent, never absent: the cell has one shape to read.
+    lent_to: List[BoardLineLending] = Field(default_factory=list)
 
 
 class BorrowDonorImpact(BaseModel):
@@ -712,6 +752,13 @@ class BoardCellLocation(BaseModel):
     #: "Available Qty": `on hand - SO + SPO`, SIGNED and never clamped - "oversold here by 632"
     #: is the signal, and a floor of zero would report it as "nothing left" instead.
     available_qty: Optional[str] = None
+    #: "PO qty": the open PURCHASE-order balance at this location, less what an order-inquiry
+    #: row already claims off those lines. SPO documents are excluded - they are already
+    #: `spo_qty`, and counting them twice would invent supply.
+    #:
+    #: INFORMATION ONLY, and deliberately outside `available_qty`: a purchase order reaches a
+    #: project line through a link, never by sitting at the location (PLAN section I).
+    po_open_qty: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"

@@ -32,6 +32,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -49,6 +50,7 @@ import {
 } from '@/app/(protected)/scm/hooks/useFulfilment';
 import type {
   SpoConfirmLine,
+  SpoCoverageLine,
   SpoDemandLine,
   SpoLocationOption,
   SpoLocationSplit,
@@ -94,12 +96,121 @@ function fmtSigned(value: number): string {
 }
 
 type SplitState = { warehouseId: string; qty: number };
-type LineState = { qty: number; splits: SplitState[] };
+type LineState = {
+  qty: number;
+  /** What the operator TYPED, held apart from what is currently sendable. Null until they
+   *  type one, and the quantity is then a derived default that follows the ticked takes.
+   *  Kept separate because the sendable figure is clamped to what is ticked, and writing
+   *  that clamp back over the typed one is how unticking the only take stored 0 and the
+   *  re-tick had nothing left to give back. */
+  typedQty: number | null;
+  splits: SplitState[];
+  /** Which PO takes this line draws from. Every one, until somebody unticks one (AC-G1). */
+  poTakeIds: string[];
+  /** Which demand this SPO is pointed at - `SpoCoverageLine.key`s (Q4, AC-G3). */
+  soKeys: string[];
+};
 type ScheduleView = 'po' | 'so';
 
-function defaultSplits(ln: SpoSuggestionLine): SplitState[] {
-  if (ln.cannot_convert || !ln.suggested_warehouse_id || ln.suggested_qty <= 0) return [];
-  return [{ warehouseId: ln.suggested_warehouse_id, qty: ln.suggested_qty }];
+/**
+ * What the ticked takes cover - the ceiling on this line's SPO quantity (AC-G2).
+ *
+ * The cascade RE-RUN over the ticked lines, not the sum of the slices it took while every
+ * line was ticked: with 100 packed against a 60-open PO and a 150-open one, the walk takes
+ * 60 and 40, and unticking the first must ask the second for the whole 100 - it has it.
+ * Summing the remaining slice answered 40 and quietly lost 60 pieces of cover that exist.
+ * `open_qty` is what makes that computable here; the server does the same walk on Create.
+ */
+function poCoveredFor(ln: SpoSuggestionLine, takeIds: string[]): number {
+  const available = ln.po_takes
+    .filter((t) => takeIds.includes(t.po_line_id))
+    .reduce((sum, t) => sum + (t.open_qty ?? t.qty), 0);
+  return Math.min(available, ln.packed_qty);
+}
+
+/**
+ * What the ticked demand actually GETS from this SPO - the one walk every figure on the
+ * row is read off (browser pass 2, finding 3).
+ *
+ * There used to be two: the cell showed `min(sum of ticked need, qty)` and the banner
+ * compared the raw `sum of ticked need` against the packed quantity. On a container packed
+ * with 100 whose POs cover 19, the cell read 19 and the banner read "302 ticked against 100
+ * packed" and disabled Create SPO - two answers to one question, and the wrong one was the
+ * one holding the button.
+ *
+ * The walk: each ticked entry, in the server's own order, takes what it needs out of the
+ * SPO quantity until there is none left. An entry that gets nothing is one this container
+ * cannot serve at all, which is the only thing worth stopping the operator for.
+ */
+function coverageTakes(
+  ln: SpoSuggestionLine,
+  soKeys: string[],
+  qty: number,
+): { entry: SpoCoverageLine; take: number }[] {
+  const out: { entry: SpoCoverageLine; take: number }[] = [];
+  let left = Math.max(qty, 0);
+  for (const entry of ln.so_coverage ?? []) {
+    if (!soKeys.includes(entry.key)) continue;
+    const take = Math.min(entry.qty, left);
+    out.push({ entry, take: Math.max(take, 0) });
+    left -= Math.max(take, 0);
+  }
+  return out;
+}
+
+/** What the ticks cover between them - what the SO-covered cell states. */
+function tickedQty(ln: SpoSuggestionLine, soKeys: string[], qty: number): number {
+  return coverageTakes(ln, soKeys, qty).reduce((sum, t) => sum + t.take, 0);
+}
+
+/**
+ * The ticks the server proposed, narrowed to what this SPO can reach.
+ *
+ * The server walks its list against the PACKED quantity; the SPO is capped at what open
+ * POs cover, which is often less. Ticking an order the container cannot serve on the very
+ * first render is how the banner fired on a screen nobody had touched.
+ */
+function defaultSoKeys(ln: SpoSuggestionLine, qty: number): string[] {
+  const proposed = (ln.so_coverage ?? []).filter((c) => c.default_ticked).map((c) => c.key);
+  return coverageTakes(ln, proposed, qty)
+    .filter((t) => t.take > 0)
+    .map((t) => t.entry.key);
+}
+
+/**
+ * Where the quantity lands, derived from the same walk (AC-G4).
+ *
+ * Each ticked piece of demand pulls what it needs, at ITS warehouse. What no tick claims is
+ * free stock, and it goes to the suggested warehouse - labelled Unassigned on screen,
+ * because nobody has said who it is for and pretending otherwise is how a container arrives
+ * against the wrong order.
+ */
+function splitsFromTicks(
+  ln: SpoSuggestionLine,
+  soKeys: string[],
+  qty: number,
+): SplitState[] {
+  if (ln.cannot_convert || qty <= 0) return [];
+  const byWarehouse = new Map<string, number>();
+  let claimed = 0;
+  for (const { entry, take } of coverageTakes(ln, soKeys, qty)) {
+    if (take <= 0) continue;
+    const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
+    if (!warehouse) continue;
+    byWarehouse.set(warehouse, (byWarehouse.get(warehouse) ?? 0) + take);
+    claimed += take;
+  }
+  const unassigned = qty - claimed;
+  if (unassigned > 0 && ln.suggested_warehouse_id) {
+    byWarehouse.set(
+      ln.suggested_warehouse_id,
+      (byWarehouse.get(ln.suggested_warehouse_id) ?? 0) + unassigned,
+    );
+  }
+  return [...byWarehouse.entries()].map(([warehouseId, splitQty]) => ({
+    warehouseId,
+    qty: splitQty,
+  }));
 }
 
 function splitsTotal(splits: SplitState[]): number {
@@ -123,7 +234,17 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // applies to its own qty overrides).
     const next: Record<string, LineState> = {};
     for (const ln of suggestion.data?.lines ?? []) {
-      next[ln.shipment_line_id] = { qty: ln.suggested_qty, splits: defaultSplits(ln) };
+      // Every take ticked and the server's own demand walk pre-ticked: the default IS the
+      // answer for most containers, and the ticks exist for the ones where it is not.
+      const poTakeIds = ln.po_takes.map((t) => t.po_line_id);
+      const soKeys = defaultSoKeys(ln, ln.suggested_qty);
+      next[ln.shipment_line_id] = {
+        qty: ln.suggested_qty,
+        typedQty: null,
+        poTakeIds,
+        soKeys,
+        splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
+      };
     }
     setState(next);
   }, [suggestion.data]);
@@ -131,20 +252,80 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const lines = useMemo(() => suggestion.data?.lines ?? [], [suggestion.data]);
   const alreadyConverted = suggestion.data?.already_converted ?? false;
 
-  const qtyFor = (ln: SpoSuggestionLine) => state[ln.shipment_line_id]?.qty ?? ln.suggested_qty;
-  const splitsFor = (ln: SpoSuggestionLine) => state[ln.shipment_line_id]?.splits ?? defaultSplits(ln);
+  const stateFor = (ln: SpoSuggestionLine): LineState => {
+    const held = state[ln.shipment_line_id];
+    if (held) return held;
+    const soKeys = defaultSoKeys(ln, ln.suggested_qty);
+    return {
+      qty: ln.suggested_qty,
+      typedQty: null,
+      poTakeIds: ln.po_takes.map((t) => t.po_line_id),
+      soKeys,
+      splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
+    };
+  };
+  const qtyFor = (ln: SpoSuggestionLine) => stateFor(ln).qty;
+  const splitsFor = (ln: SpoSuggestionLine) => stateFor(ln).splits;
+  const takeIdsFor = (ln: SpoSuggestionLine) => stateFor(ln).poTakeIds;
+  const soKeysFor = (ln: SpoSuggestionLine) => stateFor(ln).soKeys;
 
-  const setQty = (ln: SpoSuggestionLine, qty: number) =>
+  const patch = (ln: SpoSuggestionLine, next: Partial<LineState>) =>
     setState((prev) => ({
       ...prev,
-      [ln.shipment_line_id]: { qty, splits: prev[ln.shipment_line_id]?.splits ?? defaultSplits(ln) },
+      [ln.shipment_line_id]: { ...stateFor(ln), ...next },
     }));
 
-  const setSplits = (ln: SpoSuggestionLine, splits: SplitState[]) =>
-    setState((prev) => ({
-      ...prev,
-      [ln.shipment_line_id]: { qty: prev[ln.shipment_line_id]?.qty ?? ln.suggested_qty, splits },
-    }));
+  const setQty = (ln: SpoSuggestionLine, qty: number) => {
+    const current = stateFor(ln);
+    // The split follows the quantity, because it is derived from the ticks against it -
+    // leaving a stale split behind is how Create SPO refuses with "the split has to add up"
+    // on a screen where nothing looks wrong.
+    patch(ln, {
+      qty,
+      typedQty: qty,
+      splits: splitsFromTicks(ln, current.soKeys, qty),
+    });
+  };
+
+  const setSplits = (ln: SpoSuggestionLine, splits: SplitState[]) => patch(ln, { splits });
+
+  /**
+   * Untick a take and the SPO falls to what the rest of them cover; tick it back and it
+   * returns (AC-G2).
+   *
+   * ONE recompute for both directions. It used to take `min(current qty, covered)`, which
+   * cannot go back up: unticking lowered the quantity, and re-ticking then held it at the
+   * lowered figure while the PO-covers cell alone recovered - so the SPO qty, the SO
+   * covered, the split and the Create gate all sat at the unticked values until a reload.
+   *
+   * A quantity the operator TYPED is theirs and survives, clamped to what is ticked. One
+   * they never touched is a derived default and follows the takes.
+   */
+  const toggleTake = (ln: SpoSuggestionLine, poLineId: string, on: boolean) => {
+    const current = stateFor(ln);
+    const poTakeIds = on
+      ? [...current.poTakeIds, poLineId]
+      : current.poTakeIds.filter((id) => id !== poLineId);
+    const covered = poCoveredFor(ln, poTakeIds);
+    // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
+    // view of what can be sent right now, and storing it destroyed the decision behind it.
+    const qty = current.typedQty === null ? covered : Math.min(current.typedQty, covered);
+    patch(ln, {
+      poTakeIds,
+      qty,
+      soKeys: current.soKeys,
+      splits: splitsFromTicks(ln, current.soKeys, qty),
+    });
+  };
+
+  /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
+  const toggleCoverage = (ln: SpoSuggestionLine, key: string, on: boolean) => {
+    const current = stateFor(ln);
+    const soKeys = on
+      ? [...current.soKeys, key]
+      : current.soKeys.filter((k) => k !== key);
+    patch(ln, { soKeys, splits: splitsFromTicks(ln, soKeys, current.qty) });
+  };
 
   const confirmLines: SpoConfirmLine[] = useMemo(
     () =>
@@ -161,6 +342,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           qty: include ? qty : 0,
           include,
           location_splits,
+          po_take_ids: takeIdsFor(ln),
+          so_line_ids: soKeysFor(ln),
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,27 +367,102 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     return bad;
   }, [lines, confirmLines]);
 
+  /**
+   * Lines where the ticked demand asks for more than the container holds (AC-G5).
+   *
+   * The figures are shown rather than the ticks being silently clamped: the operator ticked
+   * four orders for a container that can serve three, and which of them to drop is their
+   * decision, not an arithmetic one.
+   */
+  const overTicked = useMemo(() => {
+    const bad = new Map<string, string[]>();
+    for (const ln of lines) {
+      if (ln.cannot_convert) continue;
+      // An order this SPO cannot serve AT ALL - the operator ticked past what the
+      // container holds. Which one to drop is their decision, so it is named rather than
+      // silently untitcked, and Create waits until they have made it (AC-G5).
+      const starved = coverageTakes(ln, soKeysFor(ln), qtyFor(ln))
+        .filter((t) => t.take <= 0)
+        .map((t) => t.entry.document ?? t.entry.key);
+      if (starved.length) bad.set(ln.shipment_line_id, starved);
+    }
+    return bad;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, state]);
+
+  /**
+   * Ticked demand this SPO can only PART-cover - stated, never blocking (AC-G5's figures).
+   *
+   * The default walk does this on its last entry every time a container is smaller than the
+   * demand behind it, which is most of them, so disabling Create for it would disable Create
+   * for the normal case. What it is not allowed to do is stay quiet: the order is going to
+   * be short, and the person sending it should read that here rather than discover it when
+   * the container lands.
+   */
+  const partlyCovered = useMemo(() => {
+    const out = new Map<string, { asked: number; covered: number; short: string[] }>();
+    for (const ln of lines) {
+      if (ln.cannot_convert) continue;
+      const takes = coverageTakes(ln, soKeysFor(ln), qtyFor(ln));
+      const short = takes
+        .filter((t) => t.take > 0 && t.take < t.entry.qty)
+        .map((t) => t.entry.document ?? t.entry.key);
+      if (!short.length) continue;
+      out.set(ln.shipment_line_id, {
+        asked: takes.reduce((sum, t) => sum + t.entry.qty, 0),
+        covered: takes.reduce((sum, t) => sum + t.take, 0),
+        short,
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, state]);
+
   const renderQtyCell = (ln: SpoSuggestionLine) => (
     <Input
       type="number"
       min={0}
-      max={ln.po_covered_qty || undefined}
+      max={poCoveredFor(ln, takeIdsFor(ln)) || undefined}
       step={1}
       className="h-8 w-24 tabular-nums"
       value={qtyFor(ln)}
       disabled={ln.cannot_convert}
-      title="What an open PO pulls this SPO up to (po_covered_qty) - cannot exceed it"
+      title="What the TICKED POs pull this SPO up to - cannot exceed it"
       onChange={(e) => {
         const raw = Math.max(0, Number(e.target.value) || 0);
-        const next = Math.min(raw, ln.po_covered_qty);
+        const next = Math.min(raw, poCoveredFor(ln, takeIdsFor(ln)));
         setQty(ln, next);
       }}
     />
   );
 
+  /**
+   * How much of this line's quantity no tick claims (AC-G4, Q4).
+   *
+   * It rides at the suggested warehouse, which is often the SAME warehouse a ticked order
+   * needs - so the split reads "BRW 70" whether 40 of it is spoken for or none of it is,
+   * and unticking an order moved no number on the screen at all. The figure has to be
+   * stated, because it is the difference between goods promised to an order and free stock.
+   */
+  const unassignedFor = (ln: SpoSuggestionLine) =>
+    Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), qtyFor(ln)), 0);
+
+  /** Per warehouse, what the ticked demand accounts for - the same walk the cell reads. */
+  const claimedFor = (ln: SpoSuggestionLine) => {
+    const out = new Map<string, number>();
+    for (const { entry, take } of coverageTakes(ln, soKeysFor(ln), qtyFor(ln))) {
+      if (take <= 0) continue;
+      const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
+      if (!warehouse) continue;
+      out.set(warehouse, (out.get(warehouse) ?? 0) + take);
+    }
+    return out;
+  };
+
   const renderLocationCell = (ln: SpoSuggestionLine) => {
     const splits = splitsFor(ln);
     const qty = qtyFor(ln);
+    const unassigned = unassignedFor(ln);
     const disabled = ln.cannot_convert || qty <= 0 || ln.location_options.length === 0;
     const label =
       splits.length === 0
@@ -215,18 +473,26 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           : `${splits.length} locations`;
     const mismatch = splitMismatch.has(ln.shipment_line_id);
     return (
-      <div className="flex items-center gap-1">
-        <LocationSplitPopover
-          line={ln}
-          splits={splits}
-          qty={qty}
-          disabled={disabled}
-          triggerLabel={label}
-          mismatch={mismatch}
-          onChange={(next) => setSplits(ln, next)}
-        />
-        {ln.location_options.length > 0 && !ln.cannot_convert ? (
-          <SoCoveredDrillPopover line={ln} splits={splits} />
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <LocationSplitPopover
+            line={ln}
+            splits={splits}
+            qty={qty}
+            claimed={claimedFor(ln)}
+            disabled={disabled}
+            triggerLabel={label}
+            mismatch={mismatch}
+            onChange={(next) => setSplits(ln, next)}
+          />
+          {ln.location_options.length > 0 && !ln.cannot_convert ? (
+            <SoCoveredDrillPopover line={ln} splits={splits} />
+          ) : null}
+        </div>
+        {unassigned > 0 && !ln.cannot_convert ? (
+          <span className="text-2xs text-muted-foreground">
+            {fmtInt(unassigned)} unassigned
+          </span>
         ) : null}
       </div>
     );
@@ -278,11 +544,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           if (!ln.po_takes.length) {
             return <span className="tabular-nums text-muted-foreground">{fmtInt(0)}</span>;
           }
+          const ticked = takeIdsFor(ln);
           return (
             <PoTakesDrillPopover
               title={ln.item_code ?? ln.product_name ?? 'This product'}
               takes={ln.po_takes}
-              total={ln.po_covered_qty}
+              total={poCoveredFor(ln, ticked)}
+              tickedIds={ticked}
+              onToggle={(poLineId, on) => toggleTake(ln, poLineId, on)}
             />
           );
         },
@@ -321,17 +590,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="SO covered" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
-          const splits = splitsFor(ln);
-          if (ln.cannot_convert || splits.length === 0) {
+          if (ln.cannot_convert || !(ln.so_coverage ?? []).length) {
             return <span className="tabular-nums text-muted-foreground">{EM_DASH}</span>;
           }
-          const takes = soTakesForLine(ln, splits);
-          const total = takes.reduce((sum, t) => sum + t.takenQty, 0);
-          if (!takes.length) {
-            return <span className="tabular-nums text-muted-foreground">{fmtInt(0)}</span>;
-          }
+          const keys = soKeysFor(ln);
           return (
-            <SoCoveredDrillTrigger title={ln.item_code ?? ln.product_name ?? 'This product'} takes={takes} total={total} />
+            <SoCoverageDrillPopover
+              title={ln.item_code ?? ln.product_name ?? 'This product'}
+              coverage={ln.so_coverage}
+              tickedKeys={keys}
+              total={tickedQty(ln, keys, qtyFor(ln))}
+              unassigned={Math.max(qtyFor(ln) - tickedQty(ln, keys, qtyFor(ln)), 0)}
+              onToggle={(key, on) => toggleCoverage(ln, key, on)}
+            />
           );
         },
         size: 110,
@@ -379,19 +650,36 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, state]);
 
+  // Bucketed by the TICKS, not by a cascade over the chosen locations (AC-G8): the ticks
+  // are what the operator actually decided this SPO is for, and a schedule computed from
+  // anything else would show a different answer to the one the drill above states.
   const soMatrix = useMemo(() => {
     const entries: SpoMatrixEntry<SpoDemandLine & { item_code: string | null }>[] = [];
     for (const ln of lines) {
       if (ln.cannot_convert) continue;
-      const splits = splitsFor(ln);
-      for (const t of soTakesForLine(ln, splits)) {
+      const keys = soKeysFor(ln);
+      let left = qtyFor(ln);
+      for (const entry of ln.so_coverage ?? []) {
+        if (left <= 0) break;
+        if (!keys.includes(entry.key)) continue;
+        const take = Math.min(entry.qty, left);
+        if (take <= 0) continue;
+        left -= take;
         entries.push({
           row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
           row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
           row_description: ln.product_name,
-          date: t.required_date,
-          qty: t.takenQty,
-          detail: { ...t, item_code: ln.item_code },
+          date: entry.required_date,
+          qty: take,
+          detail: {
+            so_number: entry.document,
+            customer_name: entry.customer_name,
+            agent_name: null,
+            required_date: entry.required_date,
+            order_date: null,
+            qty: take,
+            item_code: ln.item_code,
+          },
         });
       }
     }
@@ -532,7 +820,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         <Button
           size="sm"
           onClick={() => create.mutate(confirmLines)}
-          disabled={!includedCount || splitMismatch.size > 0 || create.isPending}
+          disabled={
+            !includedCount || splitMismatch.size > 0 || overTicked.size > 0 || create.isPending
+          }
         >
           {create.isPending ? (
             <LoaderCircle className="size-4 animate-spin" aria-hidden />
@@ -590,6 +880,22 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           <span className="text-2xs font-medium text-destructive">
             {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
             to the SPO qty
+          </span>
+        ) : null}
+        {overTicked.size > 0 ? (
+          <span className="text-2xs font-medium text-destructive">
+            {[...overTicked.values()].flat().join(', ')} - this container has nothing left
+            for it. Untick it, or send more.
+          </span>
+        ) : null}
+        {overTicked.size === 0 && partlyCovered.size > 0 ? (
+          <span className="text-2xs text-muted-foreground">
+            {[...partlyCovered.values()]
+              .map(
+                (p) =>
+                  `${fmtInt(p.asked)} ticked, ${fmtInt(p.covered)} on this container - ${p.short.join(', ')} partly covered`,
+              )
+              .join('; ')}
           </span>
         ) : null}
       </div>
@@ -690,14 +996,24 @@ function soTakesForLine(ln: SpoSuggestionLine, splits: SplitState[]) {
   return out;
 }
 
+/**
+ * Which POs this SPO draws from, oldest DOCUMENT first (Q8), each one tickable (AC-G1).
+ *
+ * The cell shows what the ticked ones cover and how many of them are on - untick the one
+ * that is not really covering this container and the SPO falls to what the rest of them do.
+ */
 function PoTakesDrillPopover({
   title,
   takes,
   total,
+  tickedIds,
+  onToggle,
 }: {
   title: string;
   takes: SpoPoTake[];
   total: number;
+  tickedIds: string[];
+  onToggle: (poLineId: string, on: boolean) => void;
 }) {
   return (
     <Popover>
@@ -705,9 +1021,12 @@ function PoTakesDrillPopover({
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          title="Which PO covers this, earliest first"
+          title="Which PO covers this, oldest purchase order first"
         >
           {fmtInt(total)}
+          <span className="text-2xs text-muted-foreground">
+            {tickedIds.length} of {takes.length} POs
+          </span>
           <Info className="size-3.5 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
@@ -716,21 +1035,106 @@ function PoTakesDrillPopover({
           <p className="text-xs font-medium">{title} - covered by PO</p>
           <div className="space-y-1.5">
             {takes.map((t) => (
-              <div key={t.po_line_id} className="flex items-center justify-between gap-2 text-xs">
-                <div className="min-w-0">
-                  <div className="truncate font-medium" title={t.po_number}>
-                    {t.po_number}
-                  </div>
-                  <div className="truncate text-2xs text-muted-foreground">
-                    {t.supplier_name ?? EM_DASH}
-                    {t.po_date ? ` · doc ${t.po_date}` : ''}
-                    {t.expected_date ? ` · due ${t.expected_date}` : ''}
-                  </div>
-                </div>
+              <label
+                key={t.po_line_id}
+                className="flex items-center justify-between gap-2 text-xs"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Checkbox
+                    checked={tickedIds.includes(t.po_line_id)}
+                    onCheckedChange={(checked) => onToggle(t.po_line_id, !!checked)}
+                    aria-label={`Draw from ${t.po_number}`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium" title={t.po_number}>
+                      {t.po_number}
+                    </span>
+                    <span className="block truncate text-2xs text-muted-foreground">
+                      {t.supplier_name ?? EM_DASH}
+                      {t.po_date ? ` · doc ${t.po_date}` : ''}
+                      {t.expected_date ? ` · due ${t.expected_date}` : ''}
+                    </span>
+                  </span>
+                </span>
                 <span className="shrink-0 tabular-nums">{fmtInt(t.qty)}</span>
-              </div>
+              </label>
             ))}
           </div>
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
+  );
+}
+
+/**
+ * Which demand this SPO is being pointed at, tickable (Q4, AC-G3).
+ *
+ * Project rows first, then retail, in the order the server walked them - and the ticks it
+ * pre-set are the answer for most containers. What no tick claims is stated as Unassigned
+ * rather than quietly attached to the first order in the list.
+ */
+function SoCoverageDrillPopover({
+  title,
+  coverage,
+  tickedKeys,
+  total,
+  unassigned,
+  onToggle,
+}: {
+  title: string;
+  coverage: SpoCoverageLine[];
+  tickedKeys: string[];
+  total: number;
+  unassigned: number;
+  onToggle: (key: string, on: boolean) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          title="Which demand this SPO is for - project by need-by date, then retail"
+        >
+          {fmtInt(total)}
+          <Info className="size-3.5 text-muted-foreground" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent align="start" className="w-96 space-y-2 p-3">
+          <p className="text-xs font-medium">{title} - what is this SPO for</p>
+          <div className="space-y-1.5">
+            {coverage.map((c) => (
+              <label key={c.key} className="flex items-center justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-2">
+                  <Checkbox
+                    checked={tickedKeys.includes(c.key)}
+                    onCheckedChange={(checked) => onToggle(c.key, !!checked)}
+                    aria-label={`Cover ${c.document ?? c.key}`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">
+                      {c.document ?? EM_DASH}
+                      <span className="ms-1 font-normal text-muted-foreground">
+                        {c.kind === 'project' ? 'Project' : 'Retail'}
+                      </span>
+                    </span>
+                    <span className="block truncate text-2xs text-muted-foreground">
+                      {c.customer_name ?? EM_DASH}
+                      {c.warehouse_code ? ` · ${c.warehouse_code}` : ''}
+                      {c.required_date ? ` · needed ${c.required_date}` : ''}
+                    </span>
+                  </span>
+                </span>
+                <span className="shrink-0 tabular-nums">{fmtInt(c.qty)}</span>
+              </label>
+            ))}
+          </div>
+          {unassigned > 0 ? (
+            <p className="border-t pt-2 text-2xs text-muted-foreground">
+              {fmtInt(unassigned)} unassigned - free stock at the suggested warehouse.
+            </p>
+          ) : null}
         </PopoverContent>
       </PopoverPortal>
     </Popover>
@@ -807,6 +1211,7 @@ function LocationSplitPopover({
   line,
   splits,
   qty,
+  claimed,
   disabled,
   triggerLabel,
   mismatch,
@@ -815,6 +1220,11 @@ function LocationSplitPopover({
   line: SpoSuggestionLine;
   splits: SplitState[];
   qty: number;
+  /** What the ticked demand accounts for, per warehouse - the rest of the split is free
+   *  stock. Both parts land in the SAME warehouse whenever the unassigned share rides at a
+   *  warehouse an order also needs, and then no quantity on this popover can tell them
+   *  apart. */
+  claimed: Map<string, number>;
   disabled: boolean;
   triggerLabel: string;
   mismatch: boolean;
@@ -861,6 +1271,36 @@ function LocationSplitPopover({
               {fmtInt(total)} / {fmtInt(qty)} split
             </span>
           </div>
+
+          {(() => {
+            const unassigned = Math.max(
+              qty - [...claimed.values()].reduce((sum, n) => sum + n, 0),
+              0,
+            );
+            if (unassigned <= 0 && claimed.size === 0) return null;
+            return (
+              <div className="space-y-1 rounded-md bg-muted/50 p-2 text-2xs">
+                <p className="font-medium">What this covers</p>
+                {[...claimed.entries()].map(([warehouseId, claimedQty]) => {
+                  const location = line.location_options.find(
+                    (o) => o.warehouse_id === warehouseId,
+                  );
+                  return (
+                    <p key={warehouseId} className="flex justify-between gap-2">
+                      <span>{location?.warehouse_code ?? 'Chosen location'}</span>
+                      <span className="tabular-nums">{fmtInt(claimedQty)}</span>
+                    </p>
+                  );
+                })}
+                {unassigned > 0 ? (
+                  <p className="flex justify-between gap-2 text-muted-foreground">
+                    <span>Unassigned</span>
+                    <span className="tabular-nums">{fmtInt(unassigned)}</span>
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
 
           <div className="space-y-2">
             {splits.map((split, i) => {

@@ -18,6 +18,7 @@ import {
   FileText,
   ListOrdered,
   LoaderCircleIcon,
+  Move,
   Search,
   SquarePen,
   Truck,
@@ -42,6 +43,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -55,6 +57,7 @@ import {
   subtractMoney,
   sumMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useSearchParams } from 'next/navigation';
 import { useSalesOrder, useUpdateSalesOrder } from '../../../hooks/useSalesOrders';
 import { useWarehouseOptions } from '../../../hooks/useScmOptions';
@@ -73,7 +76,15 @@ import {
   salesOrderStatusLabel,
   salesOrderStatusVariant,
 } from '../../../lib/salesOrderStatus';
-import type { SalesOrder, SalesOrderLine, SalesOrderPriority } from '../../../types/scm.types';
+import type {
+  SalesOrder,
+  SalesOrderLine,
+  SalesOrderLineSupplyComponent,
+  SalesOrderPriority,
+} from '../../../types/scm.types';
+// ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
+// with the planning board rather than restated here.
+import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -294,6 +305,35 @@ function productFallback(
     value: row.sku,
     label: row.product_name ? `${row.sku} · ${row.product_name}` : row.sku,
   };
+}
+
+/**
+ * One frozen composition, in the planning board's own words (AC-D4).
+ *
+ * `describe` is the SAME function the board, its list view and the cell popover render with,
+ * imported rather than restated: PLAN section 2 is one vocabulary, and a second phrasing of
+ * "Shared 71 (BRW)" on this page is how two screens start disagreeing about one decision.
+ *
+ * `ownLocation` is what tells the agent's own group from the shared pool on a component
+ * frozen before the rung was recorded.
+ */
+function SupplyText({
+  parts,
+  ownLocation,
+  absent,
+}: {
+  parts?: SalesOrderLineSupplyComponent[] | null;
+  ownLocation?: string | null;
+  absent: string;
+}) {
+  if (!parts) return <span className="text-muted-foreground">{absent}</span>;
+  const text = describeSupply(parts, ownLocation);
+  if (!text) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
 }
 
 export function SalesOrderDetail({ id }: { id: string }) {
@@ -837,6 +877,85 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Order inquiry' },
       },
       {
+        // AC-I9: WHERE this line's Buy actually sits. The same child table the order
+        // inquiry worklist's "Linked to" column and the PO occupancy panel read, so the
+        // three surfaces answer with one voice. A line whose inquiry row exists but holds
+        // no link reads "Not linked"; a line with no inquiry row at all reads "-", which
+        // is the difference between "nothing has been linked" and "nobody was told".
+        id: 'linked_to',
+        accessorFn: (row) => row.linked_to ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
+        cell: ({ row }) => {
+          const links = row.original.linked_to;
+          if (!links) return <span className="text-muted-foreground">-</span>;
+          if (links.length === 0)
+            return <span className="text-muted-foreground">Not linked</span>;
+          return (
+            <div className="min-w-0 space-y-0.5">
+              {links.map((link, index) => {
+                const where = link.line_label || link.location || null;
+                const due = link.expected_date ? fmtDate(link.expected_date) : null;
+                // WHEN it lands, beside where it sits (AC-G7). A link that says which SPO
+                // covers this line and not when it arrives answers half the question the
+                // person reading it came with.
+                const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}${
+                  due ? ` due ${due}` : ''
+                }`;
+                return (
+                  <span
+                    // The INDEX is always in the key. One line can be linked to the same
+                    // SPO line twice - the SPO covers it in two goes, each link carrying
+                    // its own quantity - and kind + document + label collided on the
+                    // second, which React reported as two children with the same key.
+                    key={`${link.kind}-${link.document}-${where ?? 'x'}-${index}`}
+                    className="flex min-w-0 items-center gap-1"
+                    title={label}
+                  >
+                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                      {link.kind}
+                    </span>
+                    <span className="truncate tabular-nums">{label}</span>
+                  </span>
+                );
+              })}
+            </div>
+          );
+        },
+        size: 240,
+        meta: { headerTitle: 'Linked to' },
+      },
+      {
+        // AC-D4: the board's two compositions, on the order they belong to. The SECONDARY
+        // surface for the same question - the board is where the decision is taken, this is
+        // where somebody looking at the order alone can see what was taken.
+        id: 'supply_suggested',
+        accessorFn: (row) => row.supply_proposed ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
+        cell: ({ row }) => (
+          <SupplyText
+            parts={row.original.supply_proposed}
+            ownLocation={row.original.warehouse_code}
+            absent={row.original.decision_revision == null ? '-' : 'Not recorded'}
+          />
+        ),
+        size: 220,
+        meta: { headerTitle: 'Suggested' },
+      },
+      {
+        id: 'supply_decided',
+        accessorFn: (row) => row.supply_decided ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
+        cell: ({ row }) => (
+          <SupplyText
+            parts={row.original.supply_decided}
+            ownLocation={row.original.warehouse_code}
+            absent="-"
+          />
+        ),
+        size: 220,
+        meta: { headerTitle: 'Decided' },
+      },
+      {
         id: 'decision_revision',
         accessorFn: (row) => row.decision_revision ?? null,
         header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
@@ -1073,6 +1192,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
             <Truck />
             <span>Delivery</span>
           </TabsTrigger>
+          <TabsTrigger value="transfers">
+            <Move />
+            <span>Transfers</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1220,22 +1343,30 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   not a field anybody sets here. Empty states as "-", never hidden. */}
               <Field label="Order inquiries">
                 {(so.order_inquiries ?? []).length ? (
-                  <span className="flex flex-wrap gap-x-2 gap-y-1">
+                  <span className="flex flex-col gap-1">
                     {(so.order_inquiries ?? []).map((inquiry, index) => (
-                      <Link
-                        key={inquiry.inquiry_no ?? index}
-                        href={`/project-sales/order-inquiries?query=${encodeURIComponent(
-                          so.so_number,
-                        )}`}
-                        className="text-primary hover:underline"
-                        title={
-                          `raised ${fmtDate(inquiry.raised_at)}` +
-                          `${inquiry.raised_by_name ? ` by ${inquiry.raised_by_name}` : ''}` +
-                          `, ${inquiry.rows_placed}/${inquiry.rows_total} placed`
-                        }
-                      >
-                        {inquiry.inquiry_no ?? 'Unnumbered'}
-                      </Link>
+                      <span key={inquiry.inquiry_no ?? index} className="block">
+                        <Link
+                          href={`/project-sales/order-inquiries?query=${encodeURIComponent(
+                            so.so_number,
+                          )}`}
+                          className="text-primary hover:underline"
+                          title={`${inquiry.rows_placed}/${inquiry.rows_total} placed`}
+                        >
+                          {inquiry.inquiry_no ?? 'Unnumbered'}
+                        </Link>
+                        {/* Who raised it and when, ON the header rather than in a
+                            tooltip (AC-H2): "who pushed this to purchasing" is the
+                            first thing asked of this field, and a fact nobody hovers
+                            over is a fact nobody has. Malaysian wall clock, with the
+                            hour - two revisions of one order are raised hours apart. */}
+                        <span className="ms-1 font-normal text-muted-foreground">
+                          · {inquiry.raised_by_name ?? 'Not recorded'}
+                          {inquiry.raised_at
+                            ? ` · ${formatDateTimeInMalaysia(inquiry.raised_at)}`
+                            : ''}
+                        </span>
+                      </span>
                     ))}
                   </span>
                 ) : (
@@ -1442,6 +1573,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
               )}
             </div>
           </Card>
+        </TabsContent>
+
+        {/* AC-E6: the movements this order's supply decision asked for. The SAME grid the
+            Transfers page is, pinned to this order - so a transfer cannot read one way here
+            and another way there. Always rendered; it carries its own empty state. */}
+        <TabsContent value="transfers" className="mt-0 focus-visible:outline-none">
+          <StockTransfersPanel
+            salesOrderId={so.id}
+            listingKey="scm.sales_orders.view::stock-transfers"
+            showFilters={false}
+          />
         </TabsContent>
       </Tabs>
     </div>

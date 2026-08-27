@@ -144,11 +144,12 @@ def _so(db, product, wh, qty, *, order_type, ordered_days_ago=3, required_in=10,
     it is derived from. A fixture that set the source and not the stamp would be testing a
     row the importer cannot produce.
 
-    `from_inquiry` stamps the Order Inquiry origin. It matters only to project-class
-    orders: S13b (`demand.is_plan_demand_order`, `scm.committed_v`) counts project demand
-    ONLY where the Order Inquiry created it, so a project line without the origin is
-    deliberately absent from the coverage timeline and produces no dated shortfall. The
-    report's own split is unaffected either way - it reads the class, not the origin.
+    `from_inquiry` stamps the Order Inquiry origin. Since P3 it no longer decides whether a
+    project line is demand - none of them are, on the book: project demand is the un-linked
+    remainder of a raised Order Inquiry ROW, and a project sales-order line is awaiting CS
+    until CS raises one. So a case about the DATED engine (a shortfall, a place-by date)
+    seeds a retail order, which the coverage timeline still sees; the report's own
+    project/dealer split reads the class off the order and is unaffected either way.
     """
     cust = Customer(id=_u(), customer_code=_code("C")[:30], customer_name=f"{order_type} co")
     db.add(cust)
@@ -226,9 +227,9 @@ def test_the_report_states_the_dated_position_the_run_froze(db, chain):
     """The row's figures come off the frozen snapshot, not off a live read."""
     f = chain
     _stock(db, f["product"], f["bin"], 40)
-    # Created by the Order Inquiry, which is the only way project demand reaches the plan
-    # (S13b); a project line the inquiry never named is set aside and dates nothing.
-    _so(db, f["product"], f["bin"], 100, order_type="project", from_inquiry=True)
+    # RETAIL, because the dated shortfall below is what this case is about and a
+    # project-class line is not book demand since P3 - it would date nothing at all.
+    _so(db, f["product"], f["bin"], 100, order_type="dealer")
     _po(db, f["product"], f["bin"], 25, supplier=_supplier(db))
 
     assert svc.write_rows(db, f["run"].id) == 1
@@ -238,8 +239,8 @@ def test_the_report_states_the_dated_position_the_run_froze(db, chain):
     row = out["rows"][0]
     assert row["product_code"] == f["product"].product_code
     assert row["on_hand"] == 40
-    assert row["project_demand"] == 100
-    assert row["dealer_outstanding"] == 0
+    assert row["project_demand"] == 0
+    assert row["dealer_outstanding"] == 100
     assert row["qty_on_order"] == 25
     assert row["qty_in_transit"] == 0
     # 40 on hand plus 25 arriving in 20 days against 100 due in 10: short 60 on the demand
@@ -973,11 +974,10 @@ def test_a_place_by_date_is_need_by_minus_the_lead_time(db, chain):
     place-by would sit beside a current lead time and disagree with it.
     """
     f = chain
-    # Dated short in 60 days: 100 due then against 40 on hand. Inquiry-created, so the
-    # project line is demand the plan sees (S13b).
+    # Dated short in 60 days: 100 due then against 40 on hand. Retail, because a
+    # project-class line is not book demand since P3 and would date nothing.
     _stock(db, f["product"], f["bin"], 40)
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=60,
-        from_inquiry=True)
+    _so(db, f["product"], f["bin"], 100, order_type="dealer", required_in=60)
     sup = _supplier(db)
     _link(db, f["product"], sup, cost=10, lead=45)
     _decide(db, f, qty=100, supplier=sup)
@@ -996,8 +996,7 @@ def test_a_place_by_date_already_past_is_flagged_late(db, chain):
     Flagged rather than listed silently among the ones still in time.
     """
     f = chain
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7,
-        from_inquiry=True)
+    _so(db, f["product"], f["bin"], 100, order_type="dealer", required_in=7)
     sup = _supplier(db)
     _link(db, f["product"], sup, cost=10, lead=45)
     _decide(db, f, qty=100, supplier=sup)
@@ -1031,8 +1030,7 @@ def test_no_dated_shortfall_means_no_need_by_and_no_place_by(db, chain):
 def test_an_unknown_lead_time_leaves_the_place_by_date_underivable(db, chain):
     """A place-by date from a guessed lead time is worse than none, because it is acted on."""
     f = chain
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=30,
-        from_inquiry=True)
+    _so(db, f["product"], f["bin"], 100, order_type="dealer", required_in=30)
     sup = _supplier(db)
     _decide(db, f, qty=100, supplier=sup)  # no product_suppliers link at all
 
@@ -1094,8 +1092,7 @@ def test_the_server_orders_the_worklist_late_first(db, chain):
     db.flush()
     _link(db, calm, sup, cost=10, lead=14)
     # The marker product is dated short next week against a 45-day lead: late.
-    _so(db, f["product"], f["bin"], 100, order_type="project", required_in=7,
-        from_inquiry=True)
+    _so(db, f["product"], f["bin"], 100, order_type="dealer", required_in=7)
     svc.write_rows(db, f["run"].id)
     for p in (f["product"], calm):
         svc.record_decision(

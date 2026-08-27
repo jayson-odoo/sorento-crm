@@ -361,32 +361,30 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
     views cannot disagree about a number (AC-F03): there is one calculation and two
     presentations of it.
 
-    **The unit is the sizing GROUP, not the recommendation row.** Project need, the sheet
-    leg and unclassified demand are additive across locations, so summing rows happened to
-    work for them. Netted Retail replenishment is not: a pool and a network buy are netted
-    ONCE on the aggregate, and their member cells can each read 0 - individually
-    untriggered under their own reorder level - while the group is short 213. Summing the
-    rows therefore stated "Suggested 0" for a run that had just sized a 213-unit buy. The
-    group states its own netted figure and the freeze reads that.
+    **The unit is the sizing GROUP, not the recommendation row.** Project need is additive
+    across locations, so summing rows happened to work for it. Netted Retail replenishment
+    is not: a pool and a network buy are netted ONCE on the aggregate, and their member
+    cells can each read 0 - individually untriggered under their own reorder level - while
+    the group is short 213. Summing the rows therefore stated "Suggested 0" for a run that
+    had just sized a 213-unit buy. The group states its own netted figure and the freeze
+    reads that.
 
-    **Demand is read from every kind of row, sizing only from the buys.** Project, the
-    sheet leg and unclassified demand are statements about the order book, so they come
-    from every group the product produced - covered, unsourceable and un-levelled included,
-    or a product buying at location A silently loses location B's readings and B itself
-    from the evidence. Netted Retail replenishment is the figure a purchase was sized on,
-    so it comes only from groups that bought; a covered group's is 0 by definition.
+    **Demand is read from every kind of row, sizing only from the buys.** Project demand is
+    a statement about the order book, so it comes from every group the product produced -
+    covered, unsourceable and un-levelled included, or a product buying at location A
+    silently loses location B's readings and B itself from the evidence. Netted Retail
+    replenishment is the figure a purchase was sized on, so it comes only from groups that
+    bought; a covered group's is 0 by definition.
 
     A run frozen before the basis existed (or a hand-built recommendation) has no group,
     and falls back to the row-wise sum over the BUY rows, which is exactly right for the
     per-warehouse shape it was written for and leaves those runs byte for byte as they
     were.
 
-    `project_buy_qty` is CONFIRMED unplaced Buy only, which is what plan 5.3 and AC-E04
-    define it as. The unconfirmed sheet leg was netted by the engine alongside Retail, so
-    it is answered inside `retail_replenishment_qty` and cannot be a fourth quantity here
-    (the row carries exactly three, per plan 6.4). It is still named - `project_sheet_netted`
-    in the basis, and per location below - so the drill can say where it went rather than
-    leave a reader to notice a project-class quantity missing from both columns. The open
+    `project_buy_qty` is the un-linked remainder of raised Order Inquiry rows, which is what
+    plan 5.3 and AC-E04 define it as and, since P3, the whole of project demand: the sheet
+    leg the engine used to net alongside Retail is retired, and a sheet-origin project order
+    nobody has decided is awaiting CS rather than part of any figure here. The open
     project-class order book is separately visible as `project_demand` on the same row.
     """
     buy_recs = [r for r in recs if r.rec_type == BUY_REC_TYPE]
@@ -396,8 +394,8 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
         # Netted Retail is a SIZED figure, so it is read only off the groups that actually
         # bought. A covered group's replenishment is 0 by definition (its stock covers the
         # need), and a group that could not be sourced or is waiting on a level sized no
-        # purchase either - while their Project, sheet and unclassified readings above are
-        # demand and stay additive across every group.
+        # purchase either - while their Project reading above is demand and stays additive
+        # across every group.
         retail_sources: list = list(_sizing_groups(buy_recs).values())
         locations = [
             # `warehouse_id` stays inside the recommendation snapshot, where the allocator
@@ -406,11 +404,14 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             for g in sources for loc in (g.get("locations") or [])
         ]
     else:
+        # The LEGACY branch: a run frozen before `plan_basis` existed. `unclassified_need`
+        # is read here and nowhere else - the current engine states no such figure, but a
+        # run that DID state one is re-frozen through this path, and dropping it would
+        # rewrite that run's own report to say 0 for something it measured.
         sources = [
             {
                 "project_need": (r.inputs or {}).get("project_need"),
                 "retail_need": (r.inputs or {}).get("retail_need"),
-                "project_sheet_need": (r.inputs or {}).get("project_sheet_need"),
                 "unclassified_need": (r.inputs or {}).get("unclassified_need"),
             }
             for r in buy_recs
@@ -425,11 +426,6 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
                 "warehouse_name": name,
                 "project_need": _f(inp.get("project_need")) or 0.0,
                 "retail_need": _f(inp.get("retail_need")) or 0.0,
-                # Netted inside `retail_need` above, never added to it: an unconfirmed
-                # sheet-origin project quantity is demand the engine put through ordinary
-                # netting, so it is stated for the reader and summed nowhere.
-                "project_sheet_need": _f(inp.get("project_sheet_need")) or 0.0,
-                "unclassified_need": _f(inp.get("unclassified_need")) or 0.0,
                 # Shared facts of the product-location, counted ONCE and carrying no
                 # channel dimension (AC-F07).
                 "on_hand": _f(inp.get("on_hand")),
@@ -442,8 +438,11 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
 
     project = sum(float(s.get("project_need") or 0.0) for s in sources)
     retail = sum(float(s.get("retail_need") or 0.0) for s in retail_sources)
+    # 0 on every run the current engine writes - nothing is unclassified and the plan row
+    # states no such figure (P4) - and NOT deleted, because `order_summary_row` still
+    # carries the column and an OLD run re-frozen through the legacy branch above must
+    # report what that run actually measured.
     unclassified = sum(float(s.get("unclassified_need") or 0.0) for s in sources)
-    project_sheet = sum(float(s.get("project_sheet_need") or 0.0) for s in sources)
     raw_need = project + retail
     moq = constraints.get("moq")
     multiple = constraints.get("order_multiple")
@@ -470,10 +469,6 @@ def _channel_freeze(recs: list, wh_meta: dict, *, decimal_places: int,
             # Named rather than merely absent, so the drill can say WHY it is not in the
             # actionable total instead of leaving a reader to notice the gap.
             "unclassified_excluded": unclassified,
-            # Inside `retail_replenishment_qty`, not beside it. Named so the drill can
-            # explain a project-class quantity that is not in `project_buy_qty` because
-            # nobody has confirmed a decision for it yet (plan 4).
-            "project_sheet_netted": project_sheet,
             "locations": locations,
         },
     }
@@ -1066,10 +1061,6 @@ def locations(db: Session, product_code: str, *, run_id: Optional[str] = None) -
             "warehouse_name": loc.get("warehouse_name"),
             "project_need": loc.get("project_need"),
             "retail_need": loc.get("retail_need"),
-            # Absent on a run frozen before the confirmed/sheet split, and NULL there
-            # rather than 0: the run never stated it.
-            "project_sheet_need": loc.get("project_sheet_need"),
-            "unclassified_need": loc.get("unclassified_need"),
             "on_hand": loc.get("on_hand") or 0.0,
             "incoming_spo": loc.get("incoming_spo") or 0.0,
             "on_order_po": loc.get("on_order_po") or 0.0,

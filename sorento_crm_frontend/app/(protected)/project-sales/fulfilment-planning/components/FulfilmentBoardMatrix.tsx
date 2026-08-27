@@ -5,10 +5,13 @@ import { cn } from '@/lib/utils';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { SupplyBar } from './SupplyBar';
+import { COLOURS, cellSupply, dominant, dominantText } from '../../_shared/lib/supplyVocabulary';
 import type {
   BoardAxisRow,
   BoardCell,
   BoardDateBucket,
+  BoardDraft,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const PRODUCT_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
@@ -41,11 +44,11 @@ const Z_CORNER = 'z-30';
 const PAST_HEADER_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 const NO_DATE_BG = 'bg-[color-mix(in_oklab,var(--foreground)_6%,var(--muted))]';
 
-/**
- * The body tint for a bucket that is already past. Lighter than the header, and still opaque:
- * a `/5` alpha over a scrolling body reads as a smudge rather than as a column.
+/*
+ * NO BODY TINT FOR A PAST BUCKET. The column header carries it and says "Already past", which
+ * is where the fact belongs; on the cells it collided with the supply bar, where rose means Buy
+ * and nothing else (PLAN section C, AC-C4). One rose on a cell, one meaning.
  */
-const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--background))]';
 
 /**
  * The planning board: DATE BUCKETS across the top, PRODUCTS down the side, each cell the
@@ -80,18 +83,18 @@ const PAST_CELL_BG = 'bg-[color-mix(in_oklab,var(--destructive)_6%,var(--backgro
  * A BLANK CELL IS NOT A ZERO. It means no selected order owes that product by that date, so it
  * renders blank and stays blank.
  *
- * THE PAST IS TINTED, NOT MERGED. Every dated bucket is a real date, however far back, and the
- * server's `is_past` is the only thing this grid colours on. The board used to carry one
- * aggregate Overdue column and it collapsed a whole selection into it - 160 of 160 lines, with
- * their dates gone. The cost of the change is columns, and the board pays it: it spans years,
- * so the horizontal scroll below is load-bearing rather than a nicety.
+ * THE PAST IS TINTED ON ITS HEADER, NOT MERGED. Every dated bucket is a real date, however far
+ * back, and the server's `is_past` is the only thing this grid colours a HEADER on. The board
+ * used to carry one aggregate Overdue column and it collapsed a whole selection into it - 160 of
+ * 160 lines, with their dates gone. The cost of the change is columns, and the board pays it: it
+ * spans years, so the horizontal scroll below is load-bearing rather than a nicety.
  */
 export function FulfilmentBoardMatrix({
   dateBuckets,
   rows,
   rowHeader,
   cells,
-  decidedKeys,
+  draft,
   onOpenCell,
 }: {
   dateBuckets: BoardDateBucket[];
@@ -100,8 +103,11 @@ export function FulfilmentBoardMatrix({
   /** What the corner cell calls them. */
   rowHeader: string;
   cells: BoardCell[];
-  /** Contribution keys that carry a verdict, so a fully-decided cell can say so. */
-  decidedKeys: Set<string>;
+  /**
+   * THE panel's draft, not a set of keys derived from it: the cell counts what is ticked AND
+   * colours itself by what was ticked, and two readings of one draft would drift.
+   */
+  draft: BoardDraft;
   onOpenCell: (cell: BoardCell) => void;
 }) {
   // Keyed by the cell's ROW KEY, which is the item code on the product axis and an id on the
@@ -187,16 +193,12 @@ export function FulfilmentBoardMatrix({
                   <td
                     key={bucket.key}
                     data-cell={`${product.key}|${bucket.key}`}
-                    className={cn(
-                      DATE_COL,
-                      'border-b border-e border-border p-0 align-top',
-                      bucket.is_past && PAST_CELL_BG,
-                    )}
+                    className={cn(DATE_COL, 'border-b border-e border-border p-0 align-top')}
                   >
                     {cell ? (
                       <BoardCellButton
                         cell={cell}
-                        decidedKeys={decidedKeys}
+                        draft={draft}
                         onOpen={() => onOpenCell(cell)}
                       />
                     ) : null}
@@ -220,14 +222,19 @@ export function FulfilmentBoardMatrix({
  */
 function BoardCellButton({
   cell,
-  decidedKeys,
+  draft,
   onOpen,
 }: {
   cell: BoardCell;
-  decidedKeys: Set<string>;
+  draft: BoardDraft;
   onOpen: () => void;
 }) {
-  const decided = cell.contributions.filter((entry) => decidedKeys.has(entry.key)).length;
+  const decided = cell.contributions.filter((entry) => Boolean(draft[entry.key])).length;
+  // Where this cell's quantity is coming from: the DECISION on every line that has one, the
+  // engine's proposal on the rest. Ticking Amend from Buy to the shared pool flips the bar
+  // rose to sky before anything is confirmed, and clearing the tick puts it back.
+  const supply = cellSupply(cell, draft);
+  const lead = dominant(supply.segments);
   // Only the locations this cell's own lines name. `cell.locations` also carries the rest of
   // the sales agent's ownership group, which holds none of this cell's demand - listing those
   // here would read "BRW-BB 42 · MWH-BB 0 · DC1-BB 0" on a grid whose whole job is to be
@@ -240,6 +247,11 @@ function BoardCellButton({
   // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
   // counts the draft, and a cell whose supply is settled is a different statement.
   const confirmedRevisions = decidedRevisions(cell.contributions);
+  // "71 lent to SO415472", one phrase per borrow, across every line in the cell.
+  const lent = cell.contributions
+    .flatMap((entry) => entry.lent_to ?? [])
+    .map((row) => `${row.qty} lent to ${row.so_number ?? 'another order'}`)
+    .join(' · ');
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
     orders === 1 ? '' : 's'
   }`;
@@ -265,6 +277,31 @@ function BoardCellButton({
       <span className="block truncate text-[11px] text-muted-foreground" title={strip}>
         {strip}
       </span>
+
+      {/* The supply bar, and the dominant kind in words under it. The words are there because
+          a colour alone is not a label, and short because the column is 150px wide. */}
+      <SupplyBar segments={supply.segments} decided={supply.decided} />
+      {lead ? (
+        <span
+          data-testid="cell-supply-lead"
+          className={cn('block truncate text-[11px] font-medium', COLOURS[lead.kind].text)}
+        >
+          {dominantText(supply.segments)}
+        </span>
+      ) : null}
+
+      {/* What another sales order borrowed OFF the lines in this cell (AC-L6). A borrow was
+          visible on the taking side and invisible on the giving side, so the agent whose
+          stock moved found out when the delivery did not. */}
+      {lent ? (
+        <span
+          data-testid="cell-lent-out"
+          className="block truncate text-[11px] font-medium text-amber-700"
+          title={lent}
+        >
+          {lent}
+        </span>
+      ) : null}
 
       <span className="flex flex-wrap gap-1">
         {cell.unplannable_count > 0 && (

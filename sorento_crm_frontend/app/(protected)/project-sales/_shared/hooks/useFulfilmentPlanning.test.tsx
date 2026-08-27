@@ -393,6 +393,43 @@ describe('useReconciliationMutations', () => {
     );
   });
 
+  /**
+   * PLAN-scm-cs-planning-uat.md section E: the transfer write is best-effort on the
+   * server, so a failure cannot fail a promise already made - but a movement nobody was
+   * told about is a movement nobody makes.
+   */
+  it('says nothing about transfers when they were all written', async () => {
+    confirmSupply.mockResolvedValue({
+      revision_no: 4,
+      confirmed_at: '2026-08-18T02:00:00',
+      review_state: 'confirmed',
+      inquiry_rows_created: 0,
+      exceptions: [],
+      transfers_written: 3,
+      transfers_failed: 0,
+    });
+
+    await confirmOn('pso-1');
+
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it('says how many movements went unwritten, rather than swallowing the failure', async () => {
+    confirmSupply.mockResolvedValue({
+      revision_no: 4,
+      confirmed_at: '2026-08-18T02:00:00',
+      review_state: 'confirmed',
+      inquiry_rows_created: 0,
+      exceptions: [],
+      transfers_written: 0,
+      transfers_failed: 2,
+    });
+
+    await confirmOn('pso-1');
+
+    expect(toastWarning).toHaveBeenCalledWith('Transfers not written: 2');
+  });
+
   it('says "1 purchase row" rather than "1 purchase rows"', async () => {
     confirmSupply.mockResolvedValue({
       revision_no: 1,

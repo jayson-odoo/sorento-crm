@@ -132,7 +132,7 @@ class ProjectDemandLineOut(BaseModel):
     # The human line number and the decision this Buy came from, so Purchasing can trace
     # it without a UUID crossing the wire. Both NULL on a line the AutoCount upload has
     # not reconciled to a project line, and `decision_ref` NULL on one whose SO has no
-    # confirmed decision - it is counted through the sheet leg instead.
+    # confirmed decision - such a line is awaiting CS and is reported, never planned (P3).
     line_no: Optional[int] = None
     warehouse_code: Optional[str] = None
     decision_ref: Optional[str] = None
@@ -270,11 +270,6 @@ class OrderSummaryLocationRowOut(BaseModel):
     warehouse_name: Optional[str] = None
     project_need: Optional[float] = None
     retail_need: Optional[float] = None
-    # The unconfirmed sheet-origin project leg. Already NETTED inside `retail_need`, so it
-    # is a reading and never an addend: `project_need` (confirmed Buy) plus `retail_need`
-    # is still the whole actionable need. NULL on a run frozen before the split.
-    project_sheet_need: Optional[float] = None
-    unclassified_need: Optional[float] = None
     on_hand: float = 0.0
     incoming_spo: float = 0.0
     on_order_po: float = 0.0

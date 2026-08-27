@@ -45,14 +45,19 @@ from tests.scm._outstanding_workbooks import (
     make_codes,
     seed_catalogue,
     seed_suppliers,
+    so_headers,
+    so_row,
     workbook,
 )
 
 #: The AutoCount detail listing, sales-order side: the ordered quantity, what has already
 #: gone out, and what is left. All three, which is what makes a settled row readable.
-SO_HEADERS = ("S/O NO", "SO DATE", "DEBTOR CODE", "ITEM CODE", "UOM", "QTY",
-              "TRANSFERED QTY", "REMAINING QTY", "UNIT PRICE", "DELIVERY DATE",
-              "STOCK LOCATION")
+#: `ORDER TYPE` is here because since QP1 an SO upload naming an order nothing can classify
+#: is refused outright, and `300-T012` carries no market segment - a test about settled
+#: quantities must not be measuring the refusal instead.
+SO_HEADERS = so_headers("S/O NO", "SO DATE", "DEBTOR CODE", "ITEM CODE", "UOM", "QTY",
+                        "TRANSFERED QTY", "REMAINING QTY", "UNIT PRICE", "DELIVERY DATE",
+                        "STOCK LOCATION")
 
 #: The same shape on the purchase side.
 PO_HEADERS = ("PO NO", "PO DATE", "CREDITOR CODE", "SUPPLIER", "ITEM CODE", "UOM",
@@ -86,8 +91,8 @@ def seeded_po(db) -> Codes:
 
 
 def _so_row(doc, item, qty, transferred, remaining, when, location, price=None):
-    return (doc, date(2026, 5, 4), "300-T012", item, "PCS", qty, transferred, remaining,
-            price, when, location)
+    return so_row(doc, date(2026, 5, 4), "300-T012", item, "PCS", qty, transferred,
+                  remaining, price, when, location)
 
 
 def _po_row(doc, creditor, supplier, item, ordered, received, remaining, when, location,
