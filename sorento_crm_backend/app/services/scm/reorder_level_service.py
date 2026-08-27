@@ -236,7 +236,8 @@ def get_levels(db: Session, product_ids: list[str],
                rl.id::text AS id, rl.product_id::text AS product_id,
                rl.warehouse_id::text AS warehouse_id, rl.level, rl.source,
                rl.suggested_level, rl.suggested_at, rl.suggestion_basis,
-               rl.amended_level, rl.amended_at, rl.amended_by, rl.notes
+               rl.amended_level, rl.amended_at, rl.amended_by, rl.notes,
+               rl.reorder_qty
           FROM scm.reorder_level rl
          WHERE rl.product_id = ANY(CAST(:pids AS uuid[]))
            {where_wh}
@@ -273,33 +274,99 @@ def resolve_level(levels: dict[tuple[str, Optional[str]], dict], product_id: str
     return levels.get((product_id, None))
 
 
+#: "the caller said nothing about this field", which is not the same as "clear it".
+#: `reorder_qty` is written by the AutoCount level upload as well as by the buyer, so a
+#: level-only save must leave whatever the sheet last stated exactly where it is.
+UNCHANGED = object()
+
+
 def upsert_level(db: Session, *, product_id: str, warehouse_id: Optional[str],
                  level: Optional[float], source: str = SOURCE_MANUAL,
                  notes: Optional[str] = None,
-                 company_id: Optional[str] = None) -> dict:
-    """Set the level a buyer owns. Leaves the suggestion columns alone."""
+                 company_id: Optional[str] = None,
+                 reorder_qty: Any = UNCHANGED,
+                 commit: bool = True) -> dict:
+    """Set the level a buyer owns. Leaves the suggestion columns alone.
+
+    `reorder_qty` (R5) is the lot AutoCount orders when the level fires. It travels here
+    rather than in its own endpoint because it is the same row and the same save: the
+    panel shows Level and Reorder qty side by side and one Save carries both. Omitted, it
+    is left untouched - see `UNCHANGED`.
+
+    `commit=False` is for a caller that owns the transaction (the plan's bulk save, which
+    is one request over many rows and must roll the whole batch back on any failure).
+    """
     if source not in VALID_SOURCES:
         raise AppException(status_code=422,
                            message=f"source must be one of {', '.join(VALID_SOURCES)}.")
     if level is not None and float(level) < 0:
         raise AppException(status_code=422, message="A reorder level cannot be negative.")
+    if (reorder_qty is not UNCHANGED and reorder_qty is not None
+            and float(reorder_qty) < 0):
+        raise AppException(status_code=422,
+                           message="A reorder quantity cannot be negative.")
     row = _existing(db, product_id, warehouse_id, company_id)
     now = datetime.utcnow()
+    set_qty = reorder_qty is not UNCHANGED
+    qty_value = None if not set_qty else (
+        None if reorder_qty is None else float(reorder_qty))
     if row is None:
         new_id = str(uuid.uuid4())
         db.execute(text("""
             INSERT INTO scm.reorder_level
-                (id, product_id, warehouse_id, level, source, notes, company_id, created_at)
-            VALUES (:id, :pid, :wid, :level, :source, :notes, :co, :now)
+                (id, product_id, warehouse_id, level, source, notes, reorder_qty,
+                 company_id, created_at)
+            VALUES (:id, :pid, :wid, :level, :source, :notes, :rq, :co, :now)
         """), {"id": new_id, "pid": product_id, "wid": warehouse_id, "level": level,
-               "source": source, "notes": notes, "co": company_id, "now": now})
+               "source": source, "notes": notes, "rq": qty_value, "co": company_id,
+               "now": now})
+    else:
+        db.execute(text(f"""
+            UPDATE scm.reorder_level
+               SET level = :level, source = :source, notes = :notes,
+                   {"reorder_qty = :rq," if set_qty else ""}
+                   updated_at = :now
+             WHERE id = :id
+        """), {"id": row["id"], "level": level, "source": source, "notes": notes,
+               "now": now, **({"rq": qty_value} if set_qty else {})})
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return _existing(db, product_id, warehouse_id, company_id) or {}
+
+
+def set_reorder_qty(db: Session, *, product_id: str, warehouse_id: Optional[str],
+                    reorder_qty: Optional[float], company_id: Optional[str] = None,
+                    commit: bool = True) -> dict:
+    """Set the AutoCount reorder QUANTITY alone, leaving the level exactly as it is (R5).
+
+    The plan panel edits the two independently - a buyer can change the lot size without
+    touching the trigger - so a quantity-only save must not route through `upsert_level`,
+    whose `level` argument would clear the level it was never asked about.
+    """
+    if reorder_qty is not None and float(reorder_qty) < 0:
+        raise AppException(status_code=422,
+                           message="A reorder quantity cannot be negative.")
+    row = _existing(db, product_id, warehouse_id, company_id)
+    now = datetime.utcnow()
+    value = None if reorder_qty is None else float(reorder_qty)
+    if row is None:
+        db.execute(text("""
+            INSERT INTO scm.reorder_level
+                (id, product_id, warehouse_id, reorder_qty, company_id, created_at)
+            VALUES (:id, :pid, :wid, :rq, :co, :now)
+        """), {"id": str(uuid.uuid4()), "pid": product_id, "wid": warehouse_id,
+               "rq": value, "co": company_id, "now": now})
     else:
         db.execute(text("""
-            UPDATE scm.reorder_level
-               SET level = :level, source = :source, notes = :notes, updated_at = :now
+            UPDATE scm.reorder_level SET reorder_qty = :rq, updated_at = :now
              WHERE id = :id
-        """), {"id": row["id"], "level": level, "source": source, "notes": notes, "now": now})
-    db.commit()
+        """), {"id": row["id"], "rq": value, "now": now})
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return _existing(db, product_id, warehouse_id, company_id) or {}
 
 
@@ -441,7 +508,8 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
         row = db.execute(text("""
             SELECT id::text AS id, product_id::text AS product_id,
                    warehouse_id::text AS warehouse_id, level, source, suggested_level,
-                   suggested_at, suggestion_basis, notes, company_id::text AS company_id
+                   suggested_at, suggestion_basis, notes, reorder_qty,
+                   company_id::text AS company_id
               FROM scm.reorder_level
              WHERE product_id = CAST(:pid AS uuid)
                AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)
@@ -453,7 +521,8 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
     row = db.execute(text("""
         SELECT id::text AS id, product_id::text AS product_id,
                warehouse_id::text AS warehouse_id, level, source, suggested_level,
-               suggested_at, suggestion_basis, notes, company_id::text AS company_id
+               suggested_at, suggestion_basis, notes, reorder_qty,
+               company_id::text AS company_id
           FROM scm.reorder_level
          WHERE product_id = CAST(:pid AS uuid)
            AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)

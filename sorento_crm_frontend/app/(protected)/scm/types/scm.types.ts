@@ -345,6 +345,8 @@ export interface SalesOrderLineLink {
    * would leave the line with nothing rather than with something late.
    */
   late?: boolean;
+  /** BY HOW MUCH, in days (AC-D17). Null when the document is not late. */
+  late_days?: number | null;
 }
 
 /**

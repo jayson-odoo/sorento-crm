@@ -73,6 +73,10 @@ class ReorderRunStatusResponse(BaseModel):
     # The "Plan until" cutoff this run was launched with, ISO date, or None when the run
     # carried no horizon (every run has always planned every open SO line, unchanged).
     plan_horizon_date: Optional[str] = None
+    # When the engine started. The plan page's header is "Plan dd/mm/yyyy HH:mm" and this
+    # response is the only thing that page reads, so without it the header can state the
+    # date or a fabricated time and nothing else.
+    started_at: Optional[str] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -97,6 +101,25 @@ class ReorderRunListItem(BaseModel):
     # Same field as ReorderRunStatusResponse - the plan header reads it off whichever of
     # the two responses is on screen (today's run vs a past one).
     plan_horizon_date: Optional[str] = None
+    # --- the plans list (PLAN-scm-reorder-revamp.md 4.1) ----------------------------
+    # The scheduled daily run rather than one a person started (`created_by IS NULL` -
+    # `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge; the
+    # FE deliberately refuses to guess it from the clock.
+    is_scheduled: bool = False
+    # Every ACTIVE warehouse. A plan launched with no warehouse scope stores them all, so
+    # the column would otherwise read "60 warehouses" for what was asked for as "all".
+    is_all_warehouses: bool = False
+    # How many PRODUCTS the plan narrowed to, or null for the whole catalogue (the daily
+    # run's own scope). Distinct from `summary.recommendation_count`, which counts rows.
+    product_count: Optional[int] = None
+    # How many products the run actually wrote rows for. The denominator of the Decided
+    # column: `product_count` above is the SCOPE, and it is null on the daily run, which
+    # would leave the most common plan reading "12 of -".
+    planned_product_count: Optional[int] = None
+    # Both by DISTINCT product, never by location (R14): a product held in three bins is
+    # one thing to decide and one thing to confirm.
+    decided_product_count: Optional[int] = None
+    confirmed_product_count: Optional[int] = None
 
 
 class ReorderRunListResponse(BaseModel):

@@ -3,21 +3,16 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { Info } from 'lucide-react';
+import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { OrderInquiryRowActions } from '../../_shared/components/OrderInquiryRowActions';
 import { ackStateOf, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryAckCell } from './OrderInquiryAckCell';
-import { OrderInquiryRejectAction } from './OrderInquiryRejectAction';
-import {
-  OrderInquiryStatePill,
-  OrderInquiryVerbPill,
-} from '../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   KIND_COLOURS,
@@ -32,10 +27,42 @@ import {
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-import { OrderInquiryPoDetailPopover } from './OrderInquiryPoDetailPopover';
+import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
+}
+
+/**
+ * Is what this row shows a DRAFT or a real allocation (R1)?
+ *
+ * There is no state on the link: a link is a draft while its ROW is still to confirm, and
+ * it is confirmed the moment purchasing stamps the row. One source of truth, read two
+ * ways, so the mark and the Confirmed column can never disagree.
+ */
+function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
+  const state = ackStateOf(row);
+  // A refused row's links are gone; there is nothing to mark as anything.
+  if (state === 'rejected') return null;
+  if (state === 'acknowledged') {
+    const who = row.acknowledged_by_name ?? 'Purchasing';
+    const when = row.acknowledged_at ? ` ${formatDateInMalaysia(row.acknowledged_at)}` : '';
+    const label = `Confirmed by ${who}${when}`;
+    return (
+      <span data-testid="link-confirmed-mark" title={label} aria-label={label}>
+        <CircleCheck className="size-3.5 shrink-0 text-emerald-600" aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <span
+      data-testid="link-draft-mark"
+      title="Draft, confirm to allocate"
+      aria-label="Draft, confirm to allocate"
+    >
+      <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+    </span>
+  );
 }
 
 /**
@@ -47,25 +74,13 @@ function Muted({ children }: { children: React.ReactNode }) {
  */
 export function useOrderInquiryWorklistColumns({
   selectable = false,
-  canAcknowledge = false,
-  linkUpTo,
 }: {
   /**
    * Draw the row checkboxes (AC-H2). Only where a bulk bar can act on them: the calendar
-   * drilldown reuses these columns and has no Acknowledge press, so a tick there would
+   * drilldown reuses these columns and has no Confirm press, so a tick there would
    * select rows nothing could be done with.
    */
   selectable?: boolean;
-  /**
-   * Whether this person may acknowledge or reject (`projects.order_inquiries.acknowledge`).
-   * CS sees the column and the filter; the actions are purchasing's.
-   */
-  canAcknowledge?: boolean;
-  /**
-   * How far out this page links (AC-LH3), `YYYY-MM-DD`. Handed to the Link dialog so it
-   * opens showing the same date the toolbar does, and flags a row due past it.
-   */
-  linkUpTo?: string | null;
 } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
     () => [
@@ -270,17 +285,22 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        // AC-I5: WHERE the quantity sits, not just which purchase order the row happened
-        // to be tagged to. One row now holds many links (`projects.order_inquiry_links`),
-        // so the cell states the coverage first - `8 of 8` - and then names each document
-        // with the lines it holds, which is the shape the buyer keys into AutoCount. A PO
-        // link opens that purchase order's own header and lines; an SPO link has no
-        // purchase order to open, so it carries its badge and no popover.
+        // WHERE the quantity sits (AC-D16/AC-D17). One row holds many links
+        // (`projects.order_inquiry_links`), so the cell states the coverage first -
+        // `8 of 8` - and then names each document with the LOCATION and quantity it
+        // holds, which is the shape the buyer keys into AutoCount. Either kind of
+        // document number opens the lightbox.
+        //
+        // The column id stays `po_number` even though the header no longer says PO: it
+        // is what a saved column layout is keyed by, and renaming it would silently
+        // exile the column to the right of everyone's grid.
         id: 'po_number',
         accessorFn: (row) => row.po_number ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
-        size: 260,
-        meta: { headerTitle: 'Linked to', skeleton: <Skeleton className="h-4 w-28" /> },
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Outstanding PO/SPO" column={column} />
+        ),
+        size: 280,
+        meta: { headerTitle: 'Outstanding PO/SPO', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) => {
           const summary = linkedSummary(
             row.original.qty,
@@ -302,19 +322,22 @@ export function useOrderInquiryWorklistColumns({
             />
           );
           if (!summary) {
-            // Not a dash: on their own sheet a blank PO column is what "still to link"
-            // looks like, and the word says which of the two it is.
+            // Nothing in either book can cover this row, so it is a NEW order rather
+            // than an oversight (AC-D2). "Not linked" read as a step somebody had
+            // forgotten to take; the links are drafted the moment a row is raised now,
+            // so an empty cell means the cascade looked and found nothing.
             return (
               <div className="min-w-0">
-                <Muted>Not linked</Muted>
+                <Muted>Not found (new order)</Muted>
                 {bar}
               </div>
             );
           }
           return (
             <div className="min-w-0">
-              <span className="block truncate text-xs font-medium tabular-nums">
-                {summary.headline}
+              <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+                <DraftMark row={row.original} />
+                <span className="truncate">{summary.headline}</span>
               </span>
               {bar}
               {summary.documents.map((entry) => {
@@ -322,9 +345,20 @@ export function useOrderInquiryWorklistColumns({
                   (candidate) =>
                     candidate.document === entry.document && candidate.kind === entry.kind,
                 );
-                const label = entry.late
-                  ? `${entry.document}: ${entry.parts} - arrives late`
-                  : `${entry.document}: ${entry.parts}`;
+                const lateWords =
+                  entry.lateDays !== null
+                    ? ` - lands ${entry.lateDays} day${entry.lateDays === 1 ? '' : 's'} after ${
+                        row.original.delivery_date
+                          ? formatDateInMalaysia(row.original.delivery_date)
+                          : 'the required date'
+                      }`
+                    : entry.late
+                      ? ' - arrives late'
+                      : '';
+                // The line label lives HERE and nowhere else (AC-D16): it names which
+                // line of the document holds the quantity, which matters once the
+                // document is open and never while the list is being scanned.
+                const label = `${entry.document}: ${entry.partsTitle}${lateWords}`;
                 return (
                   <span
                     key={`${entry.kind}-${entry.document}`}
@@ -334,25 +368,22 @@ export function useOrderInquiryWorklistColumns({
                     <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
                       {entry.kind}
                     </span>
-                    {entry.kind === 'po' && link?.po_id ? (
-                      <OrderInquiryPoDetailPopover
-                        poId={link.po_id}
-                        poNumber={entry.document}
-                      />
-                    ) : (
-                      <span className="truncate tabular-nums">{entry.document}</span>
-                    )}
+                    <OrderInquiryDocumentLink
+                      kind={entry.kind}
+                      document={entry.document}
+                      poId={link?.po_id}
+                    />
                     <span className="truncate text-xs text-muted-foreground">
                       {entry.parts}
                     </span>
-                    {/* AC-P3-7: the document lands after this row needs it. Said, never
-                        acted on - nothing is unlinked for lateness. */}
+                    {/* AC-D17: it lands after this row needs it, and by how much. Said,
+                        never acted on - nothing is unlinked for lateness. */}
                     {entry.late ? (
                       <span
                         data-testid={`link-late-${entry.document}`}
                         className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800"
                       >
-                        arrives late
+                        {entry.lateDays !== null ? `late ${entry.lateDays} d` : 'late'}
                       </span>
                     ) : null}
                   </span>
@@ -364,10 +395,12 @@ export function useOrderInquiryWorklistColumns({
       },
       {
         accessorKey: 'taken_from_po',
-        header: ({ column }) => <DataGridColumnHeader title="Taken from PO" column={column} />,
-        size: 130,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Taken by PO/SPO" column={column} />
+        ),
+        size: 140,
         enableSorting: false,
-        meta: { headerTitle: 'Taken from PO', skeleton: <Skeleton className="h-4 w-14" /> },
+        meta: { headerTitle: 'Taken by PO/SPO', skeleton: <Skeleton className="h-4 w-14" /> },
         // What has actually been taken off a document for this row's own SO line - the
         // sum of every link on every ORDER / ORDER BACK row of that line, never this
         // row's own qty alone. A row whose OWN verb is neither (an ADVANCE/DELAY/...)
@@ -379,7 +412,7 @@ export function useOrderInquiryWorklistColumns({
           if (excluded) {
             return (
               <Muted>
-                <span title="Only ORDER and ORDER BACK rows on this SO line count toward Taken from PO">
+                <span title="Only ORDER and ORDER BACK rows on this SO line count toward Taken by PO/SPO">
                   {excluded}
                 </span>
               </Muted>
@@ -457,13 +490,6 @@ export function useOrderInquiryWorklistColumns({
         ),
       },
       {
-        accessorKey: 'state',
-        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        size: 120,
-        meta: { headerTitle: 'State', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <OrderInquiryStatePill state={row.original.state} />,
-      },
-      {
         // WHO pushed this to purchasing. Sorted server-side on the person's name, which
         // is why the column id is `raised_by_name` rather than `raised_by`: the id is
         // what the filter sends, the name is what this column is about.
@@ -502,40 +528,13 @@ export function useOrderInquiryWorklistColumns({
         // server sorts a closed set of columns and this is not one of them, and a grid
         // drawing an arrow on a column the server ignored is a screen telling a lie.
         accessorKey: 'ack_state',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Acknowledged" column={column} />
-        ),
+        header: ({ column }) => <DataGridColumnHeader title="Confirmed" column={column} />,
         size: 210,
         enableSorting: false,
-        meta: { headerTitle: 'Acknowledged', skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Confirmed', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => <OrderInquiryAckCell row={row.original} />,
       },
-      {
-        id: 'actions',
-        header: 'Actions',
-        size: 190,
-        enableSorting: false,
-        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center gap-1">
-            <OrderInquiryRowActions
-              rowId={row.original.id}
-              verb={row.original.verb}
-              state={row.original.state}
-              itemCode={row.original.item_code}
-              qty={row.original.qty}
-              linkedQty={row.original.linked_qty}
-              linkCount={(row.original.links ?? []).length}
-              poLabel={row.original.po_number}
-              hasLinkCandidate={row.original.has_link_candidate}
-              deliveryDate={row.original.delivery_date}
-              linkUpTo={linkUpTo}
-            />
-            {canAcknowledge ? <OrderInquiryRejectAction row={row.original} /> : null}
-          </div>
-        ),
-      },
     ],
-    [selectable, canAcknowledge, linkUpTo],
+    [selectable],
   );
 }

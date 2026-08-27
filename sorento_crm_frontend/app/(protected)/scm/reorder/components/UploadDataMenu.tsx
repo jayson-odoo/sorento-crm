@@ -1,16 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronDown, Upload } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { useMemo, useState } from 'react';
+import { Upload } from 'lucide-react';
+import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { HistoryUploadDialog } from './HistoryUploadDialog';
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
 import { ReorderLevelUploadDialog } from './ReorderLevelUploadDialog';
@@ -18,16 +10,17 @@ import type { OutstandingImportKind } from '../services/outstandingImportService
 import type { HistoryImportKind } from '../services/purchaseHistoryService';
 
 /**
- * SCM - every file the plan is fed from, behind one control.
+ * SCM - every file the plan is fed from, as entries on the plans list's Actions menu.
  *
- * Four channels, and the split between them is the point rather than a category: the top
- * group is what the plan is COMPUTED from and changes tomorrow's numbers; the bottom group is
- * what the order book does not carry - what was bought historically, where stock lands, and
- * which purchase order a sales order is waiting on.
+ * Six channels, and the split between them is the point rather than a category: the order
+ * book is what the plan is COMPUTED from and changes tomorrow's numbers; history and linkage
+ * is what the order book does not carry - what was bought historically, where stock lands,
+ * and which purchase order a sales order is waiting on; the reorder-level feed is neither,
+ * it decides WHEN a product appears in the plan at all.
  *
- * One menu rather than four buttons because they are used on different days: the order book
- * weekly, the history and inquiry sheets when somebody re-exports them. Four permanent
- * buttons would give the rare ones the same weight as the routine one.
+ * They live on the LIST rather than on a plan (plan 4.1): a file feeds the next run, not the
+ * run already on screen, so a button for it beside a finished plan's own numbers promised
+ * something it could not do.
  */
 
 type Channel = OutstandingImportKind | HistoryImportKind | 'reorder-levels';
@@ -37,24 +30,21 @@ type Channel = OutstandingImportKind | HistoryImportKind | 'reorder-levels';
 // half of it described a scope the export never had, and it is what made the captain ask
 // which half he was meant to export. Same wording as the dialog these open
 // (`OutstandingUploadDialog`'s titles) and as the two list toolbars, so one action is not
-// called three things across three screens. The hints still say what each book is FOR,
-// because that is the part a person cannot read off the title.
-const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string, string]> = [
-  ['sales-orders', 'Upload sales orders', 'What customers are waiting for'],
-  ['purchase-orders', 'Upload purchase orders', 'What suppliers still owe us'],
+// called three things across three screens.
+const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string]> = [
+  ['sales-orders', 'Upload sales orders'],
+  ['purchase-orders', 'Upload purchase orders'],
 ] as const;
 
-const CURATION: ReadonlyArray<readonly [HistoryImportKind, string, string]> = [
-  ['purchase-history', 'Purchase history', 'Past orders, for last cost and slow movers'],
-  ['sales-history', 'Sales history', 'Past sales orders. Never counted as demand'],
-  ['order-inquiry', 'Order inquiry sheet', 'Stock locations and purchase-order links'],
+const CURATION: ReadonlyArray<readonly [HistoryImportKind, string]> = [
+  ['purchase-history', 'Upload purchase history'],
+  ['sales-history', 'Upload sales history'],
+  ['order-inquiry', 'Upload order inquiry sheet'],
 ] as const;
 
-// AutoCount owns the reorder level; this feed receives it (S13c). Its own group because it
-// is neither the order book nor history: it is configuration, and it decides WHEN a product
-// appears in the plan at all.
-const CONFIGURATION: ReadonlyArray<readonly ['reorder-levels', string, string]> = [
-  ['reorder-levels', 'Reorder levels (AutoCount)', 'When each product should trigger a buy'],
+// AutoCount owns the reorder level; this feed receives it (S13c).
+const CONFIGURATION: ReadonlyArray<readonly ['reorder-levels', string]> = [
+  ['reorder-levels', 'Upload reorder levels'],
 ] as const;
 
 function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
@@ -65,72 +55,45 @@ function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
   );
 }
 
-export interface UploadDataMenuProps {
-  /**
-   * Fired once an order-book or history upload has been QUEUED.
-   *
-   * There is nothing to hand back but the job: the five feeds write on the worker now, so
-   * counts do not exist yet when this fires. The outcome is read on the job page, and the
-   * upload drawer is already following it.
-   */
-  onQueued?: () => void;
+export interface UploadDataActions {
+  /** Ready to hand to `DataGridListToolbar`'s `secondaryActions`. */
+  actions: ToolbarAction[];
+  /** Mount this next to the grid - it is the dialog the chosen action opens. */
+  dialogs: React.ReactNode;
 }
 
-export function UploadDataMenu({ onQueued }: UploadDataMenuProps) {
-  // Which channel's dialog is open, or null. One piece of state rather than four booleans,
+/**
+ * The upload entries, flattened for a toolbar Actions menu, plus the dialog they open.
+ *
+ * A hook rather than a component so the plans list can put these entries in the SAME menu
+ * as Refresh instead of standing a second dropdown beside it.
+ *
+ * @param onQueued Fired once an order-book or history upload has been QUEUED. There is
+ *   nothing to hand back but the job: the five feeds write on the worker now, so counts do
+ *   not exist yet when this fires.
+ */
+export function useUploadDataActions(onQueued?: () => void): UploadDataActions {
+  // Which channel's dialog is open, or null. One piece of state rather than six booleans,
   // so two dialogs can never be open at once.
   const [channel, setChannel] = useState<Channel | null>(null);
 
-  return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="outline">
-            <Upload className="size-4" />
-            Upload data
-            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-72">
-          <DropdownMenuLabel>Order book</DropdownMenuLabel>
-          {OUTSTANDING.map(([kind, label, hint]) => (
-            <DropdownMenuItem key={kind} onSelect={() => setChannel(kind)}>
-              <div className="flex flex-col gap-0.5">
-                <span>{label}</span>
-                <span className="text-2xs text-muted-foreground">{hint}</span>
-              </div>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>History and linkage</DropdownMenuLabel>
-          {CURATION.map(([kind, label, hint]) => (
-            <DropdownMenuItem key={kind} onSelect={() => setChannel(kind)}>
-              <div className="flex flex-col gap-0.5">
-                <span>{label}</span>
-                <span className="text-2xs text-muted-foreground">{hint}</span>
-              </div>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>Configuration</DropdownMenuLabel>
-          {CONFIGURATION.map(([kind, label, hint]) => (
-            <DropdownMenuItem key={kind} onSelect={() => setChannel(kind)}>
-              <div className="flex flex-col gap-0.5">
-                <span>{label}</span>
-                <span className="text-2xs text-muted-foreground">{hint}</span>
-              </div>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+  const actions = useMemo<ToolbarAction[]>(
+    () =>
+      [...OUTSTANDING, ...CURATION, ...CONFIGURATION].map(([kind, label]) => ({
+        key: kind,
+        label,
+        icon: Upload,
+        onClick: () => setChannel(kind as Channel),
+      })),
+    [],
+  );
 
-      {/* Mounted only while its own channel is chosen, so each dialog starts from a clean
-          flow rather than whatever the last upload left behind. */}
+  // Mounted only while its own channel is chosen, so each dialog starts from a clean flow
+  // rather than whatever the last upload left behind.
+  const dialogs = (
+    <>
       {channel === 'reorder-levels' ? (
-        <ReorderLevelUploadDialog
-          open
-          onOpenChange={(next) => !next && setChannel(null)}
-        />
+        <ReorderLevelUploadDialog open onOpenChange={(next) => !next && setChannel(null)} />
       ) : null}
 
       {channel && channel !== 'reorder-levels' && !isHistoryChannel(channel) ? (
@@ -152,6 +115,6 @@ export function UploadDataMenu({ onQueued }: UploadDataMenuProps) {
       ) : null}
     </>
   );
-}
 
-export default UploadDataMenu;
+  return { actions, dialogs };
+}

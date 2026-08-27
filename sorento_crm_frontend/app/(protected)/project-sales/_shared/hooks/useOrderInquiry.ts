@@ -9,6 +9,7 @@ import {
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
+  getOrderInquirySpoDetail,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
@@ -18,6 +19,7 @@ import {
   listOrderInquiryWorklist,
   markOrderInquiryRows,
   rejectOrderInquiryRow,
+  rejectOrderInquiryRows,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
   unplaceAllOrderInquiryRows,
@@ -41,6 +43,7 @@ export const ORDER_INQUIRY_WORKLIST_KEY = 'order-inquiry-worklist';
 export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summary';
 export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
 export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
+export const ORDER_INQUIRY_SPO_DETAIL_KEY = 'order-inquiry-spo-detail';
 export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
 export const ORDER_INQUIRY_UPLOAD_JOB_KEY = 'order-inquiry-upload-job';
 
@@ -183,8 +186,9 @@ export function useOrderInquiryPoCandidates(
   });
 }
 
-/** The "PO no" cell's popup: that purchase order's header and every line, fetched only
- * while the popover is open - `enabled` holds the request off until then. */
+/** The document lightbox's PO half: that purchase order's header, every line and who
+ * holds its quantity. Fetched only while the dialog is open - `enabled` holds the
+ * request off until then. */
 export function useOrderInquiryPoDetail(
   poId: string | undefined,
   options: { enabled?: boolean } = {},
@@ -193,6 +197,21 @@ export function useOrderInquiryPoDetail(
     queryKey: [ORDER_INQUIRY_PO_DETAIL_KEY, poId],
     queryFn: () => getOrderInquiryPoDetail(poId as string),
     enabled: Boolean(poId) && options.enabled !== false,
+  });
+}
+
+/** The same lightbox's SPO half, addressed by the shipping order's own number. */
+export function useOrderInquirySpoDetail(
+  spoNumber: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_SPO_DETAIL_KEY, spoNumber],
+    queryFn: () => getOrderInquirySpoDetail(spoNumber as string),
+    enabled: Boolean(spoNumber) && options.enabled !== false,
+    // A shipping order the endpoint cannot answer for is an empty state, not something
+    // to ask for three more times.
+    retry: false,
   });
 }
 
@@ -389,6 +408,25 @@ export function useOrderInquiryHandshake() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /**
+   * The same refusal, for a batch, with ONE reason (item 15). Reject moved into the
+   * Actions menu when the row actions column went, so the reason is asked for once and
+   * carried onto every ticked row.
+   */
+  const rejectRows = useMutation({
+    mutationFn: ({ rowIds, reason }: { rowIds: string[]; reason: string }) =>
+      rejectOrderInquiryRows(rowIds, reason),
+    onSuccess: (result) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      const failed = (result.results ?? []).filter((entry) => !entry.ok).length;
+      const rows = `${result.rejected} row${result.rejected === 1 ? '' : 's'} rejected`;
+      if (failed > 0) toast.warning(`${rows}, ${failed} could not be`);
+      else toast.success(`${rows}. The lines are back with CS.`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const linkNow = useMutation({
     mutationFn: (params: AutoPlaceRequest = {}) => linkNowOrderInquiryRows(params),
     onSuccess: (result) => {
@@ -398,5 +436,5 @@ export function useOrderInquiryHandshake() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { acknowledge, reject, linkNow };
+  return { acknowledge, reject, rejectRows, linkNow };
 }

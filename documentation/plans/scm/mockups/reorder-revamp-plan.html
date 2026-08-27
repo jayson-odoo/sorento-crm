@@ -1,0 +1,254 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Reorder planning revamp plan</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}
+.warn{background:#fffbeb;border-color:#fcd34d}
+.q{background:#f5f3ff;border-color:#ddd6fe}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}
+.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}
+.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}
+.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}
+.badge.v{background:#f5f3ff;border-color:#ddd6fe;color:var(--vio)}
+.mock{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;margin:8px 0;font-size:12px;overflow-x:auto;min-width:0}
+.mock table{font-size:12px}.mock th{font-weight:500;color:var(--mut);white-space:nowrap;background:#fafaf9}
+.mock td{white-space:nowrap}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.three{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.btn{display:inline-block;font-size:12px;padding:5px 11px;border:1px solid #d6d3d1;border-radius:7px;background:#fff;margin-right:6px;white-space:nowrap}
+.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}
+.btn.dim{opacity:.5}.btn.sm{padding:2px 8px;font-size:11px}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 0}
+.menu{border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;display:inline-block;font-size:12px;vertical-align:top;margin-left:8px}
+.menu div{padding:4px 10px;border-radius:5px}.menu div.dim{color:var(--mut)}
+.neg{color:var(--rose);font-weight:600}.pos{color:var(--em);font-weight:600}
+.strike{text-decoration:line-through;color:var(--mut)}
+.exp{background:#f5f5f4;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,.8fr);gap:16px;font-size:12px}
+.exp h4{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.exp .row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed #e7e5e4}
+.inp{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 6px;width:44px;text-align:right;background:#fff;font-variant-numeric:tabular-nums}
+.inp.w{width:110px;text-align:left}
+.kpi{display:inline-block;font-size:26px;font-weight:600;margin-right:10px}
+.note{font-size:12px;color:var(--mut)}
+.arrow{color:var(--mut);padding:0 6px}
+ol,ul{margin:6px 0 6px 20px}li{margin:3px 0}
+code{font-size:12px;background:#f5f5f4;padding:1px 4px;border-radius:4px}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid}
+.pill.sug{border-color:#d6d3d1;color:var(--mut);background:#fafaf9}
+.pill.amd{border-color:#bfdbfe;color:var(--pri);background:#eff6ff}
+.pill.con{border-color:#6ee7b7;color:#047857;background:#fff}
+.pill.rej{border-color:#fecdd3;color:var(--rose);background:#fff1f2}
+.pill.uns{border-color:#fcd34d;color:var(--amb);background:#fffbeb}
+.lnk{color:var(--pri);text-decoration:underline dotted;cursor:pointer}
+.modal{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.1);padding:16px;max-width:420px;font-size:12px}
+.modal .f{margin:10px 0}.modal .f label{display:block;font-weight:500;margin-bottom:3px}
+.modal .box{border:1px solid #d6d3d1;border-radius:6px;padding:6px 8px;color:var(--mut);background:#fff}
+.radio{display:inline-flex;gap:14px;margin:4px 0}.radio span::before{content:"○ ";color:var(--mut)}.radio span.on::before{content:"● ";color:var(--pri)}
+.ch{display:inline-block;width:9px;height:9px;border:1px solid #a8a29e;border-radius:2px;margin-right:4px;vertical-align:-1px}.ch.on{background:var(--pri);border-color:var(--pri)}
+form.qf{margin:6px 0 0}form.qf label{display:block;margin:3px 0}form.qf button{font-size:12px;padding:4px 10px;border:1px solid #d6d3d1;border-radius:6px;background:#fff;margin-top:6px;cursor:pointer}
+.phase{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px}
+.dlg{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.1);padding:14px;font-size:12px;min-width:0;overflow-x:auto}
+.dlg h4{margin:0 0 8px;font-size:13px}
+.tabs{display:flex;gap:12px;border-bottom:1px solid var(--line);margin-bottom:8px;font-size:12px}.tabs span{padding:4px 0}.tabs span.on{border-bottom:2px solid var(--pri);color:var(--pri)}
+</style></head><body>
+<h1>Reorder planning: a plans list, Start Plan, decide in the expanded row, one Confirm</h1>
+<div class="sub">Plan <code>documentation/plans/scm/PLAN-scm-reorder-revamp.md</code> + UAC alongside (written after this alignment) · new lane off main · 27 Aug 2026 · Status: ALIGNING (round 3, R1-R15)</div>
+
+<div class="three">
+<div class="card"><b>Goal</b>Reorder planning works like fulfilment planning now does: a list of plans, one Start Plan, each product row expands into the whole decision (cover mix, MoQ, price, supplier, AutoCount level, product health), Save keeps drafts, one Confirm sends the plan. Every number on the row opens a lightbox that names the documents behind it.</div>
+<div class="card warn"><b>Verified: "Live stock as of" is the request time</b><code>location_stock_service.py:127</code> writes <code>as_of = datetime.utcnow()</code>. It stamps the moment the panel was opened, not the stock upload. The label will read the newest <code>stock.updated_at</code> for that product (fallback: the last stock import job's finished time) and say "Stock as of".</div>
+<div class="card ruled"><b>What stays exactly as it is</b>The engine and every frozen number. Decisions still land in <code>scm.plan_row_decision</code>, Confirm still writes draft purchase orders via <code>confirm_decisions</code>. The daily cron run still appears; it just shows up as a row on the list.</div>
+</div>
+
+<h2>1. Plans list <span class="badge">FE + tiny BE</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p>
+<div class="mock"><div class="toolbar"><span>Tiles · grid of the latest run</span><span><span class="btn">Confirm decisions (20)</span><span class="btn">Upload data ▾</span><span class="btn p">▶ Manual plan</span></span></div>
+<div class="note">The "list" is <code>RunHistoryPanel</code>: a card of hand-rolled buttons under the grid, 8 per page, resolves <code>?plan=</code> against page 1 only.</div></div></div>
+<div><p class="lbl">Proposed: <code>/scm/reorder</code> = DataGrid of plans</p>
+<div class="mock"><div class="toolbar"><span>Search · Filters · Columns</span><span><span class="btn">⚙ Actions ▾</span><span class="btn p">▶ Start Plan</span></span></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><div class="menu"><div>⬆ Upload sales orders</div><div>⬆ Upload purchase orders</div><div>⬆ Upload history…</div><div>⬆ Upload reorder levels</div><div>Refresh</div></div></div>
+<table style="margin-top:8px"><tr><th>Plan</th><th>Sales order cut-off</th><th>Warehouses</th><th>Products</th><th class="n">Lines</th><th class="n">Decided</th><th>Status</th><th class="n">Cash if all accepted</th></tr>
+<tr style="cursor:pointer;background:#f8fafc"><td>27/08/2026 09:50 <span class="note">› opens the plan</span></td><td>30/09/2026</td><td>BRW</td><td>All</td><td class="n">184</td><td class="n">20 / 184</td><td><span class="badge b">Planning</span></td><td class="n">RM 6,232,043</td></tr>
+<tr><td>27/08/2026 06:00 <span class="badge">daily</span></td><td>-</td><td>All</td><td>All</td><td class="n">402</td><td class="n">402 / 402</td><td><span class="badge g">Confirmed</span></td><td class="n">RM 9,105,110</td></tr>
+<tr><td>26/08/2026 14:12</td><td>15/09/2026</td><td>BRW, DC1</td><td>12</td><td class="n">-</td><td class="n">-</td><td><span class="badge a">Running</span></td><td class="n">-</td></tr></table>
+<div class="note" style="margin-top:6px">Every row is clickable (whole row, hover highlight) and opens <code>/scm/reorder/{id}</code>; no per-row menu. Backed by the existing paginated <code>GET /scm/reorder-runs</code> (already returns started_at, plan_horizon_date, warehouse_codes, summary counts); it gains <code>sort/dir/query</code> via <code>buildDataGridParams</code> and a <code>product_count</code>. <code>RunHistoryPanel</code> is deleted.</div></div></div>
+</div>
+<div class="card"><b>Status is derived, not stored</b> Running = run status not completed · Planning = completed, confirmed decisions &lt; rows · Confirmed = every row confirmed or skipped · Failed. "Decided" counts saved decisions (the same <code>list_plan_row_decisions</code> counter the tiles use).</div>
+
+<h2>2. Start Plan modal <span class="badge">FE only</span></h2>
+<div class="two">
+<div><p class="lbl">Today: Manual plan</p><div class="modal"><b>Manual plan</b>
+<div class="f"><label>Warehouses <span class="strike" style="float:right">Select all</span></label><div class="box">All warehouses</div></div>
+<div class="f"><label>Products</label><div class="box">All products</div></div>
+<div class="f"><label>Plan until</label><div class="box">dd/mm/yyyy</div><div class="note">Empty = no cutoff, every open order counts. Demand needed after this date is left out; demand with no date is always counted…</div></div>
+<div style="text-align:right"><span class="btn">Cancel</span><span class="btn p">Generate plan</span></div></div></div>
+<div><p class="lbl">Proposed: Start Plan</p><div class="modal"><b>Start Plan</b>
+<div class="f"><label>Sales order cut-off</label><div class="box">dd/mm/yyyy</div><div class="note">Empty = every open order counts.</div></div>
+<div class="f"><label>Warehouses</label><div class="box">All warehouses</div></div>
+<div class="f"><label>Products</label><div class="box">All products</div></div>
+<div style="text-align:right"><span class="btn">Cancel</span><span class="btn p">Start Plan</span></div></div>
+<div class="note" style="margin-top:6px">Same payload (<code>plan_horizon_date</code>, <code>warehouse_codes</code>, <code>product_codes</code>). Select all is gone (empty already means all). On 202 the page navigates straight to the new plan, which shows the existing progress state until the run completes.</div></div>
+</div>
+
+<h2>3. Plan page toolbar <span class="badge">FE only</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p><div class="mock"><div class="toolbar"><span>↻</span><span><span class="btn">✓ Confirm decisions (20)</span><span class="btn">⬆ Upload data ▾</span><span class="btn p">▶ Manual plan</span></span></div>
+<div class="toolbar"><span>Search · Filters · Columns · Export</span><span><span class="btn">… Actions</span></span></div></div></div>
+<div><p class="lbl">Proposed: <code>/scm/reorder/{id}</code></p><div class="mock"><div class="toolbar"><span>← Plans &nbsp; <b>Plan 27/08/2026 09:50</b> <span class="note">Sales order cut-off 30/09/2026</span></span><span></span></div>
+<div style="border:1px solid var(--line);border-radius:8px;padding:6px 8px 0"><div class="toolbar" style="padding-top:2px"><span>🔍 Search · Filters · Columns · Export · <span class="btn sm">⇕ Expand all</span><span class="btn sm">⇑ Collapse all</span></span><span><span class="btn">… Actions ▾</span><span class="btn">Save (3)</span><span class="btn p">✓ Confirm (20)</span></span></div>
+<table style="margin-top:4px"><tr><th>#</th><th>Product</th><th class="n">Suggested qty</th><th class="n">Reorder level</th><th class="n">Reorder qty</th><th class="n">Project</th><th class="n">Retail</th><th class="n">On hand</th><th class="n">SPO</th><th class="n">PO</th><th>Decision</th></tr><tr><td>20</td><td>› 32MM TAIL PIECE</td><td class="n"><span class="lnk">16</span></td><td class="n">-</td><td class="n">-</td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">16</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td><span class="pill sug">Suggested · Stock 16</span></td></tr></table></div>
+<div class="note">Header = plan date-time and cut-off only. Expand all / Collapse all, Actions ▾, Save and Confirm all sit on the grid's own toolbar, glued to the table (the existing <code>DataGridListToolbar</code> slot, as the fulfilment board does). Save and Confirm sit on the grid toolbar, right of Actions ▾, Confirm last. Gone: Manual plan, Upload data, the reset icon. Uploads live on the list's Actions ▾; Reset planning sits inside Actions ▾ here. Expand all / Collapse all = <code>table.toggleAllRowsExpanded</code>, the SPO allocations icon pair.</div></div></div>
+</div>
+
+<h2>4. The row, collapsed <span class="badge">FE only</span></h2>
+<div class="mock"><table><tr><th>#</th><th>Product</th><th class="n">Suggested qty</th><th class="n">Reorder level</th><th class="n">Reorder qty</th><th class="n">Project</th><th class="n">Retail</th><th class="n">On hand</th><th class="n">SPO</th><th class="n">PO</th><th>Decision</th></tr>
+<tr><td>21</td><td>› <b>ACC-CB2007</b><br><span class="note">ACC-CB2007</span></td><td class="n"><span class="lnk">31</span></td><td class="n">30</td><td class="n">100</td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">1</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span><br><span class="note">last bought 30/03/2026</span></td><td><span class="pill sug">Suggested · Stock 31</span></td></tr>
+<tr><td>24</td><td>› <b>C-FHSS24</b><br><span class="note">C-FHSS24</span></td><td class="n"><span class="lnk">169</span></td><td class="n">150</td><td class="n">500</td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">19</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span><br><span class="note">last bought 28/04/2026</span></td><td><span class="pill uns">Unsaved · Buy 200</span></td></tr>
+<tr><td>25</td><td>› <b>CB320</b><br><span class="note">CB320</span></td><td class="n"><span class="lnk">50</span></td><td class="n">50</td><td class="n">100</td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td class="n"><span class="lnk">0</span></td><td><span class="pill con">Confirmed · Buy 50</span></td></tr></table></div>
+<ul>
+<li>Exactly the ten columns kept from today (PO outstanding renamed <b>PO</b>) plus one <b>Decision</b> status pill (Suggested / Unsaved / Saved / Confirmed / Skipped, with the mix in words). No buttons in the cell.</li>
+<li>MOQ, Decision editor, Suggested price, Suggested supplier, AutoCount level + qty, Product health leave the row and live in the expanded panel. Total cost stays a column but hidden by default (Columns menu).</li>
+<li>Every <span class="lnk">dotted number</span> is the lightbox trigger. No (i) icons, no hover popovers on numbers (section 6).</li>
+<li>Whole row toggles, chevron is an indicator, several rows may be open (Expand all needs it). Filters keep price advice / level answer / health so the hidden fields stay findable.</li>
+</ul>
+
+<h2>5. The row, expanded <span class="badge">FE + BE</span></h2>
+<div class="mock" style="padding:0"><table style="border:0"><tr><td style="border:0">24 &nbsp; ⌄ <b>C-FHSS24</b> &nbsp; <span class="note">suggested 169 · level 150 · reorder qty 500 · project 0 · retail 19 · on hand 0 · SPO 0 · PO 0</span></td><td style="border:0;text-align:right"><span class="pill uns">Unsaved · Buy 200</span></td></tr></table>
+<div class="exp">
+<div><h4>Cover</h4>
+<div class="row"><span>From stock <span class="note">(pool available 0)</span></span><span class="inp">0</span></div>
+<div class="row"><span>From PO <span class="note">(open 0)</span></span><span class="inp">0</span></div>
+<div class="row"><span>Buy</span><span class="inp">200</span></div>
+<div class="row"><span>SPO arriving <span class="note">already in net</span></span><span>0</span></div>
+<div class="row"><span>MOQ <span class="note">(master 100)</span></span><span class="inp">100</span></div>
+<div class="note" style="margin-top:6px">31 over suggested · Buy rounds to MOQ and multiple on blur</div>
+<div style="margin-top:8px"><span class="btn sm">Use suggestion</span><span class="btn sm">Skip</span></div></div>
+<div><h4>Price and supplier</h4>
+<div class="row"><span>Last price</span><span><b>RM 12.40</b> <span class="note">PO-24118 · 28/04/2026</span></span></div>
+<div class="row"><span>Last supplier</span><span><span class="inp w">DEFAULT ▾</span></span></div>
+<div class="row" style="background:#fffbeb;border-radius:4px;padding:3px 4px"><span class="tri">▲ Cheaper on file</span><span>SUPCO RM 11.10 <span class="note">(-10%)</span></span></div>
+<div class="radio" style="margin-top:6px"><span class="on">Use last price</span><span>Get new price</span></div>
+<div class="note">Line cost RM 2,480 at last price</div></div>
+<div><h4>AutoCount level + qty</h4>
+<div><span class="badge v">Set AutoCount level to 468</span> <span class="note">now 150</span></div>
+<div class="row"><span>Level</span><span class="inp">468</span></div>
+<div class="row"><span>Reorder qty</span><span class="inp">500</span></div>
+<div class="note">ADU 5.2/day · lead 90 d · safety 14 d · <span class="lnk">3-month chart</span></div>
+<div class="note">Applied in AutoCount; lands in the level-changes export.</div></div>
+<div><h4>Product health</h4>
+<div><span class="badge a">Slow moving</span></div>
+<div class="radio" style="display:grid;gap:2px;margin-top:6px"><span class="on">Keep selling</span><span>Discontinue</span></div>
+<div class="note">last sold 02/06/2026 · 1.1/mo · 23 mo of stock</div></div>
+</div>
+</div>
+<div class="three">
+<div class="card"><b>Cover = the existing decision, opened up</b> The three inputs are today's <code>AdjustMixture</code> pencil popover (From stock / From PO / Buy, with the same caps and MoQ rounding) laid flat. Untouched = the engine mix. "Use suggestion" restores it, "Skip" = today's X. The line cost in zone 2 is today's Total cost, so hiding the column loses nothing.</div>
+<div class="card"><b>Price and supplier read from the last PO</b> Headline = <code>inputs.last_purchase</code> (cost, PO ref, date); supplier = that PO's supplier, so <code>_last_purchase_cost_map</code> starts carrying <code>supplier_id</code>. The select is the current shortlist (<code>line.alternatives</code>); the amber line is <code>cheaperAlternative()</code>, which already exists in <code>priceAdvice.ts</code> and uses the policy threshold. Never purchased = "No price on file", radio defaults to Get new price.</div>
+<div class="card"><b>Level, qty, health are inputs, not popovers</b> Level = today's "Set instead to", Reorder qty = <code>scm.reorder_level.reorder_qty</code> becomes writable through the same <code>PUT /reorder-levels</code>. Health radio = today's Keep selling / Discontinue buttons. The chart moves behind a link so the panel stays one screen tall at 1280.</div>
+</div>
+
+<h2>6. Lightboxes replace every tooltip <span class="badge">FE + BE</span></h2>
+<p class="note">Six numbers, six dialogs (shadcn <code>Dialog</code>, <code>sm:max-w-[95vw]</code> like <code>BoardCellBreakdownDialog</code>). No hover popovers, no (i) icons. Each dialog names documents; rows expand where a document has lines.</p>
+<div class="two">
+<div class="dlg"><h4>Suggested qty · ACC-CB2007 · 31</h4>
+<table><tr><th>Line</th><th class="n">Qty</th></tr>
+<tr><td>Project demand before cut-off</td><td class="n">0</td></tr>
+<tr><td>Retail demand before cut-off</td><td class="n">1</td></tr>
+<tr><td>- On hand (pool)</td><td class="n">0</td></tr>
+<tr><td>- SPO arriving</td><td class="n">0</td></tr>
+<tr><td>- PO open</td><td class="n">0</td></tr>
+<tr><td><b>Net</b></td><td class="n"><b class="neg">-1</b></td></tr>
+<tr><td>Reorder level 30 · breached by 31</td><td class="n">31</td></tr>
+<tr><td>Buy before rounding</td><td class="n">31</td></tr>
+<tr><td>MOQ - · multiple -</td><td class="n">31</td></tr>
+<tr><td><b>Suggested</b></td><td class="n"><b>31</b></td></tr></table>
+<div class="note" style="margin-top:6px">Today's <code>PlanOrderQtyLedger</code> rows (need, offsets, breach, rounding, last bought), unchanged, in a dialog instead of a popover.</div></div>
+<div class="dlg"><h4>Project · ACC-CB2007</h4><div class="tabs"><span class="on">Order inquiries (0 open)</span><span>SO history (3)</span></div>
+<table><tr><th>Sales order</th><th>Customer</th><th>Project</th><th>Agent</th><th class="n">Price</th><th class="n">Qty</th><th>Date</th></tr>
+<tr><td>SO401118</td><td>PEMBINAAN MAJU SDN BHD</td><td>Taman Sri Bayu Ph2</td><td>SEAN</td><td class="n">RM 18.50</td><td class="n">200</td><td>12/05/2026</td></tr>
+<tr><td>SO398220</td><td>E-REGION BUILDER SDN BHD</td><td>Bandar Rimbayu</td><td>LCL</td><td class="n">RM 18.20</td><td class="n">150</td><td>03/03/2026</td></tr>
+<tr><td>SO391004</td><td>PEMBINAAN MAJU SDN BHD</td><td>Taman Sri Bayu Ph1</td><td>SEAN</td><td class="n">RM 17.90</td><td class="n">120</td><td>19/11/2025</td></tr></table>
+<div class="note" style="margin-top:6px">Tab 1 = open order inquiries counted before the cut-off (Inquiry, Customer, Project, Agent, Price, Qty, Needed). Tab 2 = project-class sales order history for this product. Both from <code>demand?channel=project</code>: <code>scope=location</code> is the open list, <code>scope=product</code> is already the history list; it gains the project title.</div></div>
+<div class="dlg"><h4>Retail · ACC-CB2007</h4><div class="tabs"><span class="on">Open sales orders (1)</span><span>SO history (14)</span></div>
+<table><tr><th>Sales order</th><th>Customer</th><th>Project</th><th>Agent</th><th class="n">Price</th><th class="n">Qty</th><th>Required</th></tr>
+<tr><td>SO404352</td><td>E-REGION BUILDER SDN BHD (PROJECT-CASH)</td><td>-</td><td>SEAN III</td><td class="n">RM 19.00</td><td class="n">1</td><td>20/09/2026</td></tr></table>
+<div class="note" style="margin-top:6px">Same shape as Project, <code>channel=retail</code>. Agent = <code>sales_agents.person_label</code>, blank when the order carries none.</div></div>
+<div class="dlg"><h4>On hand · ACC-CB2007 <span class="note">Stock as of 27/08/2026, 6:05 am</span></h4>
+<table><tr><th></th><th>Location</th><th class="n">On hand</th><th class="n">Reserved</th><th class="n">Free</th><th class="n">SO qty</th><th class="n">SPO qty</th><th class="n">Available</th><th class="n">PO qty</th></tr>
+<tr><td>⌄</td><td>BRW</td><td class="n">5431</td><td class="n">0</td><td class="n">5431</td><td class="n">9</td><td class="n">0</td><td class="n">5422</td><td class="n">63</td></tr>
+<tr><td colspan="9" style="background:#fafaf9"><table><tr><th>Doc</th><th>Number</th><th>Customer</th><th>Agent</th><th>Doc date</th><th>Delivery</th><th class="n">Qty</th></tr><tr><td>SO</td><td>SO404352</td><td>E-REGION BUILDER SDN BHD</td><td>SEAN III</td><td>20/05/2026</td><td>20/09/2026</td><td class="n">9</td></tr><tr><td>PO</td><td>PO-24118</td><td>DEFAULT</td><td>-</td><td>28/04/2026</td><td>15/09/2026</td><td class="n">63</td></tr></table></td></tr>
+<tr><td>›</td><td>DC1</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr><td>›</td><td>MWH</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr></table>
+<div class="note" style="margin-top:6px">Today's expanded-row location table moves here. <code>CellStockTable</code> + <code>StockDocumentsPanel</code> from the fulfilment board, fed only the <b>site pool</b> rows (<code>is_pool</code> from <code>location-stock</code>), plus Reserved / Free from the same reader. Taken is dropped; it belongs to a sales order line. "Stock as of" = last stock upload (R7).</div></div>
+<div class="dlg"><h4>SPO · ACC-CB2007</h4><div class="tabs"><span class="on">Open to BRW (0)</span><span>History to BRW (5)</span></div>
+<table><tr><th>SPO</th><th>Supplier</th><th class="n">Qty</th><th class="n">Received</th><th>ETA</th><th>Arrived</th><th>Status</th></tr>
+<tr><td>SPO-2026-0412</td><td>DEFAULT</td><td class="n">500</td><td class="n">500</td><td>10/06/2026</td><td>08/06/2026</td><td><span class="badge g">Received</span></td></tr>
+<tr><td>SPO-2026-0107</td><td>DEFAULT</td><td class="n">500</td><td class="n">500</td><td>02/03/2026</td><td>05/03/2026</td><td><span class="badge g">Received</span></td></tr>
+<tr><td>SPO-2025-0988</td><td>SUPCO</td><td class="n">300</td><td class="n">280</td><td>14/12/2025</td><td>20/12/2025</td><td><span class="badge a">Short 20</span></td></tr></table>
+<div class="note" style="margin-top:6px"><b>New</b> <code>GET /reorder-runs/{run}/spo-history?product_id=</code> over the <code>spo_supply</code> reader, BRW-bound only: open shipments first (the qty the SPO cell counts), then received history.</div></div>
+<div class="dlg"><h4>PO · ACC-CB2007 · to BRW <span class="note">last bought 30/03/2026</span></h4><div class="tabs"><span class="on">Open to BRW (0)</span><span>History to BRW (7)</span></div>
+<table><tr><th>PO</th><th>Supplier</th><th class="n">Qty</th><th class="n">Unit price</th><th>Issued</th><th>ETA</th><th>Status</th></tr>
+<tr><td>PO-24091</td><td>DEFAULT</td><td class="n">100</td><td class="n">RM 12.40</td><td>30/03/2026</td><td>28/06/2026</td><td><span class="badge g">Closed</span></td></tr>
+<tr><td>PO-23877</td><td>DEFAULT</td><td class="n">100</td><td class="n">RM 12.10</td><td>02/12/2025</td><td>01/03/2026</td><td><span class="badge g">Closed</span></td></tr>
+<tr><td>PO-23540</td><td>SUPCO</td><td class="n">200</td><td class="n">RM 11.10</td><td>15/08/2025</td><td>10/11/2025</td><td><span class="badge g">Closed</span></td></tr></table>
+<div class="note" style="margin-top:6px"><b>BRW pool location only (R15)</b>: the site pool warehouse BRW itself, the same location On hand counts. Project locations (BRW-BB, BRW-AM …) are not included, so no To column is needed. Open = <code>po-book</code>, already keyed <code>product:warehouse</code>, read at the BRW key. History = <code>purchase-trend</code> with a new warehouse filter (line destination = BRW pool); a PO line with no destination or bound to a project location is left out. Caveat you have accepted: the imported purchase history names no destination on 12,928 of 12,940 lines, so the History tab holds the POs raised in the CRM, not the old export. The panel's last price / last supplier read the same BRW-filtered source, so they never disagree.</div></div>
+</div>
+<table style="margin-top:10px"><tr><th>Number</th><th>Dialog tabs</th><th>Columns</th><th>Source</th></tr>
+<tr><td>Suggested qty</td><td>Ledger</td><td>today's <code>PlanOrderQtyLedger</code> rows</td><td>row fields, unchanged</td></tr>
+<tr><td>Project</td><td>Order inquiries (open) · SO history</td><td>SO / Inquiry, Customer, Project, Agent, Price, Qty, Date</td><td><code>demand?channel=project&amp;scope=location|product</code></td></tr>
+<tr><td>Retail</td><td>Open sales orders · SO history</td><td>SO, Customer, Project, Agent, Price, Qty, Required</td><td><code>demand?channel=retail&amp;scope=location|product</code></td></tr>
+<tr><td>On hand</td><td>Site pool stock</td><td>Location, On hand, Reserved, Free, SO qty, SPO qty, Available, PO qty, › documents · Stock as of</td><td><code>location-stock</code> (pool rows) + documents reader</td></tr>
+<tr><td>SPO</td><td>Open to BRW · History to BRW</td><td>SPO, Supplier, Qty, Received, ETA, Arrived, Status</td><td><b>new</b> <code>spo-history</code></td></tr>
+<tr><td>PO</td><td>Open to BRW · History to BRW (pool location only)</td><td>PO, Supplier, Qty, Unit price, Issued, ETA, Status</td><td><code>po-book</code> + <code>purchase-trend</code></td></tr>
+</table>
+
+<h2>7. Save and Confirm <span class="badge">FE + BE</span></h2>
+<div class="three">
+<div class="card"><b>Edits are local until Save</b> Every input in the panel writes to a draft map keyed by rec id; the pill turns "Unsaved". Leaving the page with drafts prompts. This is the difference from today, where each pencil Record / MoQ blur / level Save / health click fires its own request.</div>
+<div class="card"><b>Save (N) = one request</b> <b>New</b> <code>PUT /scm/reorder-runs/{run}/plan-edits</code> with <code>rows[{rec_id, decision?, moq?, level?, reorder_qty?, lifecycle?}]</code>, one transaction, calling the existing service functions (<code>record_plan_row_decision</code>, <code>set_moq_override</code>, level amend, <code>record_lifecycle_decision</code>). Grouped rows fan out to member recs as today. The per-row endpoints stay for the API.</div>
+<div class="card"><b>Confirm (N) = Save, then confirm-decisions</b> One button, last in the toolbar. Untouched rows confirm as the engine suggestion (the sibling rule); skipped rows are left out. Confirm dialog states the count and cash. Afterwards rows read Confirmed and the pill's mix is frozen; drafts POs raise as today.</div>
+</div>
+
+<h2>8. Rulings to accept</h2>
+<table><tr><th>#</th><th>Ruling</th><th>Why</th></tr>
+<tr><td>R1</td><td>Plan detail lives at <code>/scm/reorder/{id}</code>; <code>/scm/reorder?plan=</code> redirects there.</td><td>ADR: view = <code>/{module}/{id}</code>. Bookmarks keep working.</td></tr>
+<tr><td>R2</td><td>SPO is a fact in the panel, not an input.</td><td>SPO qty is already inside net and Available; a "take SPO" quantity would count it twice. <span class="badge g">accepted</span></td></tr>
+<tr><td>R3</td><td>Confirm covers untouched rows as the suggestion.</td><td>Same rule the fulfilment board just adopted; today Confirm only takes rows someone clicked. <span class="badge g">accepted</span></td></tr>
+<tr><td>R4</td><td>Reset planning moves under the grid's Actions ▾ instead of disappearing.</td><td>The endpoint is what makes a demo repeatable; it needs no toolbar slot. <span class="badge g">accepted</span></td></tr>
+<tr><td>R5</td><td>Reorder qty becomes editable next to Level.</td><td>"AutoCount level + qty directly editable"; both land in the level-changes export.</td></tr>
+<tr><td>R6</td><td>Suggested price = last PO price and supplier, always; engine shortlist demoted to the amber "cheaper on file" line and the select.</td><td>Your ask. The shortlist ranking still exists for the highlight.</td></tr>
+<tr><td>R7</td><td>"Stock as of" = newest <code>stock.updated_at</code> for the product.</td><td>Verified bug: today it is the request time.</td></tr>
+<tr><td>R8</td><td>Product health chip leaves the collapsed row; a Filters entry keeps it findable.</td><td>Keeps the ten columns you circled; 1280 fits without horizontal scroll.</td></tr>
+<tr><td>R9</td><td>Tiles (N of Total made / Cash committed / Cash if all accepted) stay above the grid.</td><td>Not asked to change; they read the same counters the toolbar does.</td></tr>
+<tr><td>R10</td><td>Order summary / Plan exceptions / PO worklist stay on the plan page under Actions ▾.</td><td>They are views of one run, not of the list. <span class="badge g">accepted</span></td></tr>
+<tr><td>R11</td><td>Plan header = date-time + Sales order cut-off only; Save and Confirm on the grid toolbar, right of Actions ▾.</td><td>Your ask; mirrors the fulfilment board toolbar.</td></tr>
+<tr><td>R12</td><td>The expanded row holds decisions only; the per-location stock table moves into the On hand lightbox.</td><td>Your ask; the panel stays one screen tall.</td></tr>
+<tr><td>R13</td><td>Column "PO outstanding" renamed "PO".</td><td>Your ask.</td></tr>
+<tr><td>R14</td><td><b>Confirm (N), Save (N) and "N of Total made" count products, not locations.</b></td><td>Verified bug: <code>decision_service.list_plan_row_decisions</code> returns <code>decided_count = len(rows)</code>, one per recommendation; a product-grain row fans one decision out to every location member, so a product with 3 bins counts 3 and the number jumps. Fix = count distinct <code>product_id</code> on both sides (decided and total); a test pins it.</td></tr>
+<tr><td>R15</td><td>PO cell and PO dialog count the BRW pool location only (not BRW-BB / BRW-AM), like On hand and SPO.</td><td>Your ruling. Open PO book is already per warehouse; purchase history gains the filter and drops lines with no destination or a project destination.</td></tr></table>
+
+<h2>9. Build order</h2>
+<div class="phase">
+<div class="card"><b>Phase 1 · FE against mocks</b><ol><li>Plans list page (DataGrid, Start Plan modal, Actions ▾ uploads)</li><li><code>/scm/reorder/[id]</code> page + toolbar, redirect from <code>?plan=</code></li><li>Collapsed columns + pill; expand all</li><li>Expanded panel: 4 zones, draft map, Save / Confirm wiring to a mock</li><li>Six lightboxes (dialog shells reusing ledger, demand, CellStockTable content)</li></ol></div>
+<div class="card"><b>Phase 2 · BE test-first</b><ol><li><code>PUT …/plan-edits</code> bulk save (one tx, tests per field)</li><li><code>GET …/spo-history</code></li><li><code>last_purchase.supplier_id</code> on the frozen row; list gains sort/query/product_count</li><li><code>reorder_qty</code> writable on <code>PUT /reorder-levels</code></li><li><code>as_of</code> = stock upload time (test pins it)</li><li>Confirm untouched-as-suggestion (test)</li><li>Decided / total counts by distinct product (R14, test)</li><li><code>purchase-trend</code> warehouse filter, BRW pool (R15, test)</li><li>Vitest: panel, pill, Save/Confirm, dialogs</li></ol></div>
+<div class="card"><b>Phase 3 · review + verify</b><ol><li>agent-browser run from sidebar: list → Start Plan → plan → expand all → edit → Save → Confirm → draft PO</li><li>375 px and 1280 px</li><li><code>/code-review</code>, DoD gate, PR</li></ol>
+<div class="note" style="margin-top:8px">Lane: new branch off main. Sibling lane <code>feat/scm-planning-inline-decisions</code> holds :3000/:8000 from the primary checkout, so this one runs from a worktree on its own ports.</div></div>
+</div>
+
+<h2>10. Risks</h2>
+<ul>
+<li><b>Plan size.</b> The grid loads the whole run client-side (4 unpaginated queries). A 400-row plan with every row expanded renders 400 panels; Expand all stays within the current page (50 rows) and the location table fetches live stock only for open rows, as today.</li>
+<li><b>Last supplier vs shortlist.</b> Purchase history names no destination for 12,928 of 12,940 PO lines, so "last supplier" is product-wide, not per segment. The row keeps saying which attribution it used (<code>last_purchase_basis</code>).</li>
+<li><b>Unsaved drafts.</b> A browser refresh loses unsaved edits; the pill count and the leave-page prompt make that visible. Nothing is auto-saved.</li>
+<li><b>Legacy runs</b> (no <code>front_planning_contract_version</code>) stay read-only: panel renders, inputs disabled, same lock reason as today.</li>
+</ul>
+</body></html>

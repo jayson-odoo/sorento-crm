@@ -15,14 +15,13 @@ SIGNED and never clamped): a location oversold by 200 says so rather than floors
 """
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from app.models.inventory import Warehouse
+from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, _dec
@@ -67,6 +66,24 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
     # project-segment locations.
     is_pool_by_id = {str(w.id): is_site_pool(w.segment) for w in warehouses}
 
+    # What is already ORDERED into each location, on the same predicate `scm.po_ordered_v`
+    # and `po_book_service` use - one definition of "still to come" per screen, so the
+    # dialog's PO qty column and the row's own PO cell cannot disagree.
+    po_by_wh = {
+        str(r[0]): float(r[1] or 0)
+        for r in db.execute(text("""
+            SELECT pol.warehouse_id, SUM(pol.qty_ordered - pol.qty_received)
+              FROM purchase_order_lines pol
+              JOIN purchase_orders po ON po.id = pol.purchase_order_id
+             WHERE pol.product_id = CAST(:pid AS uuid)
+               AND pol.warehouse_id IS NOT NULL
+               AND po.status = ANY(ARRAY['active', 'received', 'partial', 'closed'])
+               AND pol.line_status = 'open'
+               AND pol.qty_ordered > pol.qty_received
+             GROUP BY pol.warehouse_id
+        """), {"pid": str(product_id)}).all()
+    }
+
     levels = supply.stock_levels_by_location([product_id])
     held = supply.held_stock_by_location([product_id])
     free = supply.free_stock_by_location([product_id])
@@ -101,10 +118,12 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
         free_qty = free.get(key, _ZERO)
         so_qty = so_qty_by_wh.get(wid, _ZERO)
         spo_qty = sum((ref.qty for ref in incoming.get(key, [])), _ZERO)
+        po_qty = po_by_wh.get(wid, 0.0)
         # Signed, never clamped - `stock_detail`'s own formula (AutoCount arithmetic: a
         # location oversold by more than it holds says so as a negative number).
         available = on_hand - so_qty + spo_qty
-        if not any((on_hand, reserved, held_qty, free_qty, so_qty, spo_qty, available)):
+        if not any((on_hand, reserved, held_qty, free_qty, so_qty, spo_qty, available,
+                    po_qty)):
             continue
         locations.append({
             "warehouse_id": wid,
@@ -120,10 +139,51 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
             "so_qty": float(so_qty),
             "spo_qty": float(spo_qty),
             "available": float(available),
+            # Ordered, not yet received, bound HERE. A location with nothing on order says
+            # 0 rather than null: the purchase book has an answer for every location.
+            "po_qty": po_qty,
         })
 
+    # The SOURCE of the answer stays inside `_stock_as_of` (its own return says which
+    # branch answered, which is what its tests read). The dialog prints one line, "Stock as
+    # of <when>", and never names the branch, so shipping the code would be a field with
+    # nobody to read it.
+    as_of, _source = _stock_as_of(db, product_id)
     return {
         "product_id": str(product_id),
-        "as_of": datetime.utcnow().isoformat(),
+        "as_of": as_of,
         "locations": locations,
     }
+
+
+def _stock_as_of(db: Session, product_id: str) -> tuple[Optional[str], str]:
+    """When the stock shown here was last written, and where that answer came from (R7).
+
+    This used to be ``datetime.utcnow()`` - the moment the dialog asked, which is the one
+    thing it is certainly not. AutoCount stock arrives by UPLOAD, so a buyer reading "as of
+    now" is told the book is live when it may be three days old, and that is the number
+    they decide against.
+
+    Newest ``stock.updated_at`` (or ``created_at`` for a row never updated since its
+    insert) for THIS product first, because it is the closest thing to "when did this
+    item's figure last move". A product with no stock row at all falls back to the last
+    completed stock import, which is when the file that would have moved them was taken. Neither answer available is stated as ``none`` - never
+    filled in with the clock.
+    """
+    # A row inserted by an upload and never updated since carries its write time in
+    # `created_at` (`updated_at` stays NULL until a later upload touches it), so the
+    # newest write is the max over both, per row.
+    newest = (
+        db.query(func.max(func.coalesce(Stock.updated_at, Stock.created_at)))
+        .filter(Stock.product_id == product_id)
+        .scalar()
+    )
+    if newest is not None:
+        return newest.isoformat(), "stock"
+    finished = db.execute(text(
+        "SELECT max(completed_at) FROM import_jobs "
+        "WHERE job_type = 'stock_import' AND completed_at IS NOT NULL"
+    )).scalar()
+    if finished is not None:
+        return finished.isoformat(), "import_job"
+    return None, "none"

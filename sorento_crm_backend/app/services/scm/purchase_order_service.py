@@ -1106,6 +1106,17 @@ class PurchaseOrderService:
                         None, actor_user_id=actor, trigger="po_confirm",
                         row_ids=sized_by,
                         link_up_to=link_up_to, link_horizon=link_horizon,
+                        # Awaiting rows too (`PLAN-scm-oi-draft-links.md` R6): the rows
+                        # that SIZED this buy are usually the ones nobody has confirmed
+                        # yet, and leaving them out is what made a plan-generated purchase
+                        # order land on a page that still read "Not found".
+                        include_awaiting=True,
+                        # And their DRAFTS may move onto it (section 5.4, R2): the plan
+                        # bought THIS order for these very rows, so a draft sitting on a
+                        # document the raise could reach at the time is exactly what the
+                        # confirm is meant to better. A confirmed row's link never moves,
+                        # and a re-deal that lands on the same document writes nothing.
+                        redeal_drafts=True,
                     )
                 # Pass two: everybody else waiting on these products. Idempotent - a row
                 # pass one fully linked is no longer raised, so it drops out of this query.
@@ -1113,6 +1124,8 @@ class PurchaseOrderService:
                     list(order["product_ids"]), actor_user_id=actor,
                     trigger="po_confirm",
                     link_up_to=link_up_to, link_horizon=link_horizon,
+                    include_awaiting=True,
+                    redeal_drafts=True,
                 )
             self.db.commit()
         except Exception as exc:  # noqa: BLE001

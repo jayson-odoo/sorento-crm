@@ -64,6 +64,12 @@ export interface PlanDecision {
    * proposal stands. Switching it re-reads that supplier's last price and lead time.
    */
   supplierCode?: string;
+  /**
+   * The decision has already been confirmed into a draft purchase order - the server
+   * stamped `draft_po_number` on it. Read-only here: nothing on the FE sets it, and the
+   * status pill needs it to say "Confirmed" rather than "Saved" (plan 4.3).
+   */
+  confirmed?: boolean;
 }
 
 /** The default price call, so "not stated" and "use the last price" never diverge. */
@@ -273,6 +279,7 @@ export function fromServerPlanDecision(
   const priced = {
     priceMode: sd.price_mode ?? DEFAULT_PRICE_MODE,
     ...(sd.supplier_code ? { supplierCode: sd.supplier_code } : {}),
+    ...(sd.draft_po_number ? { confirmed: true } : {}),
   };
   if (sd.kind === 'skip') return { skip: true, ...priced };
   const out: PlanDecision = { ...priced };

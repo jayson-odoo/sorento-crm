@@ -175,6 +175,14 @@ export type DataGridListToolbarProps<TData extends object> = {
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
   /**
+   * Extra controls at the END of the left cluster, after Export / Refresh - for a grid
+   * whose rows expand (Expand all / Collapse all). They belong beside Columns and Export
+   * because they change what the TABLE shows, not what the list contains, and hiding them
+   * in the Actions menu on the right puts a view control among the record actions.
+   * Hidden while the bulk strip is up, like everything else in that cluster.
+   */
+  leftActions?: ReactNode;
+  /**
    * Primary call-to-action (e.g. the "Add" button). Anchored to the right edge.
    *
    * May be a render function receiving `{ openExport }` - for a page whose right cluster
@@ -262,6 +270,7 @@ export function DataGridListToolbar<TData extends object>({
   selectAllMatching,
   onRefresh,
   isRefreshing = false,
+  leftActions,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -433,7 +442,12 @@ export function DataGridListToolbar<TData extends object>({
             </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
+          // `grow` (flex-grow, basis auto), not the default `0 1 auto`: without it a
+          // wrapping flex item is sized at its own basis rather than at the free space
+          // beside it, so Columns and Refresh dropped onto a second row at 1280 with
+          // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
+          // the row is genuinely full - the item still shrinks to min-content and wraps.
+          <div className="flex grow flex-wrap items-center gap-2">
             {searchSlot}
             {filters ? (
               filters.kind === 'listQuery' ? (
@@ -488,6 +502,7 @@ export function DataGridListToolbar<TData extends object>({
                 <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
             ) : null}
+            {leftActions}
           </div>
         )}
 

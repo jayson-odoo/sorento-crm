@@ -65,6 +65,10 @@ export interface LevelSuggestion {
   suggested_quantity: number | null;
   /** AutoCount's own reorder quantity as uploaded, beside the engine's. */
   master_reorder_quantity: number | null;
+  /** The reorder quantity the BUYER set, or the level upload last stated (R5). It sits
+   *  beside `master_reorder_quantity` the way `amended_level` sits beside
+   *  `suggested_level` - never merged into it. */
+  reorder_qty?: number | null;
   basis: LevelBasis;
 }
 

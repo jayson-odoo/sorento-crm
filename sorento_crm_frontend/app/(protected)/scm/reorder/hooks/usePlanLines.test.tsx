@@ -442,7 +442,7 @@ describe('usePlanLines - updateMoq (20 Aug live test)', () => {
   it('a single rejected write on an ungrouped row still rejects, after refreshing the grid', async () => {
     // S8: the group write is now `Promise.allSettled`, not `Promise.all` - this pins that
     // an ungrouped (single-member) failure still surfaces as a rejection for the caller
-    // (PlanMoqCell) to report, rather than being swallowed here.
+    // (the row panel's MOQ input) to report, rather than being swallowed here.
     setMoqOverride.mockReset().mockRejectedValue(new Error('Failed to save the MOQ.'));
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
     await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
