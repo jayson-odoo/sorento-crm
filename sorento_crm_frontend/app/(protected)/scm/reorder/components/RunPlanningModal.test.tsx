@@ -1,13 +1,10 @@
 /**
- * SCM M8 - RunPlanningModal (M8-D5, revised + AC-B8a). Manual-plan inputs are
- * warehouse(s) and products - NO cash budget field (captain, 20 Aug: budget is a
- * backend/post-run-only capability, tightened on the plan afterwards). NO
- * market-insight toggle (market never enters a run), and the legacy `buy_scope`
- * input is gone (planning is always per-warehouse). Warehouse is MULTI-select with a
- * Select-all shortcut and is OPTIONAL, where empty means every warehouse (P1, captain
- * 25 Aug); products are MULTI-select and OPTIONAL the same way, where empty means every
- * product, so existing behaviour and the scheduled daily run are unchanged. Submit emits
- * { warehouse_codes, product_codes, plan_horizon_date }.
+ * Start Plan (plan 4.2, UAC B1/B2). Fields in the order the buyer decides them - Sales
+ * order cut-off, Warehouses, Products - all optional, all "empty means everything". There
+ * is NO Select all (empty already means every warehouse), no cash budget field (captain,
+ * 20 Aug: budget is a backend/post-run capability), no market-insight toggle and no legacy
+ * `buy_scope`. Submit emits an unchanged { warehouse_codes, product_codes,
+ * plan_horizon_date }.
  *
  * SearchableMultiSelect + the option hooks are stubbed so the pick is deterministic.
  */
@@ -88,10 +85,12 @@ function renderModal(over: Partial<React.ComponentProps<typeof RunPlanningModal>
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('RunPlanningModal (M8-D5)', () => {
-  it('shows the warehouse(s) and products inputs, and no cash budget, market toggle or buy_scope', () => {
+describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
+  it('shows the three inputs, and no cash budget, market toggle or buy_scope', () => {
     renderModal();
-    expect(screen.getByText('Manual plan')).toBeInTheDocument();
+    // The title and the submit button both read "Start Plan" - that is the point.
+    expect(screen.getAllByText('Start Plan').length).toBeGreaterThan(0);
+    expect(screen.getByText('Sales order cut-off')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
     expect(screen.getByLabelText('All warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
@@ -103,9 +102,32 @@ describe('RunPlanningModal (M8-D5)', () => {
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
 
+  it('B1: fields read top to bottom Sales order cut-off, Warehouses, Products', () => {
+    renderModal();
+    // The dialog renders through a portal, so the labels are on `document.body`.
+    const labels = Array.from(document.body.querySelectorAll('label, [data-slot="label"]'))
+      .map((el) => el.textContent?.trim())
+      .filter((t): t is string =>
+        t === 'Sales order cut-off' || t === 'Warehouses' || t === 'Products',
+      );
+    expect(labels).toEqual(['Sales order cut-off', 'Warehouses', 'Products']);
+  });
+
+  it('B1: has no Select all - empty already means every warehouse', () => {
+    renderModal();
+    expect(screen.queryByRole('button', { name: /Select all/i })).not.toBeInTheDocument();
+  });
+
+  it('B1: the buttons are Cancel and Start Plan', () => {
+    renderModal();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start Plan' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Generate plan/i })).not.toBeInTheDocument();
+  });
+
   it('submits with NO warehouse picked: empty means every warehouse (P1)', () => {
     const { onSubmit } = renderModal();
-    fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: [],
       product_codes: [],
@@ -118,7 +140,7 @@ describe('RunPlanningModal (M8-D5)', () => {
   it('emits { warehouse_codes, product_codes, plan_horizon_date } on submit (M8-D5 / AC-B8a)', () => {
     const { onSubmit } = renderModal();
     fireEvent.click(screen.getByLabelText('Johor Bahru DC'));
-    fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-JB'],
       product_codes: [],
@@ -126,12 +148,13 @@ describe('RunPlanningModal (M8-D5)', () => {
     });
   });
 
-  it('Select all picks every warehouse; Clear all empties it', () => {
+  it('Clear all empties a warehouse pick', () => {
     const { onSubmit } = renderModal();
-    fireEvent.click(screen.getByRole('button', { name: /Select all/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+    fireEvent.click(screen.getByLabelText('Johor Bahru DC'));
+    fireEvent.click(screen.getByRole('button', { name: /Clear all/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
     expect(onSubmit).toHaveBeenCalledWith({
-      warehouse_codes: ['WH-KL', 'WH-JB'],
+      warehouse_codes: [],
       product_codes: [],
       plan_horizon_date: '',
     });
@@ -141,7 +164,7 @@ describe('RunPlanningModal (M8-D5)', () => {
     const { onSubmit } = renderModal();
     fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
     fireEvent.click(screen.getByLabelText('SRTWT7408 · Wall-hung WC 7408'));
-    fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-KL'],
       product_codes: ['SRTWT7408'],
@@ -154,15 +177,15 @@ describe('RunPlanningModal (M8-D5)', () => {
     // No "Clear all" for products until something is picked, and no validation error
     // when none ever is.
     fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-    fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
     expect(screen.queryByText(/Select at least one product/i)).not.toBeInTheDocument();
     expect(screen.getByText('Leave empty to plan every product.')).toBeInTheDocument();
   });
 
-  describe('Plan until (nit, code review 20 Aug 2026: a past date silently plans zero demand)', () => {
+  describe('Sales order cut-off (B2: a past date silently plans zero demand)', () => {
     it('sets the date input\'s own min to today, so the picker cannot offer the past', () => {
       renderModal();
-      const input = screen.getByLabelText('Plan until') as HTMLInputElement;
+      const input = screen.getByLabelText('Sales order cut-off') as HTMLInputElement;
       // Local calendar date, matching the component's own `todayDateInputValue()` - never
       // `toISOString()`'s UTC one, which can read a day off near midnight.
       const now = new Date();
@@ -177,18 +200,18 @@ describe('RunPlanningModal (M8-D5)', () => {
     it('blocks submit with a past cutoff and explains why, even if typed past the min', () => {
       const { onSubmit } = renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: '2000-01-01' } });
-      fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+      fireEvent.change(screen.getByLabelText('Sales order cut-off'), { target: { value: '2000-01-01' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).not.toHaveBeenCalled();
-      expect(screen.getByText(/Plan until cannot be in the past/i)).toBeInTheDocument();
+      expect(screen.getByText(/cut-off cannot be in the past/i)).toBeInTheDocument();
     });
 
     it('accepts today and a future date', () => {
       const { onSubmit } = renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: '2099-12-31' } });
-      fireEvent.click(screen.getByRole('button', { name: /Generate plan/i }));
+      fireEvent.change(screen.getByLabelText('Sales order cut-off'), { target: { value: '2099-12-31' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).toHaveBeenCalledWith({
         warehouse_codes: ['WH-KL'],

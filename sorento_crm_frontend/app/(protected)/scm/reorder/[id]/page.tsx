@@ -1,5 +1,4 @@
 import { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -16,27 +15,19 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import { ReorderRunsGrid } from './components/ReorderRunsGrid';
+import { ReorderPlanView } from '../components/ReorderPlanView';
 
 export const metadata: Metadata = {
-  title: 'Reorder Planning',
-  description: 'Every reorder plan, and the one button that starts a new one.',
+  title: 'Plan',
+  description: 'One reorder plan: decide each product, then confirm the lot.',
 };
 
-export default async function ReorderPlansPage({
-  searchParams,
+export default async function ReorderPlanPage({
+  params,
 }: {
-  searchParams: Promise<{ run?: string; plan?: string }>;
+  params: Promise<{ id: string }>;
 }) {
-  const { run, plan } = await searchParams;
-
-  // R1: the plan lives at its own address now. Every `?plan=` link ever copied off the old
-  // screen still lands on the right plan - it just arrives at the URL that names it.
-  if (plan) redirect(`/scm/reorder/${encodeURIComponent(plan)}`);
-
-  // `?run=1` auto-opens the Start Plan modal (deep-link support; the dashboard's header
-  // "Reorder plan" button navigates here without it - M8-B6).
-  const autoOpenRun = run === '1';
+  const { id } = await params;
 
   return (
     <RequireAccess permission="scm.reorder.run">
@@ -55,7 +46,11 @@ export default async function ReorderPlansPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Reorder Planning</BreadcrumbPage>
+                  <BreadcrumbLink href="/scm/reorder">Reorder Planning</BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Plan</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -65,7 +60,7 @@ export default async function ReorderPlansPage({
       </Container>
 
       <Container width="fluid">
-        <ReorderRunsGrid autoOpenRun={autoOpenRun} />
+        <ReorderPlanView runId={id} />
       </Container>
     </RequireAccess>
   );

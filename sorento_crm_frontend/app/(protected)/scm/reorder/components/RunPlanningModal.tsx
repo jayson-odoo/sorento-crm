@@ -17,13 +17,13 @@ import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
 
-/** Manual-plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
+/** Start Plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
  *  via `CashBudgetPanel`/`applyBudget`, never set at launch). No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
  *  (Slice E). The legacy `buy_scope` is removed. Warehouse is MULTI-select and
- *  OPTIONAL (pick several, or Select all, or leave it empty for every warehouse) so a
- *  manual run can cover any subset - or the same ground as the daily run. */
+ *  OPTIONAL (pick several, or leave it empty for every warehouse) so a plan can cover
+ *  any subset - or the same ground as the daily run. */
 export interface ManualPlanInputs {
   /**
    * Optional warehouse scope. **Empty means every warehouse** (P1, captain 25 Aug),
@@ -40,7 +40,7 @@ export interface ManualPlanInputs {
    */
   product_codes: string[];
   /**
-   * "Plan until" (captain, 20 Aug). **Empty means no horizon** - every open SO line is
+   * "Sales order cut-off" (captain, 20 Aug; renamed in the revamp). **Empty means no horizon** - every open SO line is
    * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
    * demand needed after it is excluded from this run's netting, and demand carrying no
    * date is always still counted.
@@ -60,9 +60,16 @@ function todayDateInputValue(): string {
 }
 
 /**
- * SCM M8 (slice D) - "Manual plan" on-demand run inputs. The scheduled daily run
- * (all warehouses, full budget) fires without this modal; this is the manual
- * override. Prototype: submitting just closes and re-shows the mock plan.
+ * Start Plan - the one way a person launches a run (plan 4.2). The scheduled daily run
+ * (all warehouses, full budget) fires without this modal.
+ *
+ * Fields in the order the buyer decides them: how far ahead to plan, then which warehouses,
+ * then which products. Every one is optional and empty means "everything", which is what
+ * makes Start Plan a single click on the day the answer is "the usual".
+ *
+ * There is no Select all: empty ALREADY means every warehouse, so a button that filled the
+ * box with every code produced the same run by a longer route and read as though leaving it
+ * blank would do something else.
  */
 export function RunPlanningModal({
   open,
@@ -92,9 +99,6 @@ export function RunPlanningModal({
     isError: productsError,
   } = useProductOptions();
 
-  const allCodes = (warehouseOptions ?? []).map((o) => o.value);
-  const allSelected = allCodes.length > 0 && warehouses.length === allCodes.length;
-
   useEffect(() => {
     if (!open) return;
     setWarehouses([]);
@@ -111,7 +115,7 @@ export function RunPlanningModal({
     // before today, which is every line - the run then silently returns zero demand
     // rather than saying why (nit, code review 20 Aug 2026).
     if (horizon && horizon < today) {
-      setError('Plan until cannot be in the past - it would leave the run with no demand.');
+      setError('The cut-off cannot be in the past - it would leave the run with no demand.');
       return;
     }
     onSubmit({
@@ -133,7 +137,7 @@ export function RunPlanningModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Manual plan</DialogTitle>
+          <DialogTitle>Start Plan</DialogTitle>
         </DialogHeader>
 
         <DialogBody className="space-y-5">
@@ -144,16 +148,33 @@ export function RunPlanningModal({
           ) : null}
 
           <div>
+            <Label htmlFor="plan-cutoff" className="mb-1 block">
+              Sales order cut-off
+            </Label>
+            <Input
+              id="plan-cutoff"
+              type="date"
+              min={today}
+              value={horizon}
+              onChange={(e) => setHorizon(e.target.value)}
+            />
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Empty = every open order counts.
+            </p>
+          </div>
+
+          <div>
             <div className="mb-1 flex items-center justify-between">
               <Label>Warehouses</Label>
-              <button
-                type="button"
-                className="text-2xs font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                disabled={warehousesLoading || allCodes.length === 0}
-                onClick={() => setWarehouses(allSelected ? [] : allCodes)}
-              >
-                {allSelected ? 'Clear all' : 'Select all'}
-              </button>
+              {warehouses.length ? (
+                <button
+                  type="button"
+                  className="text-2xs font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => setWarehouses([])}
+                >
+                  Clear all
+                </button>
+              ) : null}
             </div>
             <SearchableMultiSelect
               value={warehouses}
@@ -193,24 +214,6 @@ export function RunPlanningModal({
               Leave empty to plan every product.
             </p>
           </div>
-
-          <div>
-            <Label htmlFor="manual-horizon" className="mb-1 block">
-              Plan until
-            </Label>
-            <Input
-              id="manual-horizon"
-              type="date"
-              min={today}
-              value={horizon}
-              onChange={(e) => setHorizon(e.target.value)}
-            />
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Empty = no cutoff, every open order counts. Demand needed after this date is
-              left out; demand with no date is always counted (unscheduled demand is still
-              demand).
-            </p>
-          </div>
         </DialogBody>
 
         <DialogFooter>
@@ -219,7 +222,7 @@ export function RunPlanningModal({
           </Button>
           <Button onClick={submit} disabled={isSubmitting}>
             {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
-            Generate plan
+            Start Plan
           </Button>
         </DialogFooter>
       </DialogContent>

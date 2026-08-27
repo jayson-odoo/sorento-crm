@@ -15,6 +15,23 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => usePlanLines(...a) }));
 
+// The draft map has its own suite (`usePlanEdits` is exercised through `PlanLinesGrid`);
+// here it would only drag a QueryClient into every case that is about orchestration.
+vi.mock('../hooks/usePlanEdits', () => ({
+  usePlanEdits: () => ({
+    edits: {},
+    setRowEdit: vi.fn(),
+    resetRow: vi.fn(),
+    clearAll: vi.fn(),
+    saveCount: 0,
+    confirmable: { products: 0, cash: 0, unpriced: 0 },
+    save: vi.fn(),
+    confirm: vi.fn(),
+    isSaving: false,
+    isConfirming: false,
+  }),
+}));
+
 vi.mock('./PlanLinesGrid', () => ({
   PlanLinesGrid: ({
     runId,

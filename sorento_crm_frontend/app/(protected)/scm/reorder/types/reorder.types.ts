@@ -425,6 +425,14 @@ export interface ReorderRun {
   summary: ReorderRunSummary | null;
   /** Human error message when status = failed. */
   error: string | null;
+  /** Stamped once at creation; NULL on a legacy run (`lib/planGrain.ts`). */
+  decision_grain?: 'product' | 'location' | null;
+  /** `1` on a front-planning run, NULL on a legacy one - what makes a run read-only. */
+  front_planning_contract_version?: number | null;
+  /** The "Sales order cut-off" this run was launched with (`YYYY-MM-DD`), or null. */
+  plan_horizon_date?: string | null;
+  /** When the engine started. PHASE 2: `get_reorder_run` has to select it. */
+  started_at?: string | null;
 }
 
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope

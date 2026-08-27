@@ -1,6 +1,6 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: GO (aligned 27 Aug 2026, R1-R15). Phase 1 FE next.
+Status: Phase 1 (FE against mocks) BUILT 27 Aug 2026. Phase 2 (BE, test-first) next.
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
@@ -145,14 +145,27 @@ Every input writes to the draft map; the pill turns Unsaved. Leaving the page wi
 3. `purchase-trend` + `price-history` + `_last_purchase_cost_map`: `warehouse` filter, BRW pool
    (R15); `inputs.last_purchase` gains `supplier_id` + `supplier_name`.
 4. `list_reorder_runs`: sort/dir/query + `product_count`, `decided_product_count`,
-   `confirmed_product_count`.
+   `confirmed_product_count`, and `is_scheduled` (`reorder_run.created_by IS NULL` - the
+   scheduler passes no actor). **Added in Phase 1**: the daily badge (A5) has no other honest
+   source, and the FE refuses to guess one from the clock.
 5. `list_plan_row_decisions`: `decided_count` / `total_count` by distinct `product_id` (R14).
 6. `confirm_decisions`: untouched product = suggestion (R3), skipped excluded; the confirmed count
    in the response is by product.
 7. `location_stock_for_product`: `as_of` = `MAX(stock.updated_at)` for the product, fallback latest
-   stock `ImportJob.finished_at`, else null (R7). Response also carries `as_of_source`.
+   stock `ImportJob.finished_at`, else null (R7). Response also carries `as_of_source`, plus
+   `is_pool` and `po_qty` per location. **Added in Phase 1**: the On hand lightbox filters to
+   site-pool rows (R15) and shows a PO qty column; without the flag it shows every location it
+   is given rather than guessing a pool from a code.
 8. `PUT /reorder-levels` accepts `reorder_qty` (R5).
 9. `demand_for_recommendation` rows gain `project_title`.
+10. `get_reorder_run` selects `started_at` too. **Added in Phase 1**: the plan header is
+    "Plan dd/mm/yyyy HH:mm" (C1) and the detail response is the only thing the page reads.
+11. Recommendation rows gain `pool_warehouse_code` beside `pool_warehouse_id`. **Added in
+    Phase 1**: the SPO and PO lightboxes say "to BRW" (R15), and a grouped product row holds
+    the pool's id but no code - a run only writes rows for locations with demand, so on live
+    data (32MM TAIL PIECE COUPLING) no member sits at the pool to read one off. Until it
+    ships the two dialogs drop the location from their wording rather than name a project
+    bin the count excludes.
 
 No migration expected. If one is needed, `alembic heads` against origin/main first (main had two
 heads on 27 Aug; the sibling lane's first migration is `438_merge_430_437`).
@@ -179,3 +192,28 @@ Expand all; `PlanRowPanel` 4 zones + draft map + Save/Confirm against a mock; si
 Phase 2 (BE, test-first): section 5, then FE off mocks; vitest for panel, pill, Save/Confirm, dialogs.
 Phase 3: agent-browser run from the sidebar (list -> Start Plan -> plan -> Expand all -> edit ->
 Save -> Confirm -> draft PO), 375 px + 1280 px, `/code-review`, DoD gate, PR.
+
+## 9. Phase 1 deviations (27 Aug 2026, recorded as built)
+
+Everything below is a place the built screen departs from section 4, with the reason. Nothing
+here changes a ruling.
+
+- **Three backend reads joined section 5** (items 4, 7, 10 above): `is_scheduled`, `is_pool` +
+  `po_qty`, `started_at`. Each is a field the agreed UI needs and no existing response carries.
+  Until they ship the FE renders the honest fallback (no badge, every location, "Plan" with no
+  time) rather than a guess.
+- **SPO and PO lightboxes name no location on a grouped row** until section 5 item 11 ships:
+  "Open (0)", not "Open to BRW-BB". Naming the first member printed a project bin beside a
+  count that deliberately excludes it (R15).
+- **PO lightbox, Open tab**: columns are PO / Still to come / ETA / Status, not the History
+  tab's PO / Supplier / Qty / Unit price / Issued / ETA / Status. The open PO book
+  (`po_book_service`) is a netting source and carries no supplier or unit price; those two
+  belong to the purchase records the History tab reads.
+- **Row click no longer opens `ReorderExplanationDialog`** - it toggles the decision panel
+  (D1). The dialog is unchanged and still opens from `ReorderResultsGrid`; the Suggested-qty
+  lightbox now carries the derivation a buyer opens from the plan.
+- **Ungrouped (Location-grain) shape**: `Order type` and `SO` ship hidden by default, since
+  Project and Retail beside them say the same thing. They stay in the Columns menu.
+- **The leave-page prompt is two mechanisms**: `beforeunload` for a refresh, a close or a jump
+  out of the app, and a confirm dialog on the plan header's own "Plans" link. Next's app router
+  exposes no cancellable navigation event to hang a single guard on.

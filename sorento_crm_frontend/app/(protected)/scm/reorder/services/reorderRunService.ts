@@ -218,6 +218,26 @@ export interface ReorderRunHistoryItem {
    * carried none (every run has always planned every open SO line, unchanged).
    */
   plan_horizon_date?: string | null;
+  /**
+   * The scheduled daily run rather than one a person started (`reorder_run.created_by IS
+   * NULL` - `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge
+   * on the plans list.
+   *
+   * PHASE 2: `list_reorder_runs` has to emit it; absent until then, and the badge simply
+   * does not render, which is honest - the list never claims a run was scheduled.
+   */
+  is_scheduled?: boolean;
+  /**
+   * How many PRODUCTS this run planned, or null when it planned every product (the daily
+   * run's own scope). Distinct from `summary.recommendation_count`, which counts rows.
+   *
+   * PHASE 2 (plan 5.4), together with the two counts below.
+   */
+  product_count?: number | null;
+  /** Products with a decision recorded against them - the "x" of the Decided column (R14). */
+  decided_product_count?: number | null;
+  /** Products already confirmed into a draft purchase order - drives the Confirmed status. */
+  confirmed_product_count?: number | null;
 }
 
 export interface ReorderRunHistoryPage {
@@ -305,6 +325,13 @@ interface ReorderRunStatusDto {
   buy_scope: string | null;
   error: string | null;
   summary: ReorderRunSummary | null;
+  decision_grain?: PlanGrain | null;
+  front_planning_contract_version?: number | null;
+  plan_horizon_date?: string | null;
+  /** PHASE 2: `get_reorder_run` has to select it too. The plan page's header reads
+   *  "Plan dd/mm/yyyy HH:mm" off it; until it ships the header says "Plan" and the
+   *  cut-off, never a fabricated time. */
+  started_at?: string | null;
 }
 
 const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
@@ -359,6 +386,12 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     buy_scope: (dto.buy_scope as BuyScope) ?? 'network',
     summary: dto.summary ?? null,
     error: dto.error ?? null,
+    // The run carries its OWN stamped grain and cut-off (AC-F01), so the plan page reads
+    // the run in front of it rather than today's policy.
+    decision_grain: dto.decision_grain ?? null,
+    front_planning_contract_version: dto.front_planning_contract_version ?? null,
+    plan_horizon_date: dto.plan_horizon_date ?? null,
+    started_at: dto.started_at ?? null,
   };
 }
 
@@ -551,10 +584,26 @@ async function inFlightAtMost<T, R>(
   return out;
 }
 
-/** Newest-first paginated run history (drives the Run history panel). */
+/** What the plans list asks for: one DataGrid page of runs, newest first by default. */
+export interface ReorderRunQuery {
+  pageIndex: number;
+  pageSize: number;
+  sorting?: SortingState;
+  searchQuery?: string;
+}
+
+/**
+ * One page of plans (`/scm/reorder`). The endpoint is the existing paginated runs list;
+ * `sort`, `dir` and `query` travel through `buildDataGridParams` like every other listing.
+ *
+ * PHASE 2 (plan 5.4): `list_reorder_runs` has to HONOUR sort/dir/query and add
+ * `is_scheduled`, `product_count`, `decided_product_count`, `confirmed_product_count` to
+ * the row. Until it does it ignores the extra params (FastAPI drops unknown query
+ * arguments) and the columns those fields feed render their own "not known yet" state
+ * rather than a fabricated figure.
+ */
 export async function listReorderRuns(
-  page: number,
-  limit: number,
+  query: ReorderRunQuery,
 ): Promise<ReorderRunHistoryPage> {
   if (USE_M4_MOCKS) {
     return {
@@ -570,17 +619,17 @@ export async function listReorderRuns(
           summary: MOCK_SUMMARY,
         },
       ],
-      pagination: { page: 1, limit, total: 1, total_pages: 1 },
+      pagination: { page: 1, limit: query.pageSize, total: 1, total_pages: 1 },
     };
   }
   const params = buildDataGridParams({
-    pageIndex: page - 1,
-    pageSize: limit,
-    sorting: [],
-    searchQuery: '',
+    pageIndex: query.pageIndex,
+    pageSize: query.pageSize,
+    sorting: query.sorting ?? [],
+    searchQuery: query.searchQuery ?? '',
   });
   const res = await apiFetch(`/api/v1/scm/reorder-runs?${params}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run history'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the plans'));
   // As in `getTodayRun`: a history run carries its OWN stamped grain, so opening a
   // past run never relabels it with today's policy (AC-F10).
   return (await res.json()) as ReorderRunHistoryPage;
@@ -800,6 +849,17 @@ export interface LocationStockLocation {
   so_qty: number;
   spo_qty: number;
   available: number;
+  /**
+   * Whether this location is a SITE POOL rather than a project bin. The On hand lightbox
+   * counts pool rows only (R15) - a project bin's stock is already spoken for by an Order
+   * Inquiry, so counting it here would double it against the plan's own netting.
+   *
+   * PHASE 2: `location_stock_for_product` has to emit it. Absent until then, and the dialog
+   * falls back to every location it was given rather than guessing from a code.
+   */
+  is_pool?: boolean;
+  /** Open purchase-order quantity bound for this location. PHASE 2, same read as above. */
+  po_qty?: number | null;
 }
 
 export interface LocationStockResponse {
