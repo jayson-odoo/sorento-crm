@@ -1367,7 +1367,17 @@ def history(
     return result
 
 
-def send(db: Session, *, supplier_id: str, lines: list[dict], actor: Optional[str] = None) -> dict:
+def send(
+    db: Session,
+    *,
+    supplier_id: str,
+    lines: list[dict],
+    actor: Optional[str] = None,
+    channel: str = "email",
+    recipients: Optional[list] = None,
+    chat_contact_id: Optional[str] = None,
+    note: Optional[str] = None,
+) -> dict:
     """Send the reviewed request. Thin wrapper - the S8 notice machinery lives in
     `supplier_notice_service.request_and_notify`, so a request and a Loading Plan approval
     cannot drift into two different ways of talking to a supplier.
@@ -1380,5 +1390,12 @@ def send(db: Session, *, supplier_id: str, lines: list[dict], actor: Optional[st
     """
     _supplier(db, supplier_id)
     return supplier_notice_service.request_and_notify(
-        db, supplier_id=supplier_id, lines=lines, actor=actor
+        db,
+        supplier_id=supplier_id,
+        lines=lines,
+        actor=actor,
+        channel=channel,
+        recipients=recipients,
+        chat_contact_id=chat_contact_id,
+        note=note,
     )

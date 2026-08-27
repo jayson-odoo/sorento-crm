@@ -13,7 +13,7 @@ from datetime import date
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -79,6 +79,29 @@ class ContainerRequestBody(BaseModel):
     lines: list[ContainerRequestLine] = Field(
         ..., min_length=1, description="Ms Tee's reviewed lines, edited quantities included."
     )
+
+
+class ContainerRequestSendBody(ContainerRequestBody):
+    """The reviewed lines, plus who this send goes to and how (R9, AC-C1/C2/C3).
+
+    Its own body rather than four more optional fields on `ContainerRequestBody`: that one
+    also backs `/container-requests/document`, which sends nothing and has no recipients to
+    name.
+
+    Every field is optional and `channel` defaults to email, so a caller written before the
+    send dialog existed behaves exactly as it did: the request goes by email to
+    `suppliers.email`.
+    """
+
+    channel: Literal["email", "chat"] = "email"
+    #: The addresses an email send goes to. Omitted (null) means the supplier's own address;
+    #: an EMPTY list is a 422, because a dialog that just asked who to send to cannot answer
+    #: "nobody".
+    recipients: Optional[list[EmailStr]] = None
+    #: Which Respond.io contact a chat send is addressed to (`respond_contacts.id`).
+    chat_contact_id: Optional[str] = None
+    #: One line in the sender's own words, prepended to the bilingual body.
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 @router.post("/container-requests/build")
@@ -156,16 +179,26 @@ def container_request_document(
 
 @router.post("/container-requests", status_code=status.HTTP_201_CREATED)
 def send_container_request(
-    body: ContainerRequestBody,
+    body: ContainerRequestSendBody,
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Send the reviewed request: one notice per channel, the same act as approving a plan."""
+    """Send the reviewed request on the channel the sender chose (R9).
+
+    ONE notice row, for that channel: email to every address named, or WeChat to the picked
+    Respond.io contact. Anything that would make the send impossible (no address, no WeChat
+    channel connected, no approved template out of window) is a 422 with a `code` and
+    nothing is written - see `supplier_notice_service.request_and_notify`.
+    """
     return container_request_service.send(
         db,
         supplier_id=body.supplier_id,
         lines=[ln.model_dump() for ln in body.lines],
         actor=_actor(_user),
+        channel=body.channel,
+        recipients=[str(a) for a in body.recipients] if body.recipients is not None else None,
+        chat_contact_id=body.chat_contact_id,
+        note=body.note,
     )
 
 

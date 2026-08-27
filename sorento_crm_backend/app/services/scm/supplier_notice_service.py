@@ -23,9 +23,18 @@ Frontend contract (Phase 1):
     GET  /api/v1/scm/loading-plans/{id}/notices  -> {data: [Notice]}
     GET  /api/v1/scm/supplier-notices/{id}/document -> {url, filename, expires_in}
 
+    POST /api/v1/scm/container-requests -> {notices: [Notice], document_filename}
+      body: {plan_id|supplier_id, lines, channel: 'email'|'chat', recipients: [email]|null,
+             chat_contact_id: str|null, note: str|null}
+    GET  /api/v1/scm/supplier-notices/chat-contacts?supplier_id&query
+      -> {data: [{id, name, phone, channel, suggested}], total, wechat_connected,
+          wechat_channel_name, unavailable_reason}
+
     Notice = {
       id, supplier_id, supplier_name, loading_plan_id, channel: 'email'|'chat',
-      recipient: str|null, status: 'pending'|'sent'|'failed'|'skipped',
+      recipient: str|null, recipients: [str]|[{respond_contact_id,name,channel}]|null,
+      opened_at: iso|null, last_opened_at: iso|null, open_count: int,
+      status: 'pending'|'sent'|'failed'|'skipped',
       status_reason: str|null, sent_at: iso|null, attempt_count: int, last_error: str|null,
       document_filename: str|null, has_document: bool,
       xlsx_filename: str|null, has_xlsx: bool,
@@ -39,12 +48,13 @@ Frontend contract (Phase 1):
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope, set_company_scope
@@ -61,10 +71,33 @@ logger = logging.getLogger(__name__)
 
 EVENT_KEY = "supplier_loading_notice"
 
-#: Email is the channel that sends today. Chat is declared, and dark: nothing links a supplier
-#: to a Respond contact yet, so a chat row records the intent and states why it did not send.
-#: When a WeChat channel exists in the workspace it lights up with no change here (AC-F4).
+#: The two channels a loading-plan APPROVAL still writes a row on: it sends on everything it
+#: can reach, so an email that sent and a chat that did not are two rows. A container request
+#: does NOT use this - since R9 the sender picks one channel in the send dialog and exactly
+#: one row is written (see `request_and_notify`).
 CHANNELS = ("email", "chat")
+
+#: What a container request may be sent on (R9). Email is the default so a caller written
+#: before the dialog existed behaves exactly as it did.
+SEND_CHANNELS = ("email", "chat")
+
+#: The Respond.io channel source a supplier request rides on (R10, captain 27 Aug: "chat
+#: should be using wechat" - the factories are in China). Matched against
+#: `respond_channels.source`, which the template sync writes off `GET /v2/space/channel`.
+WECHAT_CHANNEL_SOURCE = "wechat"
+
+#: The template use case a chat send falls back to outside the 24h window - the same shape
+#: every other chat reply uses (`respond_template.CHAT_TEMPLATE_USE_CASES`), so an admin maps
+#: an approved template to it on the same screen. Nothing is seeded: connecting the WeChat
+#: channel and approving its template is a Respond.io task with its own go (R10), and until
+#: it is done an out-of-window send is refused rather than silently dropped.
+CHAT_USE_CASE = "supplier_request_chat"
+
+#: Deliberately not a full RFC 5322 parser: the address is typed by a person into a chip
+#: field, and the only mistakes worth catching here are the ones that would make the outbox
+#: row undeliverable. The route's `EmailStr` does the strict pass; this guards the service
+#: for every other caller.
+_EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
 #: Subject/body per `notice_type`, keyed the same as the column. Both notice types travel
 #: through the same `EVENT_KEY` (one registered email event, `EMAIL_EVENT_REGISTRY`), so the
@@ -101,8 +134,9 @@ def _supplier(db: Session, supplier_id: str) -> dict:
     address handed back in the response. `is_uuid` (the same guard `supplier_scope.py` uses)
     keeps a non-id value from reaching the UUID column comparison and 500ing; the company
     predicate is the same builder `supplier_scope.supplier_row` uses internally, reproduced
-    here rather than through that helper because this module needs `email`, which
-    `supplier_row` deliberately does not carry (the upload channels that helper serves only
+    here rather than through that helper because this module needs `email` and
+    `phone_number` (the chat picker's prefill, R10), which `supplier_row` deliberately
+    does not carry (the upload channels that helper serves only
     ever show the supplier's name and code back as confirmation).
     """
     if not is_uuid(supplier_id):
@@ -110,7 +144,7 @@ def _supplier(db: Session, supplier_id: str) -> dict:
     predicate, params = company_sql_predicate(db, "company_id", param_prefix="sn")
     row = db.execute(
         text(
-            "SELECT id, supplier_code, supplier_name, email FROM suppliers "
+            "SELECT id, supplier_code, supplier_name, email, phone_number FROM suppliers "
             f"WHERE id = :i AND {predicate or 'true'}"
         ),
         {"i": str(supplier_id), **params},
@@ -659,23 +693,316 @@ def request_document(
     return _render_request_pdf(supplier, pack, sheet), _request_filename(supplier)
 
 
+# ------------------------------------------------------- who this send is addressed to
+
+
+def _email_recipients(supplier: dict, recipients: Optional[list]) -> list[str]:
+    """The addresses an email send goes to, or a 422 naming what is wrong (AC-C2).
+
+    The supplier's own address is the DEFAULT, not the limit: the person who packs and the
+    person who quotes are rarely the same mailbox, and before R9 there was no way to add the
+    second one. Zero addresses is refused rather than turned into a `skipped` row: the
+    approval path may still record "we could not reach them", but a send dialog that just
+    asked the user who to send to has no business answering "nobody".
+    """
+    if recipients is None:
+        raw = [supplier.get("email")]
+    else:
+        raw = list(recipients)
+
+    seen: list[str] = []
+    for value in raw:
+        address = str(value or "").strip()
+        if not address:
+            continue
+        if not _EMAIL_RE.match(address):
+            raise AppException(
+                422, f"This is not an email address: {address}", code="invalid_recipient"
+            )
+        if address.lower() not in {a.lower() for a in seen}:
+            seen.append(address)
+
+    if not seen:
+        raise AppException(
+            422,
+            "Nobody would receive this request. Add at least one email address.",
+            code="no_recipients",
+        )
+    return seen
+
+
+def wechat_channel(db: Session):
+    """The workspace's WeChat channel row, or None when none is connected (R10).
+
+    Read off `respond_channels`, which the template sync fills from
+    `GET /v2/space/channel` - so this is the workspace's own answer, cached in our database
+    by the same job that keeps the templates, rather than a live call on the send path.
+    """
+    from app.models.respond_template import RespondChannel
+
+    return (
+        db.query(RespondChannel)
+        .filter(
+            RespondChannel.is_active.is_(True),
+            RespondChannel.source.ilike(f"%{WECHAT_CHANNEL_SOURCE}%"),
+        )
+        .order_by(RespondChannel.created_at)
+        .first()
+    )
+
+
+def _require_wechat_channel(db: Session):
+    channel = wechat_channel(db)
+    if channel is None:
+        raise AppException(
+            422,
+            "No WeChat channel is connected in the Respond.io workspace, so this request "
+            "cannot be sent by chat.",
+            code="wechat_channel_missing",
+        )
+    return channel
+
+
+def _chat_contact(db: Session, chat_contact_id: Optional[str]):
+    """The Respond contact a chat send is addressed to (AC-C3)."""
+    from app.models.access import RespondContact
+
+    value = str(chat_contact_id or "").strip()
+    if not value:
+        raise AppException(
+            422,
+            "Pick the WeChat contact to send this request to.",
+            code="chat_contact_required",
+        )
+    contact = (
+        db.query(RespondContact).filter(RespondContact.id == value).one_or_none()
+    )
+    if contact is None:
+        raise AppException(
+            422, "That chat contact no longer exists.", code="chat_contact_not_found"
+        )
+    return contact
+
+
+def _contact_label(contact) -> str:
+    return (
+        contact.name
+        or " ".join(filter(None, [contact.first_name, contact.last_name])).strip()
+        or contact.phone_number
+        or str(contact.id)
+    )
+
+
+def _chat_identifier(db: Session, contact) -> str:
+    """What Respond.io addresses this contact by, or a 422 saying we cannot reach them."""
+    from app.services.respond_identifier import resolve_send_identifier
+
+    identifier = resolve_send_identifier(
+        db, str(contact.respond_io_id or contact.phone_number or "").strip()
+    )
+    if not identifier:
+        raise AppException(
+            422,
+            f"{_contact_label(contact)} has no Respond.io identity, so nothing can be sent "
+            "to them.",
+            code="chat_contact_unreachable",
+        )
+    return identifier
+
+
+def _chat_window_open(db: Session, identifier: str, respond_contact_id: str) -> bool:
+    """Whether the contact wrote to us inside the 24h window (the composer's own answer).
+
+    A seam, like `_chat_send`: the real one is a live Respond.io call, and a suite that had
+    to reach api.respond.io to test our own branch would be testing somebody else's uptime.
+    """
+    from app.services.respond_messaging_service import get_window_state
+
+    return bool(
+        get_window_state(db, identifier, respond_contact_id=respond_contact_id).get("open")
+    )
+
+
+def _chat_template_ready(db: Session) -> bool:
+    """Whether an approved template is mapped for `CHAT_USE_CASE` (the out-of-window path)."""
+    from app.services.respond_template_service import get_default_row, serialize_default
+
+    return bool(
+        serialize_default(CHAT_USE_CASE, get_default_row(db, CHAT_USE_CASE)).get("is_valid")
+    )
+
+
+def _assert_chat_deliverable(db: Session, contact, identifier: str) -> None:
+    """Refuse a chat send that could not land, BEFORE anything is written (AC-C5).
+
+    Outside the 24h window a template is the only deliverable message, so with no approved
+    one mapped there is nothing to send and saying so is the whole answer: seeding the
+    template is a Respond.io task with its own go (R10). Checked here rather than left to the
+    composer's own 422 so the refusal costs nothing - no notice row, and above all no retired
+    link, which would leave the supplier holding a dead URL and no replacement.
+
+    The window lookup is cached for 45 seconds by `get_window_state`, so the composer's own
+    call a moment later is the same fact, not a second HTTP round trip.
+    """
+    if _chat_window_open(db, identifier, str(contact.id)):
+        return
+    if not _chat_template_ready(db):
+        raise AppException(
+            422,
+            f"{_contact_label(contact)} last wrote to us more than 24 hours ago, and no "
+            "approved chat template is configured for supplier requests, so nothing can be "
+            "delivered.",
+            code="template_missing",
+        )
+
+
+def _chat_send(db: Session, **kwargs) -> dict:
+    """The composer's own send, called rather than copied (R10).
+
+    `send_chat_message_for` already owns the whole of it: the 24h window branch, the raw text
+    inside it, the approved template outside it, the Respond error handling and - the reason
+    this must not be forked - the `integration_log` outbox row on success AND failure. A
+    second send path here would diverge from it on the first bug.
+
+    A one-line seam so a suite can stand in for Respond.io without reaching into another
+    module's namespace.
+    """
+    from app.services.respond_chat_template_service import send_chat_message_for
+
+    return send_chat_message_for(db, **kwargs)
+
+
+def chat_contacts(db: Session, *, supplier_id: str, query: Optional[str] = None) -> dict:
+    """WeChat contacts to pick from, the supplier's own number first (AC-C3).
+
+    `respond_contacts` carries no channel column - Respond.io decides which channel a contact
+    is reachable on - so this lists the contacts and states, once, whether the workspace has a
+    WeChat channel at all. With none connected the picker is still readable and the FE
+    disables the Chat option with the reason, which is what AC-C3 asks for.
+    """
+    from app.models.access import RespondContact
+
+    supplier = _supplier(db, supplier_id)
+    phone = _digits(supplier.get("phone_number"))
+    channel = wechat_channel(db)
+
+    q = db.query(RespondContact)
+    term = (query or "").strip()
+    if term:
+        like = f"%{term}%"
+        q = q.filter(
+            RespondContact.name.ilike(like)
+            | RespondContact.phone_number.ilike(like)
+            | RespondContact.respond_io_id.ilike(like)
+        )
+    rows = (
+        q.order_by(func.lower(func.coalesce(RespondContact.name, RespondContact.phone_number)))
+        .limit(_CHAT_CONTACT_LIMIT)
+        .all()
+    )
+
+    data = [
+        {
+            "id": str(c.id),
+            "name": _contact_label(c),
+            "phone": c.phone_number,
+            # What the send would actually ride on. Null when nothing is connected, so the
+            # FE never labels a contact with a channel that does not exist.
+            "channel": WECHAT_CHANNEL_SOURCE if channel is not None else None,
+            "suggested": bool(phone) and _digits(str(c.phone_number or "")) == phone,
+        }
+        for c in rows
+    ]
+    # The supplier's own number first: it is the one Ms Tee means nine times out of ten, and
+    # the factory often answers on a colleague's account the tenth.
+    data.sort(key=lambda row: (not row["suggested"], (row["name"] or "").lower()))
+    return {
+        "data": data,
+        "total": len(data),
+        "wechat_connected": channel is not None,
+        "wechat_channel_name": channel.name if channel is not None else None,
+        "unavailable_reason": (
+            None
+            if channel is not None
+            else "No WeChat channel is connected in the Respond.io workspace."
+        ),
+    }
+
+
+#: A picker, not a listing: the supplier's contact is at the top and the rest is what the
+#: search term narrowed to. More than this is a scroll nobody reads.
+_CHAT_CONTACT_LIMIT = 20
+
+
+def _digits(value: Optional[str]) -> str:
+    """A phone number reduced to what two of them can be compared on.
+
+    `+86 138-0000-0000` and `8613800000000` are the same number written by two systems.
+    """
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
 def request_and_notify(
     db: Session,
     *,
     supplier_id: str,
     lines: list[dict],
     actor: Optional[str] = None,
+    channel: str = "email",
+    recipients: Optional[list] = None,
+    chat_contact_id: Optional[str] = None,
+    note: Optional[str] = None,
 ) -> dict:
     """Send a container request - the S13 sibling of `approve_and_notify`.
 
-    Same shape: a document before any send is queued, one notice row per channel, a supplier
-    with no address on file still gets a notice and a downloadable document (AC-F3, carried
-    over unchanged). What differs is the source of the lines - Ms Tee's reviewed quantities,
-    not a Loading Plan's allocation - and the wording, since no container has been chosen yet
-    (`_document_html` / `_EMAIL_COPY`, keyed on `notice_type`).
+    Same shape: a document before any send is queued, a supplier with no address on file
+    still gets a notice and a downloadable document (AC-F3, carried over unchanged). What
+    differs is the source of the lines - Ms Tee's reviewed quantities, not a Loading Plan's
+    allocation - and the wording, since no container has been chosen yet (`_document_html` /
+    `_EMAIL_COPY`, keyed on `notice_type`).
+
+    ONE row, for the channel the sender chose (R9). Until S3 this wrote a row per channel and
+    the chat one was `skipped` on every send since 343 - a row that always says "not done" is
+    noise, not a record. `recipients` are the email addresses (defaulting to the supplier's
+    own); `chat_contact_id` is the Respond contact a chat send is addressed to; `note` is the
+    sender's own line, prepended to the bilingual body.
+
+    Everything that would make the send impossible is checked BEFORE anything is written or
+    retired (AC-C5: "nothing else changes"). Retiring the live link for a send that then
+    could not go out would leave the supplier holding a dead URL and no new one.
     """
+    if channel not in SEND_CHANNELS:
+        raise AppException(422, f"Unknown channel: {channel}", code="unknown_channel")
+
     supplier = _supplier(db, supplier_id)
+    # The lines first: a request naming a product that is not ours is a mistake about THIS
+    # request, and reporting it before the addressing keeps that 422 the same one it always
+    # was for every caller that never passes a channel.
     pack = _request_pack(db, lines)
+
+    to: list[str] = []
+    contact = None
+    identifier: Optional[str] = None
+    # What the notice records about WHO this went to (AC-C2): the addresses, or the one
+    # contact. Built here, where the channel is known, so the row cannot disagree with the
+    # send that produced it.
+    addressed_to: list = []
+    if channel == "email":
+        to = _email_recipients(supplier, recipients)
+        addressed_to = list(to)
+    else:
+        _require_wechat_channel(db)
+        contact = _chat_contact(db, chat_contact_id)
+        identifier = _chat_identifier(db, contact)
+        _assert_chat_deliverable(db, contact, identifier)
+        addressed_to = [
+            {
+                "respond_contact_id": str(contact.id),
+                "name": _contact_label(contact),
+                "channel": WECHAT_CHANNEL_SOURCE,
+            }
+        ]
+
     sheet = _request_sheet(db, str(supplier_id), pack)
 
     document = _render_request_pdf(supplier, pack, sheet)
@@ -710,59 +1037,61 @@ def request_and_notify(
     # live links for one supplier at any point.
     _retire_public_tokens(db, str(supplier_id))
 
-    # ONE token per SEND, on BOTH channel rows (R23, captain 27 Aug: "email and chat need to
-    # both have link"). The supplier clicks it in the email; Ms Tee copies it off whichever
-    # row is in front of her and pastes it into WeChat, which is how she reaches the factories
-    # that never open email. Two tokens would be two live links to one ask, and every extra
-    # live link is another way for one to leak - so the credential is minted here, once, and
-    # the rows below merely carry it.
+    # ONE token per SEND (R23, captain 27 Aug: "email and chat need to both have link"). The
+    # supplier clicks it in the email, or reads it in the chat message; it is the same
+    # credential either way, and a second one would be a second live link to one ask.
     public_token = secrets.token_urlsafe(_PUBLIC_TOKEN_BYTES)
     public_token_expires_at = datetime.utcnow() + timedelta(days=PUBLIC_TOKEN_TTL_DAYS)
 
-    notices: list[SupplierNotice] = []
-    for channel in CHANNELS:
-        notice = SupplierNotice(
-            supplier_id=str(supplier_id),
-            loading_plan_id=None,
-            notice_type="container_request",
-            channel=channel,
-            document_filename=filename,
-            storage_provider=provider,
-            storage_key=key,
-            xlsx_filename=xlsx_filename,
-            xlsx_storage_provider=xlsx_provider,
-            xlsx_storage_key=xlsx_key,
-            line_count=len(pack),
-            production_line_count=0,
-            created_by=actor,
-            public_token=public_token,
-            public_token_expires_at=public_token_expires_at,
-        )
-        db.add(notice)
-        db.flush()
-        for i, ln in enumerate(pack):
-            db.add(
-                SupplierNoticeLine(
-                    notice_id=str(notice.id),
-                    product_id=ln.get("product_id"),
-                    item_code=ln.get("item_code"),
-                    product_name=ln.get("product_name"),
-                    po_number=None,
-                    qty=ln.get("qty") or 0,
-                    cbm=None,
-                    kind="pack",
-                    sort_order=i,
-                )
+    notice = SupplierNotice(
+        supplier_id=str(supplier_id),
+        loading_plan_id=None,
+        notice_type="container_request",
+        channel=channel,
+        document_filename=filename,
+        storage_provider=provider,
+        storage_key=key,
+        xlsx_filename=xlsx_filename,
+        xlsx_storage_provider=xlsx_provider,
+        xlsx_storage_key=xlsx_key,
+        line_count=len(pack),
+        production_line_count=0,
+        created_by=actor,
+        public_token=public_token,
+        public_token_expires_at=public_token_expires_at,
+        recipients=addressed_to,
+    )
+    db.add(notice)
+    db.flush()
+    for i, ln in enumerate(pack):
+        db.add(
+            SupplierNoticeLine(
+                notice_id=str(notice.id),
+                product_id=ln.get("product_id"),
+                item_code=ln.get("item_code"),
+                product_name=ln.get("product_name"),
+                po_number=None,
+                qty=ln.get("qty") or 0,
+                cbm=None,
+                kind="pack",
+                sort_order=i,
             )
-        notices.append(notice)
+        )
 
     db.flush()
-    for notice in notices:
-        _dispatch(db, notice, supplier)
+    _dispatch(
+        db,
+        notice,
+        supplier,
+        recipients=to or None,
+        chat_contact=contact,
+        chat_identifier=identifier,
+        note=note,
+    )
     db.commit()
 
     return {
-        "notices": [serialize(db, n) for n in notices],
+        "notices": [serialize(db, notice)],
         "document_filename": filename,
     }
 
@@ -843,6 +1172,48 @@ def request_by_public_token(db: Session, token: str) -> SupplierNotice:
     return notice
 
 
+def _stamp_open(db: Session, token: str) -> None:
+    """Count this open on every notice carrying the token (R11).
+
+    Its own SAVEPOINT, released immediately: the page read is finished by the time this runs,
+    and the tracking must be able to fail (a lock, a dropped connection) without taking the
+    reader's page with it. `opened_at` is set once with COALESCE, because "when did they
+    first open it" is a different question from "when did they last".
+
+    Raw UPDATE rather than the ORM: it is one statement over rows the request has no session
+    identity for, and `open_count = open_count + 1` in the database is what makes two
+    simultaneous opens count as two.
+    """
+    now = datetime.utcnow()
+    savepoint = db.begin_nested()
+    db.execute(
+        text(
+            "UPDATE supplier_notices "
+            "   SET opened_at = COALESCE(opened_at, :now), "
+            "       last_opened_at = :now, "
+            "       open_count = COALESCE(open_count, 0) + 1 "
+            " WHERE public_token = :t"
+        ),
+        {"now": now, "t": token},
+    )
+    savepoint.commit()
+    db.commit()
+
+
+def _record_open(db: Session, token: str) -> None:
+    """Best effort, always (AC-C7). The tracking is the least important thing on the page."""
+    try:
+        _stamp_open(db, token)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "supplier request: the open could not be recorded for this link", exc_info=True
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def public_request_page(db: Session, token: str) -> dict:
     """What the supplier sees: this request's lines, and their own figures beside them.
 
@@ -864,7 +1235,7 @@ def public_request_page(db: Session, token: str) -> dict:
         .all()
     )
     held = _held_by_item_code(db, str(notice.supplier_id))
-    return {
+    payload = {
         "supplier_name": _supplier_name(db, str(notice.supplier_id)),
         "requested_at": notice.created_at.isoformat() if notice.created_at else None,
         "line_count": len(lines),
@@ -897,6 +1268,10 @@ def public_request_page(db: Session, token: str) -> dict:
         "has_pdf": bool(notice.storage_key),
         "has_xlsx": bool(notice.xlsx_storage_key),
     }
+    # A write on a GET, by design: this IS the tracking (R11). Last, so everything the
+    # supplier came for is already read and no stamp can stand between them and it.
+    _record_open(db, token)
+    return payload
 
 
 def _held_by_item_code(db: Session, supplier_id: str) -> dict[str, dict]:
@@ -921,9 +1296,15 @@ def _held_by_item_code(db: Session, supplier_id: str) -> dict[str, dict]:
 
 
 def public_document_url(db: Session, token: str, kind: str) -> dict:
-    """One of the request's two files, off the same token and the same 404."""
+    """One of the request's two files, off the same token and the same 404.
+
+    Downloading through the link counts as an open (R11): a supplier who goes straight for
+    the spreadsheet has read the request just as surely as one who scrolled the page.
+    """
     notice = request_by_public_token(db, token)
-    return document_url(db, str(notice.id), kind=kind)
+    out = document_url(db, str(notice.id), kind=kind)
+    _record_open(db, token)
+    return out
 
 
 def _public_base_url() -> Optional[str]:
@@ -990,33 +1371,61 @@ def _rand() -> str:
 # --------------------------------------------------------------------------- send
 
 
-def _dispatch(db: Session, notice: SupplierNotice, supplier: dict) -> None:
-    """Send one notice on its own channel, and log the attempt either way (AC-F5)."""
+def _dispatch(
+    db: Session,
+    notice: SupplierNotice,
+    supplier: dict,
+    *,
+    recipients: Optional[list[str]] = None,
+    chat_contact=None,
+    chat_identifier: Optional[str] = None,
+    note: Optional[str] = None,
+) -> None:
+    """Send one notice on its own channel, and log the attempt either way (AC-F5).
+
+    The keyword arguments are what a container request adds (R9): who the sender named, and
+    the line they wrote. A loading-plan approval passes none of them and behaves exactly as
+    it did - its email goes to `suppliers.email` and its chat row is still the declared,
+    dark one, because that path never asked anybody which channel to use.
+    """
     if notice.channel == "email":
-        _send_email(db, notice, supplier)
+        _send_email(db, notice, supplier, recipients=recipients, note=note)
+    elif chat_contact is not None:
+        _send_chat(db, notice, chat_contact, chat_identifier, note=note)
     else:
-        # Declared and dark. Nothing links a supplier to a Respond contact, so there is no
-        # identity to send to - said plainly rather than logged as a failure, because nobody
-        # can fix a "failure" whose cause is that the feature does not exist yet. It is still
-        # logged: the screen shows two channels and an outbox holding only one of them reads as
-        # a log that dropped a row.
+        # The loading-plan approval's chat row: declared and dark. That path sends on every
+        # channel it can reach and names no contact, so there is no identity to send to -
+        # said plainly rather than logged as a failure, because nobody can fix a "failure"
+        # whose cause is that nobody chose a recipient. It is still logged: that screen shows
+        # two channels, and an outbox holding one of them reads as a log that dropped a row.
+        # A container request never reaches here: its chat sends carry a contact (R9).
         notice.status = "skipped"
         notice.status_reason = "No chat channel is linked to this supplier yet."
         _log_attempt(db, notice, ok=False, detail=notice.status_reason, skipped=True)
 
 
-def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
-    to = (supplier.get("email") or "").strip()
-    if not to:
+def _send_email(
+    db: Session,
+    notice: SupplierNotice,
+    supplier: dict,
+    *,
+    recipients: Optional[list[str]] = None,
+    note: Optional[str] = None,
+) -> None:
+    addresses = [a for a in (recipients or [(supplier.get("email") or "").strip()]) if a]
+    if not addresses:
         notice.status = "skipped"
         notice.status_reason = "This supplier has no email address on file."
         _log_attempt(db, notice, ok=False, detail=notice.status_reason, skipped=True)
         return
 
-    notice.recipient = to
+    # `recipient` keeps the first address, for the screens and logs written against it;
+    # `recipients` is the whole list (AC-C2).
+    notice.recipient = addresses[0][:320]
+    notice.recipients = list(addresses)
     copy = _EMAIL_COPY.get(notice.notice_type, _EMAIL_COPY["loading"])
     subject = f"{copy['subject']} - {supplier.get('supplier_name') or ''}".strip()
-    body = copy["body"]
+    body = _body_with_note(copy["body"], note)
 
     # The third thing in the one email (AC-C1): a link to the same request, for the reader who
     # will not open an attachment on a phone. Appended only when a URL can actually be built -
@@ -1049,17 +1458,21 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
                 }
             ]
 
-        email_outbox_service.enqueue(
-            db,
-            event_key=EVENT_KEY,
-            to=to,
-            subject=subject,
-            body_text=body,
-            metadata=metadata,
-            attachment_filename=notice.document_filename,
-            attachment_storage_provider=notice.storage_provider,
-            attachment_storage_key=notice.storage_key,
-        )
+        # One row per address rather than one row with the rest in cc (AC-C2): each address
+        # then has its own delivery, its own retries and its own failure, which is what the
+        # outbox is for. A bounce at the freight desk must not stop the factory's copy.
+        for address in addresses:
+            email_outbox_service.enqueue(
+                db,
+                event_key=EVENT_KEY,
+                to=address,
+                subject=subject,
+                body_text=body,
+                metadata=metadata,
+                attachment_filename=notice.document_filename,
+                attachment_storage_provider=notice.storage_provider,
+                attachment_storage_key=notice.storage_key,
+            )
     except Exception as exc:  # noqa: BLE001 - the attempt is logged, then reported on the row
         notice.status = "failed"
         notice.last_error = str(exc)[:5000]
@@ -1074,6 +1487,85 @@ def _send_email(db: Session, notice: SupplierNotice, supplier: dict) -> None:
     notice.sent_at = datetime.utcnow()
     notice.attempt_count = (notice.attempt_count or 0) + 1
     _log_attempt(db, notice, ok=True, detail="queued to email outbox")
+
+
+def _body_with_note(body: str, note: Optional[str]) -> str:
+    """The sender's own line first, then the bilingual body (R9).
+
+    First rather than last because it is the one sentence written for this send: "ship before
+    CNY" under three paragraphs of standing wording is a sentence nobody reads.
+    """
+    line = str(note or "").strip()
+    return f"{line}\n\n{body}" if line else body
+
+
+def _send_chat(
+    db: Session,
+    notice: SupplierNotice,
+    contact,
+    identifier: Optional[str],
+    *,
+    note: Optional[str] = None,
+) -> None:
+    """Send the request on WeChat, through the composer's own path (R10, AC-C4).
+
+    The message is the same bilingual wording the email carries plus the public link, because
+    the link is what a factory actually opens - the two files hang off it. Inside the 24h
+    window the composer sends that text; outside it, the approved template for
+    `CHAT_USE_CASE`. Either way it writes the `integration_log` outbox row, on success AND on
+    failure, which is why this calls it rather than talking to Respond.io directly.
+    """
+    notice.recipient = _contact_label(contact)[:320]
+    copy = _EMAIL_COPY.get(notice.notice_type, _EMAIL_COPY["loading"])
+    text_out = _body_with_note(copy["body"], note)
+    link = public_request_url(db, notice)
+    if link:
+        text_out = (
+            f"{text_out}\n\n"
+            f"在线查看 / View online:\n{link}\n"
+            f"此链接30天内有效。 / This link works for 30 days."
+        )
+
+    try:
+        _chat_send(
+            db,
+            identifier=identifier or _chat_identifier(db, contact),
+            respond_contact_id=str(contact.id),
+            text=text_out,
+            chat_use_case=CHAT_USE_CASE,
+            business_table="supplier_notices",
+            business_id=str(notice.id),
+            sender_name=notice.created_by or "Sorento",
+            created_by=None,
+        )
+    except Exception as exc:  # noqa: BLE001 - reported on the row, never raised at the caller
+        # The composer already wrote the failed outbox row; the notice carries the reason so
+        # the Requests sent card can say what happened without anybody opening the log.
+        message = _error_message(exc)
+        notice.status = "failed"
+        notice.status_reason = message[:255]
+        notice.last_error = message[:5000]
+        notice.attempt_count = (notice.attempt_count or 0) + 1
+        logger.warning(
+            "supplier notice %s: the WeChat send failed (%s)", notice.id, message
+        )
+        return
+
+    notice.status = "sent"
+    notice.sent_at = datetime.utcnow()
+    notice.attempt_count = (notice.attempt_count or 0) + 1
+
+
+def _error_message(exc: Exception) -> str:
+    """The human half of an AppException, or the exception's own words.
+
+    `AppException.detail` is the `{message, detail, code}` dict the error handler builds, and
+    `str(exc)` on one of those reads as a dict - which is not a sentence to put on a screen.
+    """
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail.get("detail") or exc)
+    return str(exc)
 
 
 def _log_attempt(db: Session, notice: SupplierNotice, *, ok: bool, detail: str,
@@ -1130,6 +1622,16 @@ def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
         "notice_type": notice.notice_type,
         "channel": notice.channel,
         "recipient": notice.recipient,
+        # Everybody this send named (AC-C2). Null on a row written before migration 442 that
+        # never had an address either; a one-address send is backfilled to `[address]`.
+        "recipients": notice.recipients,
+        # The opens (AC-C8). `opened_at` is the first and never moves; the card reads
+        # "Opened n times, last dd/mm HH:mm" off the three together, "Not opened yet" at 0.
+        "opened_at": notice.opened_at.isoformat() if notice.opened_at else None,
+        "last_opened_at": (
+            notice.last_opened_at.isoformat() if notice.last_opened_at else None
+        ),
+        "open_count": notice.open_count or 0,
         "status": notice.status,
         "status_reason": notice.status_reason,
         "sent_at": notice.sent_at.isoformat() if notice.sent_at else None,
@@ -1177,6 +1679,41 @@ def list_for_plan(db: Session, plan_id: str) -> list[dict]:
         .all()
     )
     return [serialize(db, n) for n in rows]
+
+
+def latest_notice_for_plans(db: Session, plan_ids: list[str]) -> dict[str, dict]:
+    """The newest send per loading plan, for the list's Sent and Opened columns (AC-A1).
+
+    One row per plan, and it has to be the LATEST: a plan that was resent would otherwise
+    report the opens of a link nobody can open any more. Serialising the whole notice here
+    would put the lines, the files and the token behind every row of a 50-row grid, so this
+    answers with the four fields those two columns read.
+    """
+    ids = [str(i) for i in plan_ids or [] if is_uuid(str(i))]
+    if not ids:
+        return {}
+    rows = (
+        db.query(SupplierNotice)
+        .filter(SupplierNotice.loading_plan_id.in_(ids))
+        .order_by(
+            SupplierNotice.loading_plan_id,
+            SupplierNotice.created_at.desc(),
+            SupplierNotice.id.desc(),
+        )
+        .distinct(SupplierNotice.loading_plan_id)
+        .all()
+    )
+    return {
+        str(n.loading_plan_id): {
+            "channel": n.channel,
+            "sent_at": n.sent_at.isoformat() if n.sent_at else None,
+            "last_opened_at": (
+                n.last_opened_at.isoformat() if n.last_opened_at else None
+            ),
+            "open_count": n.open_count or 0,
+        }
+        for n in rows
+    }
 
 
 def list_for_supplier(db: Session, supplier_id: str, *, limit: int = 50) -> list[dict]:
