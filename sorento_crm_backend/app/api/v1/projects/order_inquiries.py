@@ -654,8 +654,13 @@ async def auto_place_order_inquiries(
     try:
         for product_id in payload.product_ids or []:
             validate_uuid_path(product_id, resource="Product")
+        for row_id in payload.row_ids or []:
+            validate_uuid_path(row_id, resource="Order inquiry row")
         body = ProjectOrderInquiryService(db).auto_place_for_products(
-            payload.product_ids, actor_user_id=current_user["id"], trigger="worklist"
+            payload.product_ids,
+            actor_user_id=current_user["id"],
+            trigger="worklist",
+            row_ids=payload.row_ids,
         )
         db.commit()
         return body

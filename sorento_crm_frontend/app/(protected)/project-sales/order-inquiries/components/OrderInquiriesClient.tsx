@@ -20,6 +20,7 @@ import {
   PackageSearch,
   Search,
   Undo2,
+  Unlink,
   Upload,
   Wand2,
   X,
@@ -43,12 +44,12 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import {
+  useAutoPlaceOrderInquiryRows,
   useOrderInquiryHandshake,
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
@@ -62,7 +63,10 @@ import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
-import { downloadOrderInquiryWorklistXlsx } from '../../_shared/services/orderInquiryService';
+import {
+  downloadOrderInquiryWorklistXlsx,
+  unplaceOrderInquiryRow,
+} from '../../_shared/services/orderInquiryService';
 import type {
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
@@ -187,6 +191,8 @@ export function OrderInquiriesClient() {
   const canActOnOrderInquiry = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const { acknowledge, linkNow } = useOrderInquiryHandshake();
+  const autoPlaceRows = useAutoPlaceOrderInquiryRows();
+  const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -471,6 +477,9 @@ export function OrderInquiriesClient() {
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
+  // Purchasing's page: the acknowledge grant is what marks purchasing, and CS (action
+  // grant only) ticks nothing here.
+  const canBulkLink = canAcknowledge && canActOnOrderInquiry;
   const columns = useOrderInquiryWorklistColumns({
     selectable: canAcknowledge,
     canAcknowledge,
@@ -486,7 +495,14 @@ export function OrderInquiriesClient() {
     // (`FulfilmentPlanningClient` carries the same note over the same trap). As a plain
     // boolean this let a cancelled or already-acknowledged row be ticked, and the press
     // then failed on the whole batch.
-    enableRowSelection: (row) => canAcknowledge && isAcknowledgeable(row.original),
+    // A row stays tickable after Acknowledge (the captain, 27 Aug): the tick now feeds
+    // three presses - Acknowledge, Link selected, Unlink selected - and each counts only
+    // the ticked rows it applies to. Only a cancelled or actioned row has nothing left.
+    enableRowSelection: (row) =>
+      (canAcknowledge && isAcknowledgeable(row.original)) ||
+      (canBulkLink &&
+        row.original.state !== 'cancelled' &&
+        row.original.state !== 'actioned'),
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -497,6 +513,35 @@ export function OrderInquiriesClient() {
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
   });
+
+  const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
+  const selectedAcknowledgeable = selectedRows.filter((row) => isAcknowledgeable(row));
+  const selectedLinkable = selectedRows.filter(
+    (row) =>
+      (row.ack_state === 'acknowledged' || row.ack_state === 'changed') &&
+      (row.state === 'raised' || row.state === 'partly_linked'),
+  );
+  const selectedLinked = selectedRows.filter(
+    (row) => row.state === 'placed' || row.state === 'partly_linked',
+  );
+
+  async function unlinkSelected() {
+    if (selectedLinked.length === 0) return;
+    setUnlinkingSelected(true);
+    try {
+      for (const row of selectedLinked) {
+        await unplaceOrderInquiryRow(row.id);
+      }
+      toast.success(`Unlinked ${selectedLinked.length}`);
+      setRowSelection({});
+      void list.refetch();
+      void summary.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to unlink');
+    } finally {
+      setUnlinkingSelected(false);
+    }
+  }
 
   async function handleExport() {
     setExporting(true);
@@ -923,23 +968,44 @@ export function OrderInquiriesClient() {
                 // take them on, and whatever open document can cover them is linked at
                 // that moment. Count-bearing, because a bulk action that does not say how
                 // many it is about is one nobody presses twice.
-                bulkActions={
-                  canAcknowledge
+                bulkActions={[
+                  ...(canBulkLink
                     ? [
                         {
-                          key: 'acknowledge',
-                          label: `Acknowledge (${selectedRowIds(table).length})`,
-                          icon: CheckCheck,
-                          disabled: acknowledge.isPending,
+                          key: 'link-selected',
+                          label: `Link selected (${selectedLinkable.length})`,
+                          icon: Link2,
+                          disabled: selectedLinkable.length === 0 || autoPlaceRows.isPending,
+                          disabledReason:
+                            selectedLinkable.length === 0
+                              ? 'Tick acknowledged rows that still have quantity to link.'
+                              : undefined,
                           onClick: () =>
-                            acknowledge.mutate(selectedRowIds(table), {
-                              onSuccess: () => setRowSelection({}),
-                            }),
+                            autoPlaceRows.mutate(
+                              { row_ids: selectedLinkable.map((row) => row.id) },
+                              { onSuccess: () => setRowSelection({}) },
+                            ),
+                        },
+                        {
+                          key: 'unlink-selected',
+                          label: `Unlink selected (${selectedLinked.length})`,
+                          icon: Unlink,
+                          disabled: selectedLinked.length === 0 || unlinkingSelected,
+                          disabledReason:
+                            selectedLinked.length === 0 ? 'Tick linked rows to unlink.' : undefined,
+                          onClick: () => void unlinkSelected(),
                         },
                       ]
-                    : []
-                }
+                    : []),
+                ]}
                 secondaryActions={[
+                  {
+                    key: 'export',
+                    label: exporting ? 'Preparing…' : 'Export Excel',
+                    icon: Download,
+                    disabled: exporting,
+                    onClick: () => void handleExport(),
+                  },
                   {
                     key: 'auto-place',
                     label: 'Auto-link',
@@ -975,10 +1041,26 @@ export function OrderInquiriesClient() {
                         onQueued={(queued) => setUploadJobId(queued.job_id)}
                       />
                     ) : null}
-                    <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
-                      <Download className="size-4" aria-hidden />
-                      {exporting ? 'Preparing…' : 'Export Excel'}
-                    </Button>
+                    {/* The press purchasing works this page with (AC-H2), as the page's
+                        own button (the captain, 27 Aug): tick the rows, take them on, and
+                        whatever open document can cover them is linked at that moment.
+                        Count-bearing, because a press that does not say how many it is
+                        about is one nobody presses twice. */}
+                    {canAcknowledge ? (
+                      <Button
+                        type="button"
+                        disabled={selectedAcknowledgeable.length === 0 || acknowledge.isPending}
+                        onClick={() =>
+                          acknowledge.mutate(
+                            selectedAcknowledgeable.map((row) => row.id),
+                            { onSuccess: () => setRowSelection({}) },
+                          )
+                        }
+                      >
+                        <CheckCheck className="size-4" aria-hidden />
+                        {`Acknowledge (${selectedAcknowledgeable.length})`}
+                      </Button>
+                    ) : null}
                   </div>
                 }
                 onRefresh={() => {

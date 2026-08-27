@@ -520,9 +520,11 @@ class PlaceOnPoRequest(BaseModel):
 class AutoPlaceRequest(BaseModel):
     """Run the cascade now - the worklist's own "Auto-link". Omitted `product_ids` means
     every product that currently has a raised or partly linked ORDER / RESERVE & ORDER /
-    ORDER BACK row."""
+    ORDER BACK row. `row_ids` names the rows and nothing else (the worklist's "Link
+    selected"), and wins over `product_ids`."""
 
     product_ids: Optional[List[str]] = None
+    row_ids: Optional[List[str]] = None
 
 
 class UnlinkRequest(BaseModel):

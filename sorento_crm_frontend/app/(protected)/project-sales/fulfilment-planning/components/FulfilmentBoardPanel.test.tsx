@@ -1941,7 +1941,7 @@ describe('FulfilmentBoardPanel: what was taken off the page', () => {
     expect(screen.queryByText(/lines are already past their delivery date/)).toBeNull();
     const strip = screen.getByTestId('decision-strip');
     expect(strip.textContent).toContain('Buy');
-    expect(strip.textContent).toContain('Use shared stock');
+    expect(strip.textContent).toContain('Use BRW');
     expect(strip.textContent).toContain('Use own location');
   });
 });

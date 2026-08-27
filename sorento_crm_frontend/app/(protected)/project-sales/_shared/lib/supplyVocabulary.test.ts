@@ -111,7 +111,7 @@ describe('rowOf reads the rung, never the warehouse code', () => {
       expect(COLOURS[kind].bar).toMatch(/^bg-/);
       expect(COLOURS[kind].text).toMatch(/^text-/);
     }
-    expect(LABELS.shared).toBe('Use shared stock');
+    expect(LABELS.shared).toBe('Use BRW');
     expect(LABELS.own).toBe('Use own location');
     expect(LABELS.borrow_order).toBe('Borrow from another order');
     expect(LABELS.borrow_other).toBe('Borrow other location');
@@ -137,7 +137,7 @@ describe('rowOf reads the rung, never the warehouse code', () => {
    * A component with NO rung, which is every source and every decision row of a COVERED line:
    * the board rebuilds a frozen composition without carrying the rung the engine froze. Read
    * live off SO324132 rev 1 on 25 Aug - three reserve sources at DC1-BB / MWH-BB / WH3-BB, all
-   * `rung: null`, on a BRW-BB line - which is what made AC-A2 read "Use shared stock".
+   * `rung: null`, on a BRW-BB line - which is what made AC-A2 read "Use BRW".
    *
    * The reading is on the OWNERSHIP GROUP: the suffix after the first hyphen, the backend's own
    * rule (`sales_agent_service.group_of_warehouse_code`). Not the site (which called the shared
@@ -242,7 +242,7 @@ describe('segmentsOf', () => {
           { kind: 'buy', rung: 'buy', qty: '4' },
         ]),
       ),
-    ).toBe('Shared 71');
+    ).toBe('BRW 71');
     expect(dominantText([])).toBe('');
   });
 });
@@ -254,7 +254,7 @@ describe('describe', () => {
         { kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' },
         { kind: 'buy', rung: 'buy', qty: '12' },
       ]),
-    ).toBe('Shared 71 (BRW) · Buy 12');
+    ).toBe('BRW 71 (BRW) · Buy 12');
   });
 
   it('reads a SupplyComponent, which spells its warehouse source_location', () => {
@@ -285,7 +285,7 @@ describe('suggestionBreakdown', () => {
       ]),
     );
 
-    expect(rows.map((entry) => entry.label)).toEqual(['Use shared stock', 'Buy']);
+    expect(rows.map((entry) => entry.label)).toEqual(['Use BRW', 'Buy']);
   });
 
   it('says nothing at all for a cell the ladder proposes nothing for', () => {
@@ -293,7 +293,7 @@ describe('suggestionBreakdown', () => {
   });
 
   it('reads a pool draw as shared stock, and names the pool it came from (AC-A1)', () => {
-    // SRT382-6-DIY on SO415472: "Use shared stock 71 from BRW", never "Use own location".
+    // SRT382-6-DIY on SO415472: "Use BRW 71 from BRW", never "Use own location".
     const rows = suggestionBreakdown(
       cell([
         line({
@@ -302,8 +302,8 @@ describe('suggestionBreakdown', () => {
       ]),
     );
 
-    expect(row(rows, 'Use shared stock').qty).toBe('71');
-    expect(rowText(row(rows, 'Use shared stock'))).toBe('71 from BRW');
+    expect(row(rows, 'Use BRW').qty).toBe('71');
+    expect(rowText(row(rows, 'Use BRW'))).toBe('71 from BRW');
     expect(has(rows, 'Use own location')).toBe(false);
   });
 
@@ -371,7 +371,7 @@ describe('suggestionBreakdown', () => {
       ]),
     );
 
-    expect(rowText(row(rows, 'Use shared stock'))).toBe('13 from BRW');
+    expect(rowText(row(rows, 'Use BRW'))).toBe('13 from BRW');
     expect(row(rows, 'Use own location').qty).toBe('2');
   });
 
@@ -450,7 +450,7 @@ describe('suggestionBreakdown', () => {
  * CWCY605 is a COVERED line, and `_apply_frozen` rebuilds its composition without the rung the
  * engine froze: three reserve sources at DC1-BB / MWH-BB / WH3-BB, `rung: null` on every one,
  * and a decision whose three reserve rows are the same. Both surfaces therefore read the
- * fallback, and both read "Use shared stock" until the fallback learned about ownership groups.
+ * fallback, and both read "Use BRW" until the fallback learned about ownership groups.
  */
 describe('AC-A2: a covered line whose composition arrives with no rungs', () => {
   const unrunged = [
@@ -514,7 +514,7 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
       },
     });
 
-    expect(decisionBreakdown(cell([pooled]), {})[0].label).toBe('Use shared stock');
+    expect(decisionBreakdown(cell([pooled]), {})[0].label).toBe('Use BRW');
     expect(contributionSupply(pooled, null).segments).toEqual([{ kind: 'shared', qty: '71' }]);
   });
 

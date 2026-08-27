@@ -1,6 +1,8 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
+import { ExternalLink } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -75,14 +77,25 @@ function PoDetailBody({
 }: {
   detail: NonNullable<ReturnType<typeof useOrderInquiryPoDetail>['data']>;
 }) {
-  const supplier =
-    [detail.supplier_code, detail.supplier_name].filter(Boolean).join(' - ') || null;
+  // The NAME, not the code: the code is one unbroken token ("CHAOZHOUCHAOANFENGTANG...")
+  // that truncates into nothing a person can read. The code rides on the title.
+  const supplier = detail.supplier_name || detail.supplier_code || null;
+  const supplierTitle =
+    [detail.supplier_name, detail.supplier_code].filter(Boolean).join(' · ') || undefined;
 
   return (
     <div>
       <div className="space-y-1 border-b px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold tabular-nums">{detail.po_number}</span>
+          {/* The number IS the door to the purchase order (the captain, 27 Aug): a
+              popover that names a document a person cannot reach from it is a dead end. */}
+          <Link
+            href={`/scm/purchase-orders/${detail.id}`}
+            className="inline-flex items-center gap-1 text-sm font-semibold tabular-nums text-primary hover:underline"
+          >
+            {detail.po_number}
+            <ExternalLink className="size-3" aria-hidden />
+          </Link>
           <span
             className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium capitalize ${statusPillClass(detail.status)}`}
           >
@@ -92,7 +105,7 @@ function PoDetailBody({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-2xs">
           <div className="min-w-0">
             <dt className="text-muted-foreground">Supplier</dt>
-            <dd className="truncate font-medium" title={supplier ?? undefined}>
+            <dd className="truncate font-medium" title={supplierTitle}>
               {supplier ?? <span className="text-muted-foreground">Not stated</span>}
             </dd>
           </div>

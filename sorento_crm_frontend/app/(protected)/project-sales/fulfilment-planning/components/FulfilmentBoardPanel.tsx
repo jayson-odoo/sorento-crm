@@ -3,7 +3,16 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, CheckCheck, LayoutGrid, List, PackageSearch, Search, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCheck,
+  LayoutGrid,
+  List,
+  PackageSearch,
+  Search,
+  Undo2,
+  X,
+} from 'lucide-react';
 import {
   Alert,
   AlertContent,
@@ -1030,6 +1039,19 @@ export function FulfilmentBoardPanel({
             >
               <CheckCheck className="size-4" aria-hidden />
               Approve all
+            </Button>
+            {/* The other direction (the captain, 27 Aug): every decision taken on this
+                board since it was opened, or since the last confirm, goes back to undecided.
+                Nothing on the server moves - the draft is the only thing cleared. */}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={Object.keys(draft).length === 0}
+              onClick={() => setDraft({})}
+            >
+              <Undo2 className="size-4" aria-hidden />
+              Undo all
             </Button>
             <Button
               type="button"

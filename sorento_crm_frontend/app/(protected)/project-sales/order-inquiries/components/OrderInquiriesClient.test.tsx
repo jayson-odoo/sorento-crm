@@ -393,7 +393,8 @@ describe('OrderInquiriesClient', () => {
     // tree until it closes.
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    fireEvent.click(await screen.findByRole('button', { name: /export excel/i }));
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /export excel/i }));
 
     await waitFor(() =>
       expect(downloadOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
@@ -875,8 +876,9 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
     fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
 
+    // The press is the page's own button now, so it stays - counting nothing.
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /^Acknowledge \(/ })).toBeNull(),
+      expect(screen.getByRole('button', { name: 'Acknowledge (0)' })).toBeDisabled(),
     );
   });
 

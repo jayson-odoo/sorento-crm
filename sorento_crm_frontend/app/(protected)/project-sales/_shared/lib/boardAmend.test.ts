@@ -481,7 +481,7 @@ describe('amendSummary: what the decided row reads', () => {
         },
         'BRW-BB',
       ),
-    ).toBe('Own 454 DC1-BB · Shared 71 BRW');
+    ).toBe('Own 454 DC1-BB · BRW 71 BRW');
   });
 
   it('names a borrow that states its donor order as a borrow from another order', () => {

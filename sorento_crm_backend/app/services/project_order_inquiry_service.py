@@ -2747,6 +2747,10 @@ class ProjectOrderInquiryService:
             "line_label": line_label,
             "location": location,
             "tier": tier,
+            # What the automatic pass may take (the captain, 27 Aug): the row's own site
+            # pool and better, never a sibling group or another site. A row naming no
+            # location ranks nothing and keeps the whole list, as before.
+            "cascadable": own_location is None or tier <= TIER_POOL,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
@@ -2786,6 +2790,13 @@ class ProjectOrderInquiryService:
         for candidate in candidates:
             if still <= _ZERO:
                 break
+            # The cascade stops at the site pool (the captain, 27 Aug: "we should take
+            # from site pool only"). A sibling group's line, or one at another site, is
+            # still LISTED in the Link dialog - a buyer may take it by hand - but the
+            # automatic pass never does: BRW-IB's purchase is BRW-IB's, and an order at
+            # MWH-IR taking 78 of it was the case that ruled it.
+            if not candidate.get("cascadable", True):
+                continue
             remaining = candidate["remaining"]
             take = remaining if remaining < still else still
             if take > _ZERO:

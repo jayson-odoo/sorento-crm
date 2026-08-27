@@ -12,7 +12,7 @@
  * | Rung                 | Label                      | Colour  |
  * | -------------------- | -------------------------- | ------- |
  * | `group_take`         | Use own location           | emerald |
- * | `pool`               | Use shared stock           | sky     |
+ * | `pool`               | Use BRW                    | sky     |
  * | `cross_group_borrow` | Borrow other location      | amber   |
  * | `group_borrow`       | Borrow from another order  | amber   |
  * | `buy`                | Buy                        | rose    |
@@ -66,7 +66,7 @@ export type SupplyKind =
 /** What a person reads. The whole product says supply in these six words and no others. */
 export const LABELS: Record<SupplyKind, string> = {
   buy: 'Buy',
-  shared: 'Use shared stock',
+  shared: 'Use BRW',
   own: 'Use own location',
   borrow_order: 'Borrow from another order',
   borrow_other: 'Borrow other location',
@@ -81,7 +81,7 @@ export const LABELS: Record<SupplyKind, string> = {
  */
 export const SHORT_LABELS: Record<SupplyKind, string> = {
   buy: 'Buy',
-  shared: 'Shared',
+  shared: 'BRW',
   own: 'Own',
   borrow_order: 'Borrow (order)',
   borrow_other: 'Borrow (other)',

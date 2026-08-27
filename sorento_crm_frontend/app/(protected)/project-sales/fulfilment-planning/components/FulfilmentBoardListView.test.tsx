@@ -300,7 +300,7 @@ describe('FulfilmentBoardListView says what was suggested and what was decided',
   it('states the engine composition on one side and the decision on the other', async () => {
     renderView({ contributions: [amended] });
 
-    expect(await screen.findByText('Shared 43 (BRW)')).toBeInTheDocument();
+    expect(await screen.findByText('BRW 43 (BRW)')).toBeInTheDocument();
     expect(screen.getByText('Buy 43')).toBeInTheDocument();
   });
 

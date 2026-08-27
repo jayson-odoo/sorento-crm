@@ -1103,7 +1103,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     renderCell(cell);
 
     // A bare site code is the shared pool, whatever the line's own location is.
-    expect(screen.getByText(/Shared 9 at BRW/)).toBeInTheDocument();
+    expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
     const note = await shareNoteOf(cell);
     expect(note).toContain('12 lines ahead wanting 1015 · 0 left for this line at BRW-BB');
     // Never a verdict on the reserve: the pool is a second source, so "0 left" does not mean
@@ -2142,7 +2142,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     ]);
 
     const card = screen.getByTestId('cell-suggestion');
-    expect(card).toHaveTextContent('Use shared stock');
+    expect(card).toHaveTextContent('Use BRW');
     expect(card).toHaveTextContent('71 from BRW');
     expect(card).not.toHaveTextContent('Use own location');
   });
@@ -2423,7 +2423,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
 
     const suggestion = screen.getByTestId('cell-suggestion');
     const decision = screen.getByTestId('cell-decision');
-    expect(suggestion).toHaveTextContent('Use shared stock');
+    expect(suggestion).toHaveTextContent('Use BRW');
     expect(suggestion).toHaveTextContent('71 from BRW');
     expect(decision).toHaveTextContent('Buy');
     expect(decision).toHaveTextContent('71');
@@ -2449,7 +2449,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
 
     // An approval takes the proposal as it stands, so the two cards agree - which is itself
     // the answer to "did we do what the engine said".
-    expect(screen.getByTestId('cell-decision')).toHaveTextContent('Use shared stock');
+    expect(screen.getByTestId('cell-decision')).toHaveTextContent('Use BRW');
   });
 });
 

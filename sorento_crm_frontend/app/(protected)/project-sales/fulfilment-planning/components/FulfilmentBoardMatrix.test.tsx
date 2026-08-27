@@ -235,7 +235,7 @@ describe('FulfilmentBoardMatrix colours a cell by its supply', () => {
     const bar = screen.getByTestId('supply-bar');
     expect(bar).toHaveAttribute('data-decided', 'false');
     expect(bar.querySelector('span[data-kind="shared"]')).not.toBeNull();
-    expect(screen.getByTestId('cell-supply-lead').textContent).toBe('Shared 71');
+    expect(screen.getByTestId('cell-supply-lead').textContent).toBe('BRW 71');
   });
 
   it('flips rose to sky when the draft amends a Buy to the shared pool, and back (AC-C2)', () => {

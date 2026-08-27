@@ -590,6 +590,8 @@ export interface OrderInquiryPoAllocation {
 export interface AutoPlaceRequest {
   /** Omitted: every product carrying a raised ORDER/RESERVE & ORDER row. */
   product_ids?: string[];
+  /** The named rows and nothing else ("Link selected"); wins over `product_ids`. */
+  row_ids?: string[];
 }
 
 export interface AutoPlaceResult {
