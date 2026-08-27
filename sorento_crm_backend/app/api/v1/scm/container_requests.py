@@ -9,7 +9,6 @@ reviewed lines into a notice through the same S8 machinery `approve_loading_plan
 """
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
