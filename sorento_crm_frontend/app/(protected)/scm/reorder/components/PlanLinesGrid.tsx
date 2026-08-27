@@ -81,7 +81,7 @@ import { OrderQtyLedger } from './PlanOrderQtyLedger';
 import {
   groupPlanLinesByChannel,
   isGroupedLine,
-  presentChannels,
+  PLAN_CHANNEL_ORDER,
   PLAN_CHANNEL_LABEL,
   type PlanChannel,
 } from '../lib/planLineGrouping';
@@ -440,13 +440,15 @@ export function PlanLinesGrid({
     [groupByChannel, ordered],
   );
 
-  // The channel COLUMN set (5.3 follow-up, 19-20 Aug): dynamic, off the whole run's rows
-  // (`lines`, unfiltered - a column must not appear/disappear as the buyer searches or
-  // filters), never hardcoded to two. Empty on the ungrouped grid, which has no channel
+  // The channel COLUMN set: Project and Retail, always (captain, 28 Aug 2026: "where is my
+  // project quantity column" on a run whose rows were all retail). The 19-20 Aug rule that
+  // derived the set from the run's rows (`presentChannels`) made Project vanish for a whole
+  // plan with no project demand, which read as a missing column rather than a zero. A zero
+  // is the answer; the column stays. Empty on the ungrouped grid, which has no channel
   // columns at all.
   const dynamicChannels = useMemo<PlanChannel[]>(
-    () => (groupByChannel ? presentChannels(lines) : []),
-    [groupByChannel, lines],
+    () => (groupByChannel ? PLAN_CHANNEL_ORDER : []),
+    [groupByChannel],
   );
 
   // Channel-column totals (captain follow-up, 2026-08-20: "I wonder what is the total for
