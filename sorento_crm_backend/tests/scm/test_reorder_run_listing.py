@@ -16,9 +16,10 @@ one that was never computed.
 """
 from __future__ import annotations
 
+import re
 import uuid
+from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -82,6 +83,10 @@ def _rows_for(body, run_ids):
 # ===========================================================================
 
 def test_query_matches_a_warehouse_code(scm_app):
+    """Warehouse code, and deliberately nothing else (captain's ruling, 28 Aug): a plan's
+    only human handles are its time and its scope, and a product-code search over
+    `product_ids` would answer "which plans mention this item", which is the plan PAGE's
+    question, not the list's."""
     client, db = _client(scm_app)
     wid = _mk_warehouse(db, f"{MARKER}-FINDME")
     mine = _run(db, warehouse_ids=f'["{wid}"]')
@@ -146,53 +151,6 @@ def _run_at(db, *, started_at, created_at):
     return rid
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Gap, not yet a ruling either way: list_reorder_runs' own docstring and its "
-        "`query` WHERE clause (app/api/v1/scm/reorder_runs.py ~L126, ~L138) are explicit "
-        "that the search box matches a WAREHOUSE CODE ONLY - there is no join from "
-        "`product_ids` to `products.product_code` in the filter at all, so a product-code "
-        "query matches nothing. The plan's own toolbar (4.1) does not say the search box "
-        "covers products, so this may be an intentional scope rather than a bug - route to "
-        "the captain to rule one way, then either extend the WHERE clause or drop this test."
-    ),
-)
-def test_query_matches_a_product_code_too(scm_app):
-    """The search box is one field over the whole plan (plan 4.1's toolbar); a buyer
-    typing the product they are chasing has no reason to know it only matches a
-    warehouse."""
-    client, db = _client(scm_app)
-    sup = _mk_supplier(db, f"{MARKER} product-query supplier")
-    prod = _mk_product(db, f"{MARKER}-P-FINDME")
-    mine = _run(db)
-    _rec(db, mine, prod, _mk_warehouse(db, f"{MARKER}-W-PQ"), supplier_id=sup)
-    other = _run(db)
-
-    body = client.get(
-        f"/api/v1/scm/reorder-runs?page=1&limit=100&query={MARKER}-P-FINDME"
-    ).json()
-    ids = {r["run_id"] for r in body["data"]}
-
-    assert mine in ids
-    assert other not in ids
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Real defect: `order_by` (app/api/v1/scm/reorder_runs.py, just above the SELECT) "
-        "ends every ordering in `created_at DESC` and never in `id` - so three rows tied "
-        "on BOTH `started_at` AND `created_at` (a bulk historical import, or several runs "
-        "queued in one transaction, share exactly this: `now()` is one value for the whole "
-        "transaction) have no final unique tiebreak at all. Confirmed here: page 1/limit 2 "
-        "then page 2/limit 2 over the SAME 3 tied rows returns fewer than 3 distinct ids - "
-        "a row is skipped AND another repeats, the exact instability the project's own "
-        "'now() ties in a transaction, end orderings with id' lesson names. Fix: append "
-        "`, id ASC` (or `, id`, direction-matched) as the final key in the f-string building "
-        "`order_by`, both the explicit-sort branch and the default branch."
-    ),
-)
 def test_started_at_ties_break_deterministically_on_id(scm_app):
     """`ORDER BY started_at ASC NULLS LAST, created_at DESC` alone still ties when
     BOTH columns match, which several runs queued in one transaction (or a bulk
@@ -288,6 +246,29 @@ def test_confirmed_product_count_follows_the_draft_purchase_orders(scm_app):
     assert row["confirmed_product_count"] == 1
 
 
+def test_resetting_a_confirmed_plan_puts_the_list_back_to_planning(scm_app):
+    """The Status column is derived from `confirmed_product_count`, which is read off the
+    DRAFT purchase orders - so a reset that left the draft lines behind kept the plan
+    reading Confirmed forever."""
+    client, db = _client(scm_app)
+    rid = _run(db)
+    sup = _mk_supplier(db, f"{MARKER} reset supplier")
+    prod = _mk_product(db, f"{MARKER}-P-RESET")
+    rec_id = _rec(db, rid, prod, _mk_warehouse(db, f"{MARKER}-W-RESET"), supplier_id=sup)
+    dsvc.record_plan_row_decision(db, rec_id, "buy", 40, [], None, [], None, None)
+    dsvc.confirm_decisions(db, rid, None, None)
+
+    body = client.get("/api/v1/scm/reorder-runs?page=1&limit=100").json()
+    assert _rows_for(body, [rid])[0]["confirmed_product_count"] == 1
+
+    dsvc.reset_run_decisions(db, rid, None)
+
+    row = _rows_for(
+        client.get("/api/v1/scm/reorder-runs?page=1&limit=100").json(), [rid])[0]
+    assert row["confirmed_product_count"] == 0, "Planning again, not Confirmed"
+    assert row["decided_product_count"] == 0
+
+
 def test_a_run_covering_every_warehouse_says_so(scm_app):
     """A plan launched with no warehouse scope stores EVERY active warehouse id, so the
     list would read "60 warehouses" for what the buyer asked for as "all" (fix c)."""
@@ -316,3 +297,60 @@ def test_the_run_detail_carries_started_at(scm_app):
     body = client.get(f"/api/v1/scm/reorder-runs/{rid}").json()
 
     assert body["started_at"], "the plan header reads 'Plan dd/mm/yyyy HH:mm' off this"
+
+
+def test_sorting_by_decided_orders_by_the_products_decided(scm_app):
+    """The Decided column is sortable on the grid, and ORDER BY runs over the whole
+    filtered set before the page is cut - so the count has to be sortable in SQL, not
+    re-sorted in Python after the page came back."""
+    client, db = _client(scm_app)
+    sup = _mk_supplier(db, f"{MARKER} sort supplier")
+    # Both plans name the same marker warehouse, so `query` narrows the page to exactly
+    # these two - on the prod-copy database there are hundreds of real runs, and a page of
+    # 100 sorted ascending would simply not reach them.
+    scope = _mk_warehouse(db, f"{MARKER}-W-SORTQ")
+    none_decided = _run(db, warehouse_ids=f'["{scope}"]')
+    two_decided = _run(db, warehouse_ids=f'["{scope}"]')
+    for i in range(2):
+        rec = _rec(db, two_decided, _mk_product(db, f"{MARKER}-P-SORT{i}"),
+                   _mk_warehouse(db, f"{MARKER}-W-SORT{i}"), supplier_id=sup)
+        dsvc.record_plan_row_decision(db, rec, "buy", 5, [], None, [], None, None)
+    _rec(db, none_decided, _mk_product(db, f"{MARKER}-P-SORTN"),
+         _mk_warehouse(db, f"{MARKER}-W-SORTN"), supplier_id=sup)
+
+    def _order(dir_):
+        body = client.get(
+            f"/api/v1/scm/reorder-runs?page=1&limit=100&sort=decided&dir={dir_}"
+            f"&query={MARKER}-W-SORTQ"
+        ).json()
+        return [r["run_id"] for r in _rows_for(body, [none_decided, two_decided])]
+
+    assert _order("desc") == [two_decided, none_decided]
+    assert _order("asc") == [none_decided, two_decided]
+
+
+def test_every_column_the_grid_can_sort_has_a_key_here(scm_app):
+    """The grid sends the COLUMN ID as `sort`; an id with no entry in `_RUN_SORT` is
+    silently ignored, so the header offers a sort that does nothing at all. Read off the
+    component rather than restated, which is the only version of this check that cannot
+    drift."""
+    from app.api.v1.scm.reorder_runs import _RUN_SORT
+
+    grid = (
+        Path(__file__).resolve().parents[3]
+        / "sorento_crm_frontend" / "app" / "(protected)" / "scm" / "reorder"
+        / "components" / "ReorderRunsGrid.tsx"
+    )
+    if not grid.exists():  # backend-only checkout
+        return
+    source = grid.read_text()
+    sortable = [
+        block_id
+        for block_id, block in re.findall(
+            r"\{\s*\n\s*id: '([a-z_]+)',(.*?)\n      \},", source, re.S)
+        if "enableSorting: true" in block
+    ]
+
+    assert sortable, "the column ids should be readable from the grid"
+    missing = [c for c in sortable if c not in _RUN_SORT]
+    assert missing == [], f"sortable on the grid but not in _RUN_SORT: {missing}"

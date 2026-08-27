@@ -59,9 +59,9 @@ export function RecentPurchasesTable({ lines }: { lines: PurchaseTrendLine[] }) 
  *
  * Same interaction as `PlanTrendPopover`: the number is the trigger, the trend sentence
  * and a Supplier/Date/Qty/Unit-cost table live in the popup. Underneath, when the price
- * ledger already holds a last AND a previous purchase (the SAME facts `PlanPriceCell`
- * reads, reused rather than re-fetched), one line answers "how do I know last cost is
- * high vs previous": a signed percentage, never a bare number.
+ * ledger already holds a last AND a previous purchase (the SAME facts the row panel's
+ * price zone reads, reused rather than re-fetched), one line answers "how do I know last
+ * cost is high vs previous": a signed percentage, never a bare number.
  */
 export function PlanPurchaseTrendPopover({
   qty,

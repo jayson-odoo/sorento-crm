@@ -56,6 +56,16 @@ vi.mock('../hooks/useReorderRun', async (importOriginal) => {
   };
 });
 
+// The saved column layout is a server read. Stubbed so it cannot fetch, and so the key it
+// was asked for is visible to the test below.
+const listingKeys: (string | null | undefined)[] = [];
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: ({ listingKey }: { listingKey?: string | null }) => {
+    listingKeys.push(listingKey);
+    return { resetToDefaults: vi.fn(), isLoading: false };
+  },
+}));
+
 // The filter popover uses the standard SearchableSelect. A native <select> keeps the
 // options in the DOM without driving a cmdk popover.
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -155,7 +165,6 @@ function renderGrid(
         economicsFor={opts.economicsFor}
         decisionsReadOnly={opts.decisionsReadOnly}
         readOnlyReason={opts.readOnlyReason ?? null}
-        staleAfterDays={180}
       />
     );
   }
@@ -435,5 +444,17 @@ describe('PlanLinesGrid - the toolbar (C2)', () => {
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
     expect(await screen.findByLabelText('Suggested price')).toBeInTheDocument();
     expect(screen.getByLabelText('AutoCount level')).toBeInTheDocument();
+  });
+});
+
+
+describe('PlanLinesGrid - saved column layout belongs to the screen (A1)', () => {
+  it('keys the column preferences on the listing, never on the plan id', () => {
+    listingKeys.length = 0;
+    renderGrid([line()]);
+    expect(listingKeys).toContain('scm.dashboard.view::reorder-plan-lines');
+    // Defaulted, `DataGrid` keys off the pathname - `/scm/reorder/{run_id}` - so every
+    // plan started from the defaults and a buyer's own layout was never seen twice.
+    expect(listingKeys).not.toContain('/scm/reorder/run-1');
   });
 });

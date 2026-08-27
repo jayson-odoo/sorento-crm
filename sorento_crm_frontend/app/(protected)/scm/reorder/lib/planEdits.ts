@@ -176,9 +176,11 @@ export function editedProductCount(edits: PlanRowEditMap, lines: PlanLine[]): nu
 /**
  * What Confirm would send: how many PRODUCTS and how much cash.
  *
- * Every purchasable row counts - edited, already saved, or untouched (R3: an untouched row
- * confirms as the engine's suggestion). A skipped row is left out, because Confirm
- * deliberately does nothing with it.
+ * Every purchasable row with a BUY counts - edited, already saved, or untouched (R3: an
+ * untouched row confirms as the engine's suggestion). Three kinds are left out, because
+ * Confirm would draft nothing for them: a skipped row, a row whose mixture is all stock or
+ * all open PO, and a row already confirmed into a draft purchase order that nobody has
+ * edited since.
  *
  * `cash` is what the buys can be costed at; `unpriced` counts the ones that cannot be, and
  * they are never summed as zero - a line we cannot price still has to be bought, it simply
@@ -204,13 +206,21 @@ export function confirmSummary(
     if (!line.purchasable) continue;
     const edit = edits[line.id];
     const persisted = decisionForLine(line, decisions);
+    // Already in a draft purchase order, and nothing new said about it. Confirming again
+    // reconciles it to the same line, so counting it left the button live over a plan
+    // with no work in it - "Confirm (2)" on two rows that both read Confirmed.
+    if (!hasRowEdit(edit) && persisted?.confirmed) continue;
     const effective =
       edit?.decision ??
       persisted ??
       suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
     if (effective.skip) continue;
-    products.add(line.product_id ?? line.id);
+    // Counted only where there is something to BUY. Confirm drafts purchase orders, and a
+    // row covered entirely from stock or an open PO drafts nothing at all - so counting it
+    // made the button read "Confirm (12)" and produce three lines, and left it live over a
+    // plan where every remaining row was already covered.
     if ((effective.buy ?? 0) <= 0) continue;
+    products.add(line.product_id ?? line.id);
     const cost = decidedCost(line, { buy: effective.buy });
     if (cost === null) unpriced += 1;
     else cash += cost;

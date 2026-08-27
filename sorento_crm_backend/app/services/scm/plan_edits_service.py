@@ -145,14 +145,20 @@ def _apply_row(
             db, str(rec.id), row["moq"], commit=False
         )
 
-    # The level and its quantity are PRODUCT-wide (captain, 27 Aug: "our reorder is per
-    # product, so it doesn't matter your location"), so a fanned-out grouped row writes
-    # the same product row several times with the same value - idempotent by construction.
+    # Both write to the row the PANEL is reading. `scm.reorder_level` is keyed
+    # (product, warehouse) and the suggestion the panel amends was stored under the
+    # recommendation's OWN pair (`level_suggestion_service._plan_pairs`): a product-grain
+    # rec carries `warehouse_id = NULL`, a location-grain one carries its warehouse. So
+    # the key travels off the rec rather than being forced to NULL - forcing it looked up
+    # the product-wide row, which on a location-grain run holds no suggestion and made
+    # every Level edit a 422 ("There is no suggestion to amend for this item"). A
+    # fanned-out grouped row still writes the same product row several times with the same
+    # value, which is idempotent by construction.
     if "level" in row:
         level_suggestion_service.amend_suggestion(
             db,
             product_id=str(rec.product_id),
-            warehouse_id=None,
+            warehouse_id=(str(rec.warehouse_id) if rec.warehouse_id is not None else None),
             amended_level=(None if row["level"] is None else float(row["level"])),
             amended_by=actor,
             commit=False,
@@ -162,7 +168,7 @@ def _apply_row(
         reorder_level_service.set_reorder_qty(
             db,
             product_id=str(rec.product_id),
-            warehouse_id=None,
+            warehouse_id=(str(rec.warehouse_id) if rec.warehouse_id is not None else None),
             reorder_qty=(None if row["reorder_qty"] is None else float(row["reorder_qty"])),
             company_id=company_id,
             commit=False,

@@ -50,9 +50,13 @@ def product(db, cat, uom, *, reorder_quantity: Optional[float] = None):
     return p
 
 
-def warehouse(db, *, segment: Optional[str] = None, pool_warehouse_id: Optional[str] = None):
+def warehouse(db, *, segment: Optional[str] = None, pool_warehouse_id: Optional[str] = None,
+              id: Optional[str] = None):
+    """A warehouse. `id` is settable for the one case that needs it: a test whose subject
+    is a tie broken somewhere OTHER than the id, which has to pin the id ordering the tie
+    would otherwise be decided by."""
     wh = Warehouse(
-        id=u(), warehouse_code=code("WH")[:30], warehouse_name="wh", is_active=True,
+        id=id or u(), warehouse_code=code("WH")[:30], warehouse_name="wh", is_active=True,
         counts_as_available=True, segment=segment, pool_warehouse_id=pool_warehouse_id,
     )
     db.add(wh)

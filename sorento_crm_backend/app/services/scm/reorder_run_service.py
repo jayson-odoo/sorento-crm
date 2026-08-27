@@ -827,7 +827,7 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
                pol.warehouse_id::text AS warehouse_id,
                COALESCE(w.segment, 'unattributed') AS segment,
                pol.unit_cost, COALESCE(pol.currency, po.currency) AS currency,
-               po.po_number, po.issue_date,
+               po.po_number, po.issue_date, pol.created_at AS line_created_at,
                po.supplier_id::text AS supplier_id, su.supplier_name
           FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id = pol.purchase_order_id
@@ -840,10 +840,11 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
                   po.issue_date DESC NULLS LAST, pol.created_at DESC
     """), {"pids": pids, **co_params}).mappings().all()
 
-    def _newer(entry: dict, current: Optional[dict]) -> bool:
-        return current is None or (entry["at"] or "") > (current["at"] or "")
-
     out: dict[str, dict] = {}
+    #: The rank each chosen bucket entry won on: `(issue_date, line created_at)`. Kept
+    #: BESIDE the entry rather than inside it, so a tiebreak that is nobody's business on
+    #: screen never travels into the frozen `inputs.last_purchase` the row prints.
+    ranks: dict[str, dict[str, tuple[str, str]]] = {}
     for r in rows:
         entry = {
             "cost": _fnum(r["unit_cost"]),
@@ -855,15 +856,25 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
             "supplier_id": r["supplier_id"],
             "supplier_name": r["supplier_name"],
         }
+        # `issue_date` is a DATE, so two purchases made on the same day tie on it - and
+        # two destinations bought for on one day is the ordinary shape, not an edge case.
+        # The line's own `created_at` breaks the tie the same way the query above already
+        # breaks it per destination, so "the last price" is the one recorded last rather
+        # than whichever row the scan happened to reach first.
+        rank = (
+            r["issue_date"].isoformat() if r["issue_date"] else "",
+            r["line_created_at"].isoformat() if r["line_created_at"] else "",
+        )
         bucket = out.setdefault(r["product_id"], {})
+        bucket_ranks = ranks.setdefault(r["product_id"], {})
         if r["warehouse_id"]:
             bucket[f"wh:{r['warehouse_id']}"] = entry
         # Newest within the segment. The rows arrive newest-first per DESTINATION, and a
         # segment holds several, so both of these are chosen rather than assumed.
-        if _newer(entry, bucket.get(r["segment"])):
-            bucket[r["segment"]] = entry
-        if _newer(entry, bucket.get("any")):
-            bucket["any"] = entry
+        for key in (r["segment"], "any"):
+            if key not in bucket or rank > bucket_ranks[key]:
+                bucket[key] = entry
+                bucket_ranks[key] = rank
     return out
 
 

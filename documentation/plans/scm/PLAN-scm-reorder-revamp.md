@@ -1,6 +1,6 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: Phase 2 BUILT 28 Aug 2026 (backend test-first, FE off its mocks, three layout fixes). Phase 3 (`/code-review`, DoD gate, PR) next.
+Status: Phase 3 review applied 28 Aug 2026 (blockers, should-fixes, tester xfails and nits from the review pass; see section 11). PR next.
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
@@ -251,13 +251,87 @@ Everything below departs from section 5, with the reason. Nothing here changes a
   still names none, which is Phase 1's own rule.
 - **`ImportJob.completed_at`, not `finished_at`** (R7's fallback). That is the column the
   model actually carries.
-- **`price-history` gained the `warehouse` filter with no FE caller yet.** Section 5.3 names
-  it and F7 wants the panel's price and the PO dialog's newest row to be the same purchase,
-  but the FE reads price-history once per RUN and each row has its own pool, so a run-wide
-  parameter has no honest caller. What the panel actually prints comes from
-  `inputs.last_purchase`, which IS pool-filtered (`_last_purchase_cost_map`, basis `pool`).
-  The parameter is tested and unused; delete it if no caller arrives.
+- **`price-history` has NO `warehouse` filter.** Section 5.3 named one and F7 wants the
+  panel's price and the PO dialog's newest row to be the same purchase, but the FE reads
+  price-history once per RUN and each row has its own pool, so a run-wide parameter has no
+  honest caller. It shipped in Phase 2 tested and unused, and the Phase 3 review deleted it
+  (service, route and test). What the panel actually prints comes from
+  `inputs.last_purchase`, which IS pool-filtered (`_last_purchase_cost_map`, basis `pool`),
+  and `purchase-trend` keeps its own filter because the PO dialog calls it per row.
 - **Existing saved column layouts survive.** `DataGrid` persists column sizing per
   `listingKey` (defaulting to the pathname), so the new collapsed widths only reach a user
   who has never opened the page - everyone else keeps theirs until they use Columns ->
   Reset columns. Not a defect, but it is why the widths look unchanged on a warm profile.
+
+## 11. Phase 3 review pass (28 Aug 2026)
+
+The review's findings, as applied. Each one flipped or added a test.
+
+**Blockers**
+
+- **The Level edit 422'd.** `plan_edits_service` forced `warehouse_id=None` into the level
+  amendment, so on a location-grain run it looked up the product-wide `scm.reorder_level`
+  row (which holds no suggestion) and refused the whole batch. The key now travels off the
+  recommendation, which is where `level_suggestion_service._plan_pairs` stored the
+  suggestion in the first place; the reorder quantity follows the same key for the same
+  reason. The panel also disables the Level input when the row has no suggestion at all -
+  an amendment of nothing has nothing to amend - and leaves Reorder qty editable.
+- **R3 wrote no decision.** Confirm drafted the purchase order for an untouched product and
+  recorded nothing, so the pill stayed Suggested, the tiles and the Decided column stayed
+  short and Confirm (N) stayed live over rows already in a draft PO. It now writes a
+  `PlanRowDecision` per member as the lines are upserted. **Deviation from the review's
+  wording:** `buy_qty` is the PRODUCT's whole quantity on every member, not that member's
+  share of the split - that is the shape `usePlanLines.decide` writes for a decided grouped
+  row, so a re-confirm reads it back through the grid path and drafts exactly the same
+  lines. A share would have re-split an already-split number on the second confirm.
+- **The plan grid keyed its saved column layout on the plan.** `DataGrid` defaults
+  `listingKey` to the pathname, which is `/scm/reorder/{run_id}`, so a buyer's own layout
+  was never seen twice. It is `scm.dashboard.view::reorder-plan-lines` now.
+
+**Should-fix**
+
+- Confirm (N) counted products with nothing to buy. A row covered from stock or an open PO
+  drafts no line, so it is no longer counted.
+- R3 now covers the LOCATION grain too, decision row included. `_confirm_location_grain`
+  had no untouched-as-suggestion branch at all, so a location run's buyer who agreed with a
+  row got nothing for it.
+- `reset_run_decisions` left product-grain draft lines behind (`_SRC_PRODUCT`, same rec id,
+  different stamp), so the plans list read Confirmed forever after a reset. Both stamps are
+  cleared now.
+- The Decided column is sortable, so `_RUN_SORT` has a `decided` key (by distinct decided
+  product). A test reads the sortable column ids off `ReorderRunsGrid.tsx` and asserts every
+  one of them has a key, so the two cannot drift.
+- The SPO history read is an ORM query using `open_incoming_clauses()`. It was raw SQL over
+  a company-owned table (no company predicate at all - another company's shipping orders
+  counted as ours) with a second Python copy of the open/received rule beside it.
+- `price-history`'s `warehouse` parameter is deleted (see section 10).
+- `_last_purchase_cost_map` broke same-day ties on `pol.created_at`. `po.issue_date` is a
+  DATE, so two purchases on one day tied and the winner was whichever destination's id
+  sorted first.
+
+**Tester xfails**
+
+- D4's "never purchased defaults to Get new price" is implemented; the `it.fails` is an
+  `it`.
+- The runs list ends every ordering on `id ASC`, so paging over rows tied on both
+  `started_at` and `created_at` is stable. xfail removed.
+- **Ruling (captain, 28 Aug): the plans list search is warehouse-only by design.** A plan's
+  human handles are its time and its scope; "which plans mention this product" is the plan
+  page's question. The xfailing product-code test is deleted rather than implemented.
+
+**Nits**
+
+- `_product_counts` drops a dead `LEFT JOIN purchase_orders` and reads the decidable
+  rec types off `decision_service._PLAN_ROW_DECIDABLE_TYPES` instead of a second literal.
+- The panel's supplier select is `clearable`; clearing means "no override", which reads as
+  the row's proposed supplier and sends no `supplier_code`.
+- The on-screen sentence "Prices older than N days are treated as stale" is gone (no rule
+  explanations on screen), and the `staleAfterDays` prop with it.
+- `as_of_source` was computed, typed and never rendered: dropped from the response and the
+  FE type. `_stock_as_of` still returns which branch answered, which is what its tests read.
+- Comments naming files this lane deleted (`ReorderPlanningView`, the five cell components,
+  `UploadDataMenu.test.tsx`) say what is there now.
+- The `#` column is 60px, not 36: it carries the grid's edge padding, so a rank past 99
+  truncated to "1...".
+- `_warehouse_id_for_code` and the as-of-the-run warehouse count carry the company
+  predicate every other raw read in that file already had.

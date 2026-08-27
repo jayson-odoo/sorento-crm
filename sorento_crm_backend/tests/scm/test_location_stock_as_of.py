@@ -21,6 +21,7 @@ from app.models.inventory import Stock
 from app.models.job import ImportJob
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.services.scm import location_stock_service
+from app.services.scm.location_stock_service import _stock_as_of
 from tests._pg_fixture import pg_session
 from tests.scm._revamp_fixtures import category_and_uom, product, supplier, warehouse
 from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg
@@ -71,7 +72,7 @@ def test_as_of_is_the_newest_stock_update_not_the_clock(db):
     out = location_stock_service.location_stock_for_product(db, str(prod.id))
 
     assert out["as_of"] == "2026-08-24T07:40:00"
-    assert out["as_of_source"] == "stock"
+    assert _stock_as_of(db, str(prod.id))[1] == "stock"
 
 
 def test_a_product_with_no_stock_row_says_so_rather_than_stamping_now(db):
@@ -82,8 +83,9 @@ def test_a_product_with_no_stock_row_says_so_rather_than_stamping_now(db):
 
     assert out["locations"] == []
     # Either a fallback import time or nothing at all - never a fabricated "now".
-    assert out["as_of_source"] in ("import_job", "none")
-    if out["as_of_source"] == "none":
+    source = _stock_as_of(db, str(prod.id))[1]
+    assert source in ("import_job", "none")
+    if source == "none":
         assert out["as_of"] is None
 
 
@@ -111,7 +113,7 @@ def test_as_of_falls_back_to_the_latest_completed_stock_import_when_no_stock_row
     out = location_stock_service.location_stock_for_product(db, str(prod.id))
 
     assert out["as_of"] == "2031-01-15T09:30:00"
-    assert out["as_of_source"] == "import_job"
+    assert _stock_as_of(db, str(prod.id))[1] == "import_job"
 
 
 def test_as_of_is_null_when_neither_a_stock_row_nor_a_completed_import_exists(db):
@@ -121,8 +123,6 @@ def test_as_of_is_null_when_neither_a_stock_row_nor_a_completed_import_exists(db
     the actual gap this pins is the SQL itself: with genuinely nothing to answer from,
     it returns `(None, "none")`, never a fabricated timestamp."""
     from sqlalchemy import text as _text
-
-    from app.services.scm.location_stock_service import _stock_as_of
 
     cat, uom = category_and_uom(db)
     prod = product(db, cat, uom)

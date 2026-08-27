@@ -17,6 +17,7 @@ from datetime import date
 import pytest
 
 from app.models.base import company_scope
+from app.models.company import Company
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.services.scm import spo_supply
 from tests._pg_fixture import pg_session
@@ -133,3 +134,26 @@ def test_a_product_the_run_never_planned_has_no_pool_and_no_rows(db):
 
     out = spo_supply.spo_history_for_product(db, str(plan.id), str(stranger.id))
     assert out == {"open": [], "history": []}
+
+
+def test_another_company_s_shipping_order_is_not_this_pool_s(db):
+    """`spo_allocations` is company-owned, and this read used to be raw SQL - which the
+    ORM isolation filter never sees, so another company's promise for the same product at
+    the same location counted as ours."""
+    plan, prod, sup, pool, _bin, _elsewhere = _world(db)
+    theirs = Company(id=str(uuid.uuid4()), code="ZZTRVMP-CO", name="ZZTRVMP other company")
+    db.add(theirs)
+    db.flush()
+
+    _spo(db, prod=prod, wh=pool, sup=sup, number="ZZTRVMP-SPO-MINE", qty=100,
+         expected=date(2026, 9, 30))
+    intruder = _spo(db, prod=prod, wh=pool, sup=sup, number="ZZTRVMP-SPO-THEIRS", qty=500,
+                    expected=date(2026, 9, 29))
+    intruder.company_id = theirs.id
+    db.flush()
+
+    out = spo_supply.spo_history_for_product(db, str(plan.id), str(prod.id))
+    numbers = {s["spo_number"] for s in out["open"] + out["history"]}
+
+    assert "ZZTRVMP-SPO-MINE" in numbers
+    assert "ZZTRVMP-SPO-THEIRS" not in numbers

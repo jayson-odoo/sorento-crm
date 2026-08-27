@@ -21,9 +21,9 @@ import { PlanLinesGrid } from './PlanLinesGrid';
 
 /**
  * ONE list (S11) - PlanLinesGrid + PlanBudgetReview + LevelChangesPanel, driven entirely
- * by `usePlanLines(runId)`. Extracted out of `ReorderPlanningView` so a second screen (the
- * SCM simulation page's "Planning view" tab) can render the exact same grid, hooks, cell
- * popovers and decision controls against a different run instead of re-implementing them.
+ * by `usePlanLines(runId)`. Extracted out of the plan page so a second screen (the SCM
+ * simulation page's "Planning view" tab) can render the exact same grid, hooks, row panel
+ * and decision controls against a different run instead of re-implementing them.
  * One render source - tooltips/popovers/columns can never drift between the two screens.
  *
  * `statusFilter` / `onStatusFilterChange` and `decidedFilter` / `onDecidedFilterChange` are
@@ -306,7 +306,6 @@ export function PlanLinesSection({
         economicsFor={planLines.economicsFor}
         healthThresholds={planLines.healthThresholds}
         healthWindows={planLines.healthWindows}
-        staleAfterDays={planLines.staleAfterDays}
       />
 
       <ConfirmActionDialog

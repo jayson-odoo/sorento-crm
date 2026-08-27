@@ -72,7 +72,6 @@ export function PlanRowPanel({
   levelSuggestion,
   economics,
   healthWindows,
-  staleAfterDays = 180,
   disabled = false,
   lockReason = null,
   onEdit,
@@ -90,7 +89,6 @@ export function PlanRowPanel({
   levelSuggestion: LevelSuggestion | undefined;
   economics: ProductEconomics | undefined;
   healthWindows?: { sold_window_months?: number; bought_window_months?: number };
-  staleAfterDays?: number;
   /** A legacy run: the panel still renders, every input is dead (D8). */
   disabled?: boolean;
   lockReason?: string | null;
@@ -118,12 +116,20 @@ export function PlanRowPanel({
   const masterMoq = line.order_qty_inputs.master_moq;
   const moqValue = edit?.moq !== undefined ? edit.moq : moq;
 
-  const priceMode: PlanRowPriceMode =
-    edit?.priceMode ?? current.priceMode ?? decision?.priceMode ?? 'use_last';
-  const supplierCode =
-    edit?.supplierCode ?? current.supplierCode ?? line.supplier?.code ?? null;
-  const picked = (line.alternatives ?? []).find((a) => a.value === supplierCode) ?? null;
   const hasPriceOnFile = Boolean(price?.last) || (line.unit_cost ?? 0) > 0;
+  // Never purchased means there is no last price to use, so the row starts on the only
+  // honest answer: go and get one (D4). Anything the buyer or a previous save said still
+  // wins over it.
+  const priceMode: PlanRowPriceMode =
+    edit?.priceMode ??
+    current.priceMode ??
+    decision?.priceMode ??
+    (hasPriceOnFile ? 'use_last' : 'ask_new');
+  // Clearing the select is "no override", which is the engine's own proposed supplier -
+  // so an empty value falls back to it here and sends no `supplier_code` on save.
+  const supplierCode =
+    edit?.supplierCode || current.supplierCode || line.supplier?.code || null;
+  const picked = (line.alternatives ?? []).find((a) => a.value === supplierCode) ?? null;
 
   /** The unit the line is costed at: nothing while a new price is being asked for. */
   const unitCostBase =
@@ -365,6 +371,7 @@ export function PlanRowPanel({
               }))}
               placeholder="Choose a supplier"
               emptyMessage="No supplier is linked to this product."
+              clearable
               disabled={disabled || (line.alternatives ?? []).length === 0}
               wrapOptions
               triggerClassName="h-7 text-2xs"
@@ -405,11 +412,6 @@ export function PlanRowPanel({
               <span className="text-2xs text-muted-foreground"> at last price</span>
             ) : null}
           </p>
-          {price ? null : (
-            <p className="text-2xs text-muted-foreground">
-              {`Prices older than ${fmtInt(staleAfterDays)} days are treated as stale.`}
-            </p>
-          )}
         </section>
 
         {/* ---- 3. AutoCount level + qty ------------------------------------- */}
@@ -429,6 +431,10 @@ export function PlanRowPanel({
             <p className="text-2xs text-muted-foreground">No level suggestion for this item.</p>
           )}
 
+          {/* A level is AMENDED, never set from nothing: the backend refuses an amendment
+              with no suggestion to amend ("There is no suggestion to amend for this
+              item"), and a live input whose save can only 422 is worse than a dead one.
+              The reorder quantity beside it has no such rule and stays editable. */}
           <label className="flex items-center justify-between gap-2 text-xs">
             <span className="text-muted-foreground">Level</span>
             <Input
@@ -437,7 +443,7 @@ export function PlanRowPanel({
               inputMode="numeric"
               aria-label="AutoCount level"
               className="h-7 w-24 text-right tabular-nums"
-              disabled={disabled}
+              disabled={disabled || !level}
               value={levelValue === null || levelValue === undefined ? '' : String(levelValue)}
               onChange={(e) =>
                 onEdit({ level: e.target.value.trim() === '' ? null : num(e.target.value) })

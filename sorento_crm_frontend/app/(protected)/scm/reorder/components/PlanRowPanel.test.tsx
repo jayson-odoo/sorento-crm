@@ -277,15 +277,54 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
   });
 
   // UAC D4's own last sentence: "Never purchased: 'No price on file', radio defaults to
-  // Get new price." The component's own priceMode fallback chain
-  // (`edit?.priceMode ?? current.priceMode ?? decision?.priceMode ?? 'use_last'`) never
-  // branches on whether a price exists at all - `suggestedDecisionFor` sets no priceMode
-  // either - so the radio reads "Use last price" even with nothing on file. Marked
-  // `it.fails` per the tester brief rather than silently dropped; route to the captain.
-  it.fails('defaults the radio to Get new price when nothing has ever been purchased (UAC D4)', () => {
+  // Get new price."
+  it('defaults the radio to Get new price when nothing has ever been purchased (UAC D4)', () => {
     renderPanel({ price: undefined, line: line({ unit_cost: 0, supplier: null }) });
-    const askNew = screen.getByRole('radio', { name: 'Get new price' });
-    expect(askNew).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Get new price' })).toBeChecked();
+  });
+
+  it('still defaults to Use last price when there IS one on file', () => {
+    renderPanel({ price, line: line({ unit_cost: 10 }) });
+    expect(screen.getByRole('radio', { name: 'Use last price' })).toBeChecked();
+  });
+
+  it('a saved answer outranks the default, even with no price on file', () => {
+    renderPanel({
+      price: undefined,
+      line: line({ unit_cost: 0, supplier: null }),
+      decision: { buy: 10, priceMode: 'use_last' },
+    });
+    expect(screen.getByRole('radio', { name: 'Use last price' })).toBeChecked();
+  });
+
+  it('clearing the supplier goes back to the row\'s proposed one and sends no code', () => {
+    const { onEdit } = renderPanel({
+      line: line({
+        alternatives: [
+          { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10, currency: 'MYR', lead_time_days: 30, composite_score: 0, is_primary: true },
+          { supplier_code: 'S2', supplier_name: 'Beta', unit_cost: 8, currency: 'MYR', lead_time_days: 10, composite_score: 0, is_primary: false },
+        ],
+      }),
+      edit: { supplierCode: 'S2' },
+    });
+    const select = screen.getByRole('combobox');
+    expect(select).toHaveValue('S2');
+
+    // What `SearchableSelect`'s own clear control does.
+    fireEvent.change(select, { target: { value: '' } });
+    expect(onEdit).toHaveBeenCalledWith({ supplierCode: '' });
+  });
+
+  it('a cleared supplier reads as the proposed one, not as an empty select', () => {
+    renderPanel({
+      line: line({
+        alternatives: [
+          { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10, currency: 'MYR', lead_time_days: 30, composite_score: 0, is_primary: true },
+        ],
+      }),
+      edit: { supplierCode: '' },
+    });
+    expect(screen.getByRole('combobox')).toHaveValue('S1');
   });
 });
 
@@ -334,6 +373,19 @@ describe('PlanRowPanel - AutoCount level + qty zone (D5)', () => {
     renderPanel();
     expect(screen.getByText('No level suggestion for this item.')).toBeInTheDocument();
     expect(screen.queryByText(/-month chart/)).not.toBeInTheDocument();
+  });
+
+  it('with no suggestion the Level input is dead, and Reorder qty is not', () => {
+    // A level is AMENDED: the save refuses one with no suggestion to amend (422), so a
+    // live input here could only ever fail - and it took the whole batch down with it.
+    renderPanel();
+    expect(screen.getByLabelText('AutoCount level')).toBeDisabled();
+    expect(screen.getByLabelText('AutoCount reorder qty')).not.toBeDisabled();
+  });
+
+  it('with a suggestion the Level input is editable again', () => {
+    renderPanel({ levelSuggestion: level });
+    expect(screen.getByLabelText('AutoCount level')).not.toBeDisabled();
   });
 });
 
@@ -400,5 +452,10 @@ describe('PlanRowPanel - no stock-as-of line, no location table (D9)', () => {
     renderPanel();
     expect(screen.queryByText(/Live stock as of/)).not.toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('explains no rules on screen - the staleness rule is not a sentence here', () => {
+    renderPanel({ price: undefined });
+    expect(screen.queryByText(/treated as stale/)).not.toBeInTheDocument();
   });
 });

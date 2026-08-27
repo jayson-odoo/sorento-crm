@@ -1,8 +1,9 @@
 /**
  * The two books purchasing feeds from the Order Inquiries page (AC-H12/AC-H13),
  * `PLAN-scm-oi-handshake.md`. The dialogs are stubbed to sentinels - what they render is
- * their own suites' subject (`UploadDataMenu.test.tsx` is the sibling test this one
- * mirrors); what belongs here is which entry opens which dialog with which `kind`, that
+ * their own suites' subject (`OutstandingUploadDialog.test.tsx` and
+ * `HistoryUploadDialog.test.tsx`); what belongs here is which entry opens which dialog
+ * with which `kind`, that
  * only one opens at a time, and that `onQueued` reaches the caller - the seam the page
  * uses to offer Link now and Open purchase orders.
  */

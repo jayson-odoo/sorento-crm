@@ -874,8 +874,6 @@ export interface LocationStockResponse {
    *  the product, NOT the moment the dialog asked. Null when neither that nor a stock
    *  import has ever run. */
   as_of: string | null;
-  /** `stock` | `import_job` | `none` - which of the two answers `as_of` is. */
-  as_of_source?: 'stock' | 'import_job' | 'none';
   locations: LocationStockLocation[];
 }
 

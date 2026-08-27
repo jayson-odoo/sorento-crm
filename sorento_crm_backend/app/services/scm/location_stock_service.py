@@ -144,13 +144,14 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
             "po_qty": po_qty,
         })
 
-    as_of, as_of_source = _stock_as_of(db, product_id)
+    # The SOURCE of the answer stays inside `_stock_as_of` (its own return says which
+    # branch answered, which is what its tests read). The dialog prints one line, "Stock as
+    # of <when>", and never names the branch, so shipping the code would be a field with
+    # nobody to read it.
+    as_of, _source = _stock_as_of(db, product_id)
     return {
         "product_id": str(product_id),
         "as_of": as_of,
-        # Which of the two answers the figure is, so the screen never has to guess whether
-        # "as of" means this product's own upload or the last stock file we took.
-        "as_of_source": as_of_source,
         "locations": locations,
     }
 

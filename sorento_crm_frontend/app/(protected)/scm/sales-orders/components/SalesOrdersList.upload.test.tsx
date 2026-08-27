@@ -3,7 +3,7 @@
  * from it - but a sales order manager reasonably looks for it here too. This pins the wiring
  * ONLY: the toolbar opens the real, unforked `OutstandingUploadDialog` with `kind="sales-orders"`,
  * and once it queues an upload, this list's own query and the reorder plan's two queries are
- * invalidated the same way `ReorderPlanningView`'s `uploadQueued` does. The dialog's own
+ * invalidated the same way the reorder plans list's `uploadQueued` does. The dialog's own
  * behaviour (the Test verdict, the two-step guarantee, ...) is pinned once in
  * `../../reorder/components/OutstandingUploadDialog.test.tsx` and is not re-asserted here.
  *

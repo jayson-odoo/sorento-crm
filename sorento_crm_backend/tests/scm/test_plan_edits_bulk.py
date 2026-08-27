@@ -51,11 +51,19 @@ def db():
 
 
 def _plan(db, *, legacy: bool = False, members: int = 1):
+    """A PRODUCT-grain plan, in the shape the engine actually writes one.
+
+    The buy names NO warehouse (`reorder_run_service._emit_product`: "the buy names NO
+    warehouse ... that also puts the level lifecycle where the rule now is - a
+    `needs_level` row for a product carries no location"), which is why the level and the
+    reorder quantity below land on the product-wide `scm.reorder_level` row. A
+    LOCATION-grain plan is the other shape and has its own test.
+    """
     cat, uom = category_and_uom(db)
     prod = product(db, cat, uom)
     sup = supplier(db, "revamp supplier")
     plan = run(db, legacy=legacy)
-    recs = [recommendation(db, plan, prod, warehouse(db), qty=50, sup=sup)
+    recs = [recommendation(db, plan, prod, None, qty=50, sup=sup)
             for _ in range(members)]
     return plan, prod, recs
 
@@ -67,24 +75,32 @@ def _decision_rows(db, rec_ids):
     ), {"ids": [str(r) for r in rec_ids]}).mappings().all()
 
 
-def _seed_suggestion(db, product_id, *, suggested_level=24.0, reorder_qty=None):
-    """A stored suggestion for the product, which is what `level` amends."""
+def _seed_suggestion(db, product_id, *, warehouse_id=None, suggested_level=24.0,
+                     reorder_qty=None):
+    """A stored suggestion, on the SAME (product, warehouse) key the run stored one under.
+
+    `level_suggestion_service._plan_pairs` keys every stored suggestion by the
+    recommendation's own pair, so a product-grain buy (no warehouse) stores the
+    product-wide row and a location-grain row stores its location's.
+    """
     db.execute(text("""
         INSERT INTO scm.reorder_level
             (id, product_id, warehouse_id, suggested_level, suggested_at,
              suggestion_basis, reorder_qty, company_id, created_at)
-        VALUES (gen_random_uuid(), CAST(:p AS uuid), NULL, :sl, now(),
+        VALUES (gen_random_uuid(), CAST(:p AS uuid), CAST(:w AS uuid), :sl, now(),
                 CAST('{}' AS jsonb), :rq, CAST(:co AS uuid), now())
-    """), {"p": str(product_id), "sl": suggested_level, "rq": reorder_qty,
-           "co": SORENTO_COMPANY_ID})
+    """), {"p": str(product_id), "w": (str(warehouse_id) if warehouse_id else None),
+           "sl": suggested_level, "rq": reorder_qty, "co": SORENTO_COMPANY_ID})
     db.flush()
 
 
-def _level_row(db, product_id):
+def _level_row(db, product_id, warehouse_id=None):
     return db.execute(text(
         "SELECT level, amended_level, reorder_qty FROM scm.reorder_level "
-        "WHERE product_id = CAST(:p AS uuid) AND warehouse_id IS NULL"
-    ), {"p": str(product_id)}).mappings().first()
+        " WHERE product_id = CAST(:p AS uuid) "
+        "   AND COALESCE(warehouse_id::text, '') = COALESCE(CAST(:w AS text), '')"
+    ), {"p": str(product_id), "w": (str(warehouse_id) if warehouse_id else None)}
+    ).mappings().first()
 
 
 # ===========================================================================
@@ -169,6 +185,35 @@ def test_one_row_carries_every_field_at_once(db):
     assert db.execute(text(
         "SELECT decision FROM scm.product_lifecycle_decision WHERE product_id = CAST(:p AS uuid)"
     ), {"p": str(prod.id)}).scalar() == "keep"
+
+
+# ===========================================================================
+# the LOCATION grain writes to the row the panel is reading (B1)
+# ===========================================================================
+
+def test_a_level_edit_on_a_location_grain_run_amends_that_location_s_suggestion(db):
+    """The suggestion a location-grain row shows is stored under ITS OWN warehouse.
+
+    Forcing `warehouse_id=None` here looked up the product-wide row instead, which on a
+    location run holds no suggestion at all - so every Level edit came back 422 ("There is
+    no suggestion to amend for this item") and the whole batch rolled back with it.
+    """
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    sup = supplier(db, "location grain level supplier")
+    plan = run(db, grain="location")
+    wh = warehouse(db)
+    rec = recommendation(db, plan, prod, wh, qty=50, sup=sup)
+    _seed_suggestion(db, prod.id, warehouse_id=wh.id, suggested_level=24)
+
+    out = svc.save_plan_edits(db, plan.id, [
+        {"rec_id": rec.id, "level": 30, "reorder_qty": 18},
+    ], actor=ACTOR)
+
+    assert out["saved_rows"] == 1
+    row = _level_row(db, prod.id, wh.id)
+    assert float(row["amended_level"]) == 30
+    assert float(row["reorder_qty"]) == 18
 
 
 # ===========================================================================

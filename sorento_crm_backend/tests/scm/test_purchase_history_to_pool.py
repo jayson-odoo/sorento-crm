@@ -3,16 +3,17 @@
 R15: "PO cell and PO dialog count the BRW pool location only (not BRW-BB / BRW-AM), like
 On hand and SPO. History lines with no destination or a project destination are left out."
 
-Three readers have to agree about that, or the panel's Last price and the dialog's newest
+Two readers have to agree about that, or the panel's Last price and the dialog's newest
 history row - which the buyer reads side by side (F7) - state two different purchases:
 
 * `purchase_trend_service.purchase_trend_for_run(warehouse=...)`, the History tab;
-* `price_history_service.price_history_for_run(warehouse=...)`, the amber "cheaper on
-  file" line;
 * `reorder_run_service._last_purchase_cost_map`, which freezes `inputs.last_purchase` at
   run time and is what the panel actually prints.
 
-The last of those keeps its fallbacks: on the customer's book 12,928 of 12,940 imported PO
+(`price_history_service.price_history_for_run` is deliberately NOT one of them: it is read
+once per RUN and every row has its own pool, so it has no honest destination to narrow to.)
+
+The second of those keeps its fallbacks: on the customer's book 12,928 of 12,940 imported PO
 lines name no destination at all, so a pool-only rule with nothing behind it would blank
 the price on nearly every row. The pool purchase WINS where one exists, and
 `last_purchase_basis` says which basis was used - never silently relabelled.
@@ -27,7 +28,7 @@ from sqlalchemy import text
 
 from app.models.base import company_scope
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
-from app.services.scm import price_history_service, purchase_trend_service
+from app.services.scm import purchase_trend_service
 from app.services.scm import reorder_run_service as run_svc
 from tests._pg_fixture import pg_session
 from tests.scm._revamp_fixtures import (
@@ -130,28 +131,6 @@ def test_purchase_trend_lines_carry_the_eta_and_status_the_dialog_prints(db):
 
 
 # ===========================================================================
-# price-history, the same narrowing (F7)
-# ===========================================================================
-
-def test_price_history_narrowed_to_the_pool_reads_the_pool_purchase(db):
-    plan, prod, sup, pool, bin_ = _world(db)
-    _po(db, sup=sup, prod=prod, wh=pool, number="ZZTRVMP-PH-POOL", cost=20.0,
-        issued=date(2026, 5, 20))
-    # NEWER, but bound for the project bin - so it must not become "what we last paid"
-    # for a plan row whose supply the bin is excluded from.
-    _po(db, sup=sup, prod=prod, wh=bin_, number="ZZTRVMP-PH-BIN", cost=99.0,
-        issued=date(2026, 5, 28))
-
-    prices = price_history_service.price_history_for_run(
-        db, str(plan.id), warehouse_id=str(pool.id))
-    advice = prices[f"{prod.id}:{sup.supplier_code}"]
-
-    assert advice.last is not None
-    assert advice.last.po_number == "ZZTRVMP-PH-POOL"
-    assert advice.last.unit_cost == 20.0
-
-
-# ===========================================================================
 # the frozen last purchase on the row (F7) + the supplier it names
 # ===========================================================================
 
@@ -200,3 +179,37 @@ def test_a_frozen_row_carries_the_last_supplier(db):
     entry, _basis = run_svc._last_purchase_for(costs, str(prod.id), None,
                                                pool_warehouse_id=str(pool.id))
     assert set(entry) >= {"cost", "currency", "ref", "at", "supplier_id", "supplier_name"}
+
+
+def test_two_purchases_on_the_same_day_pick_the_one_recorded_last(db):
+    """`po.issue_date` is a DATE, so a same-day pair ties on it and the bucket kept
+    whichever row the scan reached first. The line's own `created_at` breaks the tie."""
+    _plan, prod, sup, _pool, _bin = _world(db)
+    # The ids are pinned, because the query's own ordering falls through to the
+    # DESTINATION - so with the tie unbroken the winner is whichever warehouse id sorts
+    # first, and a random pair would make this test pass half the time on the old
+    # behaviour. `low` is scanned first and holds the EARLIER line.
+    tail = uuid.uuid4().hex[:12]
+    low = warehouse(db, segment="dealer", id=f"00000000-0000-4000-8000-{tail}")
+    high = warehouse(db, segment="dealer", id=f"ffffffff-ffff-4fff-bfff-{tail}")
+    same_day = date(2026, 5, 20)
+    first = _po(db, sup=sup, prod=prod, wh=low, number="ZZTRVMP-LP-EARLIER", cost=11.0,
+                issued=same_day)
+    second = _po(db, sup=sup, prod=prod, wh=high, number="ZZTRVMP-LP-LATER",
+                 cost=22.0, issued=same_day)
+    # Two lines written seconds apart, the shape one upload of one day's purchases makes.
+    _set_line_created_at(db, first, datetime(2026, 5, 20, 9, 0, 0))
+    _set_line_created_at(db, second, datetime(2026, 5, 20, 9, 0, 5))
+
+    costs = run_svc._last_purchase_cost_map(db, [str(prod.id)])
+    entry, basis = run_svc._last_purchase_for(costs, str(prod.id), "dealer")
+
+    assert basis == "own_segment"
+    assert entry["ref"] == "ZZTRVMP-LP-LATER"
+
+
+def _set_line_created_at(db, po, when):
+    db.execute(text(
+        "UPDATE purchase_order_lines SET created_at = :w WHERE purchase_order_id = :p"
+    ), {"w": when, "p": po.id})
+    db.flush()

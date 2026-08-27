@@ -150,14 +150,14 @@ def test_reconfirming_an_untouched_product_reconciles_its_line(db):
 
 
 # ===========================================================================
-# Phase 3 tester additions - the LOCATION-grain half of the same rulings.
+# The LOCATION-grain half of the same rulings.
 # `list_plan_row_decisions` (E4/R14) reads `PlanRowDecision` joined to
-# `ReorderRecommendation` with no branch on `decision_grain` at all, so it should count
-# by product identically on either grain. `confirm_decisions` DOES branch
+# `ReorderRecommendation` with no branch on `decision_grain` at all, so it counts by
+# product identically on either grain. `confirm_decisions` DOES branch
 # (`decision_grain_of(run) == PRODUCT_GRAIN` picks `_confirm_product_grain`, else
-# `_confirm_location_grain`) - R3's untouched-as-suggestion fallback (revamp plan 4.5)
-# lives ONLY in `_confirm_product_grain`'s "products NOBODY touched" block; a location
-# run has no analogous block at all.
+# `_confirm_location_grain`), and R3's untouched-as-suggestion fallback now lives in BOTH
+# halves - it used to be product-grain only, so a location run silently left every
+# untouched row out of the purchase orders Confirm raised.
 # ===========================================================================
 
 def test_list_plan_row_decisions_counts_by_product_on_a_location_grain_run_too(db):
@@ -198,20 +198,6 @@ def test_skip_excludes_on_a_location_grain_confirm(db):
     assert lines == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "R3 defect: _confirm_location_grain has no untouched-as-suggestion fallback at "
-        "all. It only drafts a rec whose status is in "
-        "accepted/adjusted/dismissed (the legacy Accept/Adjust/Reject flow) or that "
-        "carries a PlanRowDecision (the S16 row-decision path) - an untouched rec "
-        "(status='proposed', no PlanRowDecision) matches neither loop and is silently "
-        "skipped. `_confirm_product_grain` has the matching 'products NOBODY touched' "
-        "block (decision_service.py ~L760); _confirm_location_grain has no equivalent. "
-        "Route to the captain: either port the same fallback into the location-grain "
-        "half, or the plan needs to record that R3 is product-grain-only."
-    ),
-)
 def test_untouched_confirms_as_the_suggestion_on_a_location_grain_run_too(db):
     """R3's own wording carries no grain qualifier ("Confirm covers untouched rows as
     the engine suggestion") - a location run's buyer who leaves a row alone expects the
@@ -245,3 +231,101 @@ def test_a_covered_row_is_not_bought_just_because_nobody_touched_it(db):
 
     assert out["confirmed_count"] == 0
     assert _lines_for_product(db, prod.id) == []
+
+
+# ===========================================================================
+# R3's own bookkeeping: an untouched row that Confirm bought IS a decision
+# ===========================================================================
+
+def _draft_lines_on_run(db, run_id):
+    return db.execute(text("""
+        SELECT pol.id
+          FROM purchase_order_lines pol
+          JOIN purchase_orders po ON po.id = pol.purchase_order_id
+          JOIN scm.reorder_recommendation rr ON rr.id::text = pol.source_ref
+         WHERE rr.run_id = CAST(:r AS uuid) AND po.status = 'draft_recommendation'
+    """), {"r": str(run_id)}).fetchall()
+
+
+def test_confirming_untouched_rows_records_the_decision_they_were_bought_at(db):
+    """The pill, the tiles and Confirm (N) all read `list_plan_row_decisions`.
+
+    Before this, Confirm drafted the purchase order for an untouched product and wrote no
+    decision at all, so the screen kept saying nobody had decided: the pill stayed
+    Suggested, "N of Total made" stayed short, and Confirm stayed live over rows already
+    in a draft PO.
+    """
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "untouched decision supplier")
+    plan = run(db)
+    wh = warehouse(db)
+    a, b = product(db, cat, uom), product(db, cat, uom)
+    recommendation(db, plan, a, wh, qty=70, sup=sup)
+    recommendation(db, plan, b, wh, qty=30, sup=sup)
+
+    dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+
+    out = dsvc.list_plan_row_decisions(db, plan.id)
+    assert out["decided_count"] == out["total_count"] == 2
+    assert {d["kind"] for d in out["data"]} == {"buy"}
+    assert {float(d["buy_qty"]) for d in out["data"]} == {70.0, 30.0}
+    # Every product reads Confirmed: the decision names the draft PO its line sits in.
+    assert all(d["draft_po_number"] for d in out["data"])
+
+
+def test_the_same_holds_on_a_location_grain_run(db):
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "untouched decision supplier loc")
+    plan = run(db, grain="location")
+    prod = product(db, cat, uom)
+    recommendation(db, plan, prod, warehouse(db), qty=70, sup=sup)
+
+    dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+
+    out = dsvc.list_plan_row_decisions(db, plan.id)
+    assert (out["decided_count"], out["total_count"]) == (1, 1)
+    assert out["data"][0]["kind"] == "buy"
+    assert float(out["data"][0]["buy_qty"]) == 70.0
+
+
+def test_reconfirming_an_untouched_product_still_drafts_one_line(db):
+    """The second confirm reads the decision the first one wrote, through the grid path -
+    so the quantity it drafts is the product's whole quantity, not one member's share."""
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "untouched reconfirm supplier")
+    plan = run(db)
+    prod = product(db, cat, uom)
+    recommendation(db, plan, prod, warehouse(db), qty=70, sup=sup)
+
+    dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+    dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+
+    lines = _lines_for_product(db, prod.id)
+    assert len(lines) == 1
+    assert float(lines[0]["qty_ordered"]) == 70
+
+
+# ===========================================================================
+# Reset planning clears what Confirm drafted, on BOTH stamps
+# ===========================================================================
+
+def test_reset_clears_the_product_grain_draft_lines_confirm_raised(db):
+    """`reset_run_decisions` only pulled the `scm_recommendation`-stamped line, so a
+    product-grain confirm's own line (`scm_order_summary_row`, same rec id) survived - and
+    the plans list, which reads Confirmed off the draft purchase orders, said Confirmed
+    forever after a reset."""
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "reset supplier")
+    plan = run(db)
+    prod = product(db, cat, uom)
+    recommendation(db, plan, prod, warehouse(db), qty=70, sup=sup)
+
+    dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+    assert _draft_lines_on_run(db, plan.id), "confirm drafted a line to begin with"
+
+    dsvc.reset_run_decisions(db, plan.id, ACTOR)
+
+    assert _draft_lines_on_run(db, plan.id) == []
+    assert _lines_for_product(db, prod.id) == []
+    listed = dsvc.list_plan_row_decisions(db, plan.id)
+    assert listed["decided_count"] == 0

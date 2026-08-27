@@ -4,7 +4,7 @@
  * Needs a level, Stock allocation, Order summary, Plan exceptions, PO worklist). Those five
  * are gone from this component entirely; Needs a level / Stock allocation are reachable as a
  * Status filter on the one grid, and Order summary / Plan exceptions / PO worklist moved to
- * a quiet toolbar link (see ReorderPlanningView.test.tsx).
+ * a quiet toolbar link.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';

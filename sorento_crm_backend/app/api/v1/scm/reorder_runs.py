@@ -31,6 +31,7 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
+from app.services.scm import decision_service
 from app.services.scm import plan_grain
 from app.services.scm import price_history_service
 from app.services.scm import spo_supply
@@ -108,7 +109,24 @@ _RUN_SORT = {
     "lines": "(run_log->>'recommendation_count')::numeric",
     "cash": "(run_log->>'total_cash_impact')::numeric",
     "products": "jsonb_array_length(COALESCE(product_ids, '[]'::jsonb))",
+    # The Decided column, by PRODUCT (R14) - the same count `_product_counts` puts in the
+    # row, restated here because ORDER BY runs over the whole filtered set before the page
+    # is cut, so it cannot be sorted in Python afterwards. Correlated rather than joined:
+    # the outer query is one page of runs and the recommendation table is indexed on
+    # `run_id`.
+    "decided": (
+        "(SELECT count(DISTINCT rr.product_id) "
+        "   FROM scm.reorder_recommendation rr "
+        "   JOIN scm.plan_row_decision d ON d.recommendation_id = rr.id "
+        "  WHERE rr.run_id = scm.reorder_run.id "
+        "    AND rr.rec_type = ANY(:decidable_types))"
+    ),
 }
+
+
+#: The rows a plan can be decided on, straight off the service that owns the vocabulary -
+#: never a second literal list, which is how the counts and the decision endpoint drift.
+_DECIDABLE_TYPES = sorted(decision_service._PLAN_ROW_DECIDABLE_TYPES)
 
 
 @router.get("/reorder-runs", response_model=ReorderRunListResponse)
@@ -138,10 +156,14 @@ def list_reorder_runs(
     if query:
         # The scope is a jsonb array of warehouse ids, so the match is "does this run name
         # a warehouse whose CODE looks like this".
+        # The CAST is on the jsonb side, never on `w.id`: a string cast on the left of the
+        # comparison makes the primary key's index unusable (the plan read path's own rule,
+        # `tests/scm/test_plan_read_path_uses_indexes.py`).
         where.append(
             "EXISTS (SELECT 1 FROM warehouses w "
-            "         WHERE w.id::text IN ("
-            "           SELECT jsonb_array_elements_text(COALESCE(warehouse_ids, '[]'::jsonb))"
+            "         WHERE w.id IN ("
+            "           SELECT CAST(jsonb_array_elements_text("
+            "             COALESCE(warehouse_ids, '[]'::jsonb)) AS uuid)"
             "         ) AND w.warehouse_code ILIKE :q)"
         )
         params["q"] = f"%{query}%"
@@ -151,13 +173,26 @@ def list_reorder_runs(
     ).scalar() or 0
 
     sort_expr = _RUN_SORT.get(sort or "")
-    # `created_at` last, always: `started_at` is not unique and LIMIT/OFFSET paging over
-    # ties is not stable without a tie-breaker (the same defect the recommendations list
-    # was fixed for).
+    if sort_expr and ":decidable_types" in sort_expr:
+        params["decidable_types"] = _DECIDABLE_TYPES
+    # `created_at` then `id`, always. `started_at` is not unique, and neither is
+    # `created_at`: a whole transaction sees ONE `now()`, so several runs queued together
+    # (or a bulk historical import) tie on both - and LIMIT/OFFSET paging over a full tie
+    # has no stability guarantee at all, so a row is skipped on one page and repeated on
+    # the next. `id` is the always-unique final key ("now() ties in a transaction, end
+    # orderings with id").
     order_by = (
-        f"{sort_expr} {'ASC' if dir.lower() == 'asc' else 'DESC'} NULLS LAST, created_at DESC"
-        if sort_expr else "started_at DESC NULLS LAST, created_at DESC"
+        f"{sort_expr} {'ASC' if dir.lower() == 'asc' else 'DESC'} NULLS LAST, "
+        "created_at DESC, id ASC"
+        if sort_expr else "started_at DESC NULLS LAST, created_at DESC, id ASC"
     )
+    # Raw SQL again, so the count of "every warehouse there was" is scoped by hand: this
+    # company's estate, never another's (a shared row has no company at all and counts for
+    # everyone, which is what `shared=True` allows).
+    wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt",
+                                                shared=True)
+    wh_co_sql = ("AND " + wh_co) if wh_co else ""
+    params.update(wh_co_params)
     rows = db.execute(text(f"""
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
@@ -171,6 +206,7 @@ def list_reorder_runs(
                  WHERE w.is_active = true
                    AND (scm.reorder_run.started_at IS NULL
                         OR w.created_at <= scm.reorder_run.started_at)
+                   {wh_co_sql}
                ) AS warehouses_then
         FROM scm.reorder_run
         {where_sql}
@@ -227,11 +263,10 @@ def _product_counts(db: Session, run_ids: list[str]) -> dict[str, dict[str, int]
           LEFT JOIN purchase_order_lines pol
                  ON pol.source_ref = rr.id::text
                 AND pol.source_system IN ('scm_recommendation', 'scm_order_summary_row')
-          LEFT JOIN purchase_orders po ON po.id = pol.purchase_order_id
          WHERE rr.run_id = ANY(CAST(:ids AS uuid[]))
-           AND rr.rec_type IN ('buy', 'covered', 'needs_level', 'disposition')
+           AND rr.rec_type = ANY(:kinds)
          GROUP BY rr.run_id
-    """), {"ids": run_ids}).mappings().all()
+    """), {"ids": run_ids, "kinds": _DECIDABLE_TYPES}).mappings().all()
     return {
         r["run_id"]: {
             "planned": int(r["planned"] or 0),
@@ -360,9 +395,15 @@ def _warehouse_id_for_code(db: Session, code: Optional[str]) -> Optional[str]:
     """
     if not code:
         return None
+    # Scoped by hand: raw SQL never sees the ORM isolation filter, and a warehouse code is
+    # not unique across companies - resolving another company's row would narrow the read
+    # to a location this caller cannot see, which reads as "never bought here".
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="cwc",
+                                          shared=True)
     found = db.execute(text(
-        "SELECT id::text FROM warehouses WHERE warehouse_code = :c LIMIT 1"
-    ), {"c": code}).scalar()
+        "SELECT id::text FROM warehouses WHERE warehouse_code = :c "
+        f"{('AND ' + co) if co else ''} LIMIT 1"
+    ), {"c": code, **co_params}).scalar()
     return found
 
 
@@ -601,7 +642,6 @@ def get_spo_history(
 @router.get("/reorder-runs/{run_id}/price-history")
 def list_price_history(
     run_id: str,
-    warehouse: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -615,8 +655,11 @@ def list_price_history(
     about what the item is worth today, because nothing in this system can see that.
     """
     svc.assert_run_visible(db, run_id)
-    history = price_history_service.price_history_for_run(
-        db, run_id, warehouse_id=_warehouse_id_for_code(db, warehouse))
+    # Read once per RUN, so it takes no destination narrowing: each row has its own site
+    # pool and a run-wide warehouse would be the wrong one for most of them. What the
+    # panel actually prints is `inputs.last_purchase`, which IS pool-filtered
+    # (`reorder_run_service._last_purchase_cost_map`, basis `pool`).
+    history = price_history_service.price_history_for_run(db, run_id)
     # The applied thresholds ride on every entry (policy override or default), so the
     # header echoes the first entry rather than restating the module constants.
     first = next(iter(history.values()), None)

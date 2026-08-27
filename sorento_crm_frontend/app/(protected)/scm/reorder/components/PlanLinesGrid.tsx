@@ -248,7 +248,6 @@ export function PlanLinesGrid({
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   healthWindows,
-  staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
   decidedFilter: decidedFilterProp,
@@ -311,8 +310,6 @@ export function PlanLinesGrid({
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   /** The windows the movement class was judged on, so the popup can say them. */
   healthWindows?: { sold_window_months?: number; bought_window_months?: number };
-  /** The age past which the business stops trusting a price. Shown, not implied. */
-  staleAfterDays?: number;
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
@@ -508,7 +505,10 @@ export function PlanLinesGrid({
           ) : (
             <span className="tabular-nums">{row.original.rankOrder}</span>
           ),
-        size: 36,
+        // Wide enough for a four-digit rank: it is the FIRST column, so it carries the
+        // grid's edge padding too, and at 36 a plan of more than 99 rows truncated its
+        // own rank to "1...".
+        size: 60,
         enableSorting: true,
         meta: { headerTitle: 'Priority', skeleton: <Skeleton className="h-4 w-6" /> },
       },
@@ -594,7 +594,6 @@ export function PlanLinesGrid({
               levelSuggestion={levelFor?.(line)}
               economics={economicsFor?.(line)}
               healthWindows={healthWindows}
-              staleAfterDays={staleAfterDays}
               disabled={decisionsReadOnly}
               lockReason={decisionsReadOnly ? readOnlyReason : null}
               onEdit={(patch) => onRowEdit?.(line, patch)}
@@ -1030,7 +1029,7 @@ export function PlanLinesGrid({
       },
     ],
     [decisions, edits, runId, decisionsReadOnly, readOnlyReason,
-     coverFor, priceFor, cheaperFor, levelFor, economicsFor, healthWindows, staleAfterDays,
+     coverFor, priceFor, cheaperFor, levelFor, economicsFor, healthWindows,
      trendFor, trendSeriesMonths, groupByChannel, dynamicChannels,
      poFor,
      hasPhotoFor, photoStatus, onOpenPhoto,
@@ -1259,6 +1258,10 @@ export function PlanLinesGrid({
         columnsMovable: true,
         columnsVisibility: true,
       }}
+      // Saved column order/visibility belongs to the SCREEN, not to one plan: defaulted to
+      // the pathname it keyed off `/scm/reorder/{run_id}`, so every plan a buyer opened
+      // started from the defaults again and their own layout was never seen twice.
+      listingKey="scm.dashboard.view::reorder-plan-lines"
       tableClassNames={{ edgeCell: 'px-5' }}
       onRowClick={(row) => {
         // The whole row toggles its decision panel (D1). Several may be open at once -

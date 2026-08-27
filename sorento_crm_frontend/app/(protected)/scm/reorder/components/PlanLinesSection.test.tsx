@@ -1,6 +1,6 @@
 /**
  * PlanLinesSection - the extracted "one list" block (grid + budget review + level
- * changes) driven by usePlanLines. Both ReorderPlanningView and the SCM simulation
+ * changes) driven by usePlanLines. Both the plan page and the SCM simulation
  * page's Planning view tab render this SAME component; this file checks the
  * orchestration (loading / error / data) in isolation from the heavy children.
  */

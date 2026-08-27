@@ -176,6 +176,43 @@ describe('confirmSummary (R3, E5)', () => {
     expect(confirmSummary(edits, {}, lines).products).toBe(2);
   });
 
+  it('leaves out a row with nothing to buy - Confirm would draft nothing for it', () => {
+    // Covered entirely from stock: Confirm records the decision and drafts no purchase
+    // order line, so counting it made the button promise a purchase it never made (and
+    // stay enabled over a plan with nothing left to buy).
+    const covered = line({ id: 'r1', product_id: 'p1', order_qty: 10 });
+    const buys = line({ id: 'r2', product_id: 'p2', sku: 'B', order_qty: 20 });
+    const edits: PlanRowEditMap = {
+      r1: { decision: { stock: { qty: 10, sources: [] } } },
+    };
+
+    const summary = confirmSummary(edits, {}, [covered, buys]);
+    expect(summary.products).toBe(1);
+  });
+
+  it('counts nothing at all when every row is covered', () => {
+    const covered = line({ id: 'r1', product_id: 'p1', order_qty: 10 });
+    const edits: PlanRowEditMap = { r1: { decision: { po: 10 } } };
+    expect(confirmSummary(edits, {}, [covered]).products).toBe(0);
+  });
+
+  it('leaves out a row already confirmed into a draft purchase order', () => {
+    // Confirming again reconciles it to the same line, so the button would stay live over
+    // a plan where every row already reads Confirmed.
+    const decisions: PlanDecisionMap = {
+      r1: { buy: 10, confirmed: true },
+      r2: { buy: 20, confirmed: true },
+      r3: { skip: true },
+    };
+    expect(confirmSummary({}, decisions, lines).products).toBe(0);
+  });
+
+  it('a new edit on a confirmed row puts it back in the count', () => {
+    const decisions: PlanDecisionMap = { r1: { buy: 10, confirmed: true } };
+    const edits: PlanRowEditMap = { r1: { decision: { buy: 40 } } };
+    expect(confirmSummary(edits, decisions, [amended]).products).toBe(1);
+  });
+
   it('prices the buys it can and counts the ones it cannot, never summing them as zero', () => {
     const priced = line({ id: 'r1', product_id: 'p1', order_qty: 10, unit_cost: 10, cash_impact: 100 });
     const unpriced = line({

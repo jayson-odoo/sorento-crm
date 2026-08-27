@@ -36,9 +36,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
-from app.models.procurement import InboundShipment, SPOAllocation
+from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 
 #: Receipt statuses that mean the goods are in. `fully_received` is the value the column's
 #: own CHECK constraint allows; `received` is kept beside it because migration 337's view
@@ -123,38 +123,49 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
     if not pool_ids:
         return {"open": [], "history": []}
 
-    rows = db.execute(_text("""
-        SELECT sa.spo_number, s.supplier_name,
-               sa.allocated_quantity, sa.quantity_received,
-               sa.expected_date, sa.line_status, sa.receipt_status,
-               ish.actual_arrival_date
-          FROM spo_allocations sa
-          LEFT JOIN suppliers s ON s.id = sa.supplier_id
-          LEFT JOIN inbound_shipments ish ON ish.id = sa.inbound_shipment_id
-         WHERE sa.product_id = CAST(:pid AS uuid)
-           AND sa.warehouse_id = ANY(CAST(:pools AS uuid[]))
-         ORDER BY sa.expected_date DESC NULLS LAST, sa.spo_number
-    """), {"pid": product_id, "pools": pool_ids}).mappings().all()
+    # ORM, not raw SQL, for two reasons. The company isolation filter runs on ORM
+    # execution only, and this reads a company-owned table (`SPOAllocation` is
+    # `CompanyScopedMixin`) - raw SQL here would have listed another company's shipping
+    # orders. And the open/closed test is `open_incoming_clauses()` itself, evaluated in
+    # SQL and returned per row, rather than a second Python copy of the same three
+    # conditions that could drift from the module they are meant to share.
+    rows = (
+        db.query(
+            SPOAllocation.spo_number,
+            Supplier.supplier_name,
+            SPOAllocation.allocated_quantity,
+            SPOAllocation.quantity_received,
+            SPOAllocation.expected_date,
+            InboundShipment.actual_arrival_date,
+            and_(*open_incoming_clauses()).label("is_open"),
+        )
+        .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+        .outerjoin(InboundShipment,
+                   InboundShipment.id == SPOAllocation.inbound_shipment_id)
+        .filter(
+            SPOAllocation.product_id == product_id,
+            SPOAllocation.warehouse_id.in_(pool_ids),
+        )
+        .order_by(SPOAllocation.expected_date.desc().nullslast(),
+                  SPOAllocation.spo_number)
+        .all()
+    )
 
     open_rows: list[dict] = []
     history: list[dict] = []
     for r in rows:
-        allocated = float(r["allocated_quantity"] or 0)
-        received = float(r["quantity_received"] or 0)
-        arrived = r["actual_arrival_date"]
-        still_open = (
-            (r["line_status"] is None or r["line_status"] == "open")
-            and (r["receipt_status"] is None
-                 or r["receipt_status"] not in RECEIVED_RECEIPT_STATUSES)
-            and arrived is None
-            and allocated > received
-        )
+        allocated = float(r.allocated_quantity or 0)
+        received = float(r.quantity_received or 0)
+        arrived = r.actual_arrival_date
+        # The quantity test is the reader's own half of the rule (see
+        # `open_incoming_clauses`' docstring): something still has to be to come.
+        still_open = bool(r.is_open) and allocated > received
         entry = {
-            "spo_number": r["spo_number"],
-            "supplier_name": r["supplier_name"],
+            "spo_number": r.spo_number,
+            "supplier_name": r.supplier_name,
             "qty": allocated,
             "received_qty": received,
-            "eta": r["expected_date"].isoformat() if r["expected_date"] else None,
+            "eta": r.expected_date.isoformat() if r.expected_date else None,
             "arrived_at": arrived.isoformat() if arrived else None,
             "status": _shipment_status(still_open, allocated, received, arrived),
         }

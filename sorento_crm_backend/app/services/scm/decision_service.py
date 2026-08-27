@@ -600,6 +600,42 @@ def _confirm_location_grain(
         touched.add(po.id)
         confirmed += 1
 
+    # The rows NOBODY touched (R3), which carries no grain qualifier: "Confirm covers
+    # untouched rows as the engine suggestion". A location run's buyer who leaves a row
+    # alone expects the same "make this plan" behaviour a product run gives them, and
+    # before this an untouched rec matched neither loop above (status still `proposed`,
+    # no `PlanRowDecision`) and was silently left out. Only a BUY the engine sized counts,
+    # and a skipped or otherwise decided row has a decision already, so it never reaches
+    # here.
+    decided_ids = plan_row_rec_ids | {rec.id for rec in recs}
+    untouched_q = db.query(ReorderRecommendation).filter(
+        ReorderRecommendation.run_id == run_id,
+        ReorderRecommendation.rec_type == "buy",
+    )
+    if ids:
+        untouched_q = untouched_q.filter(ReorderRecommendation.id.in_(ids))
+    for rec in untouched_q.all():
+        if rec.id in decided_ids:
+            continue
+        qty = float(rec.rounded_qty or 0)
+        if qty <= 0:
+            continue  # the engine saying "do not buy this", not an absent decision
+        # The rec's own proposed supplier and frozen price - the same resolution the
+        # product-grain untouched branch uses, since nobody chose anything else.
+        choice = _resolve_choice(db, rec, None)
+        _remove_rec_line(db, rec.id)
+        po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=qty, unit_cost=choice["unit_cost"],
+            lead_days=choice["lead_time_days"],
+        )
+        touched.add(po.id)
+        # Recorded like any other decision, so the pill reads Confirmed and the counts
+        # catch up with the purchase order that was just drafted (same as product grain).
+        _record_confirmed_suggestion(db, [rec], qty, actor)
+        confirmed += 1
+
     db.flush()
     return {"confirmed_count": confirmed, "po_count": len(touched)}
 
@@ -669,6 +705,41 @@ def _grid_member_split(
             "demand_rate": float(rec.forecast_daily_demand or 0.0),
         })
     return eng_allocate(qty, inputs, decimal_places=0)
+
+
+def _record_confirmed_suggestion(
+    db: Session, members: list[ReorderRecommendation], qty: float, actor: Optional[str]
+) -> None:
+    """Write the decision an UNTOUCHED row was just confirmed at (R3).
+
+    Confirm is the buyer saying "make this plan", so a product nobody touched is bought at
+    exactly what the engine sized - and that IS a decision, which has to be recorded like
+    any other or the screen keeps saying nobody made one: the pill stayed on Suggested,
+    the tiles and the list's Decided column stayed short, and Confirm (N) stayed live over
+    rows that had already been drafted into a purchase order.
+
+    ``buy_qty`` is the PRODUCT's whole quantity on every member, never that member's share
+    of the split. That is the same shape ``usePlanLines.decide`` writes when a person
+    decides a grouped row (the SAME decision fanned onto every member, consolidated back
+    to one on confirm - see ``_confirm_product_grain``), so a re-confirm reads this back
+    through the grid path and drafts exactly the lines this one did.
+
+    Nothing else is stored: no supplier (the rec's proposed one stands, which is what
+    ``_resolve_choice(rec, None)`` answered above) and no unit cost (``use_last`` re-reads
+    the same frozen figure). A row that already carries a decision never reaches here.
+    """
+    now = datetime.utcnow()
+    for member in members:
+        db.add(PlanRowDecision(
+            id=str(uuid.uuid4()),
+            recommendation_id=member.id,
+            kind="buy",
+            buy_qty=qty,
+            price_mode=DEFAULT_PRICE_MODE,
+            decided_by=actor,
+            decided_at=now,
+        ))
+    db.flush()
 
 
 def _confirm_product_grain(
@@ -871,6 +942,7 @@ def _confirm_product_grain(
                     lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
                 )
                 touched.add(po.id)
+            _record_confirmed_suggestion(db, members, qty, actor)
             confirmed += 1
             continue
 
@@ -938,9 +1010,16 @@ def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
         .filter(PlanRowDecision.recommendation_id.in_(rec_ids))
         .count()
     )
-    # 1) Detach every rec's draft-PO line (deletes drafts that empty out).
+    # 1) Detach every rec's draft-PO line (deletes drafts that empty out). BOTH stamps:
+    # a location-grain confirm keys its line by the rec id under `scm_recommendation`, and
+    # a product-grain confirm keys ITS line by the same rec id under
+    # `scm_order_summary_row` (`_confirm_product_grain`). Clearing only the first left
+    # every product-grain draft line behind, so a reset run still read as Confirmed on the
+    # plans list (`_product_counts` counts a product with a line in a draft PO) and the
+    # pill on the row stayed Confirmed with it.
     for rec in recs:
         _remove_rec_line(db, rec.id)
+        _remove_source_line(db, rec.id, _SRC_PRODUCT)
     # 2) Drop the override overlay (adjust/reject reason rows).
     overrides_cleared = (
         db.query(RecommendationOverride)
