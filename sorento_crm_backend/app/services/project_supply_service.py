@@ -51,11 +51,22 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from sqlalchemy import func, nullslast, or_
 from sqlalchemy.exc import IntegrityError
@@ -401,6 +412,12 @@ class _LineFacts:
 
     line: Optional[ProjectSalesOrderLine] = None
     core: Optional[SalesOrderLine] = None
+    #: This line's number on its order. Stated on the FACT rather than read off `line`,
+    #: because the board has no mirror to read it off and `compose_lines` needs it from both
+    #: callers: the members of one planning unit are filled in line order (ladder v6), and a
+    #: unit whose members were filled in the board's rank order would split one composition
+    #: differently on the board and on the sheet.
+    line_no: Optional[int] = None
     item_code: Optional[str] = None
     product_id: Optional[str] = None
     open_qty: Decimal = _ZERO
@@ -794,34 +811,35 @@ class ProjectSupplyService:
         facts = self._facts_for(order, lines)
 
         frozen = self._frozen_by_line(decision)
-        pool_left: Dict[str, Decimal] = {}
+        # ONE walk over the order's lines, in line order, so the shared piles are drawn down
+        # once and the lines of one delivery date are planned as the single quantity they
+        # are (ladder v6). `lines_of` is already in line order.
+        entries = [
+            (str(line.id), facts[str(line.id)], self._unit_key(facts[str(line.id)]))
+            for line in lines
+        ]
+        composed = self.compose_lines(entries)
+        units = self.unit_totals(entries)
         payload_lines: List[Dict[str, Any]] = []
         for line in lines:
             fact = facts[str(line.id)]
+            unit_qty, unit_line_count = units[str(line.id)]
             if fact.unplannable_reason:
                 # Nothing to walk the ladder for: no core line, no open quantity, no
                 # location. The line is read out with the reason and nothing else.
-                payload_lines.append(self._serialize_line(fact, (), None))
-                continue
-            pool_key = fact.pool_key
-            if pool_key and pool_key not in pool_left:
-                pool_left[pool_key] = fact.pool_free
-            components = self.compose_line(
-                fact, pool_free_left=pool_left.get(pool_key, _ZERO)
-            )
-            if pool_key and fact.pool_code:
-                drawn = sum(
-                    (
-                        c.qty
-                        for c in components
-                        if c.kind == RESERVE and c.source_location == fact.pool_code
-                    ),
-                    _ZERO,
+                payload_lines.append(
+                    self._serialize_line(
+                        fact, (), None,
+                        unit_qty=unit_qty, unit_line_count=unit_line_count,
+                    )
                 )
-                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
-
+                continue
+            components, _pool_open = composed[str(line.id)]
             payload_lines.append(
-                self._serialize_line(fact, components, frozen.get(str(line.id)))
+                self._serialize_line(
+                    fact, components, frozen.get(str(line.id)),
+                    unit_qty=unit_qty, unit_line_count=unit_line_count,
+                )
             )
 
         header = self._header_fields(order)
@@ -914,6 +932,7 @@ class ProjectSupplyService:
         fact: _LineFacts,
         *,
         pool_free_left: Optional[Decimal] = None,
+        borrow_left: Optional[Mapping[str, Decimal]] = None,
         as_of: Optional[date] = None,
     ) -> Tuple[Component, ...]:
         """The source ladder for ONE line, ladder v5's four questions
@@ -936,6 +955,14 @@ class ProjectSupplyService:
         tracking a running balance across every secondary pool for every line on a board
         of hundreds is cost nothing here asks for. Defaults to the whole pool free, which
         is what a single line on its own may draw.
+
+        `borrow_left` is the same idea for rung 5's DONORS: warehouse id -> what is still
+        borrowable there in this walk. A donor outside the group is one pile too, and it had
+        no ledger at all - so every date of one order was offered the same free stock, four
+        lines were each proposed a Borrow of 10 from a location holding 10, and the
+        confirmation refused all but the first ("BRW-SYNT has 0 free, and 10 was asked for",
+        28 August 2026). `None` reads the live free stock, which is what a single line on its
+        own may draw; `compose_lines` states it for every line of a walk.
         """
         # The ATP reserve window (`front_planning_engine`): a line due beyond
         # `as_of + lead time + buffer` takes NO STOCK under ladder v3, so none of the STOCK
@@ -959,11 +986,12 @@ class ProjectSupplyService:
                 residual=self._ladder_residual_before_cross_group(
                     fact, pools=pools, group_take=group_take
                 ),
+                borrow_left=borrow_left,
             )
         )
         return propose_line(
             open_qty=fact.open_qty,
-            line_no=fact.line.line_no if fact.line is not None else None,
+            line_no=fact.line_no,
             required_date=fact.required_date,
             fulfilment_location=fact.own_code,
             group_code=fact.group_code,
@@ -982,6 +1010,233 @@ class ProjectSupplyService:
             group_offer=fact.group_offer if fact.group_code else None,
             pools_net=fact.pools_net,
         )
+
+    # ----------------------------------------------------- ladder v6: order units
+
+    def compose_lines(
+        self,
+        entries: Sequence[Tuple[Any, _LineFacts, Any]],
+        *,
+        as_of: Optional[date] = None,
+    ) -> Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal]]]:
+        """Compose a WHOLE WALK: every entry in the order it is walked, keyed by its caller's
+        own key, with the shared piles drawn down once as the walk passes them.
+
+        `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
+        `(components, pool_open)` - the composition, and what this line's own site pool held
+        when its unit was reached, which the board's proof states.
+
+        THE UNIT (ladder v6, `PLAN-scm-order-unit-ladder-v6.md`). Entries sharing a
+        `unit_key` are ONE quantity to plan: the captain, reading SO381895's lines 31 and 32
+        - same item, same location, same delivery date - "this is 1 order as a whole, so we
+        should look at the order as a whole instead of line by line". The engine's whole-line
+        rule then applies to the unit, so 10 and 20 are covered from stock together or bought
+        together, never "31 borrows and 32 buys". A unit's position in the walk is where its
+        FIRST member appears (the board serves by rank, the sheet by line order, and neither
+        ordering is disturbed); its members are filled in LINE order, so the sheet, the board
+        and the freeze split one composition the same way.
+
+        A unit of one line is `compose_line` exactly as before, on the fact itself.
+
+        THE TWO SHARED PILES are drawn once per unit, and this is the only place either
+        ledger lives: the own-site pool (`pool_free_left`) and the cross-group donors
+        (`borrow_left`). All three callers used to keep the pool one and none of them kept
+        the donor one - which is how four delivery dates of SO381895 were each proposed a
+        Borrow of 10 from a location holding 10 in all, and why `confirm` refused every line
+        but the first.
+
+        A fact with an `unplannable_reason` is not walked at all (empty tuple), as before: a
+        mirror line with no reconciled AutoCount line has no open quantity to promise
+        against.
+        """
+        out: Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal]]] = {}
+        units: Dict[Any, List[Tuple[Any, _LineFacts]]] = {}
+        walk: List[Any] = []
+        for key, fact, unit_key in entries:
+            if fact.unplannable_reason:
+                out[key] = ((), None)
+                continue
+            if unit_key not in units:
+                units[unit_key] = []
+                walk.append(unit_key)
+            units[unit_key].append((key, fact))
+
+        pool_left: Dict[str, Decimal] = {}
+        # product id -> warehouse id -> what is still borrowable there in this walk.
+        borrow_left: Dict[str, Dict[str, Decimal]] = {}
+        for unit_key in walk:
+            members = sorted(
+                units[unit_key],
+                key=lambda member: (
+                    member[1].line_no is None,
+                    member[1].line_no or 0,
+                    str(member[0]),
+                ),
+            )
+            unit_fact = self._unit_fact(members)
+            pool_key = unit_fact.pool_key
+            if pool_key and pool_key not in pool_left:
+                pool_left[pool_key] = unit_fact.pool_free
+            # Captured BEFORE the draw: the proof states what each pile held when this unit
+            # was reached, and reading it back afterwards would state what was left instead.
+            pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
+            donors = borrow_left.setdefault(unit_fact.product_id or "", {})
+            components = self.compose_line(
+                unit_fact,
+                pool_free_left=pool_open,
+                borrow_left=donors,
+                as_of=as_of,
+            )
+            if pool_key and unit_fact.pool_code:
+                drawn = sum(
+                    (
+                        component.qty
+                        for component in components
+                        if component.kind == RESERVE
+                        and component.source_location == unit_fact.pool_code
+                    ),
+                    _ZERO,
+                )
+                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
+            self._draw_donors(donors, unit_fact, components)
+
+            if len(members) == 1:
+                out[members[0][0]] = (components, pool_open)
+                continue
+            for key, split in self._split_unit(members, components).items():
+                out[key] = (split, pool_open)
+        return out
+
+    @staticmethod
+    def unit_totals(
+        entries: Sequence[Tuple[Any, _LineFacts, Any]]
+    ) -> Dict[Any, Tuple[Decimal, int]]:
+        """What each entry's planning UNIT is, as the payload states it: the unit's whole
+        open quantity and how many lines it is.
+
+        Beside `compose_lines` and over the same `entries`, so the sheet and the board cannot
+        group one order two ways. An unplannable line is a unit of itself - it was not walked
+        with anybody (`compose_lines`), and saying it was would describe a plan nobody made.
+        """
+        totals: Dict[Any, Decimal] = {}
+        counts: Dict[Any, int] = {}
+        for _key, fact, unit_key in entries:
+            if fact.unplannable_reason:
+                continue
+            totals[unit_key] = totals.get(unit_key, _ZERO) + max(
+                _dec(fact.open_qty), _ZERO
+            )
+            counts[unit_key] = counts.get(unit_key, 0) + 1
+        out: Dict[Any, Tuple[Decimal, int]] = {}
+        for key, fact, unit_key in entries:
+            if fact.unplannable_reason:
+                out[key] = (max(_dec(fact.open_qty), _ZERO), 1)
+                continue
+            out[key] = (totals[unit_key], counts[unit_key])
+        return out
+
+    @staticmethod
+    def _unit_key(fact: _LineFacts) -> Tuple[Any, ...]:
+        """This line's planning unit ON ONE ORDER: item, fulfilment location, delivery date.
+
+        The sales order is not in the key here because both callers of this helper walk a
+        single order's own lines. The BOARD walks several and states its own key with the
+        order in it: two customers asking for the same item at the same location on the same
+        day are two promises, and planning them as one quantity would buy or reserve for
+        somebody else's order (R1).
+        """
+        return (
+            fact.product_id,
+            str(fact.warehouse.id) if fact.warehouse else None,
+            fact.required_date,
+        )
+
+    def _unit_fact(self, members: Sequence[Tuple[Any, _LineFacts]]) -> _LineFacts:
+        """The one line the engine is asked about for a unit of several.
+
+        The first member, carrying the unit's WHOLE open quantity and the group's offer
+        against it: `max(group net + the unit's demand, 0)` is `_group_offer`'s own rule
+        applied to the quantity actually being planned, so a group that can cover 30 offers
+        30 to the unit rather than 10 to one line and 20 to another out of the same pile.
+
+        `timely_qty` is deliberately NOT recomputed here. It is the water share question 1
+        offers, and `compose_line` never reads it - `_group_take_candidates` derives the
+        water from `group_offer` itself, on whatever fact it is handed - so the netting
+        block's own recomputation is about the fact the SHEET and the confirmation read, not
+        about this throwaway one.
+        """
+        first = members[0][1]
+        if len(members) == 1:
+            return first
+        total = sum((max(_dec(fact.open_qty), _ZERO) for _key, fact in members), _ZERO)
+        return dataclass_replace(
+            first,
+            open_qty=total,
+            group_offer=(
+                max(first.group_net + total, _ZERO)
+                if first.group_code
+                else first.group_offer
+            ),
+        )
+
+    def _split_unit(
+        self,
+        members: Sequence[Tuple[Any, _LineFacts]],
+        components: Sequence[Component],
+    ) -> Dict[Any, Tuple[Component, ...]]:
+        """One unit's composition, back onto its lines in line order.
+
+        Each line is filled up to its own open quantity from the unit's components in rung
+        order, so a component can STRADDLE two lines: both halves keep its kind, its source,
+        its rung and its own sentence, because they are one draw described twice. A
+        whole-unit Buy falls out of the same walk as a Buy of each line's own quantity
+        carrying the unit's reason - which is the point: "only 12 of 30 can be covered" is
+        why THIS line is bought.
+
+        The quantities always balance: the engine returns components summing to the open
+        quantity it was given, which is the unit's, which is what the members sum to.
+        """
+        out: Dict[Any, Tuple[Component, ...]] = {}
+        index = 0
+        left = components[0].qty if components else _ZERO
+        for key, fact in members:
+            need = max(_dec(fact.open_qty), _ZERO)
+            mine: List[Component] = []
+            while need > _ZERO and index < len(components):
+                take = min(need, left)
+                if take > _ZERO:
+                    mine.append(dataclass_replace(components[index], qty=take))
+                    need -= take
+                    left -= take
+                if left <= _ZERO:
+                    index += 1
+                    left = components[index].qty if index < len(components) else _ZERO
+            out[key] = tuple(mine)
+        return out
+
+    def _draw_donors(
+        self,
+        donors: Dict[str, Decimal],
+        fact: _LineFacts,
+        components: Sequence[Component],
+    ) -> None:
+        """Take this unit's Borrow off the walk's donor ledger.
+
+        Seeded from the donor's live free stock the first time the walk borrows there, so a
+        donor nobody borrows from costs nothing and one that is borrowed from twice is
+        counted once.
+        """
+        for component in components:
+            if component.kind != BORROW or not component.source_location:
+                continue
+            warehouse_id = self.warehouse_id_for_code(component.source_location)
+            if not warehouse_id:
+                continue
+            if warehouse_id not in donors:
+                donors[warehouse_id] = max(
+                    self._free_at(fact.product_id, warehouse_id), _ZERO
+                )
+            donors[warehouse_id] = max(donors[warehouse_id] - component.qty, _ZERO)
 
     # ---------------------------------------- ladder v3 rung candidates, for the trail
 
@@ -1517,11 +1772,20 @@ class ProjectSupplyService:
         return max(remaining, _ZERO)
 
     def _cross_group_borrow_candidates(
-        self, fact: _LineFacts, *, residual: Decimal
+        self,
+        fact: _LineFacts,
+        *,
+        residual: Decimal,
+        borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
         """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
         small-quantity cap (section 1b rung 4). `residual` is what the ladder would still
         need by the time it reaches this rung - the "Q" the cap is measured against.
+
+        `borrow_left` is the walk's own donor ledger (`compose_lines`): warehouse id -> what
+        is still borrowable there after the earlier units of this walk drew on it. Without
+        it every line reads the donor's whole free balance, which is how one location holding
+        10 came to be proposed to four delivery dates at once.
 
         A location with NO ownership group (`fact.group_code` is `None`) has no "outside
         the group" either - cross-group borrow is a group concept, and auto-proposing an
@@ -1560,6 +1824,12 @@ class ProjectSupplyService:
         ):
             if free <= _ZERO or warehouse_id in inside:
                 continue
+            if borrow_left is not None and warehouse_id in borrow_left:
+                # What this walk has already borrowed here is gone: the ledger holds what is
+                # LEFT, never the live balance the pile started at.
+                free = min(free, max(_dec(borrow_left[warehouse_id]), _ZERO))
+                if free <= _ZERO:
+                    continue
             warehouse = self._warehouse_row(warehouse_id)
             if warehouse is None or not warehouse.warehouse_code:
                 continue
@@ -1784,6 +2054,7 @@ class ProjectSupplyService:
             claimed = _dec(claim.get("qty"))
             pool_triple = pool_piles.get((product_id, str(pool.id))) if pool and product_id else None
             facts[str(row["key"])] = _LineFacts(
+                line_no=row.get("line_no"),
                 item_code=row.get("item_code"),
                 product_id=product_id,
                 open_qty=_dec(row.get("open_qty")),
@@ -1909,11 +2180,22 @@ class ProjectSupplyService:
         fact: _LineFacts,
         components: Sequence[Component],
         frozen: Optional[Dict[str, Any]],
+        *,
+        unit_qty: Optional[Decimal] = None,
+        unit_line_count: int = 1,
     ) -> Dict[str, Any]:
         line = fact.line
         return {
             "project_line_id": str(line.id),
             "line_no": line.line_no,
+            #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines
+            #: for the same item, location and delivery date are one quantity, covered whole
+            #: from stock or bought whole. `1` and the line's own quantity when it was
+            #: planned alone, which is most lines.
+            "unit_qty": qty_text(
+                fact.open_qty if unit_qty is None else unit_qty
+            ),
+            "unit_line_count": unit_line_count,
             "item_code": fact.item_code,
             "product_id": fact.product_id,
             "description": line.description,
@@ -3236,32 +3518,16 @@ class ProjectSupplyService:
         they saw rather than one recomputed against a later calendar. Defaults to today, in
         `compose_line`, which is what every caller sends.
         """
-        pool_left: Dict[str, Decimal] = {}
-        out: Dict[str, Tuple[Component, ...]] = {}
-        for line, _entry, fact in sorted(
-            checked, key=lambda entry: (entry[0].line_no or 0, str(entry[0].id))
-        ):
-            if fact.unplannable_reason:
-                out[str(line.id)] = ()
-                continue
-            pool_key = fact.pool_key
-            if pool_key and pool_key not in pool_left:
-                pool_left[pool_key] = fact.pool_free
-            components = self.compose_line(
-                fact, pool_free_left=pool_left.get(pool_key, _ZERO), as_of=as_of
-            )
-            if pool_key and fact.pool_code:
-                drawn = sum(
-                    (
-                        c.qty
-                        for c in components
-                        if c.kind == RESERVE and c.source_location == fact.pool_code
-                    ),
-                    _ZERO,
+        composed = self.compose_lines(
+            [
+                (str(line.id), fact, self._unit_key(fact))
+                for line, _entry, fact in sorted(
+                    checked, key=lambda entry: (entry[0].line_no or 0, str(entry[0].id))
                 )
-                pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
-            out[str(line.id)] = components
-        return out
+            ],
+            as_of=as_of,
+        )
+        return {key: components for key, (components, _pool_open) in composed.items()}
 
     def _write_decision(
         self,
@@ -4586,6 +4852,7 @@ class ProjectSupplyService:
             facts[str(line.id)] = _LineFacts(
                 line=line,
                 core=core,
+                line_no=line.line_no,
                 item_code=codes.get(product_id or ""),
                 product_id=product_id,
                 open_qty=_open_of(core),

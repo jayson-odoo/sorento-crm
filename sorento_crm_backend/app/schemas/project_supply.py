@@ -161,6 +161,13 @@ class SupplyFrozenLine(BaseModel):
 class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
+    #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines for the
+    #: same item, the same fulfilment location and the same delivery date are ONE quantity,
+    #: covered whole from stock or bought whole. The unit's total, and how many lines it is.
+    #: `1` and the line's own quantity when it was planned on its own, which is most lines -
+    #: the screen says nothing extra for those.
+    unit_qty: str = "0"
+    unit_line_count: int = 1
     item_code: Optional[str] = None
     #: Addressing only, never rendered (see module docstring) - what the Proof button asks
     #: `GET .../fulfilment-planning/classification` with.

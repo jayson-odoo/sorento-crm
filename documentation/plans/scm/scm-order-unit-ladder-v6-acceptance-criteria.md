@@ -10,6 +10,7 @@ Engine (pytest, `tests/scm/test_ladder_v6_order_unit.py`, Postgres via `tests/_p
 - AC-U6 `proposal_for` (sheet), `_compose_for_freeze` and the board give the same composition for the same order (pin one scenario across the three).
 - AC-U7 Every existing ladder v4 / v5 test passes unchanged (single-line units are today's behaviour).
 - AC-U8 `unit_qty` and `unit_line_count` present in the board contribution and the sheet line payloads (assert in a response test; `response_model` drops undeclared fields).
+- AC-U9 One SO, four lines of one item at one location on four required dates (10, 12, 10, 5); own group net <= 0; the pools net 0; ONE other-group donor with 10 free. In walk order: line 1 Borrow 10 (whole), lines 2, 3 and 4 Buy whole - the donor is drawn down exactly once across the walk, not offered to every date. `_compose_for_freeze` gives the same answer as the board for that order, since it is the confirm path that refused it ("BRW-SYNT has 0 free, and 10 was asked for", 28 Aug).
 
 Frontend (vitest):
 

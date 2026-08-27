@@ -1,6 +1,6 @@
 # PLAN - Fulfilment planning: plan the order as a whole per delivery date (ladder v6, order units)
 
-Status: **GO 2026-08-28** (captain: "yeap correct" to the unit key). Building test-first on a worktree off `main` `e30507789` (#357). UAC: `scm-order-unit-ladder-v6-acceptance-criteria.md`.
+Status: **BACKEND BUILT 2026-08-28** (GO the same day; captain: "yeap correct" to the unit key). Built test-first on a worktree off `main` `e30507789` (#357); section 3.5 (the donor ledger) was added mid-build from a live confirmation failure and is in the same change. UAC: `scm-order-unit-ladder-v6-acceptance-criteria.md`, pinned by `tests/scm/test_ladder_v6_order_unit.py`. The frontend sentence (AC-F1) is separate and not in this change.
 
 ## 0. What the captain asked (28 Aug, reading WESERP10B on `/project-sales/fulfilment-planning`)
 
@@ -34,6 +34,16 @@ SO381895 lines 31 and 32, same item, same location BRW-IB, same delivery date 25
 4. Trail: computed per line from the SPLIT components as today; the unit sentence lives in the payload fields above.
 
 No new table, no flag, no config. The trigger for a per-tenant switch does not exist.
+
+## 3.5 The donor ledger (added 28 Aug, live failure)
+
+Confirming SO381895 answered "0 of 1 orders confirmed ... Line 51, SRTWT7445-LV: BRW-SYNT has 0 free, and 10 was asked for" on four lines that had each been proposed a Borrow of 10 from a location holding 10 in all.
+
+Cause, read in the code: `_cross_group_borrow_candidates` (rung 5) reads the donor's free stock off `_by_product()` and caps it by a `group_left` built fresh **per call**, so there is no ledger ACROSS a walk. Only the own site pool had one (`pool_left`, kept separately by each of the three callers). Every delivery date was therefore offered the same 10, and `confirm` - which does hold a running ledger - refused all but the first. `_donors_for` caches by `(product, warehouse, need)`, so the board could not have noticed either.
+
+Fix, inside the same `compose_lines`: a running donor ledger keyed by (product, donor warehouse), seeded from the donor's free stock the first time the walk borrows there and drawn down by every Borrow component the walk produces, per unit, in walk order. It reaches rung 5 the way `pool_free_left` reaches rung 3: `compose_line(..., borrow_left=<warehouse id -> remaining>)`, and `_cross_group_borrow_candidates` caps each donor's free balance by it when given. Under the whole-unit rule the later units then buy whole, which is the captain's own expectation: the donor is "occupied by the first borrow".
+
+The confirmation guard itself is unchanged. It was right; the proposal was wrong.
 
 ## 4. Out of scope
 
