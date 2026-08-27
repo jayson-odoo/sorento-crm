@@ -124,6 +124,21 @@ describe('order-qty ledger - THE LINE varies by mode', () => {
     expect(screen.queryByText('ROP = safety stock + demand rate x lead time')).not.toBeInTheDocument();
   });
 
+  it('names the AutoCount master as the source when the plan fell back to it (AC-R3)', () => {
+    // The engine decides on the master level itself now, so it arrives as `reorder_level`
+    // with its provenance beside it - the card must not present AutoCount's number as
+    // somebody's own decision.
+    renderLedger({
+      line: line({
+        policy_type: 'reorder_level', reorder_level: 500,
+        reorder_level_source: 'autocount_master', master_reorder_level: 500,
+      }),
+    });
+    expect(screen.getByText('500')).toBeInTheDocument();
+    expect(screen.getByText(/AutoCount master/)).toBeInTheDocument();
+    expect(screen.queryByText(/buyer set/)).not.toBeInTheDocument();
+  });
+
   it('manual mode falls back to the AutoCount master level when no buyer level is set', () => {
     renderLedger({
       line: line({ policy_type: 'reorder_level', reorder_level: null, master_reorder_level: 10 }),
