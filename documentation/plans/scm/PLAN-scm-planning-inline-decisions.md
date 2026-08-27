@@ -1,6 +1,6 @@
 # PLAN - Fulfilment planning: decide in the row, one Confirm, transfers on the page; sales orders list tidy-up
 
-Status: **PHASE 2 DONE, PHASE 3 IN REVIEW** 2026-08-27 (feature branch e120cfffe: 291 pytest, 2382 vitest, single alembic head 439; reviewer + /code-review + browser evidence running). GO given 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
+Status: **PHASE 3 DONE, PR #355 READY** 2026-08-28 (reviewer + /code-review findings fixed test-first, R16 transfer reconcile, two agent-browser evidence runs, CI green). GO given 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
 
 ## 0. What the captain asked (27 Aug, after walking SO404352 on `/project-sales/fulfilment-planning`)
 
