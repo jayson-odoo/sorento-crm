@@ -38,6 +38,8 @@ from app.models.scm import (
     ProformaInvoiceShipmentLink,
     SupplierProductCodeAlias,
 )
+from app.services.audit_service import log_audit
+from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
@@ -78,12 +80,16 @@ _NO_CURRENCY = (
 #: uploaded through the existing `packing_list_service.apply` path same as any other.
 _DRAFT_SHIPMENT_STATUS = "draft"
 
-#: `NumberingService` doc_type for a draft shipment's own series - kept distinct from a real
-#: container's number (usually the container number itself, or `PRELOAD-...`) so the two can
-#: never collide. Falls back to a random suffix when no numbering rule is configured, same
-#: shape as `decision_service._draft_po_for_supplier`'s `PO-DRAFT-<hex8>`.
+#: `NumberingService` doc_type for a draft packing list's own series - kept distinct from a
+#: real container's number (usually the container number itself, or `PRELOAD-...`) so the two
+#: can never collide. The rule behind it is `PL-{YYMM}-{NNN}`, seeded by migration 440.
+#:
+#: There is NO fallback. It used to invent `SHIP-DRAFT-<hex8>` when the rule was missing, and
+#: because the rule had never been seeded that random suffix was what every converted packing
+#: list was actually called: two of them sort in no order, neither can be read down a phone,
+#: and nobody can tell which came first. A missing rule is a configuration fault to be fixed
+#: in Setup, so it is reported as one.
 _DRAFT_NUMBER_DOC_TYPE = "inbound_shipment_draft"
-_DRAFT_NUMBER_PREFIX = "SHIP-DRAFT"
 
 #: Where an invoice's goods have got to. `split` is a real state, not a rounding of
 #: `converted`: one invoice legitimately sits in two containers (Q9), and until every line
@@ -970,10 +976,25 @@ def apply(
 
 
 def _draft_shipment_number(db: Session) -> str:
+    """The next `PL-YYMM-NNN` from the numbering rule, or a refusal naming what is missing.
+
+    Scoped to the writing company, the same one the row itself will be stamped with: a running
+    number printed on a document two companies share is not a series (migration 327). An
+    ambiguous scope resolves to `None`, which draws from whatever rule exists rather than
+    refusing a conversion over a scope question.
+    """
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
     number = NumberingService(db).get_next_number(
-        _DRAFT_NUMBER_DOC_TYPE, _date.today(), commit_rule=False
+        _DRAFT_NUMBER_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
     )
-    return number or f"{_DRAFT_NUMBER_PREFIX}-{uuid.uuid4().hex[:8]}"
+    if not number:
+        raise AppException(
+            500,
+            "No numbering rule is configured for a packing list, so one cannot be numbered. "
+            "Add the 'inbound_shipment_draft' rule under System > Numbering.",
+            code="numbering_rule_missing",
+        )
+    return number
 
 
 def _product_base_uoms(db: Session, product_ids: set[str]) -> dict[str, Optional[str]]:
@@ -1452,33 +1473,31 @@ def _target_shipment(db: Session, shipment_id: Optional[str]) -> Optional[Inboun
     return shipment
 
 
-def _append_notes(existing: Optional[str], addition: str) -> str:
-    """Add to a container's story rather than replacing it."""
-    existing = (existing or "").strip()
-    if not existing:
-        return addition
-    if addition in existing:
-        return existing
-    return f"{existing} | {addition}"
+def _record_over_capacity(
+    db: Session,
+    shipment_id: str,
+    over: list[str],
+    override_reason: Optional[str],
+    created_by: Optional[str],
+) -> None:
+    """Why a container was loaded past its planned volume, on the container's Timeline.
 
-
-def _draft_notes(
-    pi_numbers: list[str], over: list[str], override_reason: Optional[str]
-) -> str:
-    """What this draft shipment is, and - when it was loaded past its planned volume - why.
-
-    The reason lands on the SHIPMENT rather than on the proforma invoice: the decision was
-    about this container, and the next person to open the packing list is the one who needs
-    to read it.
+    It used to be appended to `notes`, which is the operator's OWN field: the next person to
+    edit the container found a sentence there that nobody had typed, and a note they wrote
+    themselves sat beside it with nothing to tell the two apart. The decision belongs to the
+    record of what happened to this container, which is its audit trail (R17).
     """
-    notes = "Draft from proforma invoice(s): " + ", ".join(pi_numbers)
-    if over and override_reason:
-        notes += (
-            " | Converted over planned capacity: "
-            + " ".join(over)
-            + f" Reason: {override_reason.strip()}"
-        )
-    return notes
+    reason = (override_reason or "").strip()
+    if not over or not reason:
+        return
+    log_audit(
+        db,
+        "inbound_shipments",
+        str(shipment_id),
+        "UPDATE",
+        user_id=created_by if _is_uuid(created_by) else None,
+        description=f"Converted over capacity: {' '.join(over)} Reason: {reason}",
+    )
 
 
 def convert_to_draft_shipment(
@@ -1791,7 +1810,6 @@ def convert_to_draft_shipment(
     uoms = _product_base_uoms(db, product_ids)
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
-    pi_numbers = sorted({inv.pi_number for inv in invoices})
 
     shipment = _target_shipment(db, target_shipment_id)
     if shipment is None:
@@ -1801,16 +1819,12 @@ def convert_to_draft_shipment(
             shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
             shipment_status=_DRAFT_SHIPMENT_STATUS,
             created_by=created_by,
-            notes=_draft_notes(pi_numbers, over, override_reason if over else None),
         )
         db.add(shipment)
         db.flush()
-    else:
-        # Adding to a draft somebody is already loading: its note gains this invoice rather
-        # than being replaced, so the container keeps the whole story of what went into it.
-        shipment.notes = _append_notes(
-            shipment.notes, _draft_notes(pi_numbers, over, override_reason if over else None)
-        )
+    # `notes` is left alone either way (R17): which invoices a container was drafted from is
+    # the Proforma invoices tab's answer, and it is a table's worth rather than a sentence.
+    _record_over_capacity(db, shipment.id, over, override_reason, created_by)
 
     # What is already on the container, so a second invoice naming the same model ADDS to
     # its line instead of colliding with the unique index on (shipment, product, supplier).

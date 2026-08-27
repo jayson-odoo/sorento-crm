@@ -35,8 +35,14 @@ NUMBER_DIGITS = 3
 RESET_POLICY = "monthly"
 
 
-def upgrade() -> None:
-    op.get_bind().execute(
+def seed_inbound_shipment_draft_rule(connection) -> None:
+    """The seed itself, callable outside a migration run.
+
+    CI builds its database with `create_all`, which never executes a migration body, so a
+    test that needs this rule calls this function rather than assuming the row is there -
+    the same shape as migration 336's `seed_container_sizes`.
+    """
+    connection.execute(
         text(
             """
             insert into document_numbering_rules
@@ -58,6 +64,10 @@ def upgrade() -> None:
             "reset": RESET_POLICY,
         },
     )
+
+
+def upgrade() -> None:
+    seed_inbound_shipment_draft_rule(op.get_bind())
 
 
 def downgrade() -> None:

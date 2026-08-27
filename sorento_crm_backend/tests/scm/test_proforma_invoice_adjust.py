@@ -344,6 +344,12 @@ def test_converting_an_over_capacity_invoice_is_refused_with_the_figures():
 
 
 def test_convert_anyway_with_a_reason_creates_the_shipment_and_records_why():
+    """R17 - the reason is a Timeline entry on the container, never a line in its Notes.
+
+    Notes is the operator's own field. A sentence nobody typed appearing in it read as an
+    edit somebody else had made, and there was nothing to tell the two apart.
+    """
+    from app.models.audit import AuditLog
     from app.models.procurement import InboundShipment
 
     with pg_session() as db:
@@ -361,8 +367,19 @@ def test_convert_anyway_with_a_reason_creates_the_shipment_and_records_why():
         shipment = (
             db.query(InboundShipment).filter(InboundShipment.id == out["shipment_id"]).one()
         )
-        assert "Second container booked" in (shipment.notes or "")
-        assert "over" in (shipment.notes or "").lower()
+        assert not (shipment.notes or "")
+        described = [
+            row.description or ""
+            for row in db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "inbound_shipments",
+                AuditLog.entity_id == str(out["shipment_id"]),
+            )
+            .all()
+        ]
+        assert any(
+            "Second container booked" in d and "over capacity" in d.lower() for d in described
+        ), described
 
 
 def test_convert_anyway_still_needs_a_reason():

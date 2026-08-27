@@ -748,7 +748,8 @@ def test_a_skip_only_invoice_can_be_deleted_and_a_placed_one_cannot():
     so the delete must read it the same way: three all-skipped PIs on the dev copy said
     "already converted to SHIP-DRAFT-..." while their column said Not converted (captain,
     27 Aug). A SKIP row is not goods on a container. The carrier, whose line DID reach the
-    draft, stays refused."""
+    draft, stays refused - and it is named by the packing list number the series issued
+    (R16), which is what the refusal has to quote for the operator to go and look at it."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
@@ -759,7 +760,7 @@ def test_a_skip_only_invoice_can_be_deleted_and_a_placed_one_cannot():
 
         assert out["deleted"] == 1
         assert [b["id"] for b in out["blocked"]] == [str(carrier.id)]
-        assert (out["blocked"][0]["shipment_number"] or "").startswith("SHIP-DRAFT")
+        assert (out["blocked"][0]["shipment_number"] or "").startswith("PL-")
         with pytest.raises(AppException):
             svc.get_or_404(db, str(skipped.id))
 
