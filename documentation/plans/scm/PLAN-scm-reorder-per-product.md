@@ -1,6 +1,8 @@
 # PLAN - Reorder planning per product: one level, one net, order up to the level
 
-Status: **PLANNED** 2026-08-27 (captain's rulings on lane :3080, plan 181ab143). Build on `feat/scm-uat`.
+Status: **PHASE 2 BUILT** 2026-08-27 (captain's rulings on lane :3080, plan 181ab143). Built on
+`feat/scm-uat`; branch `feat/scm-reorder-per-product`. AC-R11..AC-R15 are green under pytest +
+vitest (migration `430_plan_row_price_supplier`). NOT yet verified in a browser.
 UAC: `scm-reorder-per-product-acceptance-criteria.md`.
 
 ## The ruling (captain, 27 Aug)
