@@ -365,3 +365,81 @@ def test_a_range_that_did_not_stop_at_their_last_row_comes_back_verbatim():
         svc._widen("=SUM(F3:F119)+SUM(G3:G50)", 119, 123) == "=SUM(F3:F123)+SUM(G3:G50)"
     )
     assert svc._widen("=SUM($F$3:$F$119)", 119, 123) == "=SUM($F$3:$F$123)"
+
+
+# --------------------------------------------------------------------------- #
+# a workbook we cannot write into
+# --------------------------------------------------------------------------- #
+
+
+def _their_file_with(*merges: str) -> bytes:
+    """Their July file with extra merged ranges - the two shapes that stopped the render."""
+    wb = openpyxl.load_workbook(BytesIO(FIXTURE.read_bytes()))
+    ws = wb.active
+    for rng in merges:
+        ws.merge_cells(rng)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_a_header_merge_that_reaches_into_our_column_gives_column_k_back(monkeypatch):
+    # AC-D1. Some of these files run the last header across one more cell (`J2:K2`), and
+    # openpyxl refuses to write a covered cell, so the whole send died on a merge. Column K is
+    # ours: the merge gives it back and keeps the part of itself that is theirs.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(
+            db,
+            [_line("SRTSP131", 12)],
+            monkeypatch=monkeypatch,
+            retained=_their_file_with("J2:K2"),
+        )
+
+        out = _open(svc.render(sheet))
+
+        assert out.cell(row=HEADER_ROW, column=QTY_COL).value == svc.QTY_TO_LOAD_HEADER
+        assert out.cell(row=HEADER_ROW, column=THEIR_COLS).value == "备注"
+        assert "J2:K2" not in {str(m) for m in out.merged_cells.ranges}
+
+
+def test_a_merge_reaching_into_the_totals_row_does_not_stop_the_move(monkeypatch):
+    # AC-D2. A family merge that runs from their last data row down into 合计 (`J119:J120`)
+    # cannot follow the row down without swallowing the rows we append, so it keeps the part
+    # of itself that is still theirs and the 合计 row moves as it always did.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(
+            db,
+            [_line("SRTSP131", 12), _line("ZZT-NEW-1", 80, "New basin")],
+            monkeypatch=monkeypatch,
+            retained=_their_file_with("J119:J120"),
+        )
+
+        out = _open(svc.render(sheet))
+
+        assert out.cell(row=121, column=1).value == "合计："
+        assert out.cell(row=121, column=QTY_COL).value == "=SUM(K3:K120)"
+        assert out.cell(row=120, column=2).value == "ZZT-NEW-1"
+        assert out.cell(row=120, column=QTY_COL).value == 80
+        merges = {str(m) for m in out.merged_cells.ranges}
+        assert "J119:J120" not in merges and "A121:E121" in merges
+
+
+def test_a_workbook_that_cannot_be_written_into_falls_back_to_our_own_sheet(monkeypatch):
+    # The send is the point, the fidelity is the bonus: `request_document` calls `render` bare,
+    # so a shape of theirs we have not met yet must degrade to our own eleven columns rather
+    # than 500 the route.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTSP131", 12)], monkeypatch=monkeypatch)
+
+        def boom(_model):
+            raise ValueError("their workbook is a shape we cannot write into")
+
+        monkeypatch.setattr(svc, "_with_qty_to_load", boom)
+        out = _open(svc.render(sheet))
+
+        assert out.title == "Container request"
+        assert out.cell(row=HEADER_ROW, column=QTY_COL).value == svc.QTY_TO_LOAD_HEADER
+        assert out.cell(row=FIRST_DATA_ROW, column=2).value == "SRTWC286-SH-150NEW"

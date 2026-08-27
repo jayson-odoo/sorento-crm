@@ -26,6 +26,7 @@ this file with the numbers changed, so whatever goes out has to come back in thr
 """
 from __future__ import annotations
 
+import logging
 import re
 from copy import copy
 from datetime import datetime
@@ -39,6 +40,8 @@ from app.services.scm.supplier_document_model import (  # re-exported: one spell
     QTY_TO_LOAD_HEADER,
     SheetModel,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Their own measurements, off the July file, for the document we draw ourselves. Column K
 #: repeats column J's width, which is also the rule the in-place path applies.
@@ -89,9 +92,23 @@ def build(db: Session, *, supplier_id: str, lines: list[dict]) -> bytes:
 
 
 def render(model: SheetModel) -> bytes:
-    """The document as bytes: their workbook when we have one, ours when we do not."""
+    """The document as bytes: their workbook when we have one, ours when we do not.
+
+    Never raises. `supplier_notice_service.request_document` calls this bare, so a shape of
+    theirs this module has not met yet (a merge that reaches into column K, a merge that runs
+    down into 合计) must degrade to our own eleven columns rather than 500 the download and
+    stop the ask going out. The model is the same either way, so the supplier still receives
+    every line that was asked for; what is lost is their styling, not their document.
+    """
     if model.source is not None:
-        return _with_qty_to_load(model)
+        try:
+            return _with_qty_to_load(model)
+        except Exception as exc:  # noqa: BLE001 - a stored file is not the caller's fault
+            logger.warning(
+                "container request xlsx: the retained stock list could not be answered in "
+                "(%s); drawing the same document in our own columns",
+                exc,
+            )
     return _fresh(model)
 
 
@@ -114,6 +131,8 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
     like_col = qty_col - 1  # column J: the last column they styled themselves
     qty_letter = get_column_letter(qty_col)
     like_letter = get_column_letter(like_col)
+
+    _free_our_column(ws, qty_col)
 
     appended = [row for row in model.rows if row.appended]
     shift = len(appended)
@@ -162,18 +181,52 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
     return _bytes(wb)
 
 
+def _free_our_column(ws, qty_col: int) -> None:
+    """Give column K back before anything is written into it.
+
+    Some of their files run the last header across one more cell (`J2:K2`), and openpyxl
+    refuses to write a cell a merge covers, so the whole render died on a merge. Column K is
+    ours: the range keeps the part of itself that is theirs and lets go of the rest.
+    """
+    for rng in list(ws.merged_cells.ranges):
+        if rng.max_col < qty_col:
+            continue
+        ws.unmerge_cells(str(rng))
+        _merge(ws, rng.min_row, rng.max_row, rng.min_col, min(rng.max_col, qty_col - 1))
+
+
+def _merge(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> None:
+    """Merge what is left of a range, and nothing when only one cell is left of it."""
+    if max_row < min_row or max_col < min_col:
+        return
+    if max_row == min_row and max_col == min_col:
+        return
+    ws.merge_cells(
+        start_row=min_row, start_column=min_col, end_row=max_row, end_column=max_col
+    )
+
+
 def _move_row(ws, source: int, target: int, *, last_col: int) -> None:
     """Move one whole row down, merges included, and leave nothing behind.
 
     `insert_rows` would be the obvious call and is the wrong one: openpyxl does not carry
     merged ranges or row heights with it, and this row is the one whose merge (`A120:E120`)
     and formulas are the point.
+
+    A merge that reaches INTO this row from above (`J119:J120`, a family that runs down into
+    合计) cannot travel with it: the rows in between are the ones being appended, and a merge
+    stretched over them would hide the very quantities we are adding. It keeps the part of
+    itself that is still theirs and gives the rest back.
     """
     moved = []
     for rng in list(ws.merged_cells.ranges):
+        if rng.min_row > source or rng.max_row < source:
+            continue
+        ws.unmerge_cells(str(rng))
         if rng.min_row == source and rng.max_row == source:
             moved.append((rng.min_col, rng.max_col))
-            ws.unmerge_cells(str(rng))
+        else:
+            _merge(ws, rng.min_row, source - 1, rng.min_col, rng.max_col)
 
     for pos in range(1, last_col + 1):
         old = ws.cell(row=source, column=pos)
