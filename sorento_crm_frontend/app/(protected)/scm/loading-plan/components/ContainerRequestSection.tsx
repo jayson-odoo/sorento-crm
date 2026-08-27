@@ -475,7 +475,7 @@ export function ContainerRequestSection({
             channel="project"
           />
         ),
-        size: 90,
+        size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Project' },
       },
@@ -494,7 +494,7 @@ export function ContainerRequestSection({
             channel="retail"
           />
         ),
-        size: 90,
+        size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Retail' },
       },
@@ -588,7 +588,7 @@ export function ContainerRequestSection({
             loading={historyLoadingRef.current}
           />
         ),
-        size: 170,
+        size: 160,
         enableSorting: false,
         meta: { headerTitle: 'Ordered 12 months' },
       },
