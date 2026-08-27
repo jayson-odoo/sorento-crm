@@ -94,7 +94,10 @@ import { copyPublicLink } from './copyPublicLink';
  * Typed quantities are held HERE, not in the grid, because Save and Send both act on them and
  * both live up here. What the grid shows is `suggested_qty` with the plan's saved edits
  * already applied by the backend, plus whatever has been typed since; `engine_qty` is the
- * engine's own answer, and `Save (N)` counts the rows where the two differ.
+ * engine's own answer, and the map that goes to the server is every row where the two differ.
+ * `Save (N)` counts something narrower: the rows that differ from what the SERVER holds
+ * (`plan.line_edits`), so a cell typed back to the engine figure still counts as a change to
+ * write - it clears a saved override, and against the engine figure it looked like nothing.
  */
 
 const STATUS_LABEL: Record<LoadingPlanStatus, string> = {
@@ -172,8 +175,33 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     }
     return out;
   }, [rows, edits]);
+  /** How many rows carry an edit at all, saved or not. What a Refresh or a new cut-off would
+   *  throw away, which is why both of them ask with this number. */
   const editedCount = Object.keys(editedMap).length;
-  const unsaved = Object.keys(edits).length > 0;
+
+  /**
+   * How many rows differ from what the SERVER holds - which is what Save writes and what
+   * leaving would lose.
+   *
+   * Measured against `plan.line_edits`, not against the engine figure. Diffing against the
+   * engine made a cell typed BACK to the engine figure look like no change at all: the map
+   * lost the row (correctly - the PUT must not carry it), the count fell to zero and Save
+   * went grey, so the saved override stayed on the plan and there was no way to undo it from
+   * this screen. A key that is in the persisted map and not in this one is a cleared edit,
+   * and it counts.
+   */
+  const persistedEdits = plan?.line_edits ?? {};
+  const unsavedCount = (() => {
+    let n = 0;
+    for (const [key, qty] of Object.entries(editedMap)) {
+      if (persistedEdits[key] !== qty) n += 1;
+    }
+    for (const key of Object.keys(persistedEdits)) {
+      if (!(key in editedMap)) n += 1;
+    }
+    return n;
+  })();
+  const unsaved = unsavedCount > 0;
 
   // The browser's own guard for a hard navigation (close the tab, hit the address bar). The
   // in-app "Back to loading plans" gets the dialog below, which can say what is at stake.
@@ -210,7 +238,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
   const doSend = async (options: ContainerRequestSendOptions) => {
-    if (editedCount > 0) await save.mutateAsync(editedMap);
+    if (unsavedCount > 0) await save.mutateAsync(editedMap);
     send.mutate(
       { planId, supplierId, supplierName, lines, options },
       {
@@ -375,7 +403,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
           <Button
             variant="outline"
-            disabled={readOnly || editedCount === 0 || save.isPending}
+            disabled={readOnly || unsavedCount === 0 || save.isPending}
             title={readOnly ? 'This plan is cancelled.' : undefined}
             onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
             data-testid="save-plan-edits"
@@ -385,7 +413,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             ) : (
               <Save className="size-4" />
             )}
-            Save ({editedCount})
+            Save ({unsavedCount})
           </Button>
 
           <Button
@@ -439,7 +467,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         supplierEmail={plan.supplier_email}
         lineCount={lines.length}
         totalQty={totalQty}
-        unsavedCount={editedCount}
+        unsavedCount={unsavedCount}
         isBusy={send.isPending || save.isPending}
         error={(send.error as CodedError | null) ?? null}
         onSend={({ channel, recipients, chatContactId, note }) =>
@@ -506,7 +534,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         open={leaveOpen}
         onOpenChange={setLeaveOpen}
         title="Leave without saving?"
-        description={`${editedCount} typed ${editedCount === 1 ? 'quantity is' : 'quantities are'} not saved yet. Leaving loses them.`}
+        description={`${unsavedCount} changed ${unsavedCount === 1 ? 'quantity is' : 'quantities are'} not saved yet. Leaving ${unsavedCount === 1 ? 'loses it' : 'loses them'}.`}
         confirmLabel="Leave"
         isBusy={false}
         onConfirm={goBack}

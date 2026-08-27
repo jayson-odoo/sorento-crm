@@ -93,6 +93,13 @@ vi.mock('./ContainerRequestSection', () => ({
       <button type="button" data-testid="type-qty" onClick={() => onQtyChange('row-a', 4000)}>
         type
       </button>
+      <button
+        type="button"
+        data-testid="type-engine-qty"
+        onClick={() => onQtyChange('row-a', 4242)}
+      >
+        type the engine figure
+      </button>
     </div>
   ),
 }));
@@ -366,5 +373,45 @@ describe('LoadingPlanView (the record)', () => {
     await waitFor(() =>
       expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
     );
+  });
+});
+
+describe('LoadingPlanView, measured against what is SAVED', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.plan = { ...PLAN, line_edits: { 'row-a': 4000 } };
+    // What the server sends back once that edit is saved: the engine still says 4242.
+    state.rows = [{ ...ENGINE_ROW, suggested_qty: 4000 }];
+  });
+
+  it('a saved edit is not something to save again', () => {
+    renderView();
+
+    const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
+    expect(save.textContent).toContain('Save (0)');
+    expect(save.disabled).toBe(true);
+  });
+
+  it('typing a quantity back to the engine figure is a change, and clears the row', async () => {
+    renderView();
+
+    fireEvent.click(screen.getByTestId('type-engine-qty'));
+
+    const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
+    expect(save.textContent).toContain('Save (1)');
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({}));
+  });
+
+  it('asks before leaving with a cleared quantity, and says what would be lost', async () => {
+    renderView();
+    fireEvent.click(screen.getByTestId('type-engine-qty'));
+
+    fireEvent.click(screen.getByTestId('back-to-plans'));
+
+    expect(await screen.findByText('Leave without saving?')).toBeTruthy();
+    expect(screen.getByText(/1 changed quantity is not saved yet/)).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
   });
 });
