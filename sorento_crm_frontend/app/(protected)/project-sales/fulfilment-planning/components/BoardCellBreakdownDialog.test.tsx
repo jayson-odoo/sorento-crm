@@ -2452,3 +2452,33 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
     expect(screen.getByTestId('cell-decision')).toHaveTextContent('Use shared stock');
   });
 });
+
+/**
+ * 375px (ADR-PRODUCT-STANDARDS: "usable and non-clipped at 375px AND 1280px").
+ *
+ * jsdom does no real layout, so what this pins is structural, not a measured pixel width:
+ * the table lives inside `PanelDataGrid`'s own `ScrollArea` (`overflow-hidden` on the Radix
+ * root, which is what makes its internal viewport scroll rather than the dialog clipping the
+ * table), and nothing on the way to it carries a fixed pixel width that would force the
+ * dialog itself wider than the viewport at 375px.
+ */
+describe('BoardCellBreakdownDialog: the table scrolls inside its own container at 375px', () => {
+  it('wraps the table in a ScrollArea, not a fixed-width box', () => {
+    renderDialog([demand({ qty: '71' })], { 'BRW-BB': '71' });
+
+    const scrollArea = document.querySelector('[data-slot="scroll-area"]');
+    expect(scrollArea).not.toBeNull();
+    expect(scrollArea).toHaveClass('overflow-hidden');
+
+    // No fixed pixel width anywhere between the scroll area and the dialog's own root: a
+    // `w-[960px]` (Tailwind's own fixed-width syntax) or an inline `style.width` in px would
+    // force the dialog to overflow a 375px viewport rather than scrolling its table.
+    let node: Element | null = scrollArea;
+    while (node) {
+      expect(node.className).not.toMatch(/\bw-\[\d+px\]/);
+      const inlineWidth = (node as HTMLElement).style?.width ?? '';
+      expect(inlineWidth).not.toMatch(/^\d+px$/);
+      node = node.parentElement;
+    }
+  });
+});
