@@ -107,7 +107,11 @@ describe('OrderInquiryPoDetailPopover - the header and lines', () => {
   it('names the supplier, the expected date and the status', () => {
     renderPopover(state({ data: DETAIL }));
     openPopover();
-    expect(screen.getByText('SUP-01 - Dafuyuan')).toBeInTheDocument();
+    expect(screen.getByText('Dafuyuan')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /202601-S0015/ })).toHaveAttribute(
+      'href',
+      expect.stringContaining('/scm/purchase-orders/'),
+    );
     expect(screen.getByText('active')).toBeInTheDocument();
   });
 

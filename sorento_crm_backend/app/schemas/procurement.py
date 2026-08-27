@@ -359,8 +359,12 @@ class InboundShipmentListItemResponse(InboundShipmentBase):
 class SPOAllocationBase(BaseModel):
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
-    inbound_shipment_id: str
-    warehouse_id: str
+    # Both optional since migration 420: an imported shipping order has no shipment booked
+    # yet, and 6,520 of the captain's SPO lines name a stock location we do not hold. The
+    # raw code is carried in `location_code` so the destination is never simply lost.
+    inbound_shipment_id: Optional[str] = None
+    warehouse_id: Optional[str] = None
+    location_code: Optional[str] = None
     storage_zone_id: Optional[str] = None
     allocated_quantity: int
     uom_id: Optional[str] = None
@@ -378,6 +382,13 @@ class SPOAllocationCreate(SPOAllocationBase):
     # to be compared against (AC-C3.2).
     # Optional: 860 pre-existing allocations have no PO, and stock can arrive against none.
     po_line_id: Optional[str] = None
+    # REQUIRED on the create path, where the base relaxed them. Only an IMPORTED shipping
+    # order legitimately has no shipment or no warehouse (migration 420, and the import
+    # writes those rows directly); somebody allocating a container through the API or the
+    # screen is naming both, and accepting a blank would write a row that is supply nowhere
+    # and belongs to no shipment, silently.
+    inbound_shipment_id: str
+    warehouse_id: str
 
 
 class SPOAllocationUpdate(BaseModel):
@@ -443,6 +454,16 @@ class LinkedGRNSimple(BaseModel):
 
 class SPOAllocationResponse(SPOAllocationBase):
     id: str
+    # The document half, since the SPO itself lives in this table (migration 420). Declared
+    # here or `response_model` drops them on the way out however faithfully the service
+    # reads them.
+    source_system: Optional[str] = None
+    line_status: Optional[str] = None
+    issue_date: Optional[date] = None
+    expected_date: Optional[date] = None
+    supplier_id: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
+    currency: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     created_by: Optional[str] = None

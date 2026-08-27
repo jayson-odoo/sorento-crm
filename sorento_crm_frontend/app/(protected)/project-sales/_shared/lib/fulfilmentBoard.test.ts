@@ -1802,13 +1802,14 @@ describe('rankingNote', () => {
     expect(note?.note).toBeNull();
   });
 
-  it('names line order when the tie is one order competing with itself', () => {
-    // Common and benign under the fair policy: lines of one order in one week share their
-    // date, their document date and their terms, so nothing about the POLICY is wrong.
+  it('says nothing when the tie is one order competing with itself (ladder v4)', () => {
+    // It used to read "Same sales order; line order decided which line was served first",
+    // which described the rank queue deciding availability. Under ladder v4 availability is
+    // the ownership group's and rank decides only the order of service, so the sentence
+    // named a cause the engine no longer has.
     const note = rankingNote(cellOf(4, { rank_separates: false, distinct_order_count: 1 }));
-    expect(note?.note).toBe(
-      'Same sales order; line order decided which line was served first',
-    );
+    expect(note?.cell).toBe('Not ranked');
+    expect(note?.note).toBeNull();
   });
 
   it('keeps the policy sentence for a real tie between different orders', () => {

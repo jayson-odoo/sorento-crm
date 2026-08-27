@@ -1,5 +1,5 @@
 """Order promising: what covers a Project SO line, and why (PLAN 3.2, 3.3, 3.5, and the
-19 August 2026 follow-up section E, "ladder v2").
+25 August 2026 ruling, "ladder v3").
 
 PURE arithmetic, the same discipline as ``coverage_timeline`` and ``reorder_engine``'s top
 half: no database, no LLM, no optimizer, no configuration knob. Every number here is
@@ -9,33 +9,51 @@ number CS has to go and verify somewhere else (AC-B14).
 
 Two functions, and they answer two different questions.
 
-``propose_line`` answers "how should THIS line be met" - ladder v2's own order, per the
-captain's 19 August answers (``PLAN-demo-followups-19aug-ladder-v2.md`` section E):
+``propose_line`` answers "how should THIS line be met" - LADDER V5, the captain's four
+questions of 26 August (``PLAN-scm-cs-planning-uat.md`` section 1e), which is section 1b's
+ladder with incoming taken out of it and nothing else moved:
 
-0. beyond purchasing's reorder-coverage date -> ``Buy`` the whole line, nothing else tried;
-1. timely incoming (an SPO arriving by the required date) counts toward cover;
-2. the shared pool, own site first then the other site pools, each capped at
-   ``max(min(pool free, pool's own signed availability), 0)``, the dealer/project
-   hot-selling gate of 3.3a retained;
-3. group take: sibling locations of this line's OWNERSHIP GROUP at other sites, whatever
-   is POSITIVE and uncommitted there;
-4. group borrow: other sales orders' committed quantity at the group's locations, the
-   line's own location first, offered by the caller ONLY for donors ranked below this line
-   (a same-agent donor ranked above it is a candidate, never auto-composed here);
-5. cross-group borrow: free stock outside the ownership group, offered by the caller only
-   within the small-quantity cap;
-6. the whole-line rule: if 1-5 together reach the whole of Q, that composition is proposed,
+0. beyond the reserve window (``as_of + lead time + RESERVE_BUFFER_DAYS``) or beyond
+   purchasing's reorder-coverage date -> no rung runs and the whole line is a ``Buy``;
+1. **Can we use our location?** the OWNERSHIP GROUP, this line's own location included: the
+   caller hands over the locations in draw order, already capped so that they total no more
+   than what the WHOLE GROUP's net leaves for this line, never one warehouse's own reading
+   (ladder v4, section 1d). The rank queue no longer decides availability;
+2. **Can we take from the pool?** all five site pools netted as ONE pile (``pools_net``),
+   drawn own site first then the others by on hand, with no per-pool cap. 3.3a's dealer
+   hot-selling gate is retained and refuses the WHOLE pile (the pool is kept for retail);
+   its project hot-selling cap is subsumed by the pile's own net;
+3. **Can we borrow from another location?** what a DONOR GROUP nets as a whole, offered by
+   the caller only within the small-quantity cap;
+4. the whole-line rule: if 1-3 together reach the whole of Q, that composition is proposed,
    in rung order; otherwise NONE of it is proposed and the whole line is a Buy - never a
    partial mix of "reserve 213, buy 145".
 
-The line's OWN fulfilment location is never a Reserve source any more (rule 7): stock
-sitting there is already committed to whichever sales order is queued for it, and the
-only way another line reaches it is rung 4's group borrow, with its order-back.
+**Incoming (SPO) is not a rung** (ladder v5, section 1e). It used to be the first one, and
+to run even beyond the reserve window on the grounds that supply already on its way is
+already bought. What retired it is that an SPO is INSIDE the ownership group's net already -
+AutoCount's Available is ``on hand + SPO - SO`` - so rung 1 and the group rung were two
+readings of one pile, netted against each other to keep the arithmetic honest. One reading
+is simpler and cannot drift.
+
+It is still a KIND, though, and question 1 still answers with it: part of what the group's
+net can cover a line with is on the water rather than on a floor, so the caller marks those
+candidates ``water`` and this module composes them as ``timely_spo`` with question 1's own
+rung. Only water arriving on or before the line's required date is offered - the caller
+applies that test, because only it holds the documents - and late water is named in the
+proof's own sentence and never drawn. A LATE SPO reaches a particular line through Link SPO
+on that line's order-inquiry row, which is where purchasing was already doing it.
+
+The fourth question - **can we borrow from the same agent's other order in this group?** -
+is not a rung here at all (ruled 25 August 2026): it is a manual pick in Amend, made by a
+person who has the donor's position in front of them, never something the engine composes
+on their behalf. The proof trail states it as a question all the same, so a reader learns it
+was considered.
 
 ``attribute_sources`` answers "who gets the one pile" - several lines competing for one
 location's opening stock and its dated incoming, resolved in section 3.5's fixed order so
 the same facts always produce the same answer and the database's row order never
-participates. Unchanged by ladder v2.
+participates. Unchanged by ladder v3.
 
 Quantities are ``Decimal`` throughout. These figures are compared for exact equality at
 confirmation, and a binary float does not survive that.
@@ -51,6 +69,14 @@ ZERO = Decimal("0")
 
 # The four component kinds of the balance invariant (PLAN 3.1):
 #   open_so_qty = timely_spo_coverage + reserve_qty + borrow_qty + buy_qty
+#
+# `TIMELY_SPO` is no longer a RUNG under ladder v5 (section 1e), but it is still a KIND: what
+# question 1 draws off the water inside its own ownership group's net is incoming supply, not
+# stock on a floor, and calling it a Reserve would write a hold against goods nobody can pick
+# (captain, 27 August 2026). Such a component carries `rung=RUNG_GROUP_TAKE` - it is question
+# 1's answer, and the strip totals it under "Use own location" with the rest of that question.
+# The old rung-1 spelling (`rung=RUNG_INCOMING`) survives only on decisions frozen under v3
+# and v4, which the board still renders: a snapshot is evidence of what was promised.
 TIMELY_SPO = "timely_spo"
 RESERVE = "reserve"
 BORROW = "borrow"
@@ -65,10 +91,11 @@ COMPONENT_LABELS = {
     BUY: "Buy",
 }
 
-#: Ladder v2's own rung vocabulary (section E), finer-grained than `kind`: several rungs
+#: The ladder's own rung vocabulary, finer-grained than `kind`: several rungs
 #: share a `kind` (the pool and group-take rungs are both `reserve`; group borrow and
 #: cross-group borrow are both `borrow`) and the UI names the rung, not the kind, in the
 #: trail and the donor list.
+#: Retired by ladder v5 (section 1e); still read, because frozen snapshots carry it.
 RUNG_INCOMING = "incoming"
 RUNG_POOL = "pool"
 RUNG_GROUP_TAKE = "group_take"
@@ -87,13 +114,17 @@ BUY_REASON = "remaining uncovered need"
 #
 #     as_of + (the product's lead time) + RESERVE_BUFFER_DAYS
 #
-# and a line due beyond it is offered only stock that is genuinely SURPLUS - the pool and
-# group-take rungs, whose capacity is already `max(min(free, available), 0)` at the
-# location, i.e. what is left once everything that location's book owes is met. The BORROW
-# rungs are not offered at all: rung 4 takes another sales order's committed quantity and
-# rung 5 takes free stock outside the group that its own book expects, and neither is
-# surplus by any reading. What the surplus does not cover falls to the whole-line rule and
-# is bought, with the reason naming the window rather than the arithmetic.
+# and a line due beyond it takes NO STOCK (ladder v3, section 1b rung 0: "if delivery date
+# exceed lead time, directly buy"). v2 still walked the two surplus rungs for such a line
+# and refused it only the borrow rungs; v3 walks no stock rung at all, because "surplus" is
+# a reading of one moment and the purchase order has months to be raised in.
+#
+# INCOMING USED TO BE THE EXCEPTION - rung 1 ran on both sides of the window, because supply
+# already on its way is already bought and buying it twice is a double purchase. Ladder v5
+# (section 1e) retires the exception with the rung: an SPO is inside the ownership group's
+# net already, so it is not a second pile that a far line could be refused a share of. What
+# reaches a far line's SPO is Link SPO on its order-inquiry row, after purchasing has read
+# the buy.
 #
 # BOTH CONSTANTS ARE FUTURE POLICY FIELDS. They belong beside `reorder_coverage_until` on
 # `PriorityPolicy` (the same admin screen, the same revisioned row) the day somebody needs
@@ -144,8 +175,12 @@ def qty_text(value: Decimal) -> str:
     return format(_dec(value).normalize(), "f")
 
 
-def _date_text(value: date) -> str:
-    """"31 Oct 2026" - the captain's own wording, day first, no leading zero."""
+def date_text(value: date) -> str:
+    """"31 Oct 2026" - the captain's own wording, day first, no leading zero.
+
+    Public beside `qty_text`: the board writes sentences about the same documents this
+    module does, and a second spelling of a date is a second vocabulary.
+    """
     return f"{value.day} {_MONTHS[value.month - 1]} {value.year}"
 
 
@@ -207,9 +242,31 @@ def _own_reason(location: str) -> str:
     return f"free stock at {location} covers the need by the required date"
 
 
-def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
-    when = arrival_date.isoformat() if arrival_date else "an unstated date"
-    return f"SPO {spo_number} arrives on {when}, by the required date"
+def spo_reason(
+    spo_number: str, arrival_date: Optional[date], overdue_days: int = 0
+) -> str:
+    """How a timely incoming row reads, wherever it is named.
+
+    An OVERDUE promise is named as overdue rather than dropped (captain's ruling, 26 Aug
+    2026: trust the book). The goods are still owed and are still supply, and the buyer
+    reading this is the person who can go and chase the supplier - which they cannot do if
+    the row either disappears or reads as though the date were fine.
+
+    Public, because the supply service builds this same sentence for its own reason field.
+    Two copies agreed by coincidence until there was something new to say in both.
+
+    The `SPO` prefix is only added to a number that does not already carry one. Every
+    shipping order in the book is written `SPO-2026/08-0061`, and "SPO SPO-2026/08-0061"
+    is how a label reads when nobody looked at real data; the older `202703-S0011` spelling
+    still needs the word.
+    """
+    when = date_text(arrival_date) if arrival_date else "an unstated date"
+    named = spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
+    if overdue_days > 0:
+        day = "day" if overdue_days == 1 else "days"
+        return f"{named} arrives on {when} (overdue {overdue_days} {day})"
+    return f"{named} arrives on {when}, by the required date"
+
 
 
 # --------------------------------------------------------------------------- #
@@ -218,70 +275,127 @@ def _spo_reason(spo_number: str, arrival_date: Optional[date]) -> str:
 
 
 def _coverage_date_reason(coverage_until: date) -> str:
-    return f"Beyond purchasing's coverage ({_date_text(coverage_until)}) - buy now"
+    return f"Beyond purchasing's coverage ({date_text(coverage_until)}) - buy now"
 
 
 def pool_reserve_capacity(
     *,
     is_dealer_hot_selling: bool,
-    is_project_hot_selling: bool,
     pools: Sequence[Mapping[str, Any]],
-) -> List[Tuple[str, Decimal, str]]:
-    """Rung 2: the shared pool, own site first then the other site pools.
+    pools_net: Any,
+) -> List[Tuple[str, Decimal]]:
+    """Rung 3, LADDER V4 (section 1d): the five site pools are ONE pile.
 
-    `pools` is already in draw order - the caller's own site pool first, then the other
-    site pools - each stating `location`, `free` and `available` (the pool's own SIGNED
-    position, `on hand - SO qty + SPO qty`). Every pool is capped the same way now,
-    `max(min(free, available), 0)`, whether the product is project hot-selling or neither -
-    a change from 3.3a's "neither: uncapped", made because ladder v2 can draw a SECOND and
-    THIRD pool that were never this line's own, and an uncapped draw on one of those would
-    ignore what its own book already owes. Dealer hot-selling still excludes the pool rung
-    entirely, exactly as 3.3a states.
+    The rung offers `max(pools_net, 0)` and not a unit more - `BRW -103` beside `DC1 +1`
+    nets -102 and offers NOTHING, where per-pool arithmetic would have offered the 1, which
+    is stock the shared book already owes at BRW. `pools` is already in draw order (the
+    caller's own site pool first, then the others by on hand) and each entry states its
+    `free` balance: that is WHERE the quantity can physically come from, and `pools_net` is
+    HOW MUCH. Exactly the shape rung 2 has for the ownership group.
+
+    THERE IS NO PER-POOL CAP any more, and 3.3a's project hot-selling gate goes with it:
+    that rule capped such a line's draw at the pool's own signed availability, and the
+    pile's net now bounds EVERY draw the same way, for every item. Dealer hot-selling still
+    excludes the rung entirely, which is a different rule - the pool is kept for retail, so
+    it is not offered at all.
+
+    Nothing is un-netted here, unlike rung 2: this line's demand is booked at
+    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
     """
     if is_dealer_hot_selling:
         return []
-    out: List[Tuple[str, Decimal, str]] = []
+    left = max(_dec(pools_net), ZERO)
+    out: List[Tuple[str, Decimal]] = []
     for pool in pools:
+        if left <= ZERO:
+            break
         location = pool.get("location")
         if not location:
             continue
-        free = max(_dec(pool.get("free")), ZERO)
-        available = _dec(pool.get("available"))
-        capacity = max(min(free, available), ZERO)
+        capacity = min(max(_dec(pool.get("free")), ZERO), left)
         if capacity <= ZERO:
             continue
-        out.append(
-            (
-                str(location),
-                capacity,
-                f"Pool {location} has {qty_text(capacity)} available",
-            )
-        )
+        out.append((str(location), capacity))
+        left -= capacity
     return out
 
 
-def _group_take_reason(location: str, qty: Decimal, group_code: Optional[str]) -> str:
-    where = f" in the {group_code} group" if group_code else ""
-    return f"{location} has {qty_text(qty)} available{where}"
+def pool_reason(location: str, qty: Decimal, pools_net: Any) -> str:
+    """Why this pool may lend this much.
 
+    Built from what is actually TAKEN, beside the pile's own net - the same shape
+    `group_take_reason` has, and for the same reason: under v4 the number is a share of a
+    SET's position, so "Pool BRW has 30 available" reads as though BRW alone held it.
 
-def _group_borrow_reason(candidate: Mapping[str, Any], qty: Decimal) -> str:
-    location = candidate.get("location") or ""
-    so_number = candidate.get("donor_so_number") or "an unnamed sales order"
-    line_no = candidate.get("donor_line_no")
-    line_text = f" line {line_no}" if line_no is not None else ""
-    agent = candidate.get("donor_agent_code")
-    agent_text = f" (agent {agent})" if agent else ""
+    Public because the supply service builds this sentence when it reads a CONFIRMED
+    component back off a snapshot, exactly as it does for the group rung.
+    """
     return (
-        f"{so_number}{line_text}{agent_text} holds {qty_text(qty)} at {location}; it is "
-        "ranked below this line; order-back raised"
+        f"Pool {location} lends {qty_text(qty)} of the {qty_text(_dec(pools_net))} the "
+        "site pools net between them"
+    )
+
+
+def group_water_reason(
+    location: str,
+    qty: Decimal,
+    group_code: Optional[str],
+    group_offer: Optional[Decimal],
+    arrival_date: Optional[date],
+) -> str:
+    """Question 1's OTHER answer: the share of the group's offer that is still on the water.
+
+    The group's net is `on hand + SPO - SO`, so part of what question 1 may hand this line is
+    an SPO rather than a unit on a shelf. Drawn only when it lands on or before the required
+    date (the caller applies that test and passes the LATEST such arrival here), and never
+    called a Reserve: a hold cannot be written against goods that are not on the floor.
+
+    `arrival_date` is the day the whole of this draw has landed by, which is the date a
+    planner needs before promising it - not the earliest of several documents.
+    """
+    when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
+    if group_offer is None or not group_code:
+        return f"{location} has {qty_text(qty)} on the water{when}"
+    return (
+        f"{location} has {qty_text(qty)} of the {qty_text(group_offer)} the {group_code} "
+        f"group can cover this line with on the water{when}"
+    )
+
+
+def group_take_reason(
+    location: str, qty: Decimal, group_code: Optional[str], group_offer: Optional[Decimal]
+) -> str:
+    """Why this location may give this much (v4: it is the GROUP's number, not the
+    location's own).
+
+    Public for the same reason `spo_reason` is: the supply service builds this same sentence
+    when it reads a CONFIRMED component back off a snapshot, and two copies agreed only by
+    coincidence.
+
+    `BRW-BB has 40 available` was true while a location's own signed availability decided
+    what it could lend. Under section 1d the group is one pile - `MWH-IB` holding 7000
+    lends nothing while the IB group nets -15514 - so the quantity is a share of what the
+    GROUP can cover this line with, and the sentence has to say whose number it is.
+    """
+    if group_offer is None or not group_code:
+        where = f" in the {group_code} group" if group_code else ""
+        return f"{location} has {qty_text(qty)} available{where}"
+    return (
+        f"{location} gives {qty_text(qty)} of the {qty_text(group_offer)} the "
+        f"{group_code} group can cover this line with"
     )
 
 
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
+    """v4: what the DONOR GROUP can lend, drawn at this location.
+
+    Never "`{location}` has N free": the offer is capped by the donor group's whole net
+    (section 1d rung 4), so a location holding far more than N would be described wrongly
+    by its own free balance.
+    """
     return (
-        f"{location} has {qty_text(qty)} free outside this group, within the cross-group "
-        "borrow limit"
+        f"{location} can lend {qty_text(qty)} from outside this group, within the "
+        "cross-group borrow limit"
     )
 
 
@@ -302,114 +416,102 @@ def propose_line(
     open_qty: Any,
     line_no: Optional[int] = None,
     required_date: Optional[date] = None,
+    #: Accepted and NOT read. The rungs name their own `source_location` from the candidate
+    #: lists the caller hands over, so the line's own location takes no part in the
+    #: arithmetic here. Kept on the signature because every caller states it and the ladder's
+    #: own logs read better with it; the day a log stops naming it, it goes.
     fulfilment_location: Optional[str] = None,
     group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
+    #: Accepted and NOT read since ladder v4 (section 1d). 3.3a capped a project
+    #: hot-selling line's pool draw at the pool's own signed availability; the pile's net
+    #: now bounds every draw the same way, for every item. Kept on the signature because
+    #: three callers state it and the board's trail still names the classification in
+    #: words; the day nothing reads it at all, it goes.
     is_project_hot_selling: bool = False,
     pools: Optional[Sequence[Mapping[str, Any]]] = None,
-    timely_spo_qty: Any = ZERO,
-    timely_spo_refs: Optional[Sequence[Mapping[str, Any]]] = None,
     is_discontinued: bool = False,
     reorder_coverage_until: Optional[date] = None,
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
-    group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     outside_reserve_window: bool = False,
+    group_offer: Optional[Decimal] = None,
+    pools_net: Optional[Decimal] = None,
 ) -> Tuple[Component, ...]:
-    """The proposed composition for one line, ladder v2's own order (section E).
+    """The proposed composition for one line, ladder v5's four questions (section 1e).
 
-    0. beyond `reorder_coverage_until` -> the WHOLE line is a Buy, nothing else is tried,
-       and the rest of this function never runs. An UNDATED line (`required_date=None`)
-       never hits this rung at all - the comparison requires both dates, so it falls
-       straight through to rung 1;
-    1. timely incoming, for supply arriving on or before the required date;
-    2. the shared pool(s), `pool_reserve_capacity`, own site first;
-    3. group take: `group_take_candidates`, already capped by the caller
-       (`max(min(free, available), 0)` at each sibling location);
-    4. group borrow: `group_borrow_candidates` - the caller passes ONLY the donors this
-       rung may draw on automatically (ranked below this line); a same-agent donor ranked
-       above it is never in this list, only in the offered candidate list a person picks
-       from. SKIPPED for a line `outside_reserve_window`, see below;
-    5. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
-       donors within the small-quantity cap. SKIPPED for the same reason;
-    6. the whole-line rule: if 1-5 reach the whole of `open_qty`, that composition is
+    0. beyond the reserve window, or beyond `reorder_coverage_until` -> no rung runs and the
+       whole of `open_qty` is a single Buy naming the bound that fired. An UNDATED line
+       (`required_date=None`) is never beyond either bound - both comparisons need two dates
+       - so it falls straight through to the full walk;
+    1. the ownership group: `group_take_candidates`, already capped by the caller to the
+       GROUP's own position (`group_offer`) and already in draw order - this line's own
+       location first, then its siblings by site. An SPO to any of those locations is inside
+       that net, which is why there is no incoming rung above this one; a candidate marked
+       `water` is that SPO share, and it is composed as `timely_spo` rather than `reserve`;
+    2. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
+       bounded by `pools_net` and by each pool's own free stock;
+    3. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
+       donors within the small-quantity cap, each donor group capped at its own net;
+    4. the whole-line rule: if 1-3 reach the whole of `open_qty`, that composition is
        returned, in rung order; otherwise every partial component is DROPPED and the whole
        line is proposed as a single Buy - never "reserve 213, buy 145".
 
     Each candidate rung's inputs are already computed live and already ordered by the
-    caller (`L first, then the siblings` for group borrow; `own site pool first` for the
-    pool rung); this function only walks them in the order given and never re-sorts or
-    re-derives a capacity.
+    caller (`own location first, then the siblings` for the group rung; `own site pool
+    first` for the pool rung); this function only walks them in the order given and never
+    re-sorts or re-derives a capacity.
 
     A component contributing nothing is not proposed at all: emitting a zero would force a
     reason for a quantity that does not exist.
 
     `outside_reserve_window` is the ATP rule (see the constants at the top of this module):
     the line is due beyond `as_of + lead time + RESERVE_BUFFER_DAYS`, so purchasing can still
-    buy for it in time and it must not take stock a nearer-dated order needs. Rungs 2 and 3
-    still run - what they offer is capped at the location's SIGNED availability and is
-    therefore surplus - and rungs 4 and 5, which take stock another order holds or another
-    group's book expects, do not run at all. Anything left over is bought under the
-    whole-line rule with the window named as the reason. The CALLER decides which side of the
-    window a line falls on, because only it knows the product's lead time.
+    buy for it in time and it must not take stock a nearer-dated order needs. No rung runs
+    for such a line under v5. The CALLER decides which side of the window a line falls on,
+    because only it knows the product's lead time.
+
+    `group_offer` and `pools_net` are ladder v4's own numbers (section 1d). `pools_net` is
+    what the five site pools hold BETWEEN them, signed, and it caps rung 3's whole draw.
+    `group_offer` is what the ownership group's NET leaves for THIS line (its own quantity
+    un-netted, every other line's still netted); it is the bound the caller has already
+    applied to `group_take_candidates`, and it travels here so each component's reason can
+    name the number it is a share OF. Both are `None` for a caller that states neither, and
+    the rungs then stand on their per-location caps alone.
     """
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
         return ()
 
+    # 0. Beyond either bound, NO rung runs at all and the whole line is bought. Two bounds,
+    #    one rule: whichever of them the line is beyond decides it, and the reason names the
+    #    one that fired. Purchasing's stated coverage date is checked first because it is a
+    #    date a person set and can point at; the window is the derived one.
+    #
+    #    LADDER V5 (section 1e): incoming used to be the one rung that still ran here,
+    #    because supply already on its way is already bought. It is not a rung any more - an
+    #    SPO is inside the ownership group's own net, where AutoCount already counts it, and
+    #    it reaches a particular line through Link SPO on that line's order-inquiry row. So
+    #    "beyond the window" is now literally what section 1b always said it was: buy.
+    beyond: Optional[str] = None
     if (
         reorder_coverage_until is not None
         and required_date is not None
         and required_date > reorder_coverage_until
     ):
+        beyond = _coverage_date_reason(reorder_coverage_until)
+    elif outside_reserve_window:
+        beyond = _reserve_window_buy_reason()
+    if beyond is not None:
         return (
-            Component(
-                kind=BUY,
-                qty=open_amount,
-                reason=_coverage_date_reason(reorder_coverage_until),
-                rung=RUNG_BUY,
-            ),
+            Component(kind=BUY, qty=open_amount, reason=beyond, rung=RUNG_BUY),
         )
 
     remaining = open_amount
     components: List[Component] = []
 
-    # 1. timely incoming.
-    timely = max(_dec(timely_spo_qty), ZERO)
-    if remaining > ZERO and timely > ZERO:
-        take = min(remaining, timely)
-        for component in _timely_components(take, timely_spo_refs, fulfilment_location):
-            components.append(
-                Component(
-                    kind=component.kind,
-                    qty=component.qty,
-                    reason=component.reason,
-                    source_location=component.source_location,
-                    rung=RUNG_INCOMING,
-                )
-            )
-        remaining -= take
-
-    # 2. the shared pool(s), own site first.
-    for location, capacity, reason in pool_reserve_capacity(
-        is_dealer_hot_selling=is_dealer_hot_selling,
-        is_project_hot_selling=is_project_hot_selling,
-        pools=pools or [],
-    ):
-        if remaining <= ZERO:
-            break
-        take = min(remaining, capacity)
-        if take <= ZERO:
-            continue
-        components.append(
-            Component(
-                kind=RESERVE, qty=take, reason=reason, source_location=location,
-                rung=RUNG_POOL,
-            )
-        )
-        remaining -= take
-
-    # 3. group take: positive Available at a sibling location, never this line's own.
+    # 1. the ownership group: what the GROUP's net leaves for this line, drawn at the
+    #    locations the caller states in the draw order it states (own location first).
     for candidate in group_take_candidates or []:
         if remaining <= ZERO:
             break
@@ -418,51 +520,62 @@ def propose_line(
         if not location or capacity <= ZERO:
             continue
         take = min(remaining, capacity)
+        # Water inside the group's own net (`candidate["water"]`): incoming supply, and said
+        # so. Same rung - it is question 1's answer either way - and a different kind,
+        # because a Reserve is a hold on stock a picker can walk to.
+        water = bool(candidate.get("water"))
         components.append(
             Component(
-                kind=RESERVE,
+                kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
-                reason=_group_take_reason(str(location), take, group_code),
+                reason=(
+                    group_water_reason(
+                        str(location),
+                        take,
+                        group_code,
+                        group_offer,
+                        candidate.get("arrival_date"),
+                    )
+                    if water
+                    else group_take_reason(str(location), take, group_code, group_offer)
+                ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
             )
         )
         remaining -= take
 
-    # 4. group borrow: other sales orders' committed quantity, donors ranked below this
-    #    line only - the caller has already excluded a higher-ranked (non-same-agent)
-    #    donor from this list. Not offered at all to a line beyond its reserve window: this
-    #    rung takes stock a nearer-dated order is holding, which is the one thing that rule
-    #    exists to stop.
-    for candidate in [] if outside_reserve_window else (group_borrow_candidates or []):
+    # 2. the shared pool(s), own site first, the whole rung bounded by what the five pools
+    #    net BETWEEN them (v4, section 1d).
+    for location, capacity in pool_reserve_capacity(
+        is_dealer_hot_selling=is_dealer_hot_selling,
+        pools=pools or [],
+        pools_net=pools_net,
+    ):
         if remaining <= ZERO:
             break
-        location = candidate.get("location")
-        capacity = max(_dec(candidate.get("qty")), ZERO)
-        if not location or capacity <= ZERO:
-            continue
         take = min(remaining, capacity)
+        if take <= ZERO:
+            continue
         components.append(
             Component(
-                kind=BORROW,
+                kind=RESERVE,
                 qty=take,
-                reason=_group_borrow_reason(candidate, take),
-                source_location=str(location),
-                rung=RUNG_GROUP_BORROW,
-                donor_so_number=candidate.get("donor_so_number"),
-                donor_line_no=candidate.get("donor_line_no"),
-                donor_agent_code=candidate.get("donor_agent_code"),
-                same_agent=bool(candidate.get("same_agent")),
-                order_back_qty=take,
-                donor_core_line_id=candidate.get("donor_core_line_id"),
-                donor_required_date=_as_date(candidate.get("donor_required_date")),
+                # Built from what is TAKEN, never from the rung's own running balance: the
+                # reason travels with the quantity beside it, and a sentence naming the
+                # capacity while the component names the draw is two numbers for one fact.
+                reason=pool_reason(location, take, pools_net),
+                source_location=location,
+                rung=RUNG_POOL,
             )
         )
         remaining -= take
 
-    # 5. cross-group borrow: free stock outside this group, already cap-filtered. Skipped
-    #    beyond the window for the same reason as rung 4 - it is another group's book.
-    for candidate in [] if outside_reserve_window else (cross_group_borrow_candidates or []):
+    # 3. cross-group borrow: free stock outside this group, already cap-filtered by the
+    #    caller. Borrowing another SALES ORDER's committed quantity is not a rung here and
+    #    never becomes one: ruled 25 August 2026 as a manual pick in Amend, taken by a
+    #    person with the donor's position in front of them.
+    for candidate in cross_group_borrow_candidates or []:
         if remaining <= ZERO:
             break
         location = candidate.get("location")
@@ -481,67 +594,19 @@ def propose_line(
         )
         remaining -= take
 
-    # 6. the whole-line rule: cover Q entirely in rung order, or Buy the whole of it.
+    # 4. the whole-line rule: cover Q entirely in rung order, or Buy the whole of it.
     if remaining > ZERO:
         covered = open_amount - remaining
         return (
             Component(
                 kind=BUY,
                 qty=open_amount,
-                # Beyond the window the shortfall is not the interesting fact - the window is
-                # why two of the five rungs were never walked, and a reason reading "23 of 40
-                # covered" would send the reader looking for the missing 17.
-                reason=(
-                    _reserve_window_buy_reason()
-                    if outside_reserve_window
-                    else _whole_line_buy_reason(covered, open_amount)
-                ),
+                reason=_whole_line_buy_reason(covered, open_amount),
                 rung=RUNG_BUY,
             ),
         )
 
     return tuple(components)
-
-
-def _timely_components(
-    qty: Decimal,
-    refs: Optional[Sequence[Mapping[str, Any]]],
-    location: Optional[str],
-) -> List[Component]:
-    """Timely cover, named by the SPO rows that supply it when they are known.
-
-    Named is the useful form: "SPO 202703-S0011 arrives on 2027-03-01" is something CS can
-    look up, and an unnamed quantity is not.
-    """
-    if not refs:
-        return [
-            Component(
-                kind=TIMELY_SPO,
-                qty=qty,
-                reason="incoming supply arrives by the required date",
-                source_location=location,
-            )
-        ]
-    out: List[Component] = []
-    remaining = qty
-    for ref in _sorted_supply(refs):
-        if remaining <= ZERO:
-            break
-        take = min(remaining, max(_dec(ref.get("qty")), ZERO))
-        if take <= ZERO:
-            continue
-        out.append(
-            Component(
-                kind=TIMELY_SPO,
-                qty=take,
-                reason=_spo_reason(
-                    str(ref.get("spo_number") or ""), _as_date(ref.get("arrival_date"))
-                ),
-                source_location=location,
-            )
-        )
-        remaining -= take
-    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -676,7 +741,9 @@ def attribute_sources(
                 Component(
                     kind=TIMELY_SPO,
                     qty=taken,
-                    reason=_spo_reason(event["spo_number"], arrival),
+                    reason=spo_reason(
+                        event["spo_number"], arrival, int(event.get("overdue_days") or 0)
+                    ),
                     source_location=warehouse_code,
                 )
             )

@@ -110,6 +110,7 @@ vi.mock('../../hooks/useSalesOrders', () => ({
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useResetSalesOrderPlanning: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateDoFromSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 

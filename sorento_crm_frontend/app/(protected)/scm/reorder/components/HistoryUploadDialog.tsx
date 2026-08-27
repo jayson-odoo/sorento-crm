@@ -66,7 +66,14 @@ const COPY: Record<
     title: 'Upload purchase history',
     // What it does to the plan, in one line. Not a description of the file format, and not
     // lead time: that is measured to the goods receipt and this file carries none.
-    description: 'Past orders, for last cost and slow movers. Never counted as incoming stock.',
+    //
+    // It no longer claims that nothing here becomes incoming stock, because an `SPO-`
+    // document in this same book is filed into `spo_allocations` (`po_history_service`),
+    // which `scm.on_order_v` reads - so the sentence was untrue of half the file the
+    // captain actually uploads. What IS true of every purchase order in it: they are
+    // written closed and received, so no PO here reads as still owed.
+    description:
+      'Past purchase orders, for last cost and slow movers - written as already received. Shipping orders in the same file become incoming stock.',
     dropzoneLabel: 'Purchase Order Listing file',
   },
   'sales-history': {

@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from app.models.order import SalesOrder
 from app.services.scm import outstanding_import_service as svc
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS
 from app.services.scm.outstanding_reader import SO
 from tests._pg_fixture import pg_session
 from tests.scm._outstanding_workbooks import MARKER, Codes, make_codes, seed_catalogue, workbook
@@ -121,7 +122,7 @@ def test_a_dealer_file_classifies_as_the_default_class(db, seeded):
     out = svc.apply(db, _upload(seeded, seeded.dealer_so, "DEALER"), SO)
 
     assert out["ok"]
-    assert _header(db, seeded.dealer_so)[1] == svc.DEFAULT_DEMAND_CLASS
+    assert _header(db, seeded.dealer_so)[1] == DEFAULT_DEMAND_CLASS
 
 
 def test_the_file_never_overwrites_an_order_type_someone_set(db, seeded):
@@ -140,23 +141,25 @@ def test_the_file_never_overwrites_an_order_type_someone_set(db, seeded):
     assert out["ok"]
     order_type, demand_class = _header(db, seeded.project_so)
     assert order_type == "dealer", "the file overwrote a split someone had set by hand"
-    assert demand_class == svc.DEFAULT_DEMAND_CLASS, (
+    assert demand_class == DEFAULT_DEMAND_CLASS, (
         "the class was stamped from the file rather than from the document")
 
 
-def test_a_blank_order_type_cell_leaves_the_document_unclassified(db, seeded):
+def test_a_blank_order_type_cell_refuses_the_file(db, seeded):
     """A column present but empty is not evidence, and must not read as retail.
 
     Half-filled columns are how these exports actually arrive. Treating the blank as "not a
     project" would classify the row silently and stably, and nobody would ever learn which
-    documents were guessed at.
+    documents were guessed at - so since QP1 the upload is REFUSED and nothing is written,
+    where before the document was imported unclassified and merely reported.
     """
     unknown = f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
 
     out = svc.apply(db, _upload(seeded, seeded.project_so, None, debtor=unknown), SO)
 
-    assert out["ok"]
-    assert _header(db, seeded.project_so)[1] is None
+    assert not out["ok"]
+    assert out["unclassified_documents"] == [seeded.project_so]
+    assert _header(db, seeded.project_so) is None, "a refused file wrote a header anyway"
     assert any(seeded.project_so in " ".join(str(v) for v in p.values())
                for p in out["row_problems"]), (
-        "a blank order type was accepted without telling anyone")
+        "a blank order type was refused without telling anyone which document")

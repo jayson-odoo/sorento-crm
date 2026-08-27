@@ -85,14 +85,29 @@ describe('PlanningChangesListClient - rows', () => {
     expect(statePill('Partly failed')).toBeInTheDocument();
   });
 
-  it('goes to the batch page on row click', async () => {
+  // AC-P3-1: there is no batch page. A row opens the BOARD on the orders it moved, which is
+  // where the change is decided and where Confirm applies it.
+  it('opens the board on the batch and its orders, on row click', async () => {
     renderClient();
     const row = (await screen.findByText('JAN - DEC 2026 ORDER.xlsx')).closest('tr');
     expect(row).not.toBeNull();
 
     fireEvent.click(row as HTMLElement);
 
-    expect(push).toHaveBeenCalledWith('/project-sales/planning-changes/pcb-1');
+    expect(push).toHaveBeenCalledWith(
+      '/project-sales/fulfilment-planning?orders=SO403765%2CSO400875%2CSO401220&batch=pcb-1',
+    );
+  });
+
+  it('offers a Plan action carrying the same link', async () => {
+    renderClient();
+    await screen.findByText('JAN - DEC 2026 ORDER.xlsx');
+    const plans = screen.getAllByRole('link', { name: 'Plan' });
+    expect(plans.length).toBe(2);
+    expect(plans[0]).toHaveAttribute(
+      'href',
+      '/project-sales/fulfilment-planning?orders=SO403765%2CSO400875%2CSO401220&batch=pcb-1',
+    );
   });
 });
 

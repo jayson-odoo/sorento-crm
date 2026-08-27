@@ -7,7 +7,10 @@
  * spreadsheet purchasing already works from. Both are worth asserting without mounting a
  * table.
  */
-import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
+import type {
+  OrderInquiryLink,
+  OrderInquiryWorklistRow,
+} from '../types/orderInquiry.types';
 
 /**
  * The sheet's own spelling of a month, not the browser's: their tabs read `JAN 26`,
@@ -86,7 +89,62 @@ const NON_ORDER_FLOW_LABEL: Record<string, string> = {
   RELEASE: 'Released',
 };
 
+/**
+ * The verbs the two aggregates ARE about. `ORDER_BACK` joined `ORDER` when section 3.I
+ * made it linkable and `scm.committed_v` started netting it the same way: it is demand
+ * until it is linked, so a figure about "what still flows to reorder planning" that left
+ * it out would be a different number from the one the plan reads.
+ */
+const FLOW_VERBS = ['ORDER', 'ORDER_BACK'];
+
 export function flowExclusionLabel(verb: string): string | null {
-  if (verb === 'ORDER') return null;
+  if (FLOW_VERBS.includes(verb)) return null;
   return NON_ORDER_FLOW_LABEL[verb] ?? 'Not an ORDER row';
+}
+
+/**
+ * "Linked to", in the shape the plan asked for: `8 of 8: 202607-S0105 L3 5, L7 3`
+ * (PLAN-scm-cs-planning-uat.md section 3.I, AC-I5/AC-I6/AC-I9).
+ *
+ * `headline` is the coverage - how much of the row's quantity is on a document at all -
+ * and `documents` groups the links by document so a row split across two lines of one
+ * purchase order reads as one document with two lines, which is how the buyer keys it
+ * into AutoCount. A row with no links returns `null`, and the cell says "Not linked"
+ * rather than printing "0 of 8" at somebody: nothing has happened to it yet.
+ */
+export function linkedSummary(
+  qty: string | null | undefined,
+  linkedQty: string | null | undefined,
+  links: OrderInquiryLink[] | null | undefined,
+): {
+  headline: string;
+  documents: { document: string; kind: 'po' | 'spo'; parts: string; late: boolean }[];
+} | null {
+  const list = links ?? [];
+  if (list.length === 0) return null;
+  const grouped: { document: string; kind: 'po' | 'spo'; parts: string[]; late: boolean }[] = [];
+  for (const link of list) {
+    let entry = grouped.find((g) => g.document === link.document && g.kind === link.kind);
+    if (!entry) {
+      entry = { document: link.document, kind: link.kind, parts: [], late: false };
+      grouped.push(entry);
+    }
+    // AC-P3-7: any line of this document landing after the row needs it makes the
+    // document late. Said, never acted on - purchasing decides.
+    if (link.late) entry.late = true;
+    // The line when the book numbered it, the location when it did not: both name WHICH
+    // line of the document holds the quantity, and a bare number beside a document with
+    // six open lines names nothing.
+    const where = link.line_label || link.location || null;
+    entry.parts.push(where ? `${where} ${formatInquiryQty(link.qty)}` : formatInquiryQty(link.qty));
+  }
+  return {
+    headline: `${formatInquiryQty(linkedQty ?? '0')} of ${formatInquiryQty(qty ?? '0')}`,
+    documents: grouped.map((g) => ({
+      document: g.document,
+      kind: g.kind,
+      parts: g.parts.join(', '),
+      late: g.late,
+    })),
+  };
 }

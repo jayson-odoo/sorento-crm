@@ -95,20 +95,21 @@ def _stock(db, product, wh, qty):
     db.flush()
 
 
-def _so_line(db, product, wh, qty, when, *, demand_class="project", customer_name=None):
+def _so_line(db, product, wh, qty, when, *, demand_class="retail", customer_name=None):
     cust = None
     if customer_name:
         cust = Customer(id=_u(), customer_code=unique_code("C"), customer_name=customer_name)
         db.add(cust)
         db.flush()
-    # S13b: a project-class order only counts as demand (`is_plan_demand_order()`,
-    # mirrored in `scm.committed_v`) when the Order Inquiry created or named it. This
-    # suite is not about the project/retail split, so every call is stamped with the
-    # origin that makes the default `demand_class="project"` actually count.
+    # RETAIL, because that is what the sales-order BOOK still speaks for: since P3
+    # (`PLAN-scm-purchasing-uat-journey.md`, 26 Aug 2026) `is_plan_demand_order()` and
+    # `scm.committed_v` exclude project class from the book outright - a project line is
+    # demand as the un-linked Order Inquiry ROW it becomes, and never as a book line.
+    # These coverage suites are not about the project/retail split at all; they need a
+    # commitment the timeline counts, and retail is the class that gives them one.
     so = SalesOrder(
         id=_u(), so_number=unique_code("SO"), status="open",
         customer_id=cust.id if cust else None, demand_class=demand_class,
-        demand_origin="scm_order_inquiry" if demand_class == "project" else None,
     )
     db.add(so)
     db.flush()

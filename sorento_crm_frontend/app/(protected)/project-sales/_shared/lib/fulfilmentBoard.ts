@@ -748,52 +748,6 @@ function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
 }
 
 /**
- * The proposal, as one line of text - the same summary a cell's own composition strip shows,
- * read off a single contribution rather than a cell (D2, the board's List view).
- *
- * A line with no proposal reads what it IS rather than a blank cell: unplannable states the
- * reason, and a line that is neither unplannable nor holds a source is "Nothing proposed",
- * never an empty string a table would render as a gap nobody can explain.
- */
-export function proposalSummaryFor(contribution: BoardContribution): string {
-  if (contribution.unplannable) return 'Needs a location';
-  const parts = contribution.sources
-    .filter((source) => toMinor(source.qty) > 0)
-    .map((source) => `${sourceLabel(source)} ${source.qty}${sourceSuffix(source)}`);
-  return parts.length > 0 ? parts.join(' · ') : 'Nothing proposed';
-}
-
-/**
- * The word a source reads as, ladder v2's own rung vocabulary
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E) where it names one: Pool / Group
- * take / Group borrow / Cross-group borrow, rather than the bare "Reserve" / "Borrow" the
- * balance-invariant `kind` carries. A source with no rung (incoming, buy, a pre-v2 row)
- * reads by its kind, unchanged.
- */
-function sourceLabel(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'pool') return 'Pool';
-  if (source.rung === 'group_take') return 'Group take';
-  if (source.rung === 'group_borrow') return 'Group borrow';
-  if (source.rung === 'cross_group_borrow') return 'Cross-group borrow';
-  if (source.kind === 'reserve') return 'Reserve';
-  if (source.kind === 'timely_spo') return 'Incoming';
-  if (source.kind === 'buy') return 'Buy';
-  if (source.kind === 'borrow') return 'Borrow';
-  return 'Cannot be sourced';
-}
-
-/** "at MWH-BB", or "from SO371334 line 2" for a group borrow, which names a donor SO. */
-function sourceSuffix(source: BoardContribution['sources'][number]): string {
-  if (source.rung === 'group_borrow' && source.donor_so_number) {
-    const line = source.donor_line_no !== null && source.donor_line_no !== undefined
-      ? ` line ${source.donor_line_no}`
-      : '';
-    return ` from ${source.donor_so_number}${line}`;
-  }
-  return source.location ? ` at ${source.location}` : '';
-}
-
-/**
  * Whether a row survives the board's search box.
  *
  * The captain asked for all four: "i also need sales order search, project search, customer
@@ -849,9 +803,14 @@ export function rankingNote(
   // in this cell" restated the single row the reader was already looking at, and a sentence
   // that repeats the screen is one more thing to read past on the way to the decision.
   if (cell.contributions.length === 1) return { cell: 'Not ranked', note: null };
+  // LADDER V4 (26 August 2026): "Same sales order; line order decided which line was served
+  // first" is retired. It was true while the rank queue decided how much a line could take at
+  // its own location; availability is the ownership GROUP's now, and rank decides the order
+  // lines are served in, not what exists - so the sentence claimed a cause the engine no
+  // longer has. Lines of one sales order that tie carry no note at all.
   const note =
     (cell.distinct_order_count ?? 0) === 1
-      ? 'Same sales order; line order decided which line was served first'
+      ? null
       : 'The active policy separates none of these rows';
   return { cell: 'Not ranked', note };
 }

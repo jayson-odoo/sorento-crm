@@ -71,6 +71,7 @@ vi.mock('../../hooks/useSalesOrders', () => ({
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useResetSalesOrderPlanning: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateDoFromSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -290,5 +291,29 @@ describe('SalesOrdersList - planning the selected orders', () => {
     await waitFor(() => expect(screen.getByText('2 selected')).toBeInTheDocument());
     await openActions();
     expect(screen.queryByRole('menuitem', { name: /^Plan selected/ })).toBeNull();
+  });
+});
+
+// ── the Changed badge (AC-P3-1) ─────────────────────────────────────────────
+
+describe('SalesOrdersList - the Changed badge', () => {
+  it('opens the board on this order and its batch', async () => {
+    stub([order({ planning_change_batch_id: 'pcb-so381895' })]);
+    renderList();
+
+    const badge = await screen.findByTestId('so-changed-SO900001');
+    expect(badge).toHaveTextContent('Changed');
+    expect(badge).toHaveAttribute(
+      'href',
+      '/project-sales/fulfilment-planning?orders=SO900001&batch=pcb-so381895',
+    );
+  });
+
+  it('is absent on an order with nothing outstanding to apply', async () => {
+    stub([order({})]);
+    renderList();
+
+    await screen.findByText('SO900001');
+    expect(screen.queryByTestId('so-changed-SO900001')).toBeNull();
   });
 });

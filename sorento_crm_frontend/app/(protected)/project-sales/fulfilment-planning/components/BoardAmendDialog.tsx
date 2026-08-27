@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { amendNeedsReason } from '../../_shared/lib/fulfilmentBoard';
 import {
@@ -55,6 +56,13 @@ import { BorrowAddDialog } from './BorrowAddDialog';
  * EVERY SECTION RENDERS, whatever the answer is: a line with no warehouse says so where its
  * Reserve rows would be, and a line with no donor says so where its Borrow rows would be. A
  * section that disappears reads as a screen that has not finished loading.
+ *
+ * BUY IS A WHOLE-LINE SWITCH, not a quantity (AC-L5, the captain 25 August 2026): "a line is
+ * either wholly covered from stock (own group, pools, borrow, incoming in any mix) or wholly
+ * Buy". The engine has refused to propose a mix since ladder v2's whole-line rule, and the
+ * confirmation now refuses one too, so a free Buy box could only ever be typed into a
+ * refusal. On, the stock rows are cleared and the whole outstanding quantity is bought; off,
+ * they come back exactly as they were and the Buy is nothing.
  */
 export function BoardAmendDialog({
   contribution,
@@ -66,6 +74,12 @@ export function BoardAmendDialog({
   onCancel: () => void;
 }) {
   const [draft, setDraft] = React.useState<DraftLine>(() => amendDraftFrom(contribution));
+  // What the stock rows held before Buy was switched on, so switching it off restores the
+  // composition the planner had rather than an empty one they have to build again.
+  const stockBefore = React.useRef<Pick<
+    DraftLine,
+    'timely_spo_qty' | 'reserve' | 'borrow'
+  > | null>(null);
   // On a line an active decision covers, the reason it was decided for is already written and
   // is carried forward: it is the sentence that explains the composition in the box, and
   // making the planner retype it to re-save their own decision is how a mandatory field
@@ -79,10 +93,46 @@ export function BoardAmendDialog({
   );
   const balance = lineBalance(draft);
   const blockers = lineBlockers(draft);
+  // WHOLLY bought, which is what the switch means. A composition carrying stock AND a Buy
+  // is a revision frozen before AC-L5 - it renders in full, and `lineBlockers` is what says
+  // it cannot be saved that way.
+  const fromStockMinor =
+    balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
+  const buying = toMinor(draft.buy_qty) > 0 && fromStockMinor === 0;
   const needsReason = amendNeedsReason(contribution, draft);
   const canSave = blockers.length === 0 && (!needsReason || reason.trim().length > 0);
 
   const setBorrow = (borrow: DraftBorrow[]) => setDraft({ ...draft, borrow });
+
+  /** The whole line, one way or the other. Never a mix - see this component's docstring. */
+  const setBuying = (next: boolean) => {
+    if (next) {
+      stockBefore.current = {
+        timely_spo_qty: draft.timely_spo_qty,
+        reserve: draft.reserve,
+        borrow: draft.borrow,
+      };
+      setDraft({
+        ...draft,
+        timely_spo_qty: '0',
+        // The rows stay, at zero: they are where the locations are named, and a planner
+        // switching Buy off again should find their own composition, not a blank form.
+        reserve: draft.reserve.map((row) => ({ ...row, qty: '0' })),
+        borrow: [],
+        buy_qty: draft.open_qty,
+      });
+      return;
+    }
+    const restored = stockBefore.current;
+    stockBefore.current = null;
+    setDraft({
+      ...draft,
+      timely_spo_qty: restored?.timely_spo_qty ?? draft.timely_spo_qty,
+      reserve: restored?.reserve ?? draft.reserve,
+      borrow: restored?.borrow ?? draft.borrow,
+      buy_qty: '0',
+    });
+  };
 
   return (
     <Dialog open onOpenChange={(next) => !next && onCancel()}>
@@ -116,7 +166,9 @@ export function BoardAmendDialog({
           </Section>
 
           <Section label="Reserve">
-            {draft.reserve.length === 0 ? (
+            {buying ? (
+              <Muted>The whole line is being bought.</Muted>
+            ) : draft.reserve.length === 0 ? (
               <Muted>The sales order states no warehouse for this line.</Muted>
             ) : (
               <div className="space-y-2">
@@ -160,7 +212,9 @@ export function BoardAmendDialog({
 
           <Section label="Borrow">
             <div className="space-y-3">
-              {draft.borrow.length === 0 ? (
+              {buying ? (
+                <Muted>The whole line is being bought.</Muted>
+              ) : draft.borrow.length === 0 ? (
                 <Muted>Nothing is borrowed on this line.</Muted>
               ) : (
                 draft.borrow.map((row, index) => (
@@ -228,7 +282,7 @@ export function BoardAmendDialog({
                 ))
               )}
 
-              {candidates.length === 0 ? (
+              {buying ? null : candidates.length === 0 ? (
                 <Muted>No other location or project holds free stock of this item.</Muted>
               ) : (
                 <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
@@ -242,17 +296,64 @@ export function BoardAmendDialog({
           <Section label="Buy">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={draft.buy_qty}
-                  aria-label="Buy"
-                  onChange={(event) => setDraft({ ...draft, buy_qty: event.target.value })}
-                  className="h-8 w-28 tabular-nums"
+                <Switch
+                  id="board-buy-switch"
+                  aria-label="Buy the whole line"
+                  checked={buying}
+                  onCheckedChange={setBuying}
                 />
-                <span className="text-sm text-muted-foreground">To purchase</span>
+                <label htmlFor="board-buy-switch" className="text-sm text-muted-foreground">
+                  {buying ? `Buy the whole ${draft.open_qty}` : 'Buy the whole line'}
+                </label>
               </div>
+              {/* An order back is a Buy whose supply is ALREADY on order or already
+                  shipped (part 2 section 4b, captain 25 Aug), so the row purchasing gets
+                  carries verb ORDER BACK and may be linked to an SPO allocation as well as
+                  to a purchase order line. Offered only while the line is being bought:
+                  there is no row to mark otherwise. The document is optional - when CS
+                  names one, the auto-link walk tries it before any tier or date. */}
+              {buying && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Switch
+                      id="board-order-back-switch"
+                      aria-label="Order back"
+                      checked={draft.order_back}
+                      onCheckedChange={(next) =>
+                        setDraft({
+                          ...draft,
+                          order_back: next,
+                          cited_document: next ? draft.cited_document : '',
+                        })
+                      }
+                    />
+                    <label
+                      htmlFor="board-order-back-switch"
+                      className="text-sm text-muted-foreground"
+                    >
+                      Order back
+                    </label>
+                  </div>
+                  {draft.order_back && (
+                    <div className="space-y-1">
+                      <label
+                        className="block text-2xs uppercase tracking-wide text-muted-foreground"
+                        htmlFor="board-cited-document"
+                      >
+                        Document cited
+                      </label>
+                      <Input
+                        id="board-cited-document"
+                        value={draft.cited_document}
+                        placeholder="202604-S0083 or SPO-2026/08-0061"
+                        onChange={(event) =>
+                          setDraft({ ...draft, cited_document: event.target.value })
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               {/* The same field the per-line card carries (AC-B11): a Buy of a discontinued
                   product needs a reason, and `lineBlockers` shuts Save without one. */}
               {draft.is_discontinued && (

@@ -124,7 +124,11 @@ export interface OutstandingPlanningChangeBatch {
 
 export interface OutstandingPreview {
   doc_type: string;
-  /** false = the header is missing required columns; nothing can be applied. */
+  /**
+   * false = nothing can be applied. Two reasons: the header is missing required columns,
+   * or the file names an order whose demand class cannot be decided
+   * (`unclassified_documents`).
+   */
   ok: boolean;
   scope_documents: string[];
   counts: OutstandingCounts;
@@ -148,6 +152,13 @@ export interface OutstandingPreview {
    * import twice what it will.
    */
   shipping_order_rows?: number;
+  /**
+   * Sales orders in this file that no order type, customer market segment or agent class
+   * can classify (QP1). Non-empty REFUSES the whole file: a half-imported book disagrees
+   * with AutoCount, and a defaulted class is worse still because it is stable and no later
+   * upload surfaces it. The per-row list says which row and which debtor to fix.
+   */
+  unclassified_documents?: string[];
   /** Absent (not just `null`) on every Phase 1 response - Phase 2 wires the real preview. */
   planning_change_batch?: OutstandingPlanningChangeBatch | null;
 }

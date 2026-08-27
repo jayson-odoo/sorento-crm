@@ -41,6 +41,11 @@ const NUMBER_COL = 'w-[88px] min-w-[88px] max-w-[88px]';
  * meeting THIS line would leave it with (`available_after_need`), which is also what the
  * "After borrow" column shows until a quantity is typed over it.
  *
+ * A SAME-AGENT donor takes one more thing (AC-L6, section 1c): the agent whose other order
+ * is being drawn on is offered at ANY rank precisely because she can authorise it, so the
+ * dialog asks who did. Free text, required only on that donor, and folded into the reason
+ * stored beside the quantity - one field to read later, not two.
+ *
  * NOT a DataGrid, on the same carve-out `CellStockTable` documents: a fixed matrix of seven
  * named figures inside a dialog, with no column config, sort, resize or pagination to apply
  * to it. Its three obligations are met the same way - the table scrolls inside its own
@@ -69,13 +74,21 @@ export function BorrowAddDialog({
   );
   const [qty, setQty] = React.useState(openingQty(firstSelectable));
   const [reason, setReason] = React.useState('');
+  const [authorisation, setAuthorisation] = React.useState('');
 
   const selected =
     candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? firstSelectable;
   const trimmed = reason.trim();
+  const authorised = authorisation.trim();
+  const needsAuthorisation = Boolean(selected?.same_agent);
   const amount = Number.parseFloat(qty);
   const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
-  const valid = Boolean(selected) && !selected.over_cap && typed !== null && Boolean(trimmed);
+  const valid =
+    Boolean(selected) &&
+    !selected.over_cap &&
+    typed !== null &&
+    Boolean(trimmed) &&
+    (!needsAuthorisation || Boolean(authorised));
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
@@ -89,7 +102,7 @@ export function BorrowAddDialog({
           onSubmit={(event) => {
             event.preventDefault();
             if (!valid || !selected) return;
-            onAdd(selected, qty.trim(), trimmed);
+            onAdd(selected, qty.trim(), storedReason(selected, authorised, trimmed));
             onDone();
           }}
         >
@@ -163,6 +176,11 @@ export function BorrowAddDialog({
                                   onChange={() => {
                                     setSelectedKey(key);
                                     setQty(openingQty(candidate));
+                                    // The authorisation names ONE agent and belongs to the
+                                    // donor it was typed for. Carrying it onto the next
+                                    // donor would file somebody else's approval against an
+                                    // order they never agreed to give stock from.
+                                    setAuthorisation('');
                                   }}
                                 />
                                 <span className="min-w-0">
@@ -259,6 +277,21 @@ export function BorrowAddDialog({
             </div>
 
             <BorrowImpact candidate={selected} qty={typed} />
+
+            {needsAuthorisation && (
+              <div className="space-y-1.5">
+                <Label htmlFor={`borrow-authorisation-${lineNo}`}>
+                  {authorisationLabel(selected)} <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id={`borrow-authorisation-${lineNo}`}
+                  value={authorisation}
+                  onChange={(event) => setAuthorisation(event.target.value)}
+                  placeholder="When, and how"
+                  className="h-9"
+                />
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor={`borrow-reason-${lineNo}`}>
@@ -415,6 +448,29 @@ function openingQty(candidate: BorrowCandidate | undefined): string {
 
 function isNegative(value: string | null): boolean {
   return value !== null && Number(value) < 0;
+}
+
+/**
+ * The authorisation field's own label, naming the agent when the donor states one (AC-L6).
+ * "Authorised by agent JEREMY" is a person CS can point at; "Authorised" alone is not.
+ */
+function authorisationLabel(candidate: BorrowCandidate | undefined): string {
+  const agent = candidate?.donor_agent_code;
+  return agent ? `Authorised by agent ${agent}` : 'Authorised by the sales agent';
+}
+
+/**
+ * What is stored beside the quantity: the authorisation first, then the planner's own words.
+ * ONE field, because `so_line_allocations.reason` is one column and two half-sentences in two
+ * places is how a reason stops being readable.
+ */
+function storedReason(
+  candidate: BorrowCandidate,
+  authorised: string,
+  reason: string,
+): string {
+  if (!candidate.same_agent || !authorised) return reason;
+  return `${authorisationLabel(candidate)}: ${authorised}. ${reason}`;
 }
 
 /** "SO371334 line 2", the group-borrow donor's own identity - never a bare warehouse code,

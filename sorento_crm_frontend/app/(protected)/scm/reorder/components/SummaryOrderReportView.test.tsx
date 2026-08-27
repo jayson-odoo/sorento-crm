@@ -388,9 +388,12 @@ describe('SummaryOrderReportView - a legacy run states its channel breakdown is 
   it('renders "Unavailable" for every channel a legacy run cannot state, never zero', () => {
     renderView(state({ data: SUMMARY_ORDER_FIXTURES.legacyReport() }));
     const row = rowFor('B2155-NL-BLUE');
-    // Unclassified demand, Project Buy and Retail replenishment are all nulled on a
-    // legacy row - three separate "Unavailable" cells, not a zeroed figure.
-    expect(within(row).getAllByText('Unavailable')).toHaveLength(3);
+    // Project Buy and Retail replenishment are both nulled on a legacy row - two separate
+    // "Unavailable" cells, not a zeroed figure. Unclassified is not among them: the
+    // reading is rendered only where a run actually carries a figure for it (P4), and a
+    // legacy run carries none.
+    expect(within(row).getAllByText('Unavailable')).toHaveLength(2);
+    expect(within(row).queryByText('Unclass.')).not.toBeInTheDocument();
     // Project demand and Retail outstanding are ordinary SO totals, not a Stage-2
     // channel split, and stay stated on a legacy run.
     expect(row).toHaveTextContent('480');

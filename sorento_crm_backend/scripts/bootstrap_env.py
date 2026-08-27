@@ -162,8 +162,10 @@ def _fix_committed_v() -> None:
     ``app.services.scm.demand.COMMITTED_V_SQL`` - the single source of truth the demand
     service itself relies on - and lays it down with ``CREATE OR REPLACE``. That module
     is edited whenever the view changes, so this call always reflects the latest rule
-    with no migration bookkeeping required. Verified by asserting ``demand_origin``
-    (the newest rule) actually appears in the resulting view definition.
+    with no migration bookkeeping required. Verified by asserting the newest rule's
+    marker actually appears in the resulting view definition: ``ack_state`` (migration
+    428, the order-inquiry handshake; ``demand_origin`` was the marker until migration
+    426 dropped the sheet leg). Move the marker when the view gains a newer rule.
     """
     from sqlalchemy import text
 
@@ -177,12 +179,12 @@ def _fix_committed_v() -> None:
             "SELECT definition FROM pg_views WHERE schemaname = 'scm' "
             "AND viewname = 'committed_v'"
         )).scalar()
-    if not definition or "demand_origin" not in definition:
+    if not definition or "ack_state" not in definition:
         raise SystemExit(
-            "bootstrap: scm.committed_v fix did not take effect (no demand_origin rule "
+            "bootstrap: scm.committed_v fix did not take effect (no ack_state rule "
             "in the view definition)."
         )
-    log.info("scm.committed_v is current (demand_origin rule present)")
+    log.info("scm.committed_v is current (ack_state rule present)")
 
 
 def apply_migration_only_ddl() -> None:

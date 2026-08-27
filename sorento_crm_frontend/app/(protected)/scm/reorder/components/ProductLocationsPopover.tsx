@@ -21,8 +21,8 @@ import { useOrderSummaryLocations } from '../hooks/useSummaryOrder';
  *
  * Two rules the layout enforces:
  *
- * - **Demand is split by channel, supply is not.** Project, Retail and
- *     Unclassified are three demand columns; stock, incoming SPO, PO and the
+ * - **Demand is split by channel, supply is not.** Project and Retail
+ *     are two demand columns; stock, incoming SPO, PO and the
  *     reorder level are single shared facts of the product-location, printed once
  *     (AC-F07). Repeating them per channel would double the supply on screen.
  * - **The once-rounded product figure is stated beside the split**, so the
@@ -122,9 +122,9 @@ export function ProductLocationsPopover({
                   <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
                     <tr>
                       <th className="px-2 py-1.5 text-start font-medium">Location</th>
-                      {/* These three are the row's `_need` figures - the CONFIRMED-for-buy
+                      {/* These two are the row's `_need` figures - the confirmed-for-buy
                           / already-netted leg (same fields PlanLinesGrid's ungrouped grid
-                          labels "Project need" / "Retail need" / "Unclassified need"), NOT
+                          labels "Project need" / "Retail need"), NOT
                           a per-location split of a grouped row's channel columns (those read
                           `*_committed`, the channel's WHOLE open demand, and this endpoint
                           does not carry a location-level committed split at all - see
@@ -135,7 +135,7 @@ export function ProductLocationsPopover({
                           row's channel cell, and it is not. */}
                       <th
                         className="px-2 py-1.5 text-end font-medium"
-                        title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
+                        title="What CS asked for, less what is already on a PO or SPO. Firm: Retail netting never reduces it"
                       >
                         Project need
                       </th>
@@ -144,12 +144,6 @@ export function ProductLocationsPopover({
                         title="Retail-class need, after the normal netting of free supply"
                       >
                         Retail need
-                      </th>
-                      <th
-                        className="px-2 py-1.5 text-end font-medium"
-                        title="Demand whose sales order carries no demand class. Not in the actionable need"
-                      >
-                        Unclass. need
                       </th>
                       <th className="px-2 py-1.5 text-end font-medium">Stock</th>
                       <th className="px-2 py-1.5 text-end font-medium">SPO</th>
@@ -173,7 +167,6 @@ export function ProductLocationsPopover({
                         </td>
                         <Channel value={l.project_need} dp={decimalPlaces} />
                         <Channel value={l.retail_need} dp={decimalPlaces} />
-                        <Channel value={l.unclassified_need} dp={decimalPlaces} />
                         {/* Shared supply, once. It carries no channel dimension. */}
                         <td className="px-2 py-1.5 text-end tabular-nums">
                           {fmtQty(l.on_hand, decimalPlaces)}

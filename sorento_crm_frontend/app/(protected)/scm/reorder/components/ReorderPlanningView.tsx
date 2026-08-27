@@ -12,7 +12,6 @@ import {
   ClipboardList,
   FileSpreadsheet,
   History,
-  Info,
   Loader2,
   PlayCircle,
   RotateCcw,
@@ -32,7 +31,6 @@ import {
   runHistoryKey,
   useReorderRun,
   useTodayRun,
-  useSetAsideDemand,
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { useReorderPlan } from '../hooks/useReorderPlan';
@@ -152,7 +150,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
   // A property of the demand book, not of the run on screen, so it is read once here and
   // shown whichever run the page is looking at.
   const unlocated = useUnlocatedDemand();
-  const setAside = useSetAsideDemand();
 
   // Manual re-plan runs a live run then swaps the page to today's fresh snapshot.
   const manual = useReorderRun();
@@ -531,42 +528,6 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </div>
       ) : null}
 
-      {/* Project demand the Order Inquiry import never named. NOT in the plan, by the
-          user's own rule - the inquiry is the demand for the project side - and counted
-          here so a smaller-than-expected plan explains itself instead of looking like
-          lost data.
-
-          Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" implied the
-          orders the plan DOES count have one - 598 of 605 do not, they are retail/direct
-          sales-order lines the split never asked to have one. The predicate this reports
-          is order-level, not line-level: a project-class order the import never named. */}
-      {setAside.data && setAside.data.orders > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/5 px-3 py-2 text-sm">
-          <Info className="size-4 shrink-0 text-sky-600" aria-hidden />
-          <span className="text-muted-foreground">
-            <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(setAside.data.quantity)}
-            </span>{' '}
-            units across{' '}
-            <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(setAside.data.orders)}
-            </span>{' '}
-            project order{setAside.data.orders === 1 ? '' : 's'} the Order Inquiry import
-            never named, so this plan leaves them out.
-            {setAside.data.sample.length ? (
-              <>
-                {' '}
-                Largest:{' '}
-                <span className="font-medium text-foreground">
-                  {setAside.data.sample.map((x) => x.so_number).join(', ')}
-                </span>
-                .
-              </>
-            ) : null}
-          </span>
-        </div>
-      ) : null}
-
       {/* A newer plan is being built. Said alongside the plan on screen, not instead of it:
           the numbers below are still the last usable ones, and hiding them would leave the
           planner with nothing to work from while they wait. */}
@@ -631,6 +592,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         total={decisionProgress?.total ?? 0}
         cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
+        // Hidden (the captain, 27 Aug): an awaiting row is not demand, and the tile only asked why.
+        awaitingRows={0}
         undecidedFilterActive={decidedFilter === 'undecided'}
         onToggleUndecidedFilter={toggleUndecidedFilter}
       />

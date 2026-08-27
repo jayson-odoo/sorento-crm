@@ -516,6 +516,37 @@ describe('verdictFromPreview', () => {
     ).toBe(false);
   });
 
+  it('is invalid, with an ERROR naming the orders, when the class cannot be decided', () => {
+    // QP1: an order nothing can classify refuses the whole FILE, so it is an error and not
+    // a skipped row - the rest of the book does not go in without it, and a yellow warning
+    // beside a blocked upload is the panel lying about what happens next.
+    const result = verdictFromPreview(
+      preview({
+        ok: false,
+        unclassified_documents: ['SO394803', 'SO411133'],
+        row_problems: [
+          { row_number: 4, reason: 'SO394803 states no order type', value: 'SO394803' },
+        ],
+      }),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('2 sales orders carry no demand class');
+    expect(result.errors[0]).toContain('SO394803, SO411133');
+    expect(result.summary?.would_apply).toBe(0);
+  });
+
+  it('names ten refused orders and counts the rest, rather than printing the whole book', () => {
+    const many = Array.from({ length: 13 }, (_, i) => `SO${i + 1}`);
+
+    const result = verdictFromPreview(preview({ ok: false, unclassified_documents: many }));
+
+    expect(result.errors[0]).toContain('SO1, SO2');
+    expect(result.errors[0]).toContain('and 3 more');
+    expect(result.errors[0]).not.toContain('SO13');
+  });
+
   it('reports a skipped row as a warning, and counts it apart from the file-level notes', () => {
     const result = verdictFromPreview(
       preview({

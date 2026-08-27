@@ -109,6 +109,7 @@ vi.mock('../../../../scm/hooks/useSalesOrders', () => ({
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useResetSalesOrderPlanning: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateDoFromSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -119,6 +120,17 @@ const hooks = vi.hoisted(() => ({
   useBulkAnnotateSalesAgents: vi.fn(),
 }));
 vi.mock('../../hooks/useSalesAgents', () => hooks);
+
+// The Transfers tab renders the SAME grid the Transfers page does; that component has its
+// own tests, so here only the wiring (which agent it is pinned to) has to be proven.
+vi.mock(
+  '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel',
+  () => ({
+    StockTransfersPanel: (props: { salesAgentId?: string }) => (
+      <div data-testid="stock-transfers-panel" data-sales-agent={props.salesAgentId} />
+    ),
+  }),
+);
 
 import { SalesAgentDetail } from './SalesAgentDetail';
 import type { SalesAgent } from '../../types/salesAgent.types';
@@ -268,12 +280,25 @@ describe('SalesAgentDetail - the record header and its tabs', () => {
     expect(screen.getAllByText('Inactive').length).toBeGreaterThan(0);
   });
 
-  it('carries exactly two tabs, General first', () => {
+  it('shows the agent\'s stock transfers on their own tab, pinned to them (AC-E6)', () => {
+    withAgent(agent());
+    renderDetail();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Transfers' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+
+    const panel = screen.getByTestId('stock-transfers-panel');
+    expect(panel).toHaveAttribute('data-sales-agent', 'agent-1');
+  });
+
+  it('carries exactly three tabs, General first', () => {
     withAgent(agent());
     renderDetail();
 
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(tabs).toEqual(['General', 'Sales orders']);
+    expect(tabs).toEqual(['General', 'Sales orders', 'Transfers']);
   });
 
   it('renders every section, with an explicit empty state on the ones with nothing in them', () => {
@@ -322,6 +347,7 @@ describe('SalesAgentDetail - view and edit are the same layout', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       'General',
       'Sales orders',
+      'Transfers',
     ]);
   });
 

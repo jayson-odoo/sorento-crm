@@ -28,6 +28,52 @@ class SalesOrderLineInquiry(BaseModel):
     state: str
 
 
+class SalesOrderLineSupplyComponent(BaseModel):
+    """One piece of a line's supply, in the vocabulary the planning board reads
+    (`PLAN-scm-cs-planning-uat.md` section 2).
+
+    The COMPONENTS, never a sentence: the words ("Use shared stock 71 from BRW") are written
+    in one place, `project-sales/_shared/lib/supplyVocabulary.ts`, and a sentence composed
+    here would be a second implementation of the same vocabulary drifting against the board.
+
+    `rung` is what decides the words - never the warehouse code, which reads `BRW-BB` and
+    `BRW` as the same site when they are the agent's own location and the shared pool.
+    """
+
+    kind: str
+    qty: str
+    #: The warehouse this piece is drawn from, by CODE. `None` for a Buy, which is held
+    #: nowhere yet.
+    source_location: Optional[str] = None
+    #: `pool` / `group_take` / `group_borrow` / `cross_group_borrow` / `incoming` / `buy`.
+    #: `None` on a component frozen before the rung was recorded.
+    rung: Optional[str] = None
+    #: The sales order a borrow was taken FROM, when one was named. What tells a borrow from
+    #: another order apart from a borrow of free stock elsewhere.
+    donor_so_number: Optional[str] = None
+
+
+class SalesOrderLineLink(BaseModel):
+    """One link on the order inquiry row covering a sales order line (AC-I9).
+
+    A subset of `OrderInquiryLinkOut`: what a LINE's column needs to say where its Buy
+    sits, and nothing about who linked it or when, which the order inquiry screen owns.
+    Never an id on screen - the document number and the line label are what a person
+    reads, and `line_label` is absent rather than invented when the book numbered nothing.
+    """
+
+    #: `po` or `spo`. Only an ORDER BACK row ever carries an `spo` link (part 2 4b).
+    kind: str
+    document: Optional[str] = None
+    line_label: Optional[str] = None
+    qty: str
+    location: Optional[str] = None
+    expected_date: Optional[str] = None
+    #: The document arrives AFTER the row's own required date (AC-P3-7). Read here as well
+    #: as on the worklist, because "arrives late" has to say so wherever the link is shown.
+    late: bool = False
+
+
 class SalesOrderLine(BaseModel):
     id: str
     sku: str
@@ -71,6 +117,30 @@ class SalesOrderLine(BaseModel):
     #: active revision can still hold lines nobody has decided, and a header-level answer
     #: would report those as settled.
     decision_revision: Optional[int] = None
+    #: What was DECIDED for this line and what the engine had SUGGESTED, as components
+    #: (AC-D4). Both read off the active revision's snapshot for this line.
+    #:
+    #: `supply_decided` is `None` on a line no active revision covers - the same answer
+    #: `decision_revision` gives, for the same reason. `supply_proposed` is `None` for that
+    #: AND for a revision written before the proposal was frozen: "not recorded" and "the
+    #: engine suggested nothing" are different answers, and an empty list would claim the
+    #: second.
+    #:
+    #: An undecided line carries no suggestion here on purpose: the live ladder is the
+    #: planning board's read, and running it per line on a detail page of 300 lines would be
+    #: 300 engine walks for a column the board already answers.
+    supply_decided: Optional[List[SalesOrderLineSupplyComponent]] = None
+    supply_proposed: Optional[List[SalesOrderLineSupplyComponent]] = None
+    #: WHERE this line's Buy sits (AC-I9): every link on the order inquiry row covering
+    #: the line, PO or SPO, with the quantity each holds. Read off the SAME child table
+    #: (`projects.order_inquiry_links`) the order inquiry worklist's "Linked to" column
+    #: and the PO occupancy panel read, through the one reader, so the three surfaces
+    #: cannot answer differently.
+    #:
+    #: `[]` when a row covers the line and nothing has been linked yet; `None` when no row
+    #: covers it at all. The two are different answers - "nothing has been linked" against
+    #: "nobody was told about this line" - and the column prints each in its own words.
+    linked_to: Optional[List[SalesOrderLineLink]] = None
 
 
 class SalesOrder(BaseModel):
@@ -139,6 +209,10 @@ class SalesOrder(BaseModel):
     #: inquiries and nothing between them, so this is where an order says what has been
     #: done about it.
     order_inquiries: List[SalesOrderInquiry] = Field(default_factory=list)
+    #: The PENDING planning-change batch this order is in (AC-P3-1), when a re-uploaded
+    #: book moved one of its planned lines and nobody has applied the change yet. Present
+    #: on the LIST, which is where the Changed badge is; `None` on nearly every order.
+    planning_change_batch_id: Optional[str] = None
     created_at: str
 
 
@@ -254,6 +328,17 @@ class CreateDoResponse(BaseModel):
     do_number: str
 
 
+class ResetPlanningRequest(BaseModel):
+    """Also put the lines a planning-change upload moved back to before the first upload."""
+    rewind_book: bool = False
+
+
+class ResetPlanningResponse(BaseModel):
+    so_number: str
+    planned: bool
+    removed: dict[str, int]
+
+
 class SalesAgentOption(BaseModel):
     """One `sales_agents` row, for the Agent filter and the detail page's Agent select.
 
@@ -308,6 +393,48 @@ class PurchaseOrderLine(BaseModel):
     expected_date: Optional[str] = None
 
 
+class PurchaseOrderPlacement(BaseModel):
+    """One order-inquiry placement sitting on a purchase-order line (section 3.G, AC-G1).
+
+    Every field is a NAME. The inquiry by its number, the sales order by its document
+    number, the customer and the agent by the labels the order-inquiry worklist already
+    prints for them - a UUID on this panel would tell the buyer nothing they could act on.
+    """
+
+    #: `OI-000006`. Null only on a row raised before the numbering stamp existed.
+    inquiry_no: Optional[str] = None
+    #: The sales order this quantity is owed to - its AutoCount number where it has one.
+    so_number: Optional[str] = None
+    customer: Optional[str] = None
+    #: Who sold it, by person label, falling back to the agent code.
+    agent: Optional[str] = None
+    qty: float = 0.0
+    #: Where the demand needs it: `order_inquiry_rows.stock_location`.
+    needed_at: Optional[str] = None
+    #: True when `needed_at` is not the PO line's own location - the PO line says DC1 and
+    #: the demand is at BRW-BB. That difference IS the split instruction for AutoCount,
+    #: which is why it is a mark on the row rather than a filter that hides it.
+    location_differs: bool = False
+
+
+class PurchaseOrderLineAllocation(BaseModel):
+    """One purchase-order line's occupancy: the three figures, then who is on it (AC-G1)."""
+
+    #: Which line this belongs to, matched against `PurchaseOrderLine.id`.
+    line_id: str
+    sku: str
+    #: The PO LINE's own location, so the panel can say what the demand differs from.
+    warehouse_code: Optional[str] = None
+    #: What is still to ARRIVE on the line - the same rule `PurchaseOrderLine` prints.
+    outstanding: float = 0.0
+    #: The sum of every live order-inquiry link on this line.
+    allocated: float = 0.0
+    #: `outstanding - allocated`, floored at 0. A line promised more than it has left is
+    #: over-committed, which is a finding for the buyer, not a credit to spend twice.
+    free: float = 0.0
+    placements: List[PurchaseOrderPlacement] = Field(default_factory=list)
+
+
 class PurchaseOrder(BaseModel):
     id: str
     po_number: str
@@ -337,6 +464,14 @@ class PurchaseOrder(BaseModel):
     #: priced line. Blank on rows predating the book having more than one.
     currency: Optional[str] = None
     lines: List[PurchaseOrderLine]
+    #: What order inquiries have OCCUPIED on this order, one entry per line carrying at
+    #: least one placement (section 3.G). Empty on the LIST, which does not pay for the
+    #: placement query per row; populated on the single read, which is where the panel is.
+    allocations: List[PurchaseOrderLineAllocation] = Field(default_factory=list)
+    #: The sum of every placement across the whole order - on the list as well as the
+    #: single read (AC-G4). Declared here or `response_model` drops it, which is exactly
+    #: how a carefully built figure goes out missing.
+    allocated_qty: float = 0.0
     created_at: str
     # M4 Slice B - draft→confirm→GR flow
     is_on_order: bool = False

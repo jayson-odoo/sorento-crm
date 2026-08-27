@@ -11,15 +11,13 @@
  * captain's refined ask is ONE row per PRODUCT, with channel as COLUMNS rather than row
  * identity - "instead of 1 column SO, 1 column project, 1 column retail, it should be 2
  * columns". The column SET is dynamic, derived from `channelOf` across the run's own rows
- * (today: Project, Retail, and Unclassified only when a row actually carries it) - never
- * hardcoded to two.
+ * (today: Project and Retail) - never hardcoded, so a third would appear the day the read
+ * model grew one.
  *
  * Each channel column is that channel's OPEN demand for the product - `committed_v`'s split
- * (`project_committed` / `retail_committed` / `unclassified_committed`), summed across the
- * product's locations - NOT `project_need` (the confirmed-for-buy SUBSET of
- * `project_committed`, 5.3). The three channel figures sum to the product's SO
- * (`outstanding_sales`) total by construction, the same invariant `committed_v` guarantees
- * per location. The confirmed subset is carried alongside as `projectConfirmedQty`, shown
+ * (`project_committed` / `retail_committed`), summed across the product's locations. The
+ * channel figures sum to the product's SO (`outstanding_sales`) total by construction, the
+ * same invariant `committed_v` guarantees per location. The confirmed subset is carried alongside as `projectConfirmedQty`, shown
  * as an info aside on the Project cell rather than as the cell's own figure.
  *
  * This is a PRESENTATION grouping, not a new calculation: the per-warehouse rows stay the
@@ -53,56 +51,43 @@
 import type { PlanLine } from './planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
-export type PlanChannel = 'project' | 'retail' | 'unclassified';
+export type PlanChannel = 'project' | 'retail';
 
 export const PLAN_CHANNEL_LABEL: Record<PlanChannel, string> = {
   project: 'Project',
   retail: 'Retail',
-  unclassified: 'Unclassified',
 };
 
-/** Fixed rendering order - Project, then Retail, then Unclassified when it is present at
- *  all. Not the order channels happen to first appear in the data. */
-export const PLAN_CHANNEL_ORDER: PlanChannel[] = ['project', 'retail', 'unclassified'];
+/** Fixed rendering order - Project, then Retail. Not the order channels happen to first
+ *  appear in the data. There is no third: "nothing should be unclassified" (captain, P4). */
+export const PLAN_CHANNEL_ORDER: PlanChannel[] = ['project', 'retail'];
 
 /**
  * Warehouse `segment` -> channel (5.2/5.4: channel is a warehouse fact for THIS mapping,
- * `dealer` for the bare site and `project` for a suffixed bin). A missing segment is never
- * guessed at - it reads Unclassified, the same word the need/committed columns already use
- * for demand with no persisted class, rather than being folded into Retail.
+ * `dealer` for the bare site and `project` for a suffixed bin). A site with NO persisted
+ * segment reads Retail, which is the same call the engine itself makes -
+ * `reorder_run_service` nets on `COALESCE(w.segment, 'dealer') <> 'project'`, so a bin
+ * nobody has tagged is already planned as dealer stock. It used to read Unclassified here
+ * and nowhere else, which grew a third column for a warehouse merely missing a tag.
  *
  * Used only to derive WHICH channel columns the grid renders (`presentChannels` below) and
  * to keep the per-warehouse expand rows legible - never to decide a channel COLUMN's
  * quantity, which reads `committed_v`'s own product-location split instead (5.3).
  */
 export function channelOf(line: Pick<PlanLine, 'rec'>): PlanChannel {
-  const seg = line.rec.segment;
-  if (seg === 'project') return 'project';
-  if (seg === 'dealer') return 'retail';
-  return 'unclassified';
+  return line.rec.segment === 'project' ? 'project' : 'retail';
 }
 
 /**
- * Which channel columns the grid renders, dynamically, off the rows actually present -
- * never hardcoded to Project + Retail. Computed once over the WHOLE list passed in (not
- * per product), so every product row in a grouped grid shares the same column set rather
- * than a jagged table where one row grows a third column the others lack.
- *
- * Project and Retail are gated on a warehouse actually carrying that segment
- * (`channelOf`'s per-row read). Unclassified is gated differently, on purpose: a warehouse
- * with no persisted segment folds into Unclassified by `channelOf` even when it happens to
- * carry NO open demand there, and rendering the column for that alone is exactly what the
- * captain rejected - "I don't need unclassified, nothing should be unclassified by right"
- * (19 Aug). So Unclassified shows only when the run's `unclassified_committed` actually
- * sums to something nonzero somewhere on the page - a genuine gap to close, not a warehouse
- * that merely lacks a segment tag.
+ * Which channel columns the grid renders, dynamically, off the rows actually present.
+ * Computed once over the WHOLE list passed in (not per product), so every product row in a
+ * grouped grid shares the same column set rather than a jagged table where one row grows a
+ * column the others lack. Each channel is gated on a warehouse actually carrying that
+ * segment (`channelOf`'s per-row read).
  */
 export function presentChannels(lines: Pick<PlanLine, 'rec'>[]): PlanChannel[] {
   const present = new Set(lines.map(channelOf));
-  const hasUnclassifiedDemand = lines.some((l) => (l.rec.unclassified_committed ?? 0) !== 0);
-  return PLAN_CHANNEL_ORDER.filter((c) =>
-    c === 'unclassified' ? hasUnclassifiedDemand : present.has(c),
-  );
+  return PLAN_CHANNEL_ORDER.filter((c) => present.has(c));
 }
 
 /** The three product facts that can genuinely conflict across a group's members (see the
@@ -344,10 +329,8 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     outstanding_sales: sumOrNull(members.map((m) => m.rec.outstanding_sales)),
     project_need: sumOrNull(members.map((m) => m.rec.project_need)),
     retail_need: sumOrNull(members.map((m) => m.rec.retail_need)),
-    unclassified_need: sumOrNull(members.map((m) => m.rec.unclassified_need)),
     project_committed: sumOrNull(members.map((m) => m.rec.project_committed)),
     retail_committed: sumOrNull(members.map((m) => m.rec.retail_committed)),
-    unclassified_committed: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
     // The reorder-level columns (19-20 Aug follow-up): `master_reorder_level` /
     // `master_reorder_quantity` are PRODUCT-record facts (`products.reorder_level` /
     // `.reorder_quantity`), joined onto every one of this product's warehouse rows
@@ -382,7 +365,6 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
   const channelQty: Partial<Record<PlanChannel, number | null>> = {
     project: sumOrNull(members.map((m) => m.rec.project_committed)),
     retail: sumOrNull(members.map((m) => m.rec.retail_committed)),
-    unclassified: sumOrNull(members.map((m) => m.rec.unclassified_committed)),
   };
   // Supplier is a PRODUCT fact (captain's 20 Aug ruling, see file header): carry the
   // member's own supplier object through when every location agrees, and only fall back to

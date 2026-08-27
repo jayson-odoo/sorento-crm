@@ -1,6 +1,7 @@
 'use client';
 
-import { CheckCircle2, Wallet } from 'lucide-react';
+import Link from 'next/link';
+import { CheckCircle2, ClipboardCheck, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
@@ -156,6 +157,7 @@ export function ReorderStatTiles({
   total,
   cashCommitted,
   cashTotal,
+  awaitingRows = 0,
   undecidedFilterActive = false,
   onToggleUndecidedFilter,
 }: {
@@ -168,6 +170,13 @@ export function ReorderStatTiles({
   /** What EVERY suggestion would cost if every one of them were accepted as offered - the
    *  existing cash-impact figure, unrelated to what has actually been decided. */
   cashTotal: number;
+  /**
+   * Order inquiry rows purchasing has not acknowledged yet (`PLAN-scm-oi-handshake.md`,
+   * AC-H10). The plan counts acknowledged rows ONLY, so without this the work sitting in
+   * front of purchasing is invisible on the screen that decides what to buy. A count and
+   * a way in, never a sentence: pressing it opens that list already narrowed to them.
+   */
+  awaitingRows?: number;
   /** Whether the grid is currently narrowed to undecided lines by the Decisions tile. */
   undecidedFilterActive?: boolean;
   onToggleUndecidedFilter?: () => void;
@@ -188,6 +197,22 @@ export function ReorderStatTiles({
         iconClass="bg-scm-incoming-soft text-scm-incoming"
       />
       <Tile label="Cash if all accepted" value={fmtMoney(cashTotal)} icon={Wallet} />
+      {/* Only when there IS something waiting: a tile reading 0 is a fourth thing to read
+          past on the days the handshake is clear. */}
+      {awaitingRows > 0 ? (
+        <Link
+          href="/project-sales/order-inquiries?ack=awaiting"
+          className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <Tile
+            label="Awaiting acknowledgement"
+            value={fmtInt(awaitingRows)}
+            icon={ClipboardCheck}
+            valueClass="text-amber-600"
+            iconClass="bg-amber-100 text-amber-700"
+          />
+        </Link>
+      ) : null}
     </div>
   );
 }

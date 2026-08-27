@@ -330,7 +330,7 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
   // Wording note (live diagnosis, 20 Aug): "waiting on an Order Inquiry" used to imply the
   // orders the plan DOES count have one - 598 of 605 do not. The predicate is order-level:
   // a project-class order the Order Inquiry import never named.
-  it('says how much project demand the Order Inquiry import never named', () => {
+  it('no longer reports the project demand the Order Inquiry import never named (the captain, 27 Aug)', () => {
     stubToday(todayRun());
     useSetAsideDemand.mockReturnValue({
       data: {
@@ -343,10 +343,8 @@ describe('ReorderPlanningView - demand the plan could not net', () => {
     });
     renderView();
 
-    expect(screen.getByText(/the Order Inquiry import never named/i)).toBeInTheDocument();
-    expect(screen.queryByText(/waiting on an Order Inquiry/i)).not.toBeInTheDocument();
-    expect(screen.getByText('480')).toBeInTheDocument();
-    expect(screen.getByText('SO26-0101')).toBeInTheDocument();
+    expect(screen.queryByText(/the Order Inquiry import never named/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('SO26-0101')).not.toBeInTheDocument();
   });
 
   it('says nothing when every project order is named by the inquiry', () => {

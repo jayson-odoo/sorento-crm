@@ -83,12 +83,11 @@ function line(overrides: Partial<SupplyLine> = {}): SupplyLine {
     components: [
       {
         kind: 'reserve',
-        qty: '200',
+        qty: '600',
         reason: 'Free stock at BRW-BB covers the need by the delivery date.',
         source_location: 'BRW-BB',
         source_warehouse_id: WH_BRW,
       },
-      { kind: 'buy', qty: '400', reason: 'Remaining uncovered need.' },
     ],
     timely_spo: [],
     advisory_spo: [],
@@ -129,12 +128,11 @@ const CONFIRMED = proposal({
         components: [
           {
             kind: 'reserve',
-            qty: '200',
+            qty: '600',
             reason: 'Free stock at BRW-BB covers the need by the delivery date.',
             source_location: 'BRW-BB',
             source_warehouse_id: WH_BRW,
           },
-          { kind: 'buy', qty: '400', reason: 'Remaining uncovered need.' },
         ],
       },
     }),
@@ -339,7 +337,7 @@ describe('SupplyCompositionSection', () => {
     // Once on the card it belongs to, once at the foot beside the Confirm it blocks.
     expect(
       await screen.findAllByText(
-        'Line 1, CB6633: the components are short of the open quantity by 100.',
+        'Line 1, CB6633: the components are over the open quantity by 300.',
       ),
     ).toHaveLength(2);
     expect(confirmButton()).toBeDisabled();
@@ -434,9 +432,9 @@ describe('SupplyCompositionSection', () => {
         {
           project_line_id: 'd4000000-0000-4000-8000-000000000001',
           timely_spo_qty: '0',
-          reserve: [{ warehouse_id: WH_BRW, qty: '200' }],
+          reserve: [{ warehouse_id: WH_BRW, qty: '600' }],
           borrow: [],
-          buy_qty: '400',
+          buy_qty: '0',
           buy_reason: null,
         },
       ],
@@ -468,7 +466,7 @@ describe('SupplyCompositionSection', () => {
         {
           line_no: 1,
           item_code: 'CB6633',
-          reason: 'Only 25 of the 200 reserved units are still free at BRW-BB.',
+          reason: 'Only 25 of the 600 reserved units are still free at BRW-BB.',
         },
         {
           line_no: 2,
@@ -491,7 +489,7 @@ describe('SupplyCompositionSection', () => {
     expect(await screen.findByText('Nothing was written')).toBeInTheDocument();
     expect(screen.getByText('Line 1, CB6633:')).toBeInTheDocument();
     expect(
-      screen.getByText('Only 25 of the 200 reserved units are still free at BRW-BB.'),
+      screen.getByText('Only 25 of the 600 reserved units are still free at BRW-BB.'),
     ).toBeInTheDocument();
     expect(screen.getByText('Line 2, CB2201:')).toBeInTheDocument();
     // The message goes to the toast; the list belongs beside the lines.

@@ -6,6 +6,7 @@ the plan itself proposed is never presented as something already ordered.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 
@@ -25,7 +26,7 @@ def _u() -> str:
     return str(uuid.uuid4())
 
 
-def _world(db, company_id=None):
+def _world(db, company_id=None, inputs=None):
     from app.models.product import Product, ProductCategory, UnitOfMeasure
     from tests._pg_fixture import unique_code
 
@@ -77,12 +78,16 @@ def _world(db, company_id=None):
         + ", created_at) VALUES (:id, 'completed', false"
         + (", :co" if company_id else "")
         + ", now())"), {"id": run_id, **({"co": company_id} if company_id else {})})
+    # `inputs` carries the frozen channel split the P8 filter reads. None reproduces a run
+    # that states neither figure - a legacy one - which must keep its receipts.
     db.execute(text(
         "INSERT INTO scm.reorder_recommendation "
-        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status"
-        + (", company_id) VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed', :co)" if company_id
-           else ") VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed')")),
+        "(id, run_id, product_id, warehouse_id, rec_type, rounded_qty, status, inputs"
+        + (", company_id) VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed', "
+           "CAST(:inp AS jsonb), :co)" if company_id
+           else ") VALUES (:id, :r, :p, :w, 'buy', 10, 'proposed', CAST(:inp AS jsonb))")),
         {"id": _u(), "r": run_id, "p": pid, "w": wid,
+         "inp": json.dumps(inputs) if inputs is not None else None,
          **({"co": company_id} if company_id else {})})
     db.flush()
     return {"run_id": run_id, "product_id": pid, "warehouse_id": wid}
@@ -128,3 +133,53 @@ def test_the_endpoint_serves_it_and_rbac_holds(scm_app):
     with TestClient(app) as c:
         denied = c.get(f"/api/v1/scm/reorder-runs/{w['run_id']}/po-book")
     assert denied.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# P8: a project row's purchase order is consumed by the Order Inquiry, not here
+# --------------------------------------------------------------------------- #
+
+def test_a_project_only_cell_serves_no_receipts():
+    """`PLAN-scm-purchasing-uat-journey.md` P8, from the captain's own question: "why does
+    reorder planning consider outstanding PO again when the OI already links to it".
+
+    A raised inquiry row links to the PO line and the plan's Project figure drops by exactly
+    that much. Offering the same PO here as well is the same units twice, and the buyer
+    handles them twice - so a cell whose demand is ALL project is absent from the map, which
+    is what removes "Use PO" from the row.
+    """
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, inputs={"project_committed": 90, "retail_committed": 0})
+
+        out = po_book_service.po_book_for_run(db, w["run_id"])
+
+        assert f"{w['product_id']}:{w['warehouse_id']}" not in out["po_book"]
+
+
+def test_a_cell_carrying_BOTH_channels_keeps_its_receipts():
+    """Entirely project is the test, not "any project".
+
+    A mixed cell has a retail need that nothing else nets against a purchase order, and
+    hiding the receipts would leave that half of the row buying what is already ordered.
+    """
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, inputs={"project_committed": 90, "retail_committed": 5})
+
+        out = po_book_service.po_book_for_run(db, w["run_id"])
+
+        assert sum(r["remaining"]
+                   for r in out["po_book"][f"{w['product_id']}:{w['warehouse_id']}"]) == 564.0
+
+
+def test_a_run_frozen_before_the_channel_split_keeps_its_receipts():
+    """A legacy run states neither figure, so it is not project-only and nothing changes for
+    it - the filter must not read "no answer" as "all project"."""
+    from tests._pg_fixture import pg_session
+    with pg_session() as db:
+        w = _world(db, inputs={"on_hand": 4})
+
+        out = po_book_service.po_book_for_run(db, w["run_id"])
+
+        assert f"{w['product_id']}:{w['warehouse_id']}" in out["po_book"]

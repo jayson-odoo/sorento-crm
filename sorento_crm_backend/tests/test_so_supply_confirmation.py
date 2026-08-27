@@ -42,7 +42,11 @@ MARKER = "zzt-confirm"
 BASE = "/api/v1/project-sales"
 VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
-REQUIRED_DATE = date(2027, 3, 1)
+#: Inside the ATP reserve window, and RELATIVE so it stays inside it as the calendar moves.
+#: Ladder v3 buys a line due beyond `today + lead time + 14` whole and walks no other rung
+#: (section 1b rung 0), so a fixed 2027 date silently turned every case in this file into a
+#: Buy the moment the default 90-day lead time reached it.
+REQUIRED_DATE = date.today() + timedelta(days=30)
 
 
 def _uid() -> str:
@@ -437,11 +441,15 @@ def test_confirming_a_balanced_multi_line_so_writes_one_active_decision_with_gro
     assert {a.so_line_id for a in allocations} == {line1.id, line2.id}
 
 
-def test_a_composition_spanning_pool_reserve_and_buy_still_names_one_location(api):
+def test_a_bought_line_names_its_own_location_on_the_order_row_and_only_that_one(api):
     """AC-H5: the ORDER row is the line's OWN fulfilment location, never a join of every
-    warehouse the composition touched. A composition mixing a pool Reserve with a Buy
-    residual used to stamp `"<own> + <pool>"` on the line - unreadable by purchasing, and
-    unable to ever match a borrow-shortfall row netted by `(item_code, stock_location)`.
+    warehouse the composition touched. It used to stamp `"<own> + <pool>"` on the line -
+    unreadable by purchasing, and unable to ever match a borrow-shortfall row netted by
+    `(item_code, stock_location)`.
+
+    The pool holds 30 against the line's 50, so the whole-line rule (AC-L5) buys the whole
+    50 and the pool is not drawn on at all - which is exactly the composition that used to
+    produce the joined location.
     """
     client, world = api
     db = world.db
@@ -456,11 +464,7 @@ def test_a_composition_spanning_pool_reserve_and_buy_still_names_one_location(ap
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={
             "lines": [
-                _line_payload(
-                    line.id,
-                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
-                    buy_qty="20",
-                )
+                _line_payload(line.id, buy_qty="50")
             ]
         },
     )
@@ -580,11 +584,7 @@ def test_reconfirming_supersedes_the_active_decision_and_increments_the_revision
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={
             "lines": [
-                _line_payload(
-                    line.id,
-                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
-                    buy_qty="20",
-                )
+                _line_payload(line.id, buy_qty="50")
             ]
         },
     )
@@ -977,14 +977,17 @@ def test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requeste
     ), "no requested-state claim should ever exist on the confirmation path"
 
 
-def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_donor(api):
-    """PLAN 13.11. The captain: "when borrowed, does it / should it trigger an order back
-    via order inquiries? ... or we should order back only if the available quantity of the
-    borrowed location is negative?"
+def test_a_borrow_from_another_group_raises_an_order_back_for_the_whole_take(api):
+    """LADDER V4, ruled 26 August 2026 (`PLAN-scm-cs-planning-uat.md` section 1d): "a
+    borrow from another `-xx` group or from another order raises an ORDER BACK row against
+    the donor".
 
-    Only then. The donor here holds 100 and the book has already sold 90 of it, so its
-    availability is 10 and a borrow of 20 opens a hole of 10 - and purchasing is told about
-    the 10, at the DONOR's location, not the 20 that was taken.
+    For the WHOLE quantity taken, and no longer only where the donor's own availability
+    went negative. That older rule (PLAN 13.11) was right while a warehouse's own reading
+    decided what it could lend; under v4 rung 4 borrows only within the donor GROUP's own
+    net, so no borrow the engine proposes can push a donor below zero and the negativity
+    test would raise nothing at all, ever. What is left to record is the fact itself: the
+    donor lent 20 and is owed 20 back, at the DONOR's location.
     """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
@@ -1032,19 +1035,24 @@ def test_a_borrow_that_leaves_the_donor_short_raises_an_order_inquiry_for_the_do
     )
     assert len(rows) == 1
     row = rows[0]
-    assert str(row.qty) in ("10", "10.0000")
+    assert str(row.qty) in ("20", "20.0000")
     assert row.stock_location == donor_wh.warehouse_code
     assert row.state == "raised"
     assert row.so_line_id == line.id
-    # The sentence purchasing reads: what was taken, for whom, and who it left short.
+    # The sentence purchasing reads: who lent what, and to whom.
     assert "20" in row.note and donor_wh.warehouse_code in row.note
-    assert "short by 10" in row.note
+    assert "lent 20" in row.note
     assert order.provisional_ref in row.note
 
 
-def test_a_borrow_a_donor_can_afford_raises_nothing(api):
-    """A donor whose availability stays at or above zero needs nothing back. Borrowing from
-    them is a plain transfer, and raising a buy for it would order stock nobody is short of.
+def test_a_donor_that_can_easily_afford_the_borrow_is_still_owed_it_back(api):
+    """The other half of the 26 August ruling, and the one that changed direction.
+
+    This donor holds 100 with nothing sold against it, so under PLAN 13.11 the borrow left
+    no hole and raised nothing. Under ladder v4 what is recorded is not a hole, it is a
+    DEBT: another ownership group's 20 units are now on this order, and the row against the
+    donor is how anybody ever learns that. A pool draw still raises nothing (AC-L13) -
+    the pool is shared and nobody is owed it back.
     """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
@@ -1078,13 +1086,15 @@ def test_a_borrow_a_donor_can_afford_raises_nothing(api):
         },
     )
     assert response.status_code == 200, response.text
-    assert response.json()["inquiry_rows_created"] == 0
-    assert (
+    assert response.json()["inquiry_rows_created"] == 1
+    rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
-        .count()
-        == 0
+        .all()
     )
+    assert len(rows) == 1
+    assert str(rows[0].qty) in ("20", "20.0000")
+    assert rows[0].stock_location == donor_wh.warehouse_code
 
 
 def test_re_confirming_the_same_borrow_does_not_stack_a_second_shortfall_row(api):
@@ -1448,7 +1458,7 @@ def test_a_pool_reserve_asking_more_than_the_pools_available_position_is_refused
     oversell case this test used to pin (captain, 19 August 2026, "if available quantity is
     negative ... we must have an order back") can no longer occur through this rung -
     ladder v2's `group_borrow` (see `test_a_group_borrow_raises_its_own_order_back` in
-    `tests/scm/test_project_supply_service_ladder_v2.py`) is where an order-back now comes
+    `tests/scm/test_project_supply_service_ladder.py`) is where an order-back now comes
     from instead.
 
     The pool holds 100 with 90 of it already owed to its own book (ranked behind our line),
@@ -1556,15 +1566,54 @@ def test_a_pool_reserve_the_pool_can_afford_raises_nothing(api):
     )
 
 
-def test_an_own_location_reserve_is_refused_ladder_v2_removed_that_rung(api):
-    """Ladder v2, section E rule 7 (`PLAN-demo-followups-19aug-ladder-v2.md`): "the
-    own-location Reserve rung is REMOVED" - stock sitting at a line's own location is
-    committed to whichever customer it is queued for, and the only way another line
-    reaches it is a group borrow, with an order-back. A Reserve submission naming the
-    line's OWN warehouse is refused outright, never silently accepted."""
+def test_an_own_location_reserve_is_confirmed_ladder_v3_gave_that_rung_back(api):
+    """Ladder v3, section 1b rung 2 (the captain, 25 August 2026): "consider the group
+    location first (only available quantity)" - and the line's own location is a location of
+    its group. A line standing on 20 free units of its own reserves them, where v2's rule 7
+    refused the submission and sent purchasing to buy stock the business already held."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    proposal = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert proposal.status_code == 200, proposal.text
+    proposed = proposal.json()["lines"][0]["components"]
+    assert [(c["kind"], c["qty"], c["rung"]) for c in proposed] == [
+        ("reserve", "20", "group_take")
+    ]
+    assert proposed[0]["source_location"] == world.own_wh.warehouse_code
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "20"}],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_an_own_location_reserve_beyond_what_the_queue_ahead_leaves_is_refused(api):
+    """The other half of rung 2: the own location is capped at what the queue ranked AHEAD
+    of this line leaves it, not at the raw pile. 20 on hand with an earlier order owing all
+    20 leaves nothing, so a Reserve naming the own location is refused by quantity - the
+    location is allowed, the stock is not."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(db, theirs, world.product, world.own_wh, qty_ordered="20",
+               required_date=REQUIRED_DATE - timedelta(days=10))
+
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
@@ -1582,7 +1631,7 @@ def test_an_own_location_reserve_is_refused_ladder_v2_removed_that_rung(api):
             ]
         },
     )
-    assert response.status_code == 422, response.text
+    assert response.status_code in (409, 422), response.text
     failing = response.json()["failing_lines"]
     assert failing[0]["line_no"] == 20
     assert world.own_wh.warehouse_code in failing[0]["reason"]
@@ -1651,12 +1700,16 @@ def test_a_pool_reserve_across_two_lines_of_one_confirmation_shares_the_pools_av
 # --------------------------------------------------- the donor's availability nets holds
 
 
-def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api):
-    """F4(a). A confirmed borrow writes a hold that the donor's `on hand - SO + SPO`
-    knows nothing about (a borrow is an allocation, not a sales-order line at the donor),
-    so a second borrower judged on the triple alone sees stock the first one has already
-    taken. Donor: 100 on hand, 60 sold on its own book, so 40 available. Order B borrows
-    30 (fine, 10 left). Order A then borrows 30: the hole is 20, not nothing."""
+def test_two_borrowers_of_one_donor_each_owe_back_what_they_took(api):
+    """F4(a), re-expressed for ladder v4 (26 August 2026).
+
+    It used to test that the SECOND borrower's hole counted the first one's hold, because
+    the donor's `on hand - SO + SPO` cannot see an allocation and the two would otherwise
+    have been offered the same stock twice. The order back is no longer a hole, so there is
+    nothing to net between them: each order took 30 from another group and each owes 30
+    back. What stops the two being promised the same stock is the borrow check itself
+    (`_check_borrow`, free stock net of holds), which is where that guard belongs.
+    """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
 
     client, world = api
@@ -1699,7 +1752,7 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
 
     first = borrow(order_b, line_b)
     assert first.status_code == 200, first.text
-    assert first.json()["inquiry_rows_created"] == 0, "40 available, 30 taken: no hole"
+    assert first.json()["inquiry_rows_created"] == 1
 
     second = borrow(order_a, line_a)
     assert second.status_code == 200, second.text
@@ -1708,12 +1761,11 @@ def test_a_donor_hole_counts_what_other_confirmed_borrows_already_hold_there(api
     rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.verb == IV_BORROW_SHORTFALL)
+        .order_by(OrderInquiryRow.created_at.asc())
         .all()
     )
-    assert len(rows) == 1
-    assert rows[0].so_line_id == line_a.id
-    assert str(rows[0].qty) in ("20", "20.0000")
-    assert "short by 20" in rows[0].note
+    assert {row.so_line_id for row in rows} == {line_a.id, line_b.id}
+    assert [str(row.qty) for row in rows] == ["30.0000", "30.0000"]
 
 
 def test_a_dealer_hot_selling_line_reserving_the_pool_still_opens_no_hole_when_it_fits(api):
@@ -1794,10 +1846,9 @@ def test_a_dealer_hot_selling_line_may_not_borrow_its_own_location_as_free_stock
 
 
 def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(api):
-    """F5. Revision 1 opens a hole of 10 at the donor and purchasing actions it. A re-confirm
-    of the same hole raises nothing new; a re-confirm that widens the hole to 15 raises only
-    the 5 still outstanding - the same rule the ORDER rows already follow, because placed
-    supply is in the ledger and this service does not get to ask for it twice."""
+    """F5. Revision 1 owes the donor 25 back and purchasing actions it; a re-confirm of the
+    same borrow raises nothing new - the same rule the ORDER rows already follow, because
+    placed supply is in the ledger and this service does not get to ask for it twice."""
     from app.models.project_so import (
         INQUIRY_ACTIONED,
         IV_BORROW_SHORTFALL,
@@ -1817,7 +1868,10 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
     line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
     db.commit()
 
-    def confirm(borrow_qty, buy_qty):
+    def confirm():
+        """The whole line, borrowed (AC-L5: a line is wholly from stock or wholly bought).
+        The HOLE it opens is what changes between revisions, because the donor's own book
+        changes underneath it."""
         return client.post(
             f"{BASE}/sales-orders/{order.id}/confirm",
             json={
@@ -1828,11 +1882,10 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
                             {
                                 "source": "other_location",
                                 "warehouse_id": donor_wh.id,
-                                "qty": borrow_qty,
+                                "qty": "25",
                                 "reason": "Their hand-over is in December.",
                             }
                         ],
-                        buy_qty=buy_qty,
                     )
                 ]
             },
@@ -1846,25 +1899,26 @@ def test_a_shortfall_purchasing_already_placed_is_netted_off_the_next_revision(a
             .all()
         )
 
-    # Revision 1: 10 available, 20 borrowed, hole of 10. Purchasing places it.
-    assert confirm("20", "5").status_code == 200
+    # Revision 1: 25 borrowed from another group, so 25 is owed back. Purchasing places it.
+    assert confirm().status_code == 200
     rows = shortfall_rows()
-    assert len(rows) == 1 and str(rows[0].qty) in ("10", "10.0000")
+    assert len(rows) == 1 and str(rows[0].qty) in ("25", "25.0000")
     rows[0].state = INQUIRY_ACTIONED
     db.commit()
 
-    # Revision 2, the same hole: nothing outstanding, so nothing new.
-    assert confirm("20", "5").status_code == 200
+    # Revision 2, the same borrow: nothing outstanding, so nothing new.
+    assert confirm().status_code == 200
     db.expire_all()
     rows = shortfall_rows()
     assert [row.state for row in rows] == [INQUIRY_ACTIONED]
 
-    # Revision 3 widens the hole to 15: only the 5 not yet placed is raised.
-    assert confirm("25", "0").status_code == 200
+    # And the donor's own book growing underneath it changes nothing, which is the ladder-v4
+    # part: what is owed back is what was TAKEN, so it moves only when the borrow moves.
+    _core_line(db, theirs, world.product, donor_wh, qty_ordered="5")
+    db.commit()
+    assert confirm().status_code == 200
     db.expire_all()
-    rows = shortfall_rows()
-    assert [row.state for row in rows] == [INQUIRY_ACTIONED, "raised"]
-    assert str(rows[1].qty) in ("5", "5.0000")
+    assert [row.state for row in shortfall_rows()] == [INQUIRY_ACTIONED]
 
 
 # ------------------------------------------------------- carried holds (defect A)
@@ -1929,16 +1983,16 @@ def test_re_confirming_an_unchanged_reserve_survives_a_rival_taking_the_rest_of_
 
 
 def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_in_the_refusal(api):
-    """(b) Revision 1 holds Reserve 10 of an open qty of 12 (the other 2 bought). The
-    location then has only 1 unit free for anyone beyond this order's own carried 10.
-    Asking for 12 (an increase of 2) is refused - but only the 2 is checked and named, not
-    the 12 the order is resubmitting."""
+    """(b) Revision 1 holds Reserve 10 of an open qty of 10. The customer then orders 2
+    more, and the location has only 1 unit free for anyone beyond this order's own carried
+    10. Asking for 12 (an increase of 2) is refused - but only the 2 is checked and named,
+    not the 12 the order is resubmitting."""
     client, world = api
     db = world.db
     stock = _stock(db, world.product, world.pool_wh, on_hand=10)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="12")
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
 
@@ -1949,15 +2003,15 @@ def test_re_confirming_a_larger_reserve_only_the_increase_competes_and_is_named_
                 _line_payload(
                     line.id,
                     reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}],
-                    buy_qty="2",
                 )
             ]
         },
     )
     assert first.status_code == 200, first.text
 
-    # Only 1 unit is free beyond this order's own carried 10 - not enough for the 2-unit
-    # increase.
+    # The customer orders 2 more, and only 1 unit is free beyond this order's own carried
+    # 10 - not enough for the 2-unit increase.
+    core_line.qty_ordered = Decimal("12")
     stock.quantity_reserved = 9
     db.commit()
 
@@ -2037,3 +2091,340 @@ def test_re_confirming_the_reserve_at_a_different_location_competes_fully(api):
         .all()
     )
     assert len(decisions) == 1 and decisions[0].revision_no == 1  # nothing written
+
+
+# ------------------------------------------ the whole-line rule, extended to Amend (AC-L5)
+
+
+def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_amend(api):
+    """AC-L5, the captain 25 August 2026: "a line is either wholly covered from stock (own
+    group, pools, borrow, incoming in any mix) or wholly Buy".
+
+    The engine has refused to PROPOSE such a mix since ladder v2's rule 6, but a person could
+    still hand-compose one in Amend, and half a line bought while the other half is reserved
+    is exactly the composition purchasing cannot act on: the order inquiry asks for 15 of a
+    line the customer owes 20 of, at a location holding the other 5, and nobody can tell from
+    the row whether that is a partial buy or a mistake.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.pool_wh.id, "qty": "5"}],
+                    "buy_qty": "15",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    failing = response.json()["failing_lines"]
+    assert failing[0]["line_no"] == 10
+    assert failing[0]["reason"] == (
+        "A line is either met wholly from stock or wholly bought. This one mixes 5 from "
+        "stock with a Buy of 15: take the whole 20 from stock, or buy the whole 20."
+    )
+
+
+def test_a_line_wholly_from_stock_and_a_line_wholly_bought_both_confirm(api):
+    """The other side of AC-L5: the rule refuses the MIX, not either pure composition."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    stocked = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    bought = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="7")
+    stocked_line = _project_line(
+        db, order, line_no=10, product=world.product, core_line=stocked
+    )
+    bought_line = _project_line(
+        db, order, line_no=20, product=world.product, core_line=bought
+    )
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(stocked_line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.pool_wh.id, "qty": "20"}],
+                    "buy_qty": "0",
+                },
+                {
+                    "project_line_id": str(bought_line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "7",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
+# ------------------------------------------------- AC-D1: what the engine had said
+
+
+def _active_snapshots(db, order_id) -> list:
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order_id,
+            SOSupplyDecision.state == "active",
+        )
+        .first()
+    )
+    return list(decision.line_snapshots or [])
+
+
+def _shape(components) -> list:
+    """A composition reduced to what the two sides are compared on: what, how much,
+    from where, off which rung. The sentences beside them are written by two different
+    rules (the engine's fragment, the confirmation's own) and are not the comparison."""
+    return [
+        (c.get("kind"), c.get("qty"), c.get("source_location"), c.get("rung"))
+        for c in components or []
+    ]
+
+
+def test_confirming_an_untouched_line_freezes_a_proposal_equal_to_what_was_decided(api):
+    """AC-D1: the snapshot carries the engine's own composition beside the decided one.
+
+    Taken as it stood, the two say the same thing - which is exactly what the board's
+    decision strip has to be able to show as "Suggested 20, Decided 20" rather than
+    inferring agreement from the absence of an amendment.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "20"}]
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+    assert _shape(snapshot["proposed_components"]) == _shape(snapshot["components"])
+
+
+def test_confirming_an_amended_line_freezes_both_sides_and_they_differ(api):
+    """AC-D1: the whole point of the key. The engine offered the line's own stock and the
+    planner bought it instead; without the proposal frozen beside the decision, the board
+    can only ever show what was decided and "Suggested" is unanswerable a day later."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "20",
+                    "amend_reason": "Site wants new stock, not the units held here.",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [("buy", "20", None, None)]
+    assert _shape(snapshot["proposed_components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+
+
+def test_a_line_the_engine_cannot_plan_freezes_an_empty_proposal_not_a_missing_one(api):
+    """A line beyond its reserve window with nothing incoming is a whole-line Buy, and a
+    line the ladder never walks proposes an empty list - never an absent key, which is the
+    one thing the board reads as "this decision predates the field"."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db,
+        core_so,
+        world.product,
+        world.own_wh,
+        qty_ordered="9",
+        required_date=date.today() + timedelta(days=900),
+    )
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="9")]},
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert "proposed_components" in snapshot
+    assert _shape(snapshot["proposed_components"]) == [("buy", "9", None, "buy")]
+
+
+def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_in(api):
+    """The pool ledger is drawn down as the proposal walk goes, so a walk in PAYLOAD order
+    would freeze a different suggestion for the same board depending on which line the client
+    happened to send first. It walks LINE order, which is the order `proposal_for` walks and
+    therefore the order the planner was actually shown."""
+    client, world = api
+    db = world.db
+    # 30 in the pool against two lines wanting 20 each: whoever is walked first takes the
+    # bigger share, so the order of the walk is visible in the frozen numbers.
+    _stock(db, world.product, world.pool_wh, on_hand=30)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    second = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line_a = _project_line(db, order, line_no=10, product=world.product, core_line=first)
+    line_b = _project_line(db, order, line_no=20, product=world.product, core_line=second)
+    db.commit()
+
+    def confirm(payload_lines) -> dict:
+        response = client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": payload_lines}
+        )
+        assert response.status_code == 200, response.text
+        return {
+            snapshot["line_no"]: _shape(snapshot["proposed_components"])
+            for snapshot in _active_snapshots(db, order.id)
+        }
+
+    a_then_b = confirm(
+        [_line_payload(line_a.id, buy_qty="20"), _line_payload(line_b.id, buy_qty="20")]
+    )
+    b_then_a = confirm(
+        [_line_payload(line_b.id, buy_qty="20"), _line_payload(line_a.id, buy_qty="20")]
+    )
+
+    assert a_then_b == b_then_a
+    # And the walk really was order-sensitive, or the assertion above proves nothing: line 10
+    # is reached first and takes what the pool has.
+    assert a_then_b[10] != a_then_b[20]
+
+
+def test_the_frozen_proposal_is_walked_as_of_the_day_the_planner_was_deciding(api):
+    """A board opened on a Friday and confirmed on the Monday must not record a suggestion
+    nobody was ever shown. `as_of` moves the reserve window the ladder judges the line
+    against; it moves nothing about the decision, which is always judged against now."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=20)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    # As of today the line is inside its window, so the ladder offers the stock it stands on.
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert response.status_code == 200, response.text
+    assert _shape(_active_snapshots(db, order.id)[0]["proposed_components"]) == [
+        ("reserve", "20", world.own_wh.warehouse_code, "group_take")
+    ]
+
+    # Backdated far enough that the required date is beyond the lead-time window, the ladder
+    # walks no stock rung at all and the whole line is a Buy (section 1b rung 0).
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [_line_payload(line.id, buy_qty="20")],
+            "as_of": (date.today() - timedelta(days=900)).isoformat(),
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert _shape(_active_snapshots(db, order.id)[0]["proposed_components"]) == [
+        ("buy", "20", None, "buy")
+    ]
+
+
+def test_a_frozen_proposal_is_stamped_with_the_ladder_that_composed_it(api):
+    """A frozen suggestion outlives the rule that made it.
+
+    "MWH-IB has 30 available in the IB group" is a v3 sentence about ONE warehouse's own
+    availability, and under v4 that is not a reading anybody makes - so the board has to be
+    able to tell a suggestion composed today from one composed under a rule that no longer
+    runs. The stamp is on every component of `proposed_components`, and its ABSENCE is the
+    signal for every snapshot written before it existed: a JSON column needs no migration to
+    grow a key, and "no stamp" is exactly "before ladder v4".
+    """
+    from app.models.project_so import SOSupplyDecision
+    from app.services.project_supply_service import LADDER_VERSION
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=40)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="40")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "40"}]
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .order_by(SOSupplyDecision.revision_no.desc())
+        .first()
+    )
+    proposed = decision.line_snapshots[0]["proposed_components"]
+    assert proposed, "the engine's own composition is frozen beside the decided one"
+    assert {part["ladder"] for part in proposed} == {LADDER_VERSION}

@@ -15,6 +15,7 @@ import uuid
 from typing import Dict, List, Optional
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.numbering import DocumentNumberingRule
@@ -304,22 +305,31 @@ def seed_default_funnel(db: Session) -> int:
     if already:
         return 0
 
+    # The count above and the insert below are two statements, and under CI's xdist two
+    # workers seeding the same database can both read 0 and both insert: the second dies
+    # on `uq_statuses_entity_scope_key`. A savepoint turns that race into "someone else
+    # got there first", which for an idempotent seed is the same as `already`.
     by_key: Dict[str, Status] = {}
-    for index, (key, label, initial, terminal) in enumerate(DEFAULT_FUNNEL):
-        row = Status(
-            id=_uid(),
-            entity_type=PROJECT_ENTITY,
-            scope_id=None,
-            key=key,
-            label=label,
-            sort_order=index,
-            is_initial=initial,
-            is_terminal=terminal,
-            is_default=initial,
-        )
-        db.add(row)
-        by_key[key] = row
-    db.flush()
+    savepoint = db.begin_nested()
+    try:
+        for index, (key, label, initial, terminal) in enumerate(DEFAULT_FUNNEL):
+            row = Status(
+                id=_uid(),
+                entity_type=PROJECT_ENTITY,
+                scope_id=None,
+                key=key,
+                label=label,
+                sort_order=index,
+                is_initial=initial,
+                is_terminal=terminal,
+                is_default=initial,
+            )
+            db.add(row)
+            by_key[key] = row
+        db.flush()
+    except IntegrityError:
+        savepoint.rollback()
+        return 0
 
     created = len(by_key)
     for from_key, to_key, label in DEFAULT_EDGES:
@@ -361,6 +371,7 @@ def seed_default_funnel(db: Session) -> int:
                 )
             )
     db.flush()
+    savepoint.commit()
     return created
 
 

@@ -47,7 +47,11 @@ function position(overrides: Partial<BoardCellLocation> = {}): BoardCellLocation
   };
 }
 
-function renderTable(locations: BoardCellLocation[], groupNote?: string | null) {
+function renderTable(
+  locations: BoardCellLocation[],
+  groupNote?: string | null,
+  taken?: Map<string, string>,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
@@ -57,6 +61,7 @@ function renderTable(locations: BoardCellLocation[], groupNote?: string | null) 
         locations={locations}
         itemCode="B2155-NL-BLUE"
         groupNote={groupNote}
+        taken={taken}
       />
     </QueryClientProvider>,
   );
@@ -83,17 +88,20 @@ describe('CellStockTable: the position, tabulated', () => {
     renderTable([position()]);
 
     // No demand column. It read "Owed here" and it said what the Contributing lines table
-    // below already says line by line under Outstanding. No Free column either: it is
-    // `On hand - Reserved`, both of which are here, so it restated what the reader can see.
+    // below already says line by line under Outstanding. No Reserved and no Free: Free was
+    // `On hand - Reserved`, and Reserved was read by nothing here once Available turned out
+    // not to use it. PO qty and Taken took the room, and each answers a question no other
+    // number on the row does.
     expect(headers()).toEqual([
       '',
       'Location',
       'Where',
       'On hand',
-      'Reserved',
       'SO qty',
       'SPO qty',
       'Available',
+      'PO qty',
+      'Taken',
     ]);
   });
 
@@ -120,20 +128,22 @@ describe('CellStockTable: the position, tabulated', () => {
       'BRW-BB',
       'Own location',
       '478',
-      '0',
       '47009',
       '0',
       '-46531',
+      '0',
+      '0',
     ]);
     expect(cellsOf('BRW')).toEqual([
       '',
       'BRW',
       'Own location',
       '1015',
-      '12',
       '9028',
       '500',
       '-7513',
+      '0',
+      '0',
     ]);
   });
 
@@ -160,11 +170,11 @@ describe('CellStockTable: the position, tabulated', () => {
   });
 
   /**
-   * The opposite instruction: 0 free means do not look here, nothing stated means nobody has
-   * said where to look. A line whose sales order names no location has every figure null by
-   * construction.
+   * The one row that can still be blank, and the reason it is: there is no location whose
+   * stock could be counted, so a 0 would read as "that location is empty". Every OTHER row
+   * names a location, and AC-B2 makes it read 0.
    */
-  it('says NOT STATED, never 0, when the sales order named no location', () => {
+  it('leaves the figures blank when the sales order named no location', () => {
     renderTable([
       {
         location: null,
@@ -180,18 +190,18 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells.slice(3)).toEqual([
-      'Not stated',
-      'Not stated',
-      'Not stated',
-      'Not stated',
-      'Not stated',
-    ]);
+    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
     expect(cells).not.toContain('0');
+    // The phrase is gone from the table: it was the answer to a question this table no
+    // longer asks (AC-B2).
+    expect(screen.queryByText('Not stated')).not.toBeInTheDocument();
   });
 
-  /** Measured live: a location can carry `so_qty` while `qty_on_hand` is null. */
-  it('shows whichever figure the server stated, not all-or-nothing', () => {
+  /**
+   * AC-B2. An absent `stock` row is not an unknown: the last upload counted none there, and
+   * "0" is what lets the reader rule the location out instead of wondering about it.
+   */
+  it('reads 0, never "Not stated", for a location with no stock upload', () => {
     renderTable([
       position({
         location: 'BRW-IB',
@@ -205,10 +215,12 @@ describe('CellStockTable: the position, tabulated', () => {
     ]);
 
     const cells = cellsOf('BRW-IB');
-    expect(cells[3]).toBe('Not stated');
-    expect(cells[5]).toBe('10805');
+    expect(cells[3]).toBe('0');
+    // The figures the server DID state are untouched by the rule.
+    expect(cells[4]).toBe('10805');
+    expect(cells[5]).toBe('0');
     expect(cells[6]).toBe('0');
-    expect(cells[7]).toBe('Not stated');
+    expect(screen.queryByText('Not stated')).not.toBeInTheDocument();
   });
 
   it('scrolls inside its own container, so the dialog never scrolls sideways', () => {
@@ -334,11 +346,10 @@ describe('CellStockTable: the totals row', () => {
     const footer = [...(screen.getByRole('table').querySelectorAll('tfoot td, tfoot th') ?? [])].map(
       (cell) => cell.textContent ?? '',
     );
-    // EVERY column totals now, Reserved included: the rows are a whole ownership group rather
-    // than one warehouse, and "what does the group hold" is why it is listed.
+    // EVERY column totals: the rows are a whole ownership group rather than one warehouse,
+    // and "what does the group hold" is why it is listed.
     expect(footer).toContain('Total');
     expect(footer).toContain('1493');
-    expect(footer).toContain('12');
     expect(footer).toContain('56037');
     expect(footer).toContain('500');
     expect(footer).toContain('-54044');
@@ -480,5 +491,373 @@ describe('CellStockTable: the ownership group', () => {
     expect(screen.getByTestId('cell-stock-group-note').textContent).toBe(
       'No sales agent on the order, so no location group.',
     );
+  });
+});
+
+/**
+ * AC-B1. The captain, on SO415472: "why is BRW the only pool considered? What about MWH, DC1,
+ * WH3?" They were, and the table now says so - the server sends every pool it walked, and each
+ * section of the table adds itself up so a pool's figure is a row rather than a sentence.
+ */
+describe('CellStockTable: the whole ladder, in sections', () => {
+  /** The live shape of a BRW-BB line: own, four group siblings, five pools. */
+  function ladder(): BoardCellLocation[] {
+    return [
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      ...['MWH-BB', 'DC1-BB', 'WH3-BB', 'RSW-BB'].map((location, index) =>
+        position({
+          location,
+          warehouse_id: `wh-g${index}`,
+          where: 'group',
+          qty_on_hand: '10',
+          so_qty: '0',
+          spo_qty: '0',
+          available_qty: '10',
+        }),
+      ),
+      ...['BRW', 'MWH', 'DC1', 'WH3', 'RSW'].map((location, index) =>
+        position({
+          location,
+          warehouse_id: `wh-p${index}`,
+          where: 'site_pool',
+          qty_on_hand: '100',
+          so_qty: '0',
+          spo_qty: '0',
+          available_qty: '100',
+        }),
+      ),
+    ];
+  }
+
+  function rowOrder(): string[] {
+    return [...screen.getByRole('table').querySelectorAll('tbody tr')]
+      .map((row) => row.querySelectorAll('td')[1]?.textContent ?? '')
+      .filter((label) => !label.endsWith('subtotal'));
+  }
+
+  it('lists the own location, then the group, then every pool, each tagged', () => {
+    renderTable(ladder());
+
+    expect(rowOrder()).toEqual([
+      'BRW-BB',
+      'MWH-BB',
+      'DC1-BB',
+      'WH3-BB',
+      'RSW-BB',
+      'BRW',
+      'MWH',
+      'DC1',
+      'WH3',
+      'RSW',
+    ]);
+    expect(cellsOf('BRW-BB')[2]).toBe('Own location');
+    expect(cellsOf('RSW-BB')[2]).toBe('Group');
+    expect(cellsOf('RSW')[2]).toBe('Site pool');
+  });
+
+  it('subtotals each section and totals the table', () => {
+    renderTable(ladder());
+
+    const group = [
+      ...screen.getByTestId('stock-subtotal-group').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(group).toContain('Group subtotal');
+    expect(group).toContain('40');
+
+    const pool = [
+      ...screen.getByTestId('stock-subtotal-site_pool').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(pool).toContain('Site pool subtotal');
+    expect(pool).toContain('500');
+
+    const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
+      (entry) => entry.textContent ?? '',
+    );
+    expect(footer).toContain('Total');
+    expect(footer).toContain('580');
+  });
+
+  /**
+   * A pool the ladder took nothing from is the point of listing it: the row itself answers
+   * "why not MWH" - it was there, it held 100, and nothing was needed from it.
+   */
+  it('shows what a pool holds even when nothing was drawn from it', () => {
+    renderTable(ladder(), null, new Map([['BRW', '71']]));
+
+    expect(cellsOf('BRW')[7]).toBe('0');
+    expect(cellsOf('BRW')[8]).toBe('71');
+    expect(cellsOf('MWH')[8]).toBe('0');
+  });
+});
+
+describe('CellStockTable: PO qty and Taken', () => {
+  it('shows the open PO balance the server states, and 0 where it states none', () => {
+    renderTable([
+      position({ po_open_qty: '380' }),
+      position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
+    ]);
+
+    expect(screen.getByTestId('stock-po-BRW-BB').textContent).toBe('380');
+    expect(screen.getByTestId('stock-po-DC1-BB').textContent).toBe('0');
+  });
+
+  /**
+   * AC-B3. The Taken column sums to the quantity needed when the line is covered from stock,
+   * and every row nothing was drawn from reads 0.
+   */
+  it('adds the Taken column up to the quantity the cell drew', () => {
+    renderTable(
+      [
+        position({ location: 'DC1-BB', warehouse_id: 'wh-1', where: 'group' }),
+        position({ location: 'MWH-BB', warehouse_id: 'wh-2', where: 'group' }),
+        position({ location: 'WH3-BB', warehouse_id: 'wh-3', where: 'group' }),
+        position({ location: 'BRW', warehouse_id: 'wh-4', where: 'site_pool' }),
+      ],
+      null,
+      new Map([
+        ['DC1-BB', '454'],
+        ['MWH-BB', '267'],
+        ['WH3-BB', '211'],
+      ]),
+    );
+
+    expect(screen.getByTestId('stock-taken-DC1-BB').textContent).toBe('454');
+    expect(screen.getByTestId('stock-taken-MWH-BB').textContent).toBe('267');
+    expect(screen.getByTestId('stock-taken-WH3-BB').textContent).toBe('211');
+    // Listed, and drawn on for nothing.
+    expect(screen.getByTestId('stock-taken-BRW').textContent).toBe('0');
+
+    const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
+      (entry) => entry.textContent ?? '',
+    );
+    expect(footer).toContain('932');
+  });
+
+  it('reads 0 everywhere for a cell that draws on no stock at all', () => {
+    // A Buy-only cell: nothing is held anywhere, so nothing is taken from anywhere.
+    renderTable([position(), position({ location: 'BRW', warehouse_id: 'wh-2' })]);
+
+    expect(screen.getByTestId('stock-taken-BRW-BB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-taken-BRW').textContent).toBe('0');
+  });
+});
+
+/**
+ * AC-L12 (ladder v4, ruled 26 August 2026): the subtotal prints the NET the engine obeyed.
+ *
+ * `B2155-NL-BLUE` is the case the ruling came from. `MWH-IB` reads 7000 available and lends
+ * nothing, because the IB group it belongs to nets -15514 - and a table that showed only the
+ * per-row figure could not explain why nothing was taken from it. The net is over the WHOLE
+ * group, silent members included, so it is stated by the server rather than summed here.
+ */
+describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
+  const ibGroup = () => [
+    position({
+      location: 'BRW-IB',
+      warehouse_id: 'wh-brw-ib',
+      where: 'own',
+      qty_on_hand: '5290',
+      so_qty: '27804',
+      spo_qty: '0',
+      available_qty: '-22514',
+      net: '-15514',
+      net_of: 'IB',
+    }),
+    position({
+      location: 'MWH-IB',
+      warehouse_id: 'wh-mwh-ib',
+      where: 'group',
+      qty_on_hand: '7000',
+      so_qty: '0',
+      spo_qty: '0',
+      available_qty: '7000',
+      net: '-15514',
+      net_of: 'IB',
+    }),
+    position({
+      location: 'BRW',
+      warehouse_id: 'wh-brw',
+      where: 'site_pool',
+      qty_on_hand: '0',
+      so_qty: '103',
+      spo_qty: '0',
+      available_qty: '-103',
+      net: '-102',
+      net_of: 'pools',
+    }),
+    position({
+      location: 'DC1',
+      warehouse_id: 'wh-dc1',
+      where: 'site_pool',
+      qty_on_hand: '1',
+      so_qty: '0',
+      spo_qty: '0',
+      available_qty: '1',
+      net: '-102',
+      net_of: 'pools',
+    }),
+  ];
+
+  it('subtotals the own location WITH its group, and prints the group net', () => {
+    renderTable(ibGroup());
+
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-IB').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    // One ownership group, one subtotal, whatever Where tag each row carries: the tag says
+    // where a row stands relative to this cell, the net says which pile it is part of.
+    expect(subtotal).toContain('IB group subtotal');
+    // Available takes the server's NET; every other column still adds up the rows on
+    // screen, which is what makes the two readable side by side - 12290 sits at these two
+    // locations, and -15514 is what the group has once its book is counted.
+    expect(screen.getByTestId('stock-subtotal-available-IB').textContent).toBe('-15514');
+    expect(subtotal).toContain('12290');
+  });
+
+  it('says on the subtotal why the Available figure is not the column added up', () => {
+    // A tooltip, not a line of copy: the number is the point, and the one thing a reader
+    // cannot see is that the net covers locations this table never listed.
+    renderTable(ibGroup());
+
+    expect(
+      screen.getByTestId('stock-subtotal-available-IB').getAttribute('title'),
+    ).toBe('-15514 across every IB location, including any this table does not list');
+    expect(
+      screen.getByTestId('stock-subtotal-available-pools').getAttribute('title'),
+    ).toBe('-102 across every site pool, including any this table does not list');
+    // Every other subtotal cell IS its column added up, so it explains nothing.
+    expect(
+      screen.getByTestId('stock-subtotal-on-hand-IB').getAttribute('title'),
+    ).toBeNull();
+  });
+
+  it('lists a donor group whole, with its own net as the subtotal (AC-V3)', () => {
+    // Ladder v5, section 1e. The ladder drew from DC1-NTC; the offer was the NTC GROUP's
+    // net, so BRW-NTC comes with it even though no proposal named it. Each row keeps its
+    // OWN signed available, and the subtotal is the group's net - which is what a reader
+    // needs to check "why only 100" against.
+    renderTable([
+      position({ location: 'BRW-BB', where: 'own', net: '-969', net_of: 'BB' }),
+      position({
+        location: 'DC1-NTC',
+        warehouse_id: 'wh-dc1-ntc',
+        where: 'other_group',
+        qty: '0',
+        qty_demand: '0',
+        qty_on_hand: '100',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '100',
+        net: '166',
+        net_of: 'NTC',
+      }),
+      position({
+        location: 'BRW-NTC',
+        warehouse_id: 'wh-brw-ntc',
+        where: 'other_group',
+        qty: '0',
+        qty_demand: '0',
+        qty_on_hand: '80',
+        so_qty: '14',
+        spo_qty: '0',
+        available_qty: '66',
+        net: '166',
+        net_of: 'NTC',
+      }),
+    ]);
+
+    // Both sites of the donor group are on screen, each with its own signed available.
+    expect(cellsOf('DC1-NTC')).toContain('100');
+    expect(cellsOf('BRW-NTC')).toContain('66');
+    // ONE subtotal for the group, carrying the group's net rather than the two rows added.
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-NTC').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('NTC group subtotal');
+    expect(screen.getByTestId('stock-subtotal-available-NTC').textContent).toBe('166');
+  });
+
+  it('prints the site pools net rather than the pools on screen', () => {
+    renderTable(ibGroup());
+
+    expect(screen.getByTestId('stock-subtotal-available-pools').textContent).toBe('-102');
+    const subtotal = [
+      ...screen.getByTestId('stock-subtotal-pools').querySelectorAll('td'),
+    ].map((entry) => entry.textContent ?? '');
+    expect(subtotal).toContain('Site pool subtotal');
+  });
+
+  it('prints a net for a section of ONE row, because the rows cannot say it', () => {
+    // The net covers every location of the group; this table lists the ones the cell
+    // consulted. A single row that IS its own sum still cannot state the group's position.
+    renderTable([
+      position({ where: 'own', available_qty: '10', net: '-40', net_of: 'BB' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-brw',
+        where: 'site_pool',
+        available_qty: '5',
+        net: '5',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-BB').textContent).toBe('-40');
+  });
+
+  it('draws only from the set that has something, and reads 0 on the ones that do not', () => {
+    // The engine cannot draw on a set that nets zero or less, so what it hands the table
+    // draws from the IR group alone. The rows of the two sets it could not touch read 0 -
+    // which is the answer to "why not MWH-IB", said by the row itself - and the drawn row
+    // reads its own quantity, so the column is not simply blank everywhere.
+    renderTable(
+      [
+        ...ibGroup(),
+        position({
+          location: 'MWH-IR',
+          warehouse_id: 'wh-mwh-ir',
+          where: 'other_group',
+          qty_on_hand: '100',
+          so_qty: '0',
+          available_qty: '100',
+          net: '100',
+          net_of: 'IR',
+        }),
+      ],
+      null,
+      new Map([['MWH-IR', '60']]),
+    );
+
+    expect(screen.getByTestId('stock-taken-MWH-IR').textContent).toBe('60');
+    expect(screen.getByTestId('stock-subtotal-taken-IR').textContent).toBe('60');
+    expect(screen.getByTestId('stock-taken-BRW-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-taken-MWH-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-taken-DC1').textContent).toBe('0');
+    expect(screen.getByTestId('stock-subtotal-taken-IB').textContent).toBe('0');
+    expect(screen.getByTestId('stock-subtotal-taken-pools').textContent).toBe('0');
+  });
+
+  it('falls back to the sum where the server states no net', () => {
+    // Nothing on the wire, nothing invented: a cell whose rows carry no net is the old
+    // table, and its subtotal is what the rows add up to.
+    renderTable([
+      position({ where: 'group', qty_on_hand: '10', available_qty: '10' }),
+      position({
+        location: 'DC1-BB',
+        warehouse_id: 'wh-2',
+        where: 'group',
+        qty_on_hand: '5',
+        available_qty: '5',
+      }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-3',
+        where: 'site_pool',
+        qty_on_hand: '1728',
+        available_qty: '1716',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-group').textContent).toBe('15');
   });
 });

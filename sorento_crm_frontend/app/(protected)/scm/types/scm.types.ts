@@ -302,14 +302,73 @@ export interface SalesOrderLine {
    * and reads `null` exactly like a line on an order nobody has planned.
    */
   decision_revision?: number | null;
+  /**
+   * What was DECIDED for this line and what the engine had SUGGESTED, as components, in the
+   * planning board's vocabulary (`PLAN-scm-cs-planning-uat.md` section 2).
+   *
+   * COMPONENTS, never a sentence: the words are written once, by
+   * `project-sales/_shared/lib/supplyVocabulary.describe`, and a sentence composed on the
+   * backend would be a second implementation of the same vocabulary free to drift.
+   *
+   * `supply_decided` is null on a line no active revision covers. `supply_proposed` is null
+   * for that AND for a revision frozen before the proposal was recorded, which the column
+   * reads as "Not recorded" rather than as "the engine suggested nothing".
+   */
+  supply_decided?: SalesOrderLineSupplyComponent[] | null;
+  supply_proposed?: SalesOrderLineSupplyComponent[] | null;
+  /**
+   * Where this line's Buy actually sits (AC-I9): every link on the order inquiry row that
+   * covers the line, PO or SPO, with the quantity each holds. Read off the SAME child
+   * table (`projects.order_inquiry_links`) the worklist's "Linked to" column and the PO
+   * occupancy panel read, so the three cannot disagree.
+   *
+   * `[]` when the row exists and nothing has been linked yet; absent when no inquiry row
+   * covers the line at all - the two are different answers and the column says so.
+   */
+  linked_to?: SalesOrderLineLink[] | null;
+}
+
+/** One link on the order inquiry row covering a sales order line. Never an id on screen. */
+export interface SalesOrderLineLink {
+  /** Which book the document lives in. */
+  kind: 'po' | 'spo';
+  /** `202607-S0105`, `SPO-2026/08-0061`. */
+  document: string;
+  /** `L3` when the book numbered the line. Absent when it did not - never invented. */
+  line_label?: string | null;
+  qty: string;
+  location?: string | null;
+  expected_date?: string | null;
+  /**
+   * The document arrives AFTER the row's own required date (AC-P3-7). Stated, never acted
+   * on: purchasing decides whether a late document is still the answer, and unlinking it
+   * would leave the line with nothing rather than with something late.
+   */
+  late?: boolean;
+}
+
+/**
+ * One piece of a line's supply. The same three facts the board reads a source by: what kind,
+ * how much, and from where - plus the RUNG, which is what decides the words. Never the
+ * warehouse code, which reads `BRW-BB` (the agent's own location) and `BRW` (the shared pool)
+ * as the same site when they are not the same kind of supply at all.
+ */
+export interface SalesOrderLineSupplyComponent {
+  kind: string;
+  qty: string;
+  source_location?: string | null;
+  rung?: string | null;
+  /** The sales order a borrow was taken FROM, when one was named. */
+  donor_so_number?: string | null;
 }
 
 /** The inquiry an order line belongs to, in the two words a person reads it by. */
 export interface SalesOrderLineInquiry {
   /** `OI-000123`. Null only on a row raised before inquiries were numbered. */
   inquiry_no?: string | null;
-  /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`), not the
-   *  header's: "purchasing placed this line" is the question the column answers. */
+  /** The ROW's own state (`raised` / `partly_linked` / `placed` / `actioned` /
+   *  `cancelled`), not the header's: "has purchasing linked this line" is the question
+   *  the column answers. `placed` reads "Linked". */
   state: string;
 }
 
@@ -370,6 +429,13 @@ export interface SalesOrder {
    *  inquiries and nothing between them, so this is where an order says what has been
    *  done about it. */
   order_inquiries?: SalesOrderInquiry[];
+  /**
+   * The PENDING planning-change batch this order is in, when a re-uploaded book moved one of
+   * its planned lines and nobody has applied the change yet (AC-P3-1). Present on the LIST,
+   * which is where the Changed badge is; `null` on every order with nothing outstanding, which
+   * is nearly all of them.
+   */
+  planning_change_batch_id?: string | null;
   created_at: string;
 }
 
@@ -507,6 +573,56 @@ export interface PurchaseOrderLine {
   currency?: string | null;
 }
 
+/**
+ * One order-inquiry placement sitting on a purchase-order line (section 3.G, AC-G1).
+ *
+ * The captain, 25 August 2026: when an order inquiry occupies quantity on a PO, the PO must
+ * show how much of its outstanding is occupied, by which inquiry and sales order, and at
+ * which location - and it must live BESIDE the line, never as columns in it, because the
+ * buyer re-keys the split in AutoCount and re-uploads, and an upload that overwrote our
+ * split would lose it.
+ *
+ * Everything here is a NAME, never an id: the inquiry by its number, the sales order by its
+ * document number, the customer and the agent by the labels the order-inquiry worklist
+ * already prints for them.
+ */
+export interface PurchaseOrderPlacement {
+  /** `OI-000006`. Null only on a row raised before the numbering stamp existed. */
+  inquiry_no: string | null;
+  /** The sales order this quantity is owed to - the AutoCount number where there is one. */
+  so_number: string | null;
+  /** `YOTU BUILDER / LOT 2752` - the same label the worklist's PROJECT/CUSTOMER prints. */
+  customer: string | null;
+  /** Who sold it, by person label or agent code. Null on an order with no agent. */
+  agent: string | null;
+  /** How much of the PO line this placement occupies. */
+  qty: number;
+  /** Where the demand needs it - `order_inquiry_rows.stock_location`. */
+  needed_at: string | null;
+  /**
+   * True when `needed_at` is not the PO line's own location: the PO line says DC1 and the
+   * demand is at BRW-BB. That IS the split instruction for AutoCount, which is why it is a
+   * mark on the row rather than a filter that hides it.
+   */
+  location_differs: boolean;
+}
+
+/** One purchase-order line's occupancy: the three figures, then who is on it (AC-G1). */
+export interface PurchaseOrderLineAllocation {
+  /** Which line this belongs to - matched against `PurchaseOrderLine.id`. */
+  line_id: string;
+  sku: string;
+  /** The PO LINE's own location, so the panel can say what it differs from. */
+  warehouse_code: string | null;
+  /** `qty_ordered - qty_received`, floored at 0 and 0 on a closed line. */
+  outstanding: number;
+  /** The sum of every link on this line. */
+  allocated: number;
+  /** `outstanding - allocated`, floored at 0. */
+  free: number;
+  placements: PurchaseOrderPlacement[];
+}
+
 export interface PurchaseOrder {
   id: string;
   /** Human-readable PO number - shown in the UI (never a UUID). */
@@ -527,6 +643,19 @@ export interface PurchaseOrder {
   open_qty?: number;
   open_line_count?: number;
   lines: PurchaseOrderLine[];
+  /**
+   * What order inquiries have OCCUPIED on this order, one entry per line that carries at
+   * least one placement (section 3.G). Absent on the list, present on the single read; an
+   * empty array is a purchase order nothing is linked to yet, and the panel says so.
+   */
+  allocations?: PurchaseOrderLineAllocation[];
+  /**
+   * The sum of every placement across the whole order, on the LIST as well as the single
+   * read (AC-G4). 0 is "nothing is linked to it", which is a different answer from a book
+   * row that predates the links table - and both read as 0 here, deliberately: an order
+   * nobody has linked to is exactly what the filter's "No" means.
+   */
+  allocated_qty?: number;
   created_at: string;
   /** True when this PO counts as incoming supply (on-order) - false for a draft
    *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */

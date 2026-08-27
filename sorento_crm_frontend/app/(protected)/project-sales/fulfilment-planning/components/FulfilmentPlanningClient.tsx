@@ -129,12 +129,29 @@ export function FulfilmentPlanningClient() {
         .filter(Boolean),
     [searchParams],
   );
+  /**
+   * The planning-change batch the board was opened ON (AC-P3-1), from the same URL as the
+   * selection: `?orders=SO381895&batch=<id>`. The Planning changes list and the sales-order
+   * list's Changed badge both address the board this way, so a board on a change is one link
+   * and can be sent to somebody.
+   */
+  const batchId = React.useMemo(
+    () => searchParams.get('batch')?.trim() || null,
+    [searchParams],
+  );
   const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
-    urlOrders.length > 0 && urlOrders.length <= MAX_BOARD_SELECTION ? urlOrders : null,
+    // THE CAP DOES NOT APPLY TO A BATCH. It exists because a selection the sender did not
+    // choose is not the set they meant to share - but a batch IS a chosen set: one book
+    // upload, the orders it moved, and the only screen those changes can be decided on. A
+    // 60-order upload dead-ended on "too many orders" with nowhere else to go, because the
+    // separate batch page is retired.
+    urlOrders.length > 0 && (batchId !== null || urlOrders.length <= MAX_BOARD_SELECTION)
+      ? urlOrders
+      : null,
   );
   /** A link that asked for too many, so the refusal can be stated on the worklist. */
   const [refusedLink] = React.useState(() =>
-    urlOrders.length > MAX_BOARD_SELECTION ? urlOrders.length : 0,
+    urlOrders.length > MAX_BOARD_SELECTION && batchId === null ? urlOrders.length : 0,
   );
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -611,6 +628,7 @@ export function FulfilmentPlanningClient() {
     const next = new URLSearchParams(searchParams.toString());
     const fromSalesOrders = next.has('page') || next.has('limit');
     next.delete('orders');
+    next.delete('batch');
     next.delete('granularity');
     next.delete('product');
     const query = fromSalesOrders ? next.toString() : '';
@@ -622,7 +640,7 @@ export function FulfilmentPlanningClient() {
   // the current subject. Phase 2 puts the selection in the URL so a board can be linked.
   if (boardOrders) {
     return (
-      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={closeBoard} />
+      <FulfilmentBoardPanel soNumbers={boardOrders} batchId={batchId} onBack={closeBoard} />
     );
   }
 

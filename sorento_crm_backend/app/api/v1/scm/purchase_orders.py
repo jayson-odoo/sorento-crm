@@ -69,6 +69,22 @@ def list_purchase_orders(
             "Omitted = every status."
         ),
     ),
+    allocated: Optional[bool] = Query(
+        None,
+        description=(
+            "true = at least one order-inquiry row is linked to a line of this order; "
+            "false = none is; omitted = every order. The same fact the `allocated_qty` "
+            "column sums, so the filter and the figure cannot disagree."
+        ),
+    ),
+    documents: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated purchase order numbers - keep only these. What the Order "
+            "Inquiries page hands over when the buyer asks to see the book they just "
+            "uploaded (AC-H13). Omitted = every order; naming none matches none."
+        ),
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
@@ -83,10 +99,20 @@ def list_purchase_orders(
     `outstanding` is the buyer's "at a glance" question (the captain, 20 Aug: "how do i know
     the open PO / outstanding PO") - the PO book's own `is_on_order` flag as a list filter,
     so it can never disagree with what a row's own badge says.
+
+    `allocated` is the same shape of question for section 3.G: every row carries
+    `allocated_qty`, the quantity order inquiries have already occupied on it, and this
+    narrows the list to the orders that are, or are not, spoken for. WHO is on an order is
+    the detail page's Allocated to panel - a list of 13,000 orders answers "is this one
+    taken", never "by whom".
+
+    `documents` is the narrowest of them: the exact orders one upload wrote, so "Open
+    purchase orders" after a book lands shows that book and not the other 13,000.
     """
     return PurchaseOrderService(db).list(
         page, limit, sort, dir, query, status, supplier,
-        product_code=product_code, outstanding=outstanding,
+        product_code=product_code, outstanding=outstanding, allocated=allocated,
+        documents=documents.split(",") if documents is not None else None,
     )
 
 

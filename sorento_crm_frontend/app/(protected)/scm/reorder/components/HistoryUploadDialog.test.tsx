@@ -450,12 +450,17 @@ describe('HistoryUploadDialog - an unreadable file', () => {
 // ── 3. purchase history reads as history ────────────────────────────────────
 
 describe('HistoryUploadDialog - purchase history', () => {
-  it('states plainly that this feed is never counted as incoming stock', () => {
+  it('says what this feed does to the plan, purchase orders and shipping orders apart', () => {
     // The single most expensive misreading available on this screen: a year of closed 2020
-    // orders taken for supply would inflate every position in the system.
+    // orders taken for supply would inflate every position in the system. So the purchase
+    // orders say they are already received. What the copy must NOT do is claim the whole
+    // file is invisible to supply - the `SPO-` documents in it become `spo_allocations`,
+    // which `scm.on_order_v` reads, and that is the captain's own PO & SPO book.
     renderDialog('purchase-history');
 
-    expect(screen.getByText(/Never counted as incoming stock/i)).toBeInTheDocument();
+    expect(screen.getByText(/already received/i)).toBeInTheDocument();
+    expect(screen.getByText(/Shipping orders in the same file become incoming stock/i))
+      .toBeInTheDocument();
   });
 
   it('shows the book it read, and the period it covers', async () => {

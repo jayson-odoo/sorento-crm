@@ -302,7 +302,7 @@ describe('PlanLinesGrid - the explanations are still there', () => {
   // faith, so they are pinned here.
   it('offers the demand and checklist drills beside the product', () => {
     renderGrid([line()]);
-    // Exact match: the ungrouped grid's Project/Retail/Unclass. cells (21 Aug follow-up)
+    // Exact match: the ungrouped grid's Project/Retail cells (21 Aug follow-up)
     // carry their OWN "<Channel> demand behind this row" triggers, which a substring
     // match against "Demand behind this row" would also catch.
     expect(screen.getByRole('button', { name: 'Demand behind this row' })).toBeInTheDocument();
@@ -701,7 +701,7 @@ describe('the column story - result first, explanation after (2026-08-11 markup)
   });
 });
 
-describe('the forecast advisory (2026-08-11 markup)', () => {
+describe('the trend verdict (2026-08-11 markup; advisory line removed P6, 25 Aug)', () => {
   const rising: TrajectoryEntry = {
     verdict: 'rising', recent_qty: 120, previous_qty: 90, change_pct: 33.33,
     year_ago_qty: null, year_change_pct: null, window_months: 12,
@@ -714,28 +714,20 @@ describe('the forecast advisory (2026-08-11 markup)', () => {
     expect(within(so).getByText('Orders rising - consider more')).toBeInTheDocument();
   });
 
-  it('advises how many more, and one click applies it as the decision with its reason', () => {
-    const { onDecide } = renderGrid(
+  it('never puts a "Consider N more/less" line in the decision cell (P6)', () => {
+    renderGrid(
       [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
       () => rising,
     );
-
-    const chip = screen.getByRole('button', { name: /Consider 34 more - orders rose 33%/ });
-    fireEvent.click(chip);
-    expect(onDecide).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'r1' }),
-      { buy: 134, reason: 'Trend: orders rose 33%' },
-    );
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 
-  it('advises fewer on a falling book, and never advises on a holding one', () => {
+  it('nor on a falling book - the trajectory popover keeps the whole argument (P6)', () => {
     renderGrid(
       [line({ order_qty: 100, recommended_qty: 100 })], {}, [], undefined, undefined,
       () => ({ ...rising, verdict: 'falling', change_pct: -28.4 }),
     );
-    expect(
-      screen.getByRole('button', { name: /Consider 28 less - orders fell 28%/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 
   it('stays silent when the trend argues nothing', () => {
@@ -784,18 +776,15 @@ describe('product health (2026-08-11 markup)', () => {
     expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
   });
 
-  it('a consider-more advisory on a thin margin carries the caveat in the same breath', () => {
+  it('states the thin margin on the row itself, with no advisory beside the decision (P6)', () => {
     // Base cost 92 (cash 9200 over 100 units) vs sells 100 -> 8% margin, below the floor.
     renderGrid(
       [line({ order_qty: 100, recommended_qty: 100, unit_cost: 92, cash_impact: 9200 })],
       {}, [], undefined, undefined, () => rising, () => econ(),
     );
 
-    expect(
-      screen.getByRole('button', {
-        name: /Consider 34 more - orders rose 33%, but margin only 8%/,
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Margin 8%/)).toBeInTheDocument();
+    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
   });
 });
 
@@ -1022,22 +1011,22 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
   const retail = line({
     id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
     segment: 'dealer', rank: 1, order_qty: 3,
-    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+    retail_committed: 6, project_committed: 0, project_need: 0,
   });
   const projectIb = line({
     id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
     segment: 'project', rank: 2, order_qty: 4,
-    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+    retail_committed: 0, project_committed: 5, project_need: 3,
   });
   const projectIr = line({
     id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
     segment: 'project', rank: 3, order_qty: 5,
-    retail_committed: 0, project_committed: 2, unclassified_committed: 0, project_need: 1,
+    retail_committed: 0, project_committed: 2, project_need: 1,
   });
 
   function renderGroupedGrid(
     lines: PlanLine[],
-    channelTrendFor?: (productId: string | null, channel: 'project' | 'retail' | 'unclassified') =>
+    channelTrendFor?: (productId: string | null, channel: 'project' | 'retail') =>
       { verdict: 'rising' | 'holding' | 'falling' | 'quiet' | 'no_history'; recent_qty: number;
         previous_qty: number; change_pct: number | null; window_months: number;
         avg_day: number | null } | undefined,
@@ -1101,7 +1090,7 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(heads).toContain('Location');
   });
 
-  it('grouped mode drops the Order-type badge column and the SO/Project/Retail/Unclassified fixed columns', () => {
+  it('grouped mode drops the Order-type badge column and the fixed SO/Project/Retail columns', () => {
     renderGroupedGrid([retail, projectIb, projectIr]);
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
     expect(heads).not.toContain('Order type');
@@ -1173,7 +1162,7 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     const allZero = line({
       id: 'z', warehouse_id: 'w-zero', warehouse_code: 'BRW-Z', warehouse_name: 'Zero Loc',
       segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
-      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0,
     });
     renderGroupedGrid([retail, projectIb, projectIr, allZero]);
     fireEvent.click(screen.getByText('SKU-1'));
@@ -1187,12 +1176,12 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     const allZero1 = line({
       id: 'z1', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z1', warehouse_name: 'Zero 1',
       segment: 'dealer', rank: 5, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
-      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0,
     });
     const allZero2 = line({
       id: 'z2', product_id: 'p9', sku: 'SKU-ZERO', warehouse_id: 'w-z2', warehouse_name: 'Zero 2',
       segment: 'dealer', rank: 6, order_qty: 0, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
-      outstanding_sales: 0, project_need: 0, retail_need: 0, unclassified_need: 0,
+      outstanding_sales: 0, project_need: 0, retail_need: 0,
     });
     renderGroupedGrid([allZero1, allZero2]);
     fireEvent.click(screen.getByText('SKU-ZERO'));
@@ -1279,25 +1268,28 @@ describe('PlanLinesGrid - product-grain channel grouping (5.3 follow-up, 19-20 A
     expect(screen.queryByRole('button', { name: /Buy 12/ })).not.toBeInTheDocument();
   });
 
-  it('a warehouse with no persisted segment still folds into the SAME group row, adding an Unclassified column', () => {
+  it('a warehouse with no persisted segment folds into the SAME group row, as retail, never a third column', () => {
     const unmapped = line({
       id: 'd', sku: 'SKU-1', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
-      segment: null, rank: 4, unclassified_committed: 1,
+      segment: null, rank: 4, retail_committed: 1,
     });
     renderGroupedGrid([retail, unmapped]);
     expect(screen.getAllByText('SKU-1')).toHaveLength(1);
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
-    expect(heads).toContain('Unclassified');
+    expect(heads).toContain('Retail');
+    expect(heads).not.toContain('Unclassified');
+    expect(heads).not.toContain('Unclass.');
   });
 
-  it('an ungrouped-mode plan keeps the fixed SO/Project/Retail/Unclassified need columns, not the dynamic channel ones', () => {
+  it('an ungrouped-mode plan keeps the fixed SO/Project/Retail need columns, not the dynamic channel ones', () => {
     // Ungrouped mode has its own "Project"/"Retail" headers too (the fixed `project_need`
     // / `retail_need` columns) - what distinguishes grouped mode is `Order type` being
-    // absent and `Unclass.` present, both pinned in the earlier assertions above.
+    // absent, pinned in the earlier assertions above. Neither mode has an Unclassified
+    // column any more (P4).
     renderGrid([retail]);
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
     expect(heads).toContain('Order type');
-    expect(heads).toContain('Unclass.');
+    expect(heads).not.toContain('Unclass.');
   });
 
   // Supplier / price / MOQ are PRODUCT facts (captain, 20 Aug ruling): carried onto the
@@ -1391,12 +1383,12 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
   const locA = line({
     id: 'live-a', warehouse_id: 'w-live-a', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
     segment: 'dealer', rank: 1, order_qty: 3,
-    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+    retail_committed: 6, project_committed: 0, project_need: 0,
   });
   const locB = line({
     id: 'live-b', warehouse_id: 'w-live-b', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
     segment: 'project', rank: 2, order_qty: 4,
-    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+    retail_committed: 0, project_committed: 5, project_need: 3,
   });
 
   function renderLiveGroupedGrid(lines: PlanLine[]) {
@@ -1417,8 +1409,7 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
 
   function availableCell(warehouseLabel: string): HTMLElement {
     const row = screen.getByText(warehouseLabel).closest('tr') as HTMLElement;
-    // Location, Project, Retail, On hand, Reserved, Free, SPO, Available, Suggested qty -
-    // no Unclass. column here since neither fixture carries a nonzero unclassified figure.
+    // Location, Project, Retail, On hand, Reserved, Free, SPO, Available, Suggested qty.
     const cells = within(row).getAllByRole('cell');
     return cells[7];
   }
@@ -1508,7 +1499,7 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
     const locC = line({
       id: 'live-c', warehouse_id: null, warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
       segment: 'project', rank: 3, order_qty: 2,
-      retail_committed: 0, project_committed: 0, unclassified_committed: 0, project_need: 0,
+      retail_committed: 0, project_committed: 0, project_need: 0,
     });
     locationStockState.isLoading = false;
     locationStockState.data = {
@@ -1554,8 +1545,7 @@ describe('PlanLinesGrid - grouped-expand live location-stock cells (20 Aug live 
     expect(
       screen.getByRole('button', { name: 'Retail demand at BRW - IB' }),
     ).toBeInTheDocument();
-    // Neither fixture carries unclassified demand, so no third trigger - 2 members x 2
-    // channels, never a stray extra.
+    // Two channels and nothing else - 2 members x 2 channels, never a stray extra.
     expect(
       screen.getAllByRole('button', { name: /demand at /i }),
     ).toHaveLength(4);

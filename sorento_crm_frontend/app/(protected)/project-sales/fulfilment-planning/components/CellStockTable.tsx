@@ -25,14 +25,15 @@ const NUMBER_COL = 'min-w-[100px]';
 const WHERE_COL = 'min-w-[104px]';
 
 /**
- * Where a location stands, in the order the reader walks it: this line's own first, then the
- * agent's group, then the pools the ladder drew on, then anything outside the group.
- *
- * The table lists every location the LADDER consulted, and unlabelled they all look the same:
- * on SO415472 the pool holding 1716 sat beside five group warehouses holding nothing, and the
- * Suggestion card quoted a figure that appeared to come from nowhere.
+ * What a figure the server did not state renders as, which after AC-B2 is ONE row: the line
+ * whose sales order names no location. A zero there would read as "that location is empty",
+ * and there is no location to be empty.
  */
-const WHERE_ORDER: BoardLocationWhere[] = ['own', 'group', 'site_pool', 'other_group'];
+const BLANK = '-';
+const NOT_STATED_TITLE = 'No location on the sales order line, so nothing to count';
+
+/** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
+const EMPTY_TAKEN: Map<string, string> = new Map();
 
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
@@ -53,11 +54,8 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * word by word to compare. The same facts as a row each, under AutoCount's own headers, are read
  * by running an eye down a column.
  *
- * RESERVED MOVED OUT OF A TOOLTIP AND INTO THE TABLE, unreachable as it was on a touch screen
- * and invisible to anyone who did not hover. Free came with it and has since gone again: it is
- * `On hand - Reserved`, both of which are columns, so it restated what the reader could already
- * see. The incoming legs were in that tooltip too, and they are SPO rows in the expansion, which
- * is where the document that carries them already lives.
+ * The incoming legs were in a tooltip once, and they are SPO rows in the row's own expansion
+ * now, which is where the document that carries them already lives.
  *
  * NOT a DataGrid, and this is the carve-out `FulfilmentBoardMatrix` documents and PLAN 13.10
  * states: this is a fixed matrix of eight named figures, not a listing - no column config, sort,
@@ -68,14 +66,17 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * its columns the moment content exceeds the declared width), and long text truncates with a
  * `title`.
  *
- * A NULL FIGURE IS "Not stated", NEVER 0. The two are opposite instructions - 0 free means do
- * not look here, nothing stated means nobody has said where to look - and a line whose sales
- * order names no location has every stock figure null by construction.
+ * A LOCATION WITH NO STOCK ROW READS 0 (AC-B2). It used to read "Not stated", and that was the
+ * answer to a different question: an absent `stock` row means the last upload counted none
+ * there, which is a fact, while "nobody has said where to look" is true only of a line whose
+ * sales order names no location at all. That one row keeps its blanks, and it is now the only
+ * row that can have any - the server states a figure for every location it names.
  */
 export function CellStockTable({
   locations,
   itemCode,
   groupNote,
+  taken,
 }: {
   locations: BoardCellLocation[];
   /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
@@ -87,7 +88,17 @@ export function CellStockTable({
    * exactly one place" - which is the belief the group listing exists to correct.
    */
   groupNote?: string | null;
+  /**
+   * How much this cell draws from each location, by warehouse code
+   * (`supplyVocabulary.takenByLocation`). A location with no entry reads 0.
+   *
+   * Passed in rather than derived here: it is the SAME switch between the decision and the
+   * suggestion that colours the cell on the grid, and computing it twice is how the bar and
+   * the table come to disagree about a line the planner has just amended.
+   */
+  taken?: Map<string, string>;
 }) {
+  const drawn = taken ?? EMPTY_TAKEN;
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
    * location and on the shared pool is opened precisely to compare the two, and an accordion
@@ -118,15 +129,13 @@ export function CellStockTable({
 
   const showTotals = locations.length > 1;
   /**
-   * The rows grouped by where they stand, in `WHERE_ORDER`. A section of SEVERAL rows carries a
-   * subtotal, and only while the table spans more than one section - with a single section the
-   * subtotal is the Total, printed twice under two different words.
+   * The rows grouped into the SETS the engine nets over (ladder v4), in the order the server
+   * sent them. A section carries a subtotal when it holds several rows, or when it states a
+   * net - the net is the number the ladder obeyed and it is over the whole set, including
+   * members this cell never listed, so it says something no sum of these rows can.
    */
-  const sections = WHERE_ORDER.map((where) => ({
-    where,
-    rows: locations.filter((entry) => (entry.where ?? 'own') === where),
-  })).filter((section) => section.rows.length > 0);
-  const showSubtotals = sections.length > 1;
+  const sections = sectionsOf(locations);
+  const showSubtotals = sections.length > 1 || sections.some((section) => section.net !== null);
 
   return (
     <div className="space-y-1">
@@ -216,7 +225,7 @@ export function CellStockTable({
                     </span>
                   </td>
                   {NUMERIC_COLUMNS.map((column) => {
-                    const value = column.of(entry);
+                    const value = valueOf(column, entry, drawn);
                     // Signed and never clamped: a negative Available IS the shortfall, and the
                     // colour is what makes it the number the eye lands on.
                     const negative = column.signed && isNegative(value);
@@ -229,9 +238,9 @@ export function CellStockTable({
                             value === null && 'text-muted-foreground',
                             negative && 'text-destructive',
                           )}
-                          title={value ?? 'Not stated'}
+                          title={value ?? NOT_STATED_TITLE}
                         >
-                          {value ?? 'Not stated'}
+                          {value ?? BLANK}
                         </span>
                       </td>
                     );
@@ -255,34 +264,41 @@ export function CellStockTable({
               </React.Fragment>
             );
           }),
-          // What this section holds, added up: "Pool BRW has 1716 available" has to be the sum
-          // of rows the reader can see, not a figure only the Suggestion card knows.
-          ...(showSubtotals && section.rows.length > 1
+          // What this section holds, added up - and for Available, what the SET NETS, which
+          // is the figure the ladder actually drew on. The two differ on purpose: the net
+          // covers every location of the group, and this table lists the ones this cell
+          // consulted.
+          ...(showSubtotals && (section.rows.length > 1 || section.net !== null)
             ? [
-                <tr
-                  key={`subtotal-${section.where}`}
-                  data-testid={`stock-subtotal-${section.where}`}
-                >
+                <tr key={`subtotal-${section.key}`} data-testid={`stock-subtotal-${section.key}`}>
                   <td className={cn(CHEVRON_COL, FOOT_CELL)} />
                   <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>
-                    {`${WHERE_LABELS[section.where]} subtotal`}
+                    {section.label}
                   </td>
                   <td className={cn(WHERE_COL, FOOT_CELL)} />
                   {NUMERIC_COLUMNS.map((column) => {
                     if (!column.total) {
                       return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                     }
-                    const total = sumOf(section.rows, column.of);
+                    const isNet = column.key === 'available' && section.net !== null;
+                    const total = isNet
+                      ? section.net
+                      : sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
                     return (
                       <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                         <span
+                          data-testid={`stock-subtotal-${column.key}-${section.key}`}
                           className={cn(
                             'block truncate text-end tabular-nums',
                             total === null && 'font-normal text-muted-foreground',
                             column.signed && isNegative(total) && 'text-destructive',
                           )}
+                          // Why this one figure is not the column above it added up: the
+                          // net covers EVERY location of the set, and the table lists the
+                          // ones this cell consulted.
+                          title={isNet ? netTitle(section) : undefined}
                         >
-                          {total ?? 'Not stated'}
+                          {total ?? BLANK}
                         </span>
                       </td>
                     );
@@ -305,7 +321,7 @@ export function CellStockTable({
                 if (!column.total) {
                   return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
                 }
-                const total = sumOf(locations, column.of);
+                const total = sumOf(locations, (entry) => valueOf(column, entry, drawn));
                 return (
                   <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                     <span
@@ -315,7 +331,7 @@ export function CellStockTable({
                         column.signed && isNegative(total) && 'text-destructive',
                       )}
                     >
-                      {total ?? 'Not stated'}
+                      {total ?? BLANK}
                     </span>
                   </td>
                 );
@@ -336,6 +352,85 @@ export function CellStockTable({
   );
 }
 
+type StockSection = {
+  /** Stable per table, and what the subtotal row is addressed by in a test. */
+  key: string;
+  /** The SET this run belongs to, compared exactly - a prefix test would merge `IB` into `IB2`. */
+  setKey: string;
+  /** The set's own name (`IB`, `pools`), for the subtotal's label and its tooltip. */
+  netOf: string | null;
+  label: string;
+  /** What the SET nets, when the server states one. `null` for a set with no net. */
+  net: string | null;
+  rows: BoardCellLocation[];
+};
+
+/**
+ * The rows cut into the sets availability is actually counted over (ladder v4).
+ *
+ * The line's own location and its group's other warehouses are ONE ownership group and net
+ * as one, so they share a subtotal even though they carry different Where tags - the tag says
+ * where a row stands relative to this cell, the net says which pile it is part of, and after
+ * 26 August those are two different questions. Every site pool is one pile too. A donor group
+ * outside this line's own gets its own subtotal, because each donor group nets separately.
+ *
+ * Cut on CONTIGUOUS RUNS, never by re-collecting rows with the same key: the server sends the
+ * rows in the order the reader walks them, and quietly moving one up beside an earlier row of
+ * the same set would rearrange a table somebody is comparing against AutoCount.
+ */
+function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
+  const sections: StockSection[] = [];
+  const used = new Set<string>();
+  locations.forEach((entry) => {
+    const where = entry.where ?? 'own';
+    const setKey = entry.net_of ? `set:${entry.net_of}` : `where:${where}`;
+    const last = sections[sections.length - 1];
+    if (last && last.setKey === setKey) {
+      last.rows.push(entry);
+      return;
+    }
+    // The set's own name is the test id and the anchor: `group`, `pools`, `IB`. Suffixed
+    // only if one set is ever split into two runs, which is what keeps the id unique
+    // without putting an index on the ordinary case.
+    let key = entry.net_of ?? where;
+    for (let n = 2; used.has(key); n += 1) key = `${entry.net_of ?? where}-${n}`;
+    used.add(key);
+    sections.push({
+      key,
+      setKey,
+      netOf: entry.net_of ?? null,
+      label: labelOf(where, entry.net_of ?? null),
+      net: entry.net ?? null,
+      rows: [entry],
+    });
+  });
+  return sections;
+}
+
+/**
+ * What the Available subtotal means, for the one cell whose figure is not a sum of the rows
+ * above it. A tooltip rather than a line of copy: the number is the point, and a table that
+ * explains itself in prose is a table nobody reads twice.
+ */
+function netTitle(section: StockSection): string {
+  const what =
+    section.netOf === POOLS_SET
+      ? 'every site pool'
+      : section.netOf
+        ? `every ${section.netOf} location`
+        : 'every location of this set';
+  return `${section.net} across ${what}, including any this table does not list`;
+}
+
+function labelOf(where: BoardLocationWhere, netOf: string | null): string {
+  if (netOf === POOLS_SET) return 'Site pool subtotal';
+  if (netOf) return `${netOf} group subtotal`;
+  return `${WHERE_LABELS[where]} subtotal`;
+}
+
+/** What the server calls the five-pool set on `net_of`. */
+const POOLS_SET = 'pools';
+
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
@@ -350,25 +445,24 @@ const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-
  * twice, in a word this screen no longer uses. What this table is for is what is AT each
  * location, which is the one thing that table cannot say.
  *
- * EVERY column totals. The rows are now a whole ownership group rather than the one warehouse
- * a line named, and "what does the group hold" is the question the group was listed to answer -
- * so Reserved is summed too. It was left out when a "total" could only ever add a location to
- * itself.
+ * EVERY column totals. The rows are a whole ownership group and every site pool rather than the
+ * one warehouse a line named, and "what does the group hold" is the question they were listed to
+ * answer. Totals were left out when a "total" could only ever add a location to itself.
  */
 const NUMERIC_COLUMNS: {
   key: string;
   label: string;
-  of: (entry: BoardCellLocation) => string | null;
+  of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null;
   /** Summed in the totals row. */
   total?: boolean;
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
 }[] = [
   { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
-  { key: 'reserved', label: 'Reserved', of: (entry) => entry.qty_reserved ?? null, total: true },
-  // No Free column. It is `On hand - Reserved` and the two columns beside it already state
-  // both, so it was a third number saying what the reader can see - and on a table this wide
-  // every column costs the ones that answer a question nothing else does.
+  // No Reserved column, and no Free one. Free was `On hand - Reserved`, and Reserved itself is
+  // read by nothing on this screen: `Available` is `On hand - SO + SPO` and does not use it.
+  // Both went to make room for the two columns below, which answer questions no other number
+  // here does. Reserved is still on the wire and still in the row's own expansion.
   { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
   { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
   {
@@ -378,9 +472,42 @@ const NUMERIC_COLUMNS: {
     total: true,
     signed: true,
   },
+  // Information, deliberately NOT folded into Available: a purchase order reaches a project
+  // line through a link, never by sitting at the location. "500 already on order at DC1" is
+  // what decides between a Buy and a transfer, and until now the planner had to leave the
+  // dialog to find it.
+  { key: 'po', label: 'PO qty', of: (entry) => entry.po_open_qty ?? null, total: true },
+  // What the cell actually draws from this row. A location nothing was needed from reads 0,
+  // which is the answer to "why not MWH" - it was listed, it had stock, nothing was taken.
+  {
+    key: 'taken',
+    label: 'Taken',
+    of: (entry, taken) => (entry.location ? taken.get(entry.location) ?? '0' : null),
+    total: true,
+  },
 ];
 
-/** Absent stays absent: a column no location stated is "Not stated", never a total of 0. */
+/**
+ * One column's figure on one row, with AC-B2's rule applied HERE and nowhere else: a row that
+ * NAMES a location and carries no figure reads 0.
+ *
+ * An absent `stock` row means the last upload counted none there, which is a fact. The row
+ * whose sales order names no location keeps its blank, because there is no location whose
+ * stock could be counted and a 0 would read as "that location is empty".
+ *
+ * Stated once, so the cells and the two totals rows cannot come to disagree about a blank.
+ */
+function valueOf(
+  column: { of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null },
+  entry: BoardCellLocation,
+  taken: Map<string, string>,
+): string | null {
+  const value = column.of(entry, taken);
+  if (value !== null) return value;
+  return entry.location ? '0' : null;
+}
+
+/** Absent stays absent: a column no location stated has no total, never a total of 0. */
 function sumOf(
   locations: BoardCellLocation[],
   pick: (entry: BoardCellLocation) => string | null,

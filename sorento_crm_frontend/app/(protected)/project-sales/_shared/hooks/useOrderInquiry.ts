@@ -2,22 +2,28 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import {
+  acknowledgeOrderInquiryRows,
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
+  getOrderInquiryUploadJob,
   getOrderInquiryPoDetail,
   getOrderInquirySummary,
   getOrderInquiryWorklistSummary,
   getSalesOrderInquiry,
   getUnplaceAllPreview,
   listOrderInquiryRows,
+  linkNowOrderInquiryRows,
   listOrderInquiryWorklist,
   markOrderInquiryRows,
+  rejectOrderInquiryRow,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
+import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type {
   AutoPlaceRequest,
   OrderInquiryListParams,
@@ -34,6 +40,7 @@ export const ORDER_INQUIRY_WORKLIST_SUMMARY_KEY = 'order-inquiry-worklist-summar
 export const ORDER_INQUIRY_PO_CANDIDATES_KEY = 'order-inquiry-po-candidates';
 export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
 export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
+export const ORDER_INQUIRY_UPLOAD_JOB_KEY = 'order-inquiry-upload-job';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -201,10 +208,10 @@ export function useOrderInquiryPlacementMutations() {
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
-    // Another raised row on the same product may now cover less (or more) of the PO
-    // line this one just tagged or freed.
+    // Another raised row on the same product may now cover less (or more) of the
+    // document line this one just linked or freed.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
-    // A single place/unplace moves the placed count "Unplace all" reads too.
+    // A single link/unlink moves the linked count "Unlink all" reads too.
     queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
   }
 
@@ -213,12 +220,15 @@ export function useOrderInquiryPlacementMutations() {
       placeOrderInquiryRowOnPo(rowId, poLineId),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Placed on the purchase order');
+      toast.success('Linked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  /** The G2 cascade shape: one or more `{po_line_id, qty}` lines in one call. */
+  /**
+   * The cascade shape: one or more `{po_line_id | spo_allocation_id, qty}` lines in one
+   * call. The row keeps its full quantity and gains one link per allocation (AC-I6).
+   */
   const placeAllocations = useMutation({
     mutationFn: ({
       rowId,
@@ -229,16 +239,18 @@ export function useOrderInquiryPlacementMutations() {
     }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Placed on the purchase order');
+      toast.success('Linked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** Unlink: one link when `linkId` names it, every link the row holds when it does not. */
   const unplace = useMutation({
-    mutationFn: (rowId: string) => unplaceOrderInquiryRow(rowId),
+    mutationFn: ({ rowId, linkId }: { rowId: string; linkId?: string }) =>
+      unplaceOrderInquiryRow(rowId, linkId),
     onSuccess: () => {
       invalidateAfterPlacement();
-      toast.success('Unplaced');
+      toast.success('Unlinked');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -247,8 +259,8 @@ export function useOrderInquiryPlacementMutations() {
 }
 
 /**
- * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Invalidates the same
- * query families a single placement does, since a bulk pass can touch any of them.
+ * Run the cascade now - the worklist's "Auto-link". Invalidates the same query families a
+ * single link does, since a bulk pass can touch any of them.
  */
 export function useAutoPlaceOrderInquiryRows() {
   const queryClient = useQueryClient();
@@ -264,8 +276,8 @@ export function useAutoPlaceOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
       toast.success(
-        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} placed across ` +
-          `${result.allocations} allocation${result.allocations === 1 ? '' : 's'}`,
+        `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
+          `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`,
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -273,9 +285,9 @@ export function useAutoPlaceOrderInquiryRows() {
 }
 
 /**
- * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED
- * row matching the filters passed in reverts to raised, ready for a clean Auto-place
- * re-deal. Invalidates the same query families a single unplace does.
+ * "Unlink all" for the CURRENT worklist scope (the captain, 20-21 Aug): every linked or
+ * partly linked row matching the filters passed in loses its links, ready for a clean
+ * Auto-link re-deal. Named after its route, which the plan deliberately left unrenamed.
  */
 export function useUnplaceAllOrderInquiryRows() {
   const queryClient = useQueryClient();
@@ -291,9 +303,107 @@ export function useUnplaceAllOrderInquiryRows() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
       toast.success(
-        `${result.unplaced} row${result.unplaced === 1 ? '' : 's'} unplaced`,
+        `${result.unplaced} row${result.unplaced === 1 ? '' : 's'} unlinked`,
       );
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+/**
+ * The upload this page queued, watched to its end (AC-H13).
+ *
+ * The drawer's own feed is the watcher - one poll for every upload in the system, already
+ * running - so this reads the session whose id is the job's rather than starting a second
+ * one. `landed` is the moment the worker is done with it, whichever way it ended; only
+ * then is the job asked what it wrote, because before then the answer is half a book.
+ *
+ * A job the feed has never heard of reads as still running: it was queued a moment ago and
+ * the feed has not caught up, and offering to link against a book nobody has read yet is
+ * the thing this gate exists to stop.
+ */
+export function useUploadedBook(jobId: string | null) {
+  const { sessions } = useUploadActivity();
+  const session = jobId
+    ? sessions.find((s) => s.session_id === jobId || s.import_job_id === jobId)
+    : undefined;
+  const landed = Boolean(
+    session && session.status !== 'uploading' && session.status !== 'processing',
+  );
+
+  const scope = useQuery({
+    queryKey: [ORDER_INQUIRY_UPLOAD_JOB_KEY, jobId],
+    queryFn: () => getOrderInquiryUploadJob(jobId as string),
+    enabled: Boolean(jobId) && landed,
+    // The job is terminal by now, so its answer cannot change; a refetch on every focus
+    // would ask the same question again for the life of the alert.
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  return { landed, failed: session?.status === 'failed', scope: scope.data ?? null };
+}
+
+/**
+ * The handshake (`PLAN-scm-oi-handshake.md`): Acknowledge, Reject, Link now.
+ *
+ * All three invalidate the same families a link does, because all three MOVE links:
+ * acknowledging runs the cascade for the rows it takes on, rejecting takes a row out of
+ * netting (and its line back to the board), and Link now is the cascade itself.
+ */
+export function useOrderInquiryHandshake() {
+  const queryClient = useQueryClient();
+
+  function invalidate() {
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_ROWS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_SUMMARY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_PO_CANDIDATES_KEY] });
+    queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY] });
+  }
+
+  const acknowledge = useMutation({
+    mutationFn: (rowIds: string[]) => acknowledgeOrderInquiryRows(rowIds),
+    onSuccess: (result) => {
+      invalidate();
+      const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
+      toast.success(
+        result.linked_rows > 0
+          ? `${rows} acknowledged, ${result.linked_rows} linked across ` +
+              `${result.links} document line${result.links === 1 ? '' : 's'}`
+          : `${rows} acknowledged`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reject = useMutation({
+    mutationFn: ({ rowId, reason }: { rowId: string; reason: string }) =>
+      rejectOrderInquiryRow(rowId, reason),
+    onSuccess: () => {
+      invalidate();
+      // The board is where the line went back to, so its own reads are stale now.
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      toast.success('Rejected. The line is back with CS.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const linkNow = useMutation({
+    mutationFn: (params: AutoPlaceRequest = {}) => linkNowOrderInquiryRows(params),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success(
+        result.placed_rows > 0
+          ? `${result.placed_rows} row${result.placed_rows === 1 ? '' : 's'} linked across ` +
+              `${result.allocations} document line${result.allocations === 1 ? '' : 's'}`
+          : 'Nothing new to link yet',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { acknowledge, reject, linkNow };
 }

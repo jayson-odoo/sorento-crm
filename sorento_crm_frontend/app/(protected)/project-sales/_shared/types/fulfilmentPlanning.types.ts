@@ -514,6 +514,18 @@ export interface ConfirmLine {
 
 export interface ConfirmSupplyBody {
   lines: ConfirmLine[];
+  /**
+   * The planning-change batch this Confirm is answering (AC-P3-4).
+   *
+   * Set when the board was opened at `?orders=...&batch=<id>`: the confirmation then APPLIES
+   * that batch - the lines above become the batch rows' own compositions, the batch reads
+   * applied with actor and time, and one revision is written. Absent on an ordinary board
+   * Confirm, which is the common case and behaves exactly as it always has.
+   *
+   * A second Confirm on a batch already applied is refused with a message rather than writing
+   * a second revision.
+   */
+  batch_id?: string | null;
 }
 
 export interface ConfirmException {
@@ -529,6 +541,17 @@ export interface ConfirmResult {
   review_state: string;
   inquiry_rows_created: number;
   exceptions: ConfirmException[];
+  /**
+   * The physical movements this confirmation raised, and how many it could NOT write
+   * (`PLAN-scm-cs-planning-uat.md` section E).
+   *
+   * The transfer write is best-effort on the server so a failure cannot fail a promise
+   * already made, but a movement nobody was told about is a movement nobody makes - so a
+   * non-zero `transfers_failed` is said out loud. Optional, because a revision confirmed
+   * against a server that predates the field carries neither.
+   */
+  transfers_written?: number | null;
+  transfers_failed?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -600,63 +623,71 @@ export interface BoardDateBucket {
 export type BoardSourceKind = 'reserve' | 'timely_spo' | 'buy' | 'borrow' | 'unplannable';
 
 /**
- * The rungs of the source ladder, in the order the engine walks them - ladder v2
- * (`PLAN-demo-followups-19aug-ladder-v2.md` section E, amended by review finding S4): the
- * read-only own location (`reserve_own`), then incoming, the pool, group take, group
- * borrow, cross-group borrow, then buy. The own-location rung is gone AS A SOURCE (rule
- * 7 - a line's own stock is never reserved), but it stays as the first rung, read-only:
- * it is the one place the queue ahead of THIS line at ITS OWN pile is named, because
- * `QueueLink`'s dialog opens exactly this rung's own location and nowhere else's.
- * `reserve_pool` / plain `borrow` are pre-v2 spellings, kept only so a stale cached trail
- * does not fail to render.
+ * The five rows of the proof, as INTERNAL KEYS - ladder v5
+ * (`PLAN-scm-cs-planning-uat.md` section 1e). Nothing renders these: the reader is shown
+ * `question`. `own` is question 1, the ownership group read as one pile, with the old
+ * read-only `reserve_own` strip folded into it (it existed to name the queue, which is one
+ * of that question's facts rather than a question of its own, and `QueueLink`'s dialog
+ * still opens exactly that location).
+ *
+ * `incoming` / `group_take` / `reserve_own` / `reserve_pool` / plain `borrow` are retired
+ * spellings, kept only so a stale cached trail does not fail to render.
  */
 export type BoardTrailKind =
-  | 'reserve_own'
-  | 'incoming'
+  | 'own'
   | 'pool'
-  | 'group_take'
-  | 'group_borrow'
   | 'cross_group_borrow'
+  | 'group_borrow'
   | 'buy'
+  | 'incoming'
+  | 'group_take'
+  | 'reserve_own'
   | 'reserve_pool'
   | 'borrow';
 
 /**
- * What happened at one rung.
+ * Did this question supply anything? One word, five times, so the proof can be scanned.
  *
- *   took          the source gave something
- *   nothing_left  it was checked and had nothing to give
- *   not_eligible  a RULE skipped it (hot-selling protects dealer stock; no shared pool exists)
- *   offered       found, and deliberately not taken - Borrow needs a donor and a person's reason
- *   none_needed   the line was already covered before the ladder reached it
+ * It replaced a five-valued `outcome` (`took` / `nothing_left` / `not_eligible` /
+ * `offered` / `none_needed`), which was five shades of the same two answers and put the
+ * reasoning in a pill instead of in the sentence. The distinction survives where it
+ * matters, in `why`.
  */
-export type BoardTrailOutcome =
-  | 'took'
-  | 'nothing_left'
-  | 'not_eligible'
-  | 'offered'
-  | 'none_needed';
+export type BoardTrailAnswer = 'yes' | 'no';
 
 /**
- * One rung of the ladder, as it was walked for one line (the captain: "can you justify how you
- * arrive at the buy, like what's the process you have gone through ... need more justification",
- * and then "the justification needs to be STRUCTURED instead of plain text").
+ * One of the four questions ladder v5 asks about a line, or Buy (the captain: "can you
+ * justify how you arrive at the buy ... need more justification", then "the justification
+ * needs to be STRUCTURED instead of plain text", then, on 26 August: "our thought process
+ * is simpler now").
  *
- * EVERY rung arrives, including the ones that gave nothing: "the pool was checked and had none"
- * is the answer to that question, and a step the server omitted would read as a step nobody took.
- * A line that cannot be planned carries an empty trail, because no ladder was walked for it.
+ * FIVE ROWS arrive, always, and every one is answered - "the pool was checked and had none"
+ * is the answer to that question, and a row the server omitted would read as a question
+ * nobody asked. A line that cannot be planned carries an empty trail, because no ladder was
+ * walked for it.
+ *
+ * THE FIGURES ARE INSIDE `why`: the group's net, the pile's net, the donor group's net, the
+ * cap. That is what retired `opening`, `offered` and `remaining_after` - eight columns of
+ * arithmetic a reader had to do themselves.
  */
 export interface BoardTrailStep {
-  /** 1-based, in the order the ladder walked. */
+  /** 1-based, in the order the questions are asked. */
   step: number;
+  /** The internal rung key. Addressing and test ids only - never rendered. */
   kind: BoardTrailKind;
+  /** The question, in the words a planner would ask it. */
+  question: string;
+  /** Whether this question supplied anything. */
+  answer: BoardTrailAnswer;
+  /** What the line took from it. */
+  took: string;
+  /** The warehouses it came from, comma-joined, or null on a No. */
+  from?: string | null;
   /** The source's warehouse code. Null for Buy, which is held nowhere, and for Borrow. */
   location?: string | null;
   /** The same warehouse by id. Addressing only, never rendered. */
   warehouse_id?: string | null;
-  /** What the source held when the ladder reached this line, before the demand ahead of it. */
-  opening?: string | null;
-  /** Own location only: what the queue in front of this line wants, and how long it is. */
+  /** Question 1 only: what the queue in front of this line wants, and how long it is. */
   ahead_qty?: string | null;
   ahead_lines?: number | null;
   /**
@@ -670,13 +701,6 @@ export interface BoardTrailStep {
   ahead?: BoardAheadLine[];
   ahead_more?: number;
   ahead_by_factor?: Record<string, number>;
-  /** What this source could give THIS line once its own rules were applied. */
-  offered: string;
-  /** What the line actually took. Always 0 for Borrow, which is offered and never proposed. */
-  taken: string;
-  /** Still uncovered after this step. Zero on the last one. */
-  remaining_after: string;
-  outcome: BoardTrailOutcome;
   /**
    * WHY it ended that way, in one plain sentence from the server. Never assembled here: the side
    * that walked the ladder is the side that knows, and a sentence written on the client would
@@ -804,10 +828,28 @@ export interface BoardDecisionBorrow {
  * these words. An UNTOUCHED covered line is never posted from the board: the server carries every
  * covered line the body does not name into the next revision itself, verbatim.
  */
+/**
+ * One SPO share of a frozen decision, in the shape a Reserve row already has.
+ *
+ * `timely_spo_qty` is the TOTAL and is what `ConfirmLine` takes the composition back in; this
+ * says WHERE each share was coming to and WHICH question drew it. Under ladder v5 the water is
+ * question 1's answer (`rung: group_take`), so it reads under "Use own location" exactly as
+ * the suggestion beside it does.
+ */
+export interface BoardDecisionIncoming {
+  warehouse_id?: string | null;
+  location?: string | null;
+  qty: string;
+  /** `group_take` on a v5 confirmation, `incoming` on one frozen under the retired rung 1. */
+  rung?: string | null;
+}
+
 export interface BoardLineDecision {
   revision_no: number;
   confirmed_at?: string | null;
   timely_spo_qty: string;
+  /** The same quantity split per document location and rung. Empty on an older revision. */
+  incoming?: BoardDecisionIncoming[];
   /** Same shape as an amendment's Reserve: addressed by id, labelled by code. */
   reserve: BoardReserveComponent[];
   borrow: BoardDecisionBorrow[];
@@ -816,6 +858,9 @@ export interface BoardLineDecision {
   buy_reason?: string | null;
   /** Why the composition was not the engine's, in the planner's own words. */
   amend_reason?: string | null;
+  /** The frozen Buy was an ORDER BACK, and the document CS cited for it (part 2 4b). */
+  order_back?: boolean;
+  cited_document?: string | null;
 }
 
 /**
@@ -958,6 +1003,17 @@ export interface BoardContribution {
   /** The default rule's proposal for this row, in the order the engine proposes them. */
   sources: BoardSource[];
   /**
+   * What the ENGINE suggested for this line, beside what was decided (AC-D2).
+   *
+   * The live ladder on an undecided line - the same list as `sources` there - and the
+   * composition FROZEN at confirm on a covered one, where `sources` states the decision and
+   * the suggestion would otherwise be lost the moment somebody amended it.
+   *
+   * `null` on a revision written before the proposal was frozen. "Not recorded" and "the
+   * engine suggested nothing" are different answers and the screen says which.
+   */
+  proposed?: BoardProposed | null;
+  /**
    * HOW that proposal was arrived at: the ladder, rung by rung, in the order it was walked.
    *
    * The sources say what the answer is; this says what was checked to get there, including the
@@ -999,6 +1055,28 @@ export interface BoardContribution {
    * been told about this line" and "told, about nothing" are different answers.
    */
   order_inquiry?: BoardLineOrderInquiry | null;
+  /**
+   * What ANOTHER sales order borrowed OFF this line (AC-L6). The captain, 25 August 2026:
+   * the donor's cell reads "71 lent to SO415472".
+   *
+   * An empty list when nothing was lent, never absent, so the cell has one shape to read.
+   */
+  lent_to?: BoardLineLending[];
+}
+
+/** What the engine suggested for one line, in the same shape a source is stated in. */
+export interface BoardProposed {
+  components: BoardSource[];
+}
+
+/** One borrow taken OFF a board row by another sales order (AC-L6). */
+export interface BoardLineLending {
+  /** How much was taken. */
+  qty: string;
+  /** The order that took it, by its document number - never a UUID. */
+  so_number?: string | null;
+  /** Its line on that order, so two lines of one order are told apart. */
+  line_no?: number | null;
 }
 
 /** The order inquiry a board row belongs to, in the two words a person reads it by. */
@@ -1007,6 +1085,22 @@ export interface BoardLineOrderInquiry {
   inquiry_no?: string | null;
   /** The ROW's own state (`raised` / `placed` / `actioned` / `cancelled`). */
   state: string;
+  /**
+   * The handshake (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
+   * `rejected`. A different question from `state`, which says where the quantity sits.
+   */
+  /**
+   * `awaiting` / `acknowledged` / `changed` / `rejected`, or NULL once CS has answered a
+   * refusal: the cell is then about their decision and not about the objection that
+   * prompted it, so there is no acknowledgement state left to report.
+   */
+  ack_state?: string | null;
+  /**
+   * Why purchasing refused it, and who did. Set only on a rejected row - and that is the
+   * row whose LINE is undecided again, so the cell has to say why it came back.
+   */
+  rejected_reason?: string | null;
+  rejected_by_name?: string | null;
 }
 
 /**
@@ -1052,6 +1146,17 @@ export interface BoardPolicy {
 export interface BoardSource {
   kind: BoardSourceKind;
   qty: string;
+  /**
+   * WHICH LADDER composed this component (`"v5"` today).
+   *
+   * A frozen suggestion outlives the rule that made it: "MWH-IB has 30 available in the IB
+   * group" is a v3 sentence about ONE warehouse's availability, and under v4 that reading
+   * does not exist. A LIVE source carries today's version, because it is today's answer by
+   * definition; a FROZEN one carries what was stamped when it was frozen, and is absent
+   * only on a snapshot older than the stamp itself. The screen labels anything that is not
+   * today's rather than passing it off as today's answer (AC-V8).
+   */
+  ladder?: string | null;
   /** Warehouse code for a Reserve; null for Buy, which has no location by definition. */
   location?: string | null;
   /**
@@ -1163,6 +1268,26 @@ export interface BoardCellLocation {
   so_qty?: string | null;
   spo_qty?: string | null;
   available_qty?: string | null;
+  /**
+   * The open PURCHASE-order balance here, less what an order-inquiry row already claims off
+   * those lines. SPO documents are excluded - they are `spo_qty` already.
+   *
+   * INFORMATION ONLY and outside `available_qty` on purpose: a purchase order reaches a
+   * project line through a link, never by sitting at the location.
+   */
+  po_open_qty?: string | null;
+  /**
+   * Ladder v4: what the SET this row belongs to nets between ITS OWN locations, signed -
+   * the ownership group for an `own` / `group` row, the five site pools for a `site_pool`
+   * row, the donor group for an `other_group` row.
+   *
+   * THE NUMBER THE ENGINE DECIDED ON. `MWH-IB` reads 7000 available and lends nothing,
+   * because the IB group it belongs to nets -15514; the row's own figure explains none of
+   * that, and the subtotal prints this instead of a sum of whichever rows are on screen.
+   */
+  net?: string | null;
+  /** Which set that net covers, for the subtotal's label: a group code, or `pools`. */
+  net_of?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -1362,6 +1487,13 @@ export interface BoardReserveComponent {
   /** The warehouse CODE, for the pill and the editor. Never the id. */
   location?: string | null;
   qty: string;
+  /**
+   * Which rung the confirmation froze this share under. Server-supplied on a FROZEN
+   * decision only; the Amend editor never sets it, and the confirmation ignores it coming
+   * back. Read rather than inferred: `BRW-BB` and the pool `BRW` share a site prefix and are
+   * not the same kind of supply, so the code cannot answer this question.
+   */
+  rung?: string | null;
 }
 
 /** One donor an amendment borrows from. The confirm body's borrow component, plus its code. */
@@ -1417,6 +1549,22 @@ export interface BoardDecision {
    * person made by hand has to say why, or the snapshot cannot explain itself later.
    */
   reason?: string;
+  /**
+   * This Buy is an ORDER BACK, not a fresh purchase (part 2 section 4b, captain 25 Aug):
+   * the quantity is a shortfall against something already ordered or already shipped. The
+   * order inquiry row is raised with verb `ORDER_BACK`, which is the ONE verb whose links
+   * may name an SPO allocation as well as a purchase order line.
+   *
+   * Only meaningful with `buy_qty > 0`; an amendment that buys nothing has no row to mark.
+   */
+  order_back?: boolean;
+  /**
+   * The document CS named on the order back, if they named one. It is not a link by
+   * itself - it is what the auto-link walk tries FIRST, before any tier or date
+   * (`ProjectOrderInquiryService` candidate order). Free text on purpose: CS types what
+   * the form says, and a document we do not hold is recorded rather than refused.
+   */
+  cited_document?: string | null;
 }
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
@@ -1467,6 +1615,15 @@ export interface StockDetailIncoming {
   supplier_name?: string | null;
   expected_date?: string | null;
   spo_qty: string;
+  /**
+   * How many days late the promised arrival is; 0 when it is today, ahead or unstated.
+   *
+   * The quantity is counted either way (captain, 26 August 2026: trust the book - the goods
+   * are owed until a re-uploaded book says they arrived). This is what stops that being
+   * read as a fresh promise: an overdue row is named as overdue, so the buyer can see which
+   * supplier to chase instead of wondering why the cover never lands.
+   */
+  overdue_days?: number | null;
 }
 
 /**

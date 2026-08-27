@@ -62,8 +62,11 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: The captain's shape, minus the columns these tests do not exercise. `AGENT` is here because
 #: an agent nobody holds is the one thing an upload creates without being asked to.
+#: `ORDER TYPE` is here because since QP1 an order nothing can classify refuses the whole
+#: file, and these debtor codes carry no market segment - a row-outcome test must not be
+#: measuring the refusal instead.
 AGENT_HEADERS = ("S/O NO", "DEBTOR CODE", "AGENT", "ITEM CODE", "QTY", "DELIVERY DATE",
-                 "STOCK LOCATION")
+                 "STOCK LOCATION", "ORDER TYPE")
 
 #: The Order Inquiry sheet's own spelling, from the customer's file.
 INQUIRY_HEADERS = ("SO NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT", "PO NO")
@@ -189,8 +192,9 @@ def test_a_row_naming_an_unknown_product_is_skipped_with_the_reason(scm_app, mon
     ghost = f"{MARKER}-GHOST-{uuid.uuid4().hex[:6]}".upper()
     data = workbook(
         [(codes.project_so, "300-T012", "", codes.item_rl, 10, date(2026, 7, 1),
-          codes.loc_project),
-         (codes.project_so, "300-T012", "", ghost, 4, date(2026, 7, 1), codes.loc_project)],
+          codes.loc_project, "DEALER"),
+         (codes.project_so, "300-T012", "", ghost, 4, date(2026, 7, 1),
+          codes.loc_project, "DEALER")],
         headers=AGENT_HEADERS,
     )
 
@@ -214,9 +218,9 @@ def test_a_caption_row_is_not_a_line_and_says_so(scm_app, monkeypatch):
     codes = make_codes()
     seed_catalogue(db, codes)
     data = workbook(
-        [("ITEM PACKAGE : KITCHEN", "", "", "", None, None, ""),
+        [("ITEM PACKAGE : KITCHEN", "", "", "", None, None, "", ""),
          (codes.project_so, "300-T012", "", codes.item_rl, 10, date(2026, 7, 1),
-          codes.loc_project)],
+          codes.loc_project, "DEALER")],
         headers=AGENT_HEADERS,
     )
 
@@ -240,9 +244,9 @@ def test_a_row_with_nothing_left_outstanding_says_so_rather_than_failing(scm_app
     seed_catalogue(db, codes)
     data = workbook(
         [(codes.project_so, "300-T012", "", codes.item_rl, 10, date(2026, 7, 1),
-          codes.loc_project),
+          codes.loc_project, "DEALER"),
          (codes.project_so, "300-T012", "", codes.item_wt, 0, date(2026, 7, 1),
-          codes.loc_project)],
+          codes.loc_project, "DEALER")],
         headers=AGENT_HEADERS,
     )
 
@@ -268,7 +272,7 @@ def test_an_agent_nobody_holds_is_reported_on_the_job(scm_app, monkeypatch):
     agent = f"{MARKER}-SEAN-{uuid.uuid4().hex[:6]} III".upper()
     data = workbook(
         [(codes.project_so, "300-T012", agent, codes.item_rl, 10, date(2026, 7, 1),
-          codes.loc_project)],
+          codes.loc_project, "DEALER")],
         headers=AGENT_HEADERS,
     )
 

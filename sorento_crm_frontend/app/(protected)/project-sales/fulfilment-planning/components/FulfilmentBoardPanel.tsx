@@ -3,7 +3,16 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, CheckCheck, LayoutGrid, List, PackageSearch, Search, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCheck,
+  LayoutGrid,
+  List,
+  PackageSearch,
+  Search,
+  Undo2,
+  X,
+} from 'lucide-react';
 import {
   Alert,
   AlertContent,
@@ -27,13 +36,20 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useReconciliationMutations,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
+import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
 import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
+import {
+  annotationsByCell,
+  preMarkedKeys,
+  uncoverChangedLines,
+} from '../../_shared/lib/boardChangeAnnotations';
 import {
   boardAxis,
   bucketLabelText,
@@ -64,6 +80,9 @@ import type {
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
+import { DecisionStrip } from './DecisionStrip';
+import { cellCarriesKind, contributionCarriesKind } from '../../_shared/lib/decisionStrip';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 
 /** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
 type BoardView = 'grid' | 'list';
@@ -137,9 +156,18 @@ function granularityFrom(value: string | null): BoardGranularity {
  */
 export function FulfilmentBoardPanel({
   soNumbers,
+  batchId,
   onBack,
 }: {
   soNumbers: string[];
+  /**
+   * The planning-change batch the board was opened ON (`?batch=<id>`, AC-P3-1).
+   *
+   * Everything it changes is additive: the changed lines' cells carry a Was / Now table and
+   * arrive pre-marked, and Confirm applies the batch instead of writing an ordinary revision.
+   * A board opened without one is untouched.
+   */
+  batchId?: string | null;
   onBack: () => void;
 }) {
   const router = useRouter();
@@ -168,6 +196,14 @@ export function FulfilmentBoardPanel({
    */
   const [view, setView] = React.useState<BoardView>(() => boardViewFrom(searchParams.get('view')));
   const [draft, setDraft] = React.useState<BoardDraft>({});
+  /**
+   * The decision-strip card currently narrowing the grid, or null (AC-D2).
+   *
+   * Deliberately NOT in the URL, unlike the dials above: it is a way of reading the board in
+   * front of you while you work, not a state of the board worth sending to somebody else, and
+   * a shared link that arrived pre-filtered would hide the rest of the plan without saying so.
+   */
+  const [kindFilter, setKindFilter] = React.useState<SupplyKind | null>(null);
   const [openCell, setOpenCell] = React.useState<BoardCell | null>(null);
   /** Which 30-day window the day view is showing. Undefined lets the server choose the first. */
   const [dayWindow, setDayWindow] = React.useState<string | undefined>(undefined);
@@ -192,7 +228,16 @@ export function FulfilmentBoardPanel({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [granularity, rowAxis, productSearch, view, pathname, router, searchParams]);
 
-  const board = usePlanningBoard(
+  /**
+   * The batch the board was opened on (AC-P3-1). Undefined `batchId` fetches nothing.
+   *
+   * Read beside the board rather than folded into it: the board is a live read of what is
+   * outstanding and the batch is a record of what an upload did, and one payload carrying
+   * both would have the board refuse to render whenever the batch could not be loaded.
+   */
+  const changeBatch = usePlanningChangeBatch(batchId ?? undefined);
+
+  const rawBoard = usePlanningBoard(
     soNumbers,
     granularity,
     // Always the LIVE policy. The preview was a what-if for showing a fair weighting before one
@@ -200,6 +245,22 @@ export function FulfilmentBoardPanel({
     // the banner that carried the way back went with the banner itself.
     false,
     dayWindow ? { dayWindow } : {},
+  );
+
+  /**
+   * The board as the CHANGED lines make it: a line the book has moved is no longer covered
+   * by the decision taken for it, so it arrives undecided carrying the batch's own fresh
+   * proposal (`uncoverChangedLines`). Identity on every board opened without a batch.
+   */
+  const changeBatchData = changeBatch.data ?? null;
+  const board = React.useMemo(
+    () => ({
+      ...rawBoard,
+      data: rawBoard.data
+        ? uncoverChangedLines(rawBoard.data, changeBatchData)
+        : rawBoard.data,
+    }),
+    [rawBoard, changeBatchData],
   );
 
   /**
@@ -235,8 +296,6 @@ export function FulfilmentBoardPanel({
       return next;
     });
   }, []);
-
-  const decidedKeys = React.useMemo(() => new Set(Object.keys(draft)), [draft]);
 
   const { confirm } = useReconciliationMutations();
   const { adopt } = useFulfilmentPlanningMutations();
@@ -319,7 +378,15 @@ export function FulfilmentBoardPanel({
           return;
         }
 
-        await confirm.mutateAsync({ psoId: psoId as string, body: { lines } });
+        // With a batch on screen, the SAME press applies it (AC-P3-4): the lines below are
+        // the batch rows' own compositions, the batch reads applied with actor and time, and
+        // exactly one revision is written. A second press is refused by the server rather
+        // than writing a second revision, so nothing here has to guard against it.
+        await confirm.mutateAsync({
+          psoId: psoId as string,
+          body: batchId ? { lines, batch_id: batchId } : { lines },
+        });
+        if (batchId) await changeBatch.refetch();
         const committed = new Set(lines.map((line) => line.project_line_id));
         setDraft((current) => {
           const next = { ...current };
@@ -354,7 +421,7 @@ export function FulfilmentBoardPanel({
         setConfirming(null);
       }
     },
-    [board, confirm, adopt, draft],
+    [board, confirm, adopt, draft, batchId, changeBatch],
   );
 
   /**
@@ -459,6 +526,30 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * Every changed line of the batch arrives PRE-MARKED (AC-P3-3).
+   *
+   * Seeded into the board's own DRAFT, not into a second state: the cell then colours, counts
+   * and confirms exactly as a line the planner ticked themselves, and un-ticking one is the
+   * same gesture it always was. Once, on the first board that carries both the batch and its
+   * lines - re-seeding on every render would put back a tick the planner had just cleared.
+   *
+   * A verdict the planner has already given is never overwritten.
+   */
+  const preMarked = React.useRef(false);
+  React.useEffect(() => {
+    if (!batchId || preMarked.current) return;
+    if (!changeBatchData || allContributions.length === 0) return;
+    const keys = preMarkedKeys(changeBatchData, allContributions);
+    if (keys.length === 0) return;
+    preMarked.current = true;
+    setDraft((current) => {
+      const next = { ...current };
+      for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
+      return next;
+    });
+  }, [batchId, changeBatchData, allContributions]);
+
+  /**
    * The same lines, in the GRID's product order.
    *
    * The two views are two readings of one payload and the reader toggles between them to find
@@ -521,6 +612,43 @@ export function FulfilmentBoardPanel({
     }
     return { approved, undecided, orderCount: orderIds.size };
   }, [allContributions, draft]);
+
+  /**
+   * Why an order's Confirm is off, when it is (AC-P3-4).
+   *
+   * PER ORDER, not per batch. One upload moves many orders and Confirm is pressed once per
+   * order, so a batch-wide block turned the first press into a wall in front of every other
+   * order on the same board - each of which still had a change nobody had decided. An order
+   * is blocked once ITS OWN rows read applied; the whole board is blocked only once the
+   * batch itself does, which is the last press.
+   *
+   * Stated rather than left as a dead button, and the server refuses the same two cases, so
+   * the screen and the write cannot disagree.
+   */
+  const batchApplied = changeBatch.data?.applied_at ?? null;
+  const appliedSoNumbers = React.useMemo(() => {
+    const out = new Set<string>();
+    for (const order of changeBatchData?.orders ?? []) {
+      if (order.rows.length > 0 && order.rows.every((row) => row.applied_state === 'applied')) {
+        out.add(order.so_number);
+      }
+    }
+    return out;
+  }, [changeBatchData]);
+  const confirmBlockedFor = React.useCallback(
+    (soNumber: string): string | null => {
+      if (batchApplied) {
+        return `This planning change was applied ${formatDateTimeInMalaysia(batchApplied)}${
+          changeBatch.data?.applied_by_name ? ` by ${changeBatch.data.applied_by_name}` : ''
+        }.`;
+      }
+      if (appliedSoNumbers.has(soNumber)) {
+        return 'This planning change was already applied to this sales order.';
+      }
+      return null;
+    },
+    [batchApplied, changeBatch.data?.applied_by_name, appliedSoNumbers],
+  );
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -651,27 +779,84 @@ export function FulfilmentBoardPanel({
     return boardAxis(rowAxis, cells);
   }, [board.data, rowAxis]);
 
+  /**
+   * What the re-uploaded book did to each cell's lines (AC-P3-2), keyed as the matrix keys
+   * its cells. Empty on every board opened without a batch.
+   */
+  const changeAnnotations = React.useMemo(
+    () => annotationsByCell(changeBatchData, axis.cells),
+    [changeBatchData, axis],
+  );
+
+  /**
+   * What the decision strip is summed over: THE LINES THE CURRENT VIEW CAN SHOW.
+   *
+   * The grid renders cells, and at day granularity those are a 30-day window; the list renders
+   * the whole selection. Summing the strip over the selection while filtering the grid over
+   * its cells let a card read "Shared 71" off lines three months out and then empty the board
+   * when it was pressed - a figure the view cannot produce, acted on. So the population
+   * follows the view, and the card and the figures above it can never disagree.
+   */
+  const stripContributions = React.useMemo<BoardContribution[]>(() => {
+    if (view === 'list') return listContributions;
+    // Keyed, because a pivoted axis regroups the same cells and a line must not be counted
+    // twice for landing in two of them.
+    const seen = new Map<string, BoardContribution>();
+    for (const cell of axis.cells) {
+      for (const contribution of cell.contributions) seen.set(contribution.key, contribution);
+    }
+    return [...seen.values()];
+  }, [view, listContributions, axis]);
+
+  /**
+   * The cells a decision-strip card leaves on screen (AC-D2): the ones carrying that kind on
+   * EITHER side, suggested or decided.
+   *
+   * A filter over the axis's own cells, so the rows follow: a row every one of whose cells is
+   * filtered out drops out with them, and the "N of M" fraction below counts it.
+   */
+  const visibleCells = React.useMemo(
+    () =>
+      kindFilter
+        ? axis.cells.filter((cell) => cellCarriesKind(cell, draft, kindFilter))
+        : axis.cells,
+    [axis, draft, kindFilter],
+  );
+
+  /** The same card, obeyed by the list. Both views answer to one press or neither should. */
+  const visibleListContributions = React.useMemo(
+    () =>
+      kindFilter
+        ? listContributions.filter((contribution) =>
+            contributionCarriesKind(contribution, draft[contribution.key] ?? null, kindFilter),
+          )
+        : listContributions,
+    [listContributions, draft, kindFilter],
+  );
+
   /** Lines per row, so the search can ask whether ANY of a row's lines matches. */
   const linesByRow = React.useMemo(() => {
     const map = new Map<string, BoardContribution[]>();
-    for (const cell of axis.cells) {
+    for (const cell of visibleCells) {
       const key = cell.row_key ?? cell.item_code;
       const held = map.get(key);
       if (held) held.push(...cell.contributions);
       else map.set(key, [...cell.contributions]);
     }
     return map;
-  }, [axis]);
+  }, [visibleCells]);
 
   const visibleProductRows = React.useMemo(
     () =>
-      axis.rows.filter((row) =>
-        rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
+      axis.rows.filter(
+        (row) =>
+          (!kindFilter || linesByRow.has(row.key)) &&
+          rowMatchesSearch(row, linesByRow.get(row.key) ?? [], productSearch),
       ),
-    [axis, linesByRow, productSearch],
+    [axis, linesByRow, productSearch, kindFilter],
   );
 
-  const filtering = productSearch.trim().length > 0;
+  const filtering = productSearch.trim().length > 0 || kindFilter !== null;
 
   /**
    * Orders the link asked for that the board came back without.
@@ -713,23 +898,6 @@ export function FulfilmentBoardPanel({
       ) ?? null
     );
   }, [openCell, board.data, axis]);
-
-  /**
-   * How many LINES of the selection are already past their delivery date.
-   *
-   * The server's two selection-scoped totals, read straight. NOT summed off the cells: cells
-   * are what a window is showing, so the same board reported a different number on day than on
-   * week and reported none at all when the window was scrolled somewhere empty. The per-cell
-   * `past_count` is still right for its own cell; it was only wrong as a banner source.
-   *
-   * It also is not the count of TINTED columns, which is a different question: a line due
-   * yesterday sits in the week containing `as_of`, whose period has not ended, so that week is
-   * not tinted while the line is certainly late.
-   */
-  const pastTotal = {
-    lines: board.data?.past_line_count ?? 0,
-    allLines: board.data?.line_count ?? 0,
-  };
 
   return (
     <div className="space-y-4">
@@ -872,6 +1040,19 @@ export function FulfilmentBoardPanel({
               <CheckCheck className="size-4" aria-hidden />
               Approve all
             </Button>
+            {/* The other direction (the captain, 27 Aug): every decision taken on this
+                board since it was opened, or since the last confirm, goes back to undecided.
+                Nothing on the server moves - the draft is the only thing cleared. */}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={Object.keys(draft).length === 0}
+              onClick={() => setDraft({})}
+            >
+              <Undo2 className="size-4" aria-hidden />
+              Undo all
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -976,21 +1157,10 @@ export function FulfilmentBoardPanel({
             </Alert>
           )}
 
-          {/* The fact, and only the fact. The columns and their tint say where those lines
-              are; a paragraph explaining the tint would be a feature explanation in the UI,
-              and a tint that needs one has failed. */}
-          {pastTotal.lines > 0 && (
-            <Alert appearance="light">
-              <AlertIcon>
-                <AlertTriangle />
-              </AlertIcon>
-              <AlertContent>
-                <AlertTitle>
-                  {`${pastTotal.lines} of ${pastTotal.allLines} lines are already past their delivery date`}
-                </AlertTitle>
-              </AlertContent>
-            </Alert>
-          )}
+          {/* NO "N of M lines are already past their delivery date" BANNER (retired 26
+              August 2026, AC-C5). The column headers already say "Already past" over the
+              periods it is talking about, so the banner restated the screen in words and
+              pushed the grid down a row to do it. */}
 
           {/* NO POLICY BANNER. It named the rule and listed its weights across the top of the
               board, and the captain's verdict on it was "this text is not needed at the top":
@@ -999,12 +1169,26 @@ export function FulfilmentBoardPanel({
               popover on a row names the policy above its factor table, which is where somebody
               IS asking - see `BoardRankPopover` and PLAN 13.10. */}
 
+          {/* NO LEGEND ROW (retired 26 August 2026, AC-C5). The decision strip below carries
+              every label in its own colour, so a legend was the same six words twice - and
+              the one a reader meets first should be the one with the numbers on it. */}
+
+          {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
+          <DecisionStrip
+            contributions={stripContributions}
+            draft={draft}
+            active={kindFilter}
+            onToggle={(kind) =>
+              setKindFilter((current) => (current === kind ? null : kind))
+            }
+          />
+
           {view === 'list' ? (
             /* D2: one row per contributing line across every cell of the WHOLE selection, not
                the pivoted/windowed rows the grid shows - the point is an overview, so the row
                axis and product search that shape the grid do not narrow it. */
             <FulfilmentBoardListView
-              contributions={listContributions}
+              contributions={visibleListContributions}
               draft={draft}
               onDecide={decide}
               isLoading={board.isFetching}
@@ -1035,8 +1219,9 @@ export function FulfilmentBoardPanel({
                   rowHeader={
                     ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
                   }
-                  cells={axis.cells}
-                  decidedKeys={decidedKeys}
+                  cells={visibleCells}
+                  draft={draft}
+                  annotations={changeAnnotations}
                   onOpenCell={(cell) => setOpenCell(cell)}
                 />
               )}
@@ -1057,6 +1242,13 @@ export function FulfilmentBoardPanel({
                 >
                   Order Inquiries
                 </Link>
+                ; a Use BRW or Borrow other location becomes a{' '}
+                <Link
+                  href="/inventory-management/stock-transfers"
+                  className="text-primary hover:underline"
+                >
+                  stock transfer
+                </Link>
                 .
               </p>
             </CardHeader>
@@ -1069,6 +1261,7 @@ export function FulfilmentBoardPanel({
                   busy={confirming === standing.sales_order_id}
                   refused={refusals[standing.sales_order_id] ?? []}
                   unpostable={unpostable[standing.sales_order_id] ?? []}
+                  blockedReason={confirmBlockedFor(standing.so_number)}
                   onConfirm={() => void confirmOrder(standing)}
                 />
               ))}
@@ -1123,6 +1316,7 @@ function OrderCommitRow({
   busy,
   refused,
   unpostable,
+  blockedReason,
   onConfirm,
 }: {
   standing: BoardOrderStanding;
@@ -1132,13 +1326,18 @@ function OrderCommitRow({
   refused: SupplyFailingLine[];
   /** Decided lines this confirmation must omit, each with the reason it cannot carry it. */
   unpostable: UnpostableLine[];
+  /** Why this Confirm is off, when it is - stated, never a dead button. */
+  blockedReason?: string | null;
   onConfirm: () => void;
 }) {
   const committing = preview?.committing ?? 0;
   const leaving = preview?.leaving_undecided ?? 0;
   const blocked = preview?.blocked ?? 0;
   return (
-    <div className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+    <div
+      data-testid={`commit-row-${standing.so_number}`}
+      className="space-y-2 rounded-lg border border-border px-3 py-2.5"
+    >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium tabular-nums">{standing.so_number}</div>
@@ -1173,7 +1372,7 @@ function OrderCommitRow({
           <Button
             type="button"
             size="sm"
-            disabled={committing === 0 || busy}
+            disabled={committing === 0 || busy || Boolean(blockedReason)}
             onClick={onConfirm}
           >
             {/* "Confirm 0 lines" on an untouched order would be a button describing nothing.
@@ -1184,6 +1383,12 @@ function OrderCommitRow({
           </Button>
         </div>
       </div>
+
+      {blockedReason ? (
+        <p data-testid="commit-blocked" className="text-sm text-muted-foreground break-words">
+          {blockedReason}
+        </p>
+      ) : null}
 
       {/* A line the planner decided that this confirmation cannot carry. Named, with why,
           because dropping it silently would tell them they committed something they did not -

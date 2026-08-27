@@ -247,6 +247,7 @@ PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
+PERMISSION_REGISTRY.extend(_crud("inventory", "stock_transfers", "Stock Transfers"))
 
 # Marketing
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotions", "Promotions"))
@@ -534,6 +535,18 @@ PERMISSION_REGISTRY.extend([
             "Purchasing grant: mark an order inquiry row actioned or cancelled. Held by "
             "purchasing rather than by the project's salesperson, because the row is "
             "purchasing's work and they do not own the project it came from."
+        ),
+    },
+    {
+        "slug": "projects.order_inquiries.acknowledge",
+        "name": "Acknowledge Order Inquiry Rows",
+        "description": (
+            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
+            "documents are linked to it - reject one with a reason, run Link now, and "
+            "upload the purchase order and SPO books from the Order Inquiries page. "
+            "Separate from `projects.order_inquiry.action`, which is marking a row's "
+            "supply state: acknowledging is purchasing taking CS's instruction on, and "
+            "CS may not do it for them."
         ),
     },
     {

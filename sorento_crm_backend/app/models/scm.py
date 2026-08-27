@@ -1028,6 +1028,11 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
     upload result reports - "34 orders name a purchase order we have not seen" is how
     somebody finds out the PO book is a month behind.
 
+    The PURCHASE side is one of two columns, never both: `po_line_id` for a `######-S####`
+    purchase order, `spo_allocation_id` for an `SPO-####/##-####` shipping order, which since
+    migration 420 is a row in `spo_allocations`. Which one a claim uses is decided by the
+    number it already holds, so nothing has to be re-parsed at read time.
+
     `item_code` is nullable because the two feeds know different things. The Order Inquiry
     sheet states the item, so its claims are per line. The `**SO:174830**` notes inside the PO
     export do not - a note sits between lines and nothing says which side it describes - so
@@ -1052,11 +1057,26 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: The purchase side when the document is a SHIPPING order. An `SPO-` number names a row
+    #: in `spo_allocations`, not in `purchase_order_lines` (migration 420), and a claim with
+    #: nowhere to record that half could never resolve: 12,393 of them, naming 2,989 sales
+    #: orders, would have read "awaiting purchase order" for ever. Exactly one of the two
+    #: columns is filled, decided by the number the claim itself carries.
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="SET NULL",
+            name="fk_scm_order_link_claim_spo_allocation",
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_scm_order_link_claim_so", "so_number"),
         Index("ix_scm_order_link_claim_po", "po_number"),
+        Index("ix_scm_order_link_claim_spo_allocation", "spo_allocation_id"),
         CheckConstraint(
             "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', 'manual')",
             name="ck_scm_order_link_claim_source",

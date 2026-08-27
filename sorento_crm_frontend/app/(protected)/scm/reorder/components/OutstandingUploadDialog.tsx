@@ -96,9 +96,22 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
  * The count is still there, and it is the number that decides whether to fix the file first.
  */
 export function verdictFromPreview(preview: OutstandingPreview): UploadTestResult {
-  const errors = preview.missing_columns.map(
-    (column) => `Missing required column: ${column}`,
-  );
+  const unclassified = preview.unclassified_documents ?? [];
+  const errors = [
+    ...preview.missing_columns.map((column) => `Missing required column: ${column}`),
+    // QP1: an order nothing can classify refuses the FILE, so it is an ERROR and not a
+    // skipped row - the rest of the book does not go in without it. The per-row warnings
+    // below name each order and its debtor; this is the one line that says why the upload
+    // is blocked at all.
+    ...(unclassified.length
+      ? [
+          `${unclassified.length} sales order${unclassified.length === 1 ? '' : 's'} ` +
+            'carry no demand class, so nothing will be imported: ' +
+            `${unclassified.slice(0, 10).join(', ')}` +
+            `${unclassified.length > 10 ? ` and ${unclassified.length - 10} more` : ''}.`,
+        ]
+      : []),
+  ];
   const skipped = [
     ...preview.row_problems.map(
       (p) => `Row ${p.row_number}: ${p.reason}${p.value ? ` (${p.value})` : ''}`,

@@ -32,6 +32,7 @@
  *                                   (`outstandingImportService`'s own `planning_change_batch`).
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
+ *   POST   /sales-orders/{id}/reset-planning { rewind_book } → { so_number, planned, removed }
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -238,5 +239,29 @@ export async function createDoFromSalesOrder(
 ): Promise<{ sales_order: SalesOrder; do_number: string }> {
   const res = await apiFetch(`${BASE}/${id}/create-do`, { method: 'POST' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to create delivery order'));
+  return res.json();
+}
+
+export interface ResetPlanningResult {
+  so_number: string;
+  planned: boolean;
+  removed: Record<string, number>;
+}
+
+/**
+ * Back to never-planned: the order's inquiries, links, allocations, transfers and supply
+ * decisions go; the order and its lines stay. `rewindBook` also puts the lines a
+ * planning-change upload moved back to before the first upload.
+ */
+export async function resetSalesOrderPlanning(
+  id: string,
+  rewindBook = false,
+): Promise<ResetPlanningResult> {
+  const res = await apiFetch(`${BASE}/${id}/reset-planning`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rewind_book: rewindBook }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to reset planning'));
   return res.json();
 }

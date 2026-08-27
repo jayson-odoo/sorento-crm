@@ -20,6 +20,7 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -655,15 +656,16 @@ def test_apply_release_returns_the_whole_line_to_the_board_with_no_buy_and_no_oi
     assert row_model.result_json["released"]["location"] == world.pool_wh.warehouse_code
 
 
-def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_release_row(api):
+def test_apply_release_gives_up_a_reserved_lines_whole_claim_and_asks_purchasing_for_nothing(api):
     """Captain, 19 August 2026 (correcting the first cut of AC-R08): a release gives up
-    the project's claim ENTIRELY, not just the reserve - the Buy this line held is no
-    longer a purchase for this line, so its existing (non-actioned) OI row moves to the
-    line's pool location with a note, and a RELEASE change row makes that visible in the
-    worklist the way a DELAY row does."""
+    the project's claim ENTIRELY - the reserve goes back to the pool and a RELEASE change
+    row makes that visible in the worklist the way a DELAY row does.
+
+    The line is wholly reserved (AC-L5: a line is met entirely from stock or entirely
+    bought), which is also the only shape a release can now find a reserve on."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=50)
+    _stock(db, world.product, world.pool_wh, on_hand=150)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="150",
                             required_date=date(2026, 8, 25))
@@ -672,20 +674,16 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "2"}],
-                      buy_qty="148", buy_reason="Nothing free elsewhere."),
+        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "150"}]),
     ]})
 
-    order_row = (
+    # A reserved line asks purchasing for nothing, so it raises no ORDER row at all.
+    assert (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
-        .one()
+        .count()
+        == 0
     )
-    # Captain, 20 August 2026: confirm-time stamping now always names the line's OWN
-    # fulfilment warehouse (AC-H5), regardless of which locations the reserve drew from -
-    # the row names one location, the buy's destination, not a description of the
-    # composition. Only RELEASE (below) moves it to the pool.
-    assert order_row.stock_location == world.own_wh.warehouse_code
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
@@ -713,25 +711,42 @@ def test_apply_release_moves_the_lines_order_row_to_the_pool_and_raises_a_releas
     batch_model = db.query(PlanningChangeBatchModel).filter(
         PlanningChangeBatchModel.id == batch.id
     ).one()
-    assert {"verb": "RELEASE", "count": 1} in batch_model.result_json["inquiry_rows_changed"]
-
-    db.refresh(order_row)
-    assert order_row.stock_location == world.pool_wh.warehouse_code
-    assert order_row.verb == IV_ORDER  # the purchase itself is untouched, only its location
-    assert "Released from" in (order_row.note or "")
-    assert f"buy for {world.pool_wh.warehouse_code}" in (order_row.note or "")
-
-    release_row = (
+    # A reserved line held no purchase, so releasing it asks purchasing for nothing at all
+    # - the stock simply frees. Under AC-L5 a line can no longer hold both a reserve and a
+    # Buy, so the "move the Buy to the pool" half of a release only ever applies to
+    # revisions frozen before that rule.
+    assert batch_model.result_json["inquiry_rows_changed"] == []
+    assert (
         db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == "RELEASE")
-        .one()
+        .filter(OrderInquiryRow.so_line_id == line.id)
+        .count()
+        == 0
     )
-    assert release_row.qty == Decimal("148")
-    assert release_row.stock_location == world.pool_wh.warehouse_code
-    assert "Released from" in (release_row.note or "")
+
+    # And the claim is gone: the new revision does not cover the line, so it is back on the
+    # board and its 150 are free at the pool again.
+    from app.models.project_so import SOSupplyDecision
+    from app.services.project_supply_service import ProjectSupplyService
+
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == "active")
+        .first()
+    )
+    snapshots = active.line_snapshots if active else []
+    assert [snap for snap in snapshots if snap["line_id"] == str(line.id)] == []
+    assert ProjectSupplyService(db).free_stock_by_location([world.product.id])[
+        (world.product.id, world.pool_wh.id)
+    ] == Decimal("150")
 
 
-def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
+def test_apply_qty_down_reduces_the_row_in_place_and_writes_no_cancel_balance(api):
+    """AC-P3-8 (26 August 2026), replacing the CANCEL_BALANCE this test used to pin.
+
+    The drop is not a second instruction: the row purchasing already holds is REDUCED, and
+    its own note carries what it was. An exception row beside it said the same thing twice,
+    on a screen whose whole rule is one row per sales-order line."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=50)
@@ -743,8 +758,8 @@ def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
-                      buy_qty="16", buy_reason="Nothing free elsewhere."),
+        # Wholly bought (AC-L5), so the 16-unit reduction has only the Buy to come off.
+        _line_payload(line.id, buy_qty="66", buy_reason="Nothing free elsewhere."),
     ]})
 
     core_line.qty_ordered = Decimal("50")
@@ -780,15 +795,27 @@ def test_apply_qty_down_reduces_buy_and_raises_cancel_balance(api):
     )
     snapshot = decision.line_snapshots[0]
     buy = [c for c in snapshot["components"] if c["kind"] == "buy"]
-    assert buy == []  # 16 dropped off the Buy first, for the whole 16-unit reduction
+    # 16 dropped off the Buy, for the whole 16-unit reduction; the line is still wholly
+    # bought, now for 50.
+    assert [c["qty"] for c in buy] == ["50"]
 
     cancel_rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == "CANCEL_BALANCE")
         .all()
     )
-    assert len(cancel_rows) == 1
-    assert cancel_rows[0].qty == Decimal("16")
+    assert cancel_rows == [], "the row absorbed the drop; nothing is raised beside it"
+
+    db.expire_all()
+    live = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    )
+    assert len(live) == 1, "one order inquiry row per sales-order line, always"
+    assert live[0].qty == Decimal("50")
+    assert "66" in (live[0].note or ""), "and it says what it was"
 
 
 def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
@@ -803,8 +830,8 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
     db.commit()
 
     _confirm(client, order.id, {"lines": [
-        _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "4"}],
-                      buy_qty="8", buy_reason="Timely stock short."),
+        # Wholly bought (AC-L5).
+        _line_payload(line.id, buy_qty="12", buy_reason="Timely stock short."),
     ]})
 
     # The Buy above already raised a row against this order's OWN inquiry
@@ -1307,12 +1334,15 @@ def test_apply_placed_offset_full_redirect_when_the_pool_alone_covers_it():
     assert out["trail"][0].get("note") is None  # nothing relabelled, nothing to narrate
 
 
-def test_apply_placed_offset_partial_redirect_relabels_the_remainder_off_incoming():
-    """Pool covers only 5 of the placed 12 (`qty_proposed_reserve` 5); the remaining 7
-    cannot redirect - by construction there is nothing left of Reserve to spend it
-    against (`redirect_qty = min(placed_qty, reserve)` already consumed all of it) - so
-    it falls to the OLD relabel, off `qty_proposed_incoming` only, trimmed and narrated
-    exactly as `_trim_sources_for_offset` / `_annotate_trail_for_offset` describe."""
+def test_apply_placed_offset_relabels_the_water_before_it_redirects_the_pool():
+    """LADDER V5, second pass (27 August 2026): a placed PO is expected supply, and so is
+    the water question 1 draws off the group's net. Two promises of one delivery, so the
+    PO relabels the WATER first and only what is left of it reaches the pool redirect.
+
+    9 on the water and 5 in the pool against 12 placed: the whole 9 becomes Buy, and 3 of
+    the placed quantity redirects to replenish the pool. Under the old order the redirect
+    ate 5 of the 12 first and left 2 of the water standing beside a PO that had already
+    bought it."""
     proposal = {
         "qty_proposed_reserve": "5",
         "qty_proposed_incoming": "9",
@@ -1329,20 +1359,73 @@ def test_apply_placed_offset_partial_redirect_relabels_the_remainder_off_incomin
         ],
     }
     out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-2")
-    assert out["qty_proposed_reserve"] == "5"  # untouched - fully spent on the redirect
-    assert out["qty_proposed_incoming"] == "2"  # 9 - 7 relabelled
-    assert out["qty_proposed_buy"] == "7"
-    assert out["placed_redirect_qty"] == "5"
+    assert out["qty_proposed_reserve"] == "5"  # untouched - the pool take always stands
+    assert out["qty_proposed_incoming"] == "0"  # the whole 9 was already bought
+    assert out["qty_proposed_buy"] == "9"
+    assert out["placed_redirect_qty"] == "3"  # 12 - 9, and 3 <= the pool's 5
 
-    incoming_source = next(s for s in out["sources"] if s["kind"] == "timely_spo")
-    assert incoming_source["qty"] == "2"
+    assert not [s for s in out["sources"] if s["kind"] == "timely_spo"]
     reserve_source = next(s for s in out["sources"] if s["kind"] == "reserve")
     assert reserve_source["qty"] == "5"  # untouched
 
     incoming_step = next(s for s in out["trail"] if s["kind"] == "incoming")
-    assert "7 already placed on PO-2, kept as the buy" in incoming_step["note"]
+    assert "9 already placed on PO-2, kept as the buy" in incoming_step["note"]
     pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
     assert pool_step.get("note") is None  # the redirect-eligible rung is never narrated here
+
+
+def test_apply_placed_offset_narrates_a_v5_trail_whose_water_came_to_a_sibling():
+    """A ladder v5 trail has no `incoming` step - question 1 draws the water, under the key
+    `own` - and question 1's step names the LINE's own location while the water may be
+    coming to a sibling. Matching the code exactly then found nothing, so the step went on
+    claiming 9 the aggregate had just moved onto Buy, which is the exact defect
+    `_annotate_trail_for_offset` was written to stop.
+    """
+    proposal = {
+        "qty_proposed_reserve": "5",
+        "qty_proposed_incoming": "9",
+        "qty_proposed_buy": "0",
+        "sources": [
+            {"kind": "reserve", "qty": "5", "location": "BRW"},
+            {"kind": "timely_spo", "qty": "9", "location": "MWH-SMC"},
+        ],
+        "trail": [
+            {"step": 1, "kind": "own", "location": "BRW-SMC", "taken": "9",
+             "remaining_after": "5", "outcome": "took"},
+            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
+             "remaining_after": "0", "outcome": "took"},
+        ],
+    }
+    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-4")
+
+    assert out["qty_proposed_incoming"] == "0"
+    assert out["qty_proposed_buy"] == "9"
+    assert out["placed_redirect_qty"] == "3"
+    own_step = next(s for s in out["trail"] if s["kind"] == "own")
+    assert "9 already placed on PO-4, kept as the buy" in (own_step["note"] or "")
+    pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
+    assert pool_step.get("note") is None
+
+
+def test_apply_placed_offset_redirects_the_whole_placed_qty_when_there_is_no_water():
+    """The other side of the same order: nothing on the water, so nothing is relabelled and
+    the pool redirect gets the whole placed quantity - exactly the captain's 21 Aug ruling,
+    unchanged. What moved is only WHICH of the two goes first when both are on the table."""
+    proposal = {
+        "qty_proposed_reserve": "5",
+        "qty_proposed_incoming": "0",
+        "qty_proposed_buy": "7",
+        "sources": [{"kind": "reserve", "qty": "5", "location": "BRW"}],
+        "trail": [
+            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
+             "remaining_after": "7", "outcome": "took"},
+        ],
+    }
+    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-3")
+    assert out["qty_proposed_reserve"] == "5"
+    assert out["qty_proposed_incoming"] == "0"
+    assert out["qty_proposed_buy"] == "7"
+    assert out["placed_redirect_qty"] == "5"
 
 
 def test_apply_placed_offset_is_a_noop_with_nothing_placed():
@@ -1450,17 +1533,18 @@ def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it
         f"{BASE}/planning-changes/{batch.id}/rows/{row['id']}",
         json={
             "decision": "amend",
+            # Wholly from stock (AC-L5): the planner takes the whole line from the pool
+            # rather than the Buy the proposal offered.
             "composition": _line_payload(
                 line.id,
-                reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
-                buy_qty="22",
+                reserve=[{"warehouse_id": world.pool_wh.id, "qty": "72"}],
                 amend_reason="The pool has stock the proposal did not use.",
             ),
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["composition"]["reserve"] == [
-        {"warehouse_id": world.pool_wh.id, "qty": "50"}
+        {"warehouse_id": world.pool_wh.id, "qty": "72"}
     ]
 
     apply_response = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
@@ -1476,7 +1560,7 @@ def test_route_put_amend_stores_the_planners_own_composition_and_apply_writes_it
     )
     snapshot = decision.line_snapshots[0]
     reserve = [c for c in snapshot["components"] if c["kind"] == "reserve"]
-    assert reserve and Decimal(reserve[0]["qty"]) == Decimal("50")
+    assert reserve and Decimal(reserve[0]["qty"]) == Decimal("72")
 
 
 # ============================================================================
@@ -1713,12 +1797,14 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
 
     proposal = row["proposal"]
     assert proposal is not None
-    # Ladder v2's seven rungs (the read-only own location, then incoming, pool, group
-    # take, group borrow, cross-group borrow, buy) - the own-location rung is never a
-    # SOURCE any more (rule 7), but it stays as a read-only first rung (S4 of the 19
-    # August review): it is the one place the queue ahead of this line is named.
-    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5, 6, 7]
-    assert [step["kind"] for step in proposal["trail"]][0] == "reserve_own"
+    # LADDER V5 (section 1e): the four questions plus Buy. The read-only own-location
+    # strip is folded into question 1 - it existed to name the queue, which is one of that
+    # question's facts - and incoming is not a question at all, because an SPO is inside
+    # the ownership group's own net.
+    assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
+    assert [step["kind"] for step in proposal["trail"]] == [
+        "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+    ]
     assert proposal["rank_factors"]
     assert proposal["sources"]
     assert proposal["item_flags"] is not None
@@ -2137,13 +2223,17 @@ def test_apply_of_a_genuinely_unconfirmable_target_line_still_fails_with_its_rea
 # ============================================================================
 
 
-def test_apply_qty_up_after_a_real_place_on_po_raises_only_the_delta(api):
+def test_apply_qty_up_after_a_real_place_on_po_updates_the_one_row_and_keeps_its_link(api):
     """Case A (the captain, 20 Aug): SO349754 WESERP10B - a line already covered by an
     active decision, placed 5 on a real PO, then the book raised the qty to 10. Before the
     fix, the netting predicate only recognised `INQUIRY_ACTIONED` (0 rows company-wide;
     "Place on PO" writes `INQUIRY_PLACED`), so a reconfirm re-raised the FULL new need on
-    top of the untouched placed row - 15 against a 10 line. Expected: the placed 5 stays
-    exactly as it was, and only the 5-unit delta is freshly raised."""
+    top of the untouched placed row - 15 against a 10 line.
+
+    Since AC-P3-5 the answer is ONE row, not two: the line's own row is updated in place
+    to the 10 the book says, its 5 stays on the purchase order it was placed on, and the
+    row reads partly linked. The name used to promise a freshly-raised delta row, which is
+    the shape this test now exists to say does NOT happen."""
     client, world = api
     db = world.db
     # No pool stock: the board proposes the whole line as Buy, isolating this case from
@@ -2210,15 +2300,18 @@ def test_apply_qty_up_after_a_real_place_on_po_raises_only_the_delta(api):
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
         .all()
     )
-    assert len(live_rows) == 2, "the placed row untouched, plus one new row for the delta"
-    still_placed = [r for r in live_rows if r.state == INQUIRY_PLACED]
-    raised = [r for r in live_rows if r.state == "raised"]
-    assert len(still_placed) == 1
-    assert still_placed[0].id == placed_row.id
-    assert still_placed[0].qty == Decimal("5")
-    assert still_placed[0].po_ref == po.po_number  # untouched, PO link intact
-    assert len(raised) == 1
-    assert raised[0].qty == Decimal("5")  # the delta only, not the full 10
+    # AC-P3-5 (26 August 2026): ONE row, updated. The 5 already on the purchase order
+    # stays on it - the link is untouched - and the row now asks for the 10 the book says,
+    # of which 5 is covered. It used to be two rows, the placed 5 and a fresh 5, which is
+    # the same line reading as two instructions on purchasing's list.
+    assert len(live_rows) == 1, "one order inquiry row per sales-order line, always"
+    survivor = live_rows[0]
+    assert survivor.id == placed_row.id
+    assert survivor.qty == Decimal("10")
+    assert survivor.state == INQUIRY_PARTLY_LINKED
+    assert survivor.po_ref == po.po_number  # the placement is intact
+    links = ProjectOrderInquiryService(db)._links_of(survivor.id)
+    assert [str(link.qty) for link in links] == ["5.0000"]
 
 
 def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the_pool(api):
@@ -2233,8 +2326,11 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=50)
     core_so = _core_so(db, world.company_id)
+    # Inside the lead-time reserve window, and relative so it stays there: ladder v3 buys a
+    # line beyond `today + lead time + 14` whole and consults no pool at all (AC-L1).
+    needed = date.today() + timedelta(days=30)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
-                            required_date=date(2027, 2, 1))
+                            required_date=needed)
     order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
     line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
     db.commit()
@@ -2260,8 +2356,8 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
     db.commit()
     changed = _diff_change(
         QTY_CHANGED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
-        location=world.own_wh.warehouse_code, old_date=date(2027, 2, 1),
-        new_date=date(2027, 2, 1), old_qty="5", new_qty="10",
+        location=world.own_wh.warehouse_code, old_date=needed,
+        new_date=needed, old_qty="5", new_qty="10",
     )
     diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
     batch = planning_change_service.build_batch(
@@ -2330,11 +2426,14 @@ def test_apply_qty_up_with_no_decision_and_a_real_placed_row_redirects_it_to_the
 def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_pool(api):
     """The SO397450 / SRT382-6-DIY shape, end-to-end, under the captain's 21 Aug ruling:
     an ADVANCE whose fresh proposal draws 432 from the pool at BRW while the line already
-    has 432 placed across TWO real purchase orders (300 + 132, the G2 cascade shape).
-    Confirming as proposed keeps the pool's Reserve 432 whole - no relabel onto Buy - and
-    Apply redirects BOTH placed rows to replenish the pool: neither is cancelled, neither
-    is duplicated, and no CANCEL_BALANCE is raised for the placed 432 the fresh Buy no
-    longer needs."""
+    has 432 on TWO real purchase orders (300 + 132). Confirming as proposed keeps the
+    pool's Reserve 432 whole - no relabel onto Buy - and Apply redirects the placed row to
+    replenish the pool: it is not cancelled, not duplicated, and no CANCEL_BALANCE is
+    raised for the placed 432 the fresh Buy no longer needs.
+
+    Since section 3.I the two purchase orders are two LINKS on ONE row rather than two
+    split rows (AC-I6), so the redirect marks one row and the documents are read off its
+    links. The arithmetic is unchanged: 432 placed, 432 redirected, nothing re-raised."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=500)
@@ -2399,8 +2498,9 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state == INQUIRY_PLACED)
         .all()
     )
-    assert len(placed_rows) == 2
-    assert sum((r.qty for r in placed_rows), Decimal("0")) == Decimal("432")
+    assert len(placed_rows) == 1, "one instruction per sales-order line (AC-I6)"
+    assert placed_rows[0].qty == Decimal("432")
+    assert len(ProjectOrderInquiryService(db)._links_of(placed_rows[0].id)) == 2
 
     changed = _diff_change(
         DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ADV",
@@ -2425,8 +2525,10 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     # The trail still reads "the pool took 432 at BRW", unedited - the pool take stands,
     # so there is nothing to relabel and nothing to narrate.
     pool_step = next(step for step in proposal["trail"] if step["kind"] == "pool")
-    assert Decimal(pool_step["taken"]) == Decimal("432")
-    assert pool_step.get("note") is None
+    assert Decimal(pool_step["took"]) == Decimal("432")
+    # Its note says which pools were opened (ladder v5's own hint) and nothing about a
+    # placed quantity, because there was nothing to relabel.
+    assert "already placed" not in (pool_step.get("note") or "")
     # sources agree with the aggregate - Fix 2's guard has nothing to warn about here.
     reserve_sources_total = sum(
         (Decimal(s["qty"]) for s in proposal["sources"] if s["kind"] == "reserve"),
@@ -2453,24 +2555,28 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
         .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != INQUIRY_CANCELLED)
         .all()
     )
-    # Three live rows: the two redirected placed ORDER rows, plus the informational
-    # ADVANCE row every advance/delay always raises (`_oi_demand_rows`) - a date-change
-    # instruction, never a purchase (Fix 3's own subject). No CANCEL_BALANCE, and no
-    # fresh ORDER row: `refresh_for_decision` sees a composed need of 0 and a placed
-    # total of 0 (both redirected), so it raises nothing further.
-    assert len(live_rows) == 3
+    # Two live rows: the redirected placed ORDER row carrying both links, plus the
+    # informational ADVANCE row every advance/delay always raises (`_oi_demand_rows`) - a
+    # date-change instruction, never a purchase (Fix 3's own subject). No CANCEL_BALANCE,
+    # and no fresh ORDER row: `refresh_for_decision` sees a composed need of 0 and a
+    # placed total of 0 (redirected), so it raises nothing further.
+    assert len(live_rows) == 2
     assert [r for r in live_rows if r.verb == "CANCEL_BALANCE"] == []
     assert [r for r in live_rows if r.verb == IV_ORDER and r.state == INQUIRY_RAISED] == []
 
     order_rows = [r for r in live_rows if r.verb == IV_ORDER]
-    assert len(order_rows) == 2
-    for r in order_rows:
-        assert r.state == INQUIRY_PLACED
-        assert r.redirected_to_pool is True
-        assert r.stock_location == world.pool_wh.warehouse_code
-        assert "Redirected" in (r.note or "")
-    assert {r.qty for r in order_rows} == {Decimal("300"), Decimal("132")}
-    assert {r.po_ref for r in order_rows} == {po_a.po_number, po_b.po_number}
+    assert len(order_rows) == 1
+    redirected = order_rows[0]
+    assert redirected.state == INQUIRY_PLACED
+    assert redirected.redirected_to_pool is True
+    assert redirected.stock_location == world.pool_wh.warehouse_code
+    assert "Redirected" in (redirected.note or "")
+    assert redirected.qty == Decimal("432")
+    # BOTH purchase orders are still named, off the links rather than off a scalar that
+    # could only ever hold one of them.
+    links = ProjectOrderInquiryService(db)._links_of(redirected.id)
+    assert {link.qty for link in links} == {Decimal("300.0000"), Decimal("132.0000")}
+    assert {link.document for link in links} == {po_a.po_number, po_b.po_number}
 
     advance_row = next(r for r in live_rows if r.verb == "ADVANCE")
     assert advance_row.state == INQUIRY_RAISED
@@ -2528,3 +2634,87 @@ def test_build_batch_facts_read_buy_actioned_true_for_a_really_placed_row(api):
     assert row["suggested"] == "keep"
     assert "already a placed purchase order" in row["why"]
     assert po.po_number in row["why"]
+
+
+def test_a_wholly_bought_line_delayed_beyond_the_window_buys_for_the_pool(api):
+    """The captain's ruling of 26 August 2026 (AC-P3-10), reviving the dead release path.
+
+    `release` used to be gated on the held composition carrying a RESERVE, and the whole-
+    line rule (AC-L5) had already made a reserve-and-Buy mix impossible - so a wholly
+    bought line delayed most of a year suggested `keep` and purchasing was told nothing
+    worth acting on. It releases now: the purchase is for the POOL, so the row moves
+    there, and because nobody has put it on a document yet purchasing also gets a DELAY
+    carrying the date it moved from.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=150)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="150",
+                            required_date=date(2026, 8, 25))
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    _confirm(client, order.id, {"lines": [
+        _line_payload(line.id, buy_qty="150", buy_reason="Nothing free elsewhere."),
+    ]})
+
+    order_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    assert order_row.stock_location == world.own_wh.warehouse_code
+
+    changed = _diff_change(
+        DATE_MOVED, core_line, doc_number=core_so.so_number, item_code="ZZT-ITEM",
+        location=world.own_wh.warehouse_code, old_date=date(2026, 8, 25),
+        new_date=date(2027, 3, 10), old_qty="150", new_qty="150",
+    )
+    diff = Diff(scope_documents=(core_so.so_number,), changes=[changed])
+    batch = planning_change_service.build_batch(
+        db, diff, applied_line_ids={id(changed): str(core_line.id)},
+        order_ids={core_so.so_number: str(core_so.id)}, actor=world.actor,
+        import_job_id=None, file_name="book.xlsx",
+    )
+    db.commit()
+    out = planning_change_service.get_batch(db, str(batch.id))
+    row = out["orders"][0]["rows"][0]
+    assert row["held"]["reserve"] == [], "wholly bought, so there is no reserve to release"
+    assert row["suggested"] == "release"
+    assert "beyond the 60-day reserve window" in row["why"]
+
+    result = planning_change_service.apply(db, str(batch.id), world.actor)
+    db.commit()
+    assert result["failed_orders"] == []
+
+    from app.models.planning_change import PlanningChangeBatch as PlanningChangeBatchModel
+
+    batch_model = db.query(PlanningChangeBatchModel).filter(
+        PlanningChangeBatchModel.id == batch.id
+    ).one()
+    assert {"verb": "DELAY", "count": 1} in batch_model.result_json["inquiry_rows_changed"]
+    assert not any(
+        entry["verb"] == "RELEASE"
+        for entry in batch_model.result_json["inquiry_rows_changed"]
+    )
+
+    db.expire_all()
+    live = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    # The purchase is not lost: an ORDER row for the whole 150, now for the POOL rather
+    # than for a line that has moved most of a year out, with a DELAY row beside it
+    # naming the date it moved from.
+    orders = [r for r in live if r.verb == IV_ORDER]
+    assert [str(r.qty) for r in orders] == ["150.0000"]
+    assert orders[0].stock_location == world.pool_wh.warehouse_code
+    delays = [r for r in live if r.verb == "DELAY"]
+    assert len(delays) == 1
+    assert "2026-08-25" in (delays[0].note or "")

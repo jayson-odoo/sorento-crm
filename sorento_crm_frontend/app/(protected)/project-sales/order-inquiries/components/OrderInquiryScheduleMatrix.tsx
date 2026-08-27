@@ -3,6 +3,14 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { VERB_PALETTE_KEY } from '../../_shared/components/OrderInquiryVerbPill';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
+import {
+  KIND_COLOURS,
+  KIND_LABELS,
+  fullyLinked,
+  kindText,
+  segmentsOfRows,
+} from '../../_shared/lib/orderInquiryKinds';
 import { dominantVerbOf } from '../../_shared/lib/orderInquiryMatrix';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import type {
@@ -144,23 +152,41 @@ function MatrixCellButton({
   const rowCount = cell.rows.length;
   const dominantVerb = dominantVerbOf(cell.rows);
   const paletteKey = dominantVerb ? (VERB_PALETTE_KEY[dominantVerb] ?? 'draft') : 'draft';
-  const label = `${formatInquiryQty(cell.qty)}, ${rowCount} row${rowCount === 1 ? '' : 's'}`;
+  // What this cell's quantity still needs, the way the board reads a cell (AC-I12): a
+  // segment per kind under the figure, and the same words beside it. Solid when every
+  // row is wholly on a document, faded while any of it is still only an instruction.
+  const segments = segmentsOfRows(cell.rows);
+  const supply = kindText(segments);
+  // The figure is what is STILL OWED here (`buildOrderInquiryMatrix` leaves a cancelled
+  // row out of it), so it and the words under it always add up. The row count is the
+  // whole cell all the same, cancelled rows included: it says what a click opens.
+  const label = `${formatInquiryQty(cell.qty)} owed, ${rowCount} row${
+    rowCount === 1 ? '' : 's'
+  }${supply ? `, ${supply}` : ''}`;
 
   return (
     <button
       type="button"
       onClick={onOpen}
       aria-label={label}
-      className="flex w-full items-center gap-1.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      className="flex w-full items-start gap-1.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
       <span
         aria-hidden
-        className={cn('size-1.5 shrink-0 rounded-full', VERB_DOT_CLASS[paletteKey] ?? 'bg-muted-foreground')}
+        className={cn('mt-1 size-1.5 shrink-0 rounded-full', VERB_DOT_CLASS[paletteKey] ?? 'bg-muted-foreground')}
       />
-      <span className="flex min-w-0 flex-col">
+      <span className="flex min-w-0 grow flex-col gap-0.5">
         <span className="font-medium tabular-nums">{formatInquiryQty(cell.qty)}</span>
-        <span className="text-[11px] text-muted-foreground">
-          {rowCount} row{rowCount === 1 ? '' : 's'}
+        <SupplyBar
+          segments={segments}
+          decided={fullyLinked(cell.rows)}
+          labels={KIND_LABELS}
+          colours={KIND_COLOURS}
+        />
+        {/* The row count moves into the title beside the words: a cell is 130px wide and
+            what to DO with the quantity is worth more of it than how many rows it is. */}
+        <span className="truncate text-[11px] text-muted-foreground" title={label}>
+          {supply || `${rowCount} row${rowCount === 1 ? '' : 's'}`}
         </span>
       </span>
     </button>
