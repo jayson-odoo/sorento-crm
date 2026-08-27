@@ -282,7 +282,7 @@ export async function getLatestContainerStatusDocument(): Promise<LatestContaine
  * ============================================================================
  * Where this container's lines came from - the proforma invoices behind it (F10)
  * ============================================================================
- * Layering: PackingListDetail -> usePackingListSourceInvoices -> THIS -> api-client.
+ * Layering: the packing-list tabs -> usePackingListSourceInvoices -> THIS -> api-client.
  *
  * ── BACKEND CONTRACT (app/api/v1/scm/proforma_invoices.py) ────────────────
  *  GET /api/v1/scm/inbound-shipments/{id}/source-proforma-invoices

@@ -27,12 +27,20 @@ import { usePackingListSourceInvoices } from '../hooks/usePackingLists';
  * across two containers (Q9), so 200 of 500 here means 300 is somewhere else, and a card
  * showing only 200 would read as the whole invoice.
  */
-export function SourceProformaInvoicesCard({ packingListId }: { packingListId: string }) {
+export function SourceProformaInvoicesCard({
+  packingListId,
+  convertedOn,
+}: {
+  packingListId: string;
+  /** When this container was drafted. Read off the container, so the card is not a second
+   *  source for a date the header already knows. */
+  convertedOn?: string | Date | null;
+}) {
   const { data, isLoading } = usePackingListSourceInvoices(packingListId);
   const invoices = data?.invoices ?? [];
 
   return (
-    <Card className="mt-6">
+    <Card>
       <CardHeader>
         <CardTitle>Source proforma invoices</CardTitle>
       </CardHeader>
@@ -41,8 +49,7 @@ export function SourceProformaInvoicesCard({ packingListId }: { packingListId: s
           <Skeleton className="h-20 w-full rounded-lg" />
         ) : invoices.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            This container was not drafted from a proforma invoice. Its lines came from the
-            packing list itself.
+            Read from a packing list, not drafted from a proforma invoice.
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -115,6 +122,15 @@ export function SourceProformaInvoicesCard({ packingListId }: { packingListId: s
                 ))}
               </TableBody>
             </Table>
+            {/* Who drafted the container and when. Under the table rather than down it: it
+                is one fact about the container, and a column repeating it on every row
+                would read as a fact about each invoice. `created_by` is the NAME the server
+                resolved - `created_by` on the container is a user id, and printing that put
+                a UUID on the page. */}
+            <p className="mt-3 text-sm text-muted-foreground">
+              Uploaded by {data?.created_by || 'System'}
+              {convertedOn ? `, converted on ${formatDate(new Date(convertedOn))}` : ''}.
+            </p>
           </div>
         )}
       </CardContent>
