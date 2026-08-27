@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { recToPlanLine, type PlanLine } from './planLine';
 import { groupPlanLinesByChannel } from './planLineGrouping';
+import { NO_COVER } from './coverPlan';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import type { PlanDecisionMap } from './planDecisions';
 import {
@@ -211,6 +212,41 @@ describe('confirmSummary (R3, E5)', () => {
     const decisions: PlanDecisionMap = { r1: { buy: 10, confirmed: true } };
     const edits: PlanRowEditMap = { r1: { decision: { buy: 40 } } };
     expect(confirmSummary(edits, decisions, [amended]).products).toBe(1);
+  });
+
+  it('mixes all five row shapes on one plan: only the confirmed-untouched, the skip and the stock-only untouched drop out', () => {
+    // `cash_impact` set so each line's own `unit_cost_base` (`cash_impact / order_qty`,
+    // `planRow.recToPlanRow`) comes out to a round 10, so the assertion below reads
+    // straight off the buy quantities rather than the fixture's own unrelated defaults.
+    // (a) already confirmed, no new edit -> excluded.
+    const confirmedNoEdit = line({ id: 'r1', product_id: 'p1', sku: 'A', order_qty: 10, cash_impact: 100 });
+    // (b) confirmed, then edited again -> included at the EDITED quantity.
+    const confirmedEdited = line({ id: 'r2', product_id: 'p2', sku: 'B', order_qty: 10, cash_impact: 100 });
+    // (c) skipped -> excluded.
+    const skipped = line({ id: 'r3', product_id: 'p3', sku: 'C', order_qty: 30, cash_impact: 300 });
+    // (d) untouched, the engine's own mixture is a buy -> included.
+    const untouchedBuy = line({ id: 'r4', product_id: 'p4', sku: 'D', order_qty: 20, cash_impact: 200 });
+    // (e) untouched, fully covered from stock (buy 0) -> excluded.
+    const untouchedStockOnly = line({ id: 'r5', product_id: 'p5', sku: 'E', order_qty: 15, cash_impact: 150 });
+    const rows = [confirmedNoEdit, confirmedEdited, skipped, untouchedBuy, untouchedStockOnly];
+
+    const decisions: PlanDecisionMap = {
+      r1: { buy: 10, confirmed: true },
+      r2: { buy: 10, confirmed: true },
+      r3: { skip: true },
+    };
+    const edits: PlanRowEditMap = {
+      r2: { decision: { buy: 25 } },
+    };
+    const coverFor = (l: PlanLine) =>
+      l.id === 'r5' ? { ...NO_COVER, coverQty: 15, buyQty: 0 } : NO_COVER;
+
+    const summary = confirmSummary(edits, decisions, rows, coverFor);
+
+    expect(summary.products).toBe(2); // (b) and (d) only
+    // unit_cost_base is 10 on every line above: 10 * 25 (b, the EDITED buy) + 10 * 20 (d).
+    expect(summary.cash).toBe(250 + 200);
+    expect(summary.unpriced).toBe(0);
   });
 
   it('prices the buys it can and counts the ones it cannot, never summing them as zero', () => {

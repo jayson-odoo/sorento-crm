@@ -217,6 +217,52 @@ def test_a_level_edit_on_a_location_grain_run_amends_that_location_s_suggestion(
 
 
 # ===========================================================================
+# B1 guard: a Level edit against a row with no suggestion has nothing to amend
+# ===========================================================================
+
+def test_a_level_edit_with_no_suggestion_422s_and_rolls_the_batch_back(db):
+    """`_plan` seeds no `scm.reorder_level` row at all, so the product-grain rec below
+    carries no suggestion to amend. Section 11's blocker fix keyed the amendment off the
+    RIGHT (product, warehouse) pair - it never made a missing suggestion succeed, and it
+    still must not: `level_suggestion_service.amend_suggestion` refuses it with a 422,
+    and that refusal has to take the rest of the batch down with it, the same as any
+    other row failure (`test_a_failing_row_rolls_the_whole_batch_back` above)."""
+    plan, _prod, recs = _plan(db, members=2)
+
+    with pytest.raises(AppException) as err:
+        svc.save_plan_edits(db, plan.id, [
+            {"rec_id": recs[0].id, "moq": 25},
+            {"rec_id": recs[1].id, "level": 30},
+        ], actor=ACTOR)
+
+    assert err.value.status_code == 422
+    db.rollback()
+    moq = db.execute(text(
+        "SELECT moq_override FROM scm.reorder_recommendation WHERE id = :id"
+    ), {"id": recs[0].id}).scalar()
+    assert moq is None, "the whole batch rolls back, including the row before the failure"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="B1 guard: the 422 level_suggestion_service.amend_suggestion raises "
+           "('There is no suggestion to amend for this item.') carries no rec id, "
+           "product code or row identifier at all - a batch of several Level edits "
+           "gives the buyer no way to tell which row failed. Not fixed by this lane.",
+)
+def test_the_422_names_which_row_had_no_suggestion(db):
+    plan, prod, recs = _plan(db, members=1)
+
+    with pytest.raises(AppException) as err:
+        svc.save_plan_edits(db, plan.id, [
+            {"rec_id": recs[0].id, "level": 30},
+        ], actor=ACTOR)
+
+    message = str(err.value.detail.get("message") or "")
+    assert str(recs[0].id) in message or prod.product_code in message
+
+
+# ===========================================================================
 # one transaction (E1)
 # ===========================================================================
 
