@@ -30,6 +30,11 @@ import type {
   ConfirmLine,
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
+import {
+  confirmLineFrom,
+  decisionFromAmendDraft,
+  suggestionDraftFrom,
+} from './boardAmend';
 import { fromMinor, toMinor } from './supplyComposition';
 
 /**
@@ -335,38 +340,33 @@ function lineFor(
     const buy = toMinor(decision.buy_qty ?? '0');
     if (discontinued && buy > 0 && !buyReason) return 'buy_reason_missing';
     if (!contribution.project_line_id) return 'no_mirror';
-    return {
-      project_line_id: contribution.project_line_id,
-      timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
-      reserve: decision.reserve
-        .filter((row) => toMinor(row.qty) > 0)
-        .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
-      borrow: (decision.borrow ?? [])
-        .filter((row) => toMinor(row.qty) > 0)
-        .map((row) => ({
-          source: row.source,
-          warehouse_id: row.warehouse_id,
-          donor_project_id: row.donor_project_id ?? null,
-          qty: row.qty,
-          reason: row.reason,
-          // Ladder v2 group borrow (section E.4): round-tripped so the confirmation
-          // checks this row against the donor line's live commitment, not free stock.
-          donor_core_line_id: row.donor_core_line_id ?? null,
-          donor_so_number: row.donor_so_number ?? null,
-          donor_line_no: row.donor_line_no ?? null,
-          donor_agent_code: row.donor_agent_code ?? null,
-          same_agent: row.same_agent ?? false,
-          donor_required_date: row.donor_required_date ?? null,
-        })),
-      buy_qty: fromMinor(buy),
-      buy_reason: buyReason,
-      // Frozen with the line. Every other component carries the sentence of the RULE that
-      // produced it, and those explain a decision nobody took once a person overrode them.
-      amend_reason: decision.reason,
-      // The doubt beside the verdict (R10). Sent on every verdict, not only an amendment:
-      // "I did what it said and I think the numbers are wrong" is the case worth chasing.
+    return confirmLineFrom(contribution.project_line_id, decision);
+  }
+
+  // AN APPROVAL ON A COVERED LINE POSTS THE ENGINE'S SUGGESTION, COMPOSED, NOT DERIVED.
+  //
+  // The derivation below reads `qty_proposed_*`, the source strip and the borrow strip, and
+  // on a covered line the server fills all three from the ACTIVE DECISION (`_apply_frozen`).
+  // So Approve suggestion on SO404352 line 22 - confirmed at 8 from BRW-AM and 16 from the
+  // pool, suggested at 9 and 15 - flipped the pill to Approved, moved the Confirm counter and
+  // then posted the 8 and the 16 again: "0 transfers proposed", and the revision unchanged
+  // after a reload. The suggestion is composed exactly as the editor composes it and posted
+  // exactly as an amendment is, with no `amend_reason`, because an approval is not an
+  // override. An UNCOVERED approval keeps the derivation: there the three fields are the
+  // engine's own answer, and re-deriving from them is what makes the board agree with the
+  // sheet.
+  if (contribution.covered && decision?.verdict === 'approved') {
+    const suggested: BoardDecision = {
+      ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+      verdict: 'approved',
       suspected_system_issue: decision.suspected_system_issue ?? false,
     };
+    const suggestedBuy = toMinor(suggested.buy_qty ?? '0');
+    if (discontinued && suggestedBuy > 0 && !suggested.buy_reason?.trim()) {
+      return 'buy_reason_missing';
+    }
+    if (!contribution.project_line_id) return 'no_mirror';
+    return confirmLineFrom(contribution.project_line_id, suggested);
   }
 
   const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);

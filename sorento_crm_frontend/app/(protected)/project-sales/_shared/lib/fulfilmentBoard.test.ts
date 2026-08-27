@@ -1471,6 +1471,140 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
 });
 
 /**
+ * APPROVE SUGGESTION ON A COVERED LINE POSTS THE ENGINE'S COMPOSITION, NOT THE FROZEN ONE.
+ *
+ * The plan's canonical line, third browser run: SO404352 line 22 was confirmed at Reserve 8
+ * from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend, then
+ * Approve suggestion, flipped the pill to Approved and moved the Confirm counter - and then
+ * posted the 8 and the 16 again ("0 transfers proposed", the revision unchanged after a
+ * reload), because `qty_proposed_*` and the source strip both state the ACTIVE DECISION on a
+ * covered line (the server's `_apply_frozen`). So the approval is composed from the
+ * suggestion the way the editor composes it, and posted the way an amendment is.
+ */
+describe('confirmLinesFor: an approval on a covered line whose decision left the suggestion', () => {
+  const frozen = {
+    revision_no: 4,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '9',
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '15',
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      reason: 'The shared pool at BRW covers this much within its cap.',
+    },
+  ];
+  const board = buildBoard(
+    [
+      line({
+        sales_order_id: 'so-a',
+        so_number: 'SO404352',
+        line_no: 22,
+        qty: '24',
+        item_code: 'SRTWB7518',
+        fulfilment_location: 'BRW-AM',
+        decision: frozen,
+      }),
+    ],
+    { today: TODAY },
+  );
+  // As the server sends a covered line: `sources` and `qty_proposed_*` state the DECISION
+  // (`_apply_frozen`), and the engine's own composition is the proposal frozen beside it.
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => ({ ...entry, proposed: { components: suggestion } }));
+  const key = contributions[0].key;
+
+  it('posts the engine’s 9 and 15, never the 8 and 16 the revision froze', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: { verdict: 'approved' },
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '9' },
+      { warehouse_id: 'wh-BRW', qty: '15' },
+    ]);
+    expect(lines[0].buy_qty).toBe('0');
+    // An approval is not an override: it carries no reason of its own.
+    expect(lines[0].amend_reason).toBeUndefined();
+  });
+
+  it('carries the doubt beside the verdict (R10)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: { verdict: 'approved', suspected_system_issue: true },
+    });
+    expect(lines[0].suspected_system_issue).toBe(true);
+  });
+
+  it('posts what the planner composed when they amended instead', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: {
+        verdict: 'amended',
+        reserve_qty: '24',
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+          { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+        reason: 'The site took the extra from the pool.',
+      },
+    });
+
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', qty: '16' },
+    ]);
+    expect(lines[0].amend_reason).toBe('The site took the extra from the pool.');
+  });
+
+  it('still posts nothing for the covered line while nobody has touched it, or rejected it', () => {
+    expect(confirmLinesFor(contributions, 'so-a', {})).toEqual([]);
+    expect(
+      confirmLinesFor(contributions, 'so-a', {
+        [key]: { verdict: 'rejected', reason: 'The site cancelled it.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('leaves an UNCOVERED approval on its own derivation', () => {
+    const uncovered = contributions.map((entry) => ({
+      ...entry,
+      covered: false,
+      decision: null,
+      sources: suggestion,
+      qty_proposed_reserve: '24',
+      qty_proposed_incoming: '0',
+      qty_proposed_buy: '0',
+    }));
+    const lines = confirmLinesFor(uncovered, 'so-a', { [key]: { verdict: 'approved' } });
+
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '9' },
+      { warehouse_id: 'wh-BRW', qty: '15' },
+    ]);
+    expect(lines[0].buy_qty).toBe('0');
+  });
+});
+
+/**
  * Adoption mirrored the order's OPEN lines at the time it ran, so a later upload can add a core
  * line that has no mirror. Its order is still confirmable; that one line is not.
  *

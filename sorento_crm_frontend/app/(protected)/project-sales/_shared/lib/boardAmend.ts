@@ -19,7 +19,10 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardReserveComponent,
+  BoardSource,
   BorrowCandidate,
+  ConfirmBorrowComponent,
+  ConfirmLine,
 } from '../types/fulfilmentPlanning.types';
 import {
   fromMinor,
@@ -51,9 +54,50 @@ import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary'
 export function amendDraftFrom(contribution: BoardContribution): DraftLine {
   const frozen = contribution.covered ? contribution.decision : null;
   if (frozen) return frozenDraft(contribution, frozen);
-  const reserveSources = contribution.sources.filter(
-    (source) => source.kind === 'reserve',
+  return draftFromSources(contribution, contribution.sources, true);
+}
+
+/**
+ * THE ENGINE'S SUGGESTION as the editor's draft, whatever the line's own decision says.
+ *
+ * `amendDraftFrom` opens a covered line on what was DECIDED, which is right for Amend and
+ * wrong for Approve suggestion: the planner has just asked for the engine's composition back,
+ * and on SO404352 line 22 they got the frozen 8 / 16 they were pressing the button to leave.
+ *
+ * The suggestion is `contributionSuggestion`'s own rule (`supplyVocabulary`) - the proposal
+ * FROZEN beside the decision when the revision recorded one, the live ladder otherwise - so
+ * the inputs reset to exactly the composition the Suggestion card states.
+ *
+ * A revision written before the proposal was frozen records none, and `sources` states the
+ * decision itself on a covered line: the frozen composition is then all the board holds for
+ * that line, so it is what the reset shows rather than an empty form.
+ */
+export function suggestionDraftFrom(contribution: BoardContribution): DraftLine {
+  // On an UNCOVERED line the proposal IS the draft, so there is one seeder, not two.
+  if (!contribution.covered) return amendDraftFrom(contribution);
+  // `qty_proposed_*` states the ACTIVE DECISION on a covered line (the server's
+  // `_apply_frozen`), so the totals come off the suggestion's own components instead.
+  return draftFromSources(
+    contribution,
+    contribution.proposed?.components ?? contribution.sources,
+    false,
   );
+}
+
+/**
+ * One composition, read off supply components: the shared body of the two seeders above.
+ *
+ * `proposedTotals` says whether the server's `qty_proposed_*` may be trusted for the incoming
+ * and Buy figures. It may on a line the engine planned - those are its own totals, and they
+ * are the reason the board proposes what the sheet proposes - and it may NOT on a covered
+ * line, where the same three fields state what was decided rather than what was suggested.
+ */
+function draftFromSources(
+  contribution: BoardContribution,
+  sources: BoardSource[],
+  proposedTotals: boolean,
+): DraftLine {
+  const reserveSources = sources.filter((source) => source.kind === 'reserve');
 
   const rows: DraftReserve[] = [];
   for (const source of reserveSources) {
@@ -77,7 +121,7 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
   // within the cap. Group borrow left the engine entirely (AC-L3) and reaches this editor
   // only when a person picks a donor. Either way, a borrow the proposal DID name has to be
   // carried in - dropping it here would lose it the instant Amend was opened.
-  const borrowSources = contribution.sources.filter(
+  const borrowSources = sources.filter(
     (source) => source.kind === 'borrow' && source.warehouse_id,
   );
   const borrowRows: DraftBorrow[] = borrowSources.map((source, index) => ({
@@ -95,6 +139,9 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     donor_line_no: source.donor_line_no ?? null,
     donor_agent_code: source.donor_agent_code ?? null,
     same_agent: source.same_agent ?? false,
+    // The donor's own delivery date, which is the order-back's urgency: dropped here it was
+    // lost from the posted borrow the moment the composition went through this editor.
+    donor_required_date: source.donor_required_date ?? null,
   }));
 
   return {
@@ -105,9 +152,11 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     // Dated supply, not a choice: it is shown and never typed, on the board exactly as on the
     // sheet, so an amendment cannot promise incoming stock that is not coming.
     timely_spo_qty: fromMinor(
-      numberOr(contribution.qty_proposed_incoming, () =>
-        sumSources(contribution, 'timely_spo'),
-      ),
+      proposedTotals
+        ? numberOr(contribution.qty_proposed_incoming, () =>
+            sumSources(sources, 'timely_spo'),
+          )
+        : sumSources(sources, 'timely_spo'),
     ),
     reserve: rows,
     // The engine's own auto-proposed borrows (group / cross-group), carried into the
@@ -115,7 +164,9 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     // with its own reason (AC-B09).
     borrow: borrowRows,
     buy_qty: fromMinor(
-      numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy')),
+      proposedTotals
+        ? numberOr(contribution.qty_proposed_buy, () => sumSources(sources, 'buy'))
+        : sumSources(sources, 'buy'),
     ),
     buy_reason: '',
     // The item facts the ladder judged the line on, so a Buy of a discontinued product asks
@@ -321,6 +372,58 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
 }
 
 /**
+ * A composed decision as the LINE ONE CONFIRMATION POSTS, component for component.
+ *
+ * One mapping for the two verdicts that post a composition rather than a derivation: an
+ * amendment as the planner typed it, and an approval of the engine's suggestion on a line an
+ * active decision already covers (C9 / C11). The approval used to be derived from
+ * `qty_proposed_*` and the source strip, and BOTH state the decision on a covered line, so
+ * pressing Approve suggestion re-posted the very numbers it was pressed to leave.
+ *
+ * A zero-quantity component is dropped: it decides nothing, and the confirmation would drop
+ * it anyway. `amend_reason` is whatever the decision carries - an approval carries none,
+ * because it is not an override.
+ */
+export function confirmLineFrom(
+  projectLineId: string,
+  decision: BoardDecision,
+): ConfirmLine {
+  const borrow: ConfirmBorrowComponent[] = (decision.borrow ?? [])
+    .filter((row) => toMinor(row.qty) > 0)
+    .map((row) => ({
+      source: row.source,
+      warehouse_id: row.warehouse_id,
+      donor_project_id: row.donor_project_id ?? null,
+      qty: row.qty,
+      reason: row.reason,
+      // Ladder v2 group borrow (section E.4): round-tripped so the confirmation checks
+      // this row against the donor line's live commitment, not against free stock.
+      donor_core_line_id: row.donor_core_line_id ?? null,
+      donor_so_number: row.donor_so_number ?? null,
+      donor_line_no: row.donor_line_no ?? null,
+      donor_agent_code: row.donor_agent_code ?? null,
+      same_agent: row.same_agent ?? false,
+      donor_required_date: row.donor_required_date ?? null,
+    }));
+  return {
+    project_line_id: projectLineId,
+    timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
+    reserve: (decision.reserve ?? [])
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
+    borrow,
+    buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
+    buy_reason: decision.buy_reason?.trim() || undefined,
+    // Frozen with the line. Every other component carries the sentence of the RULE that
+    // produced it, and those explain a decision nobody took once a person overrode them.
+    amend_reason: decision.reason,
+    // The doubt beside the verdict (R10). Sent on every verdict, not only an amendment:
+    // "I did what it said and I think the numbers are wrong" is the case worth chasing.
+    suspected_system_issue: decision.suspected_system_issue ?? false,
+  };
+}
+
+/**
  * What an amended row reads on the board, IN SECTION 2'S WORDS.
  *
  * "Amended to reserve 20" was true and no longer sufficient: the same amendment can now borrow
@@ -388,8 +491,8 @@ function numberOr(value: string | null | undefined, fallback: () => number): num
   return value === null || value === undefined ? fallback() : toMinor(value);
 }
 
-function sumSources(contribution: BoardContribution, kind: string): number {
-  return contribution.sources
+function sumSources(sources: BoardSource[], kind: string): number {
+  return sources
     .filter((source) => source.kind === kind)
     .reduce((total, source) => total + toMinor(source.qty), 0);
 }

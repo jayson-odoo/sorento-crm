@@ -13,6 +13,7 @@ import {
   amendSummary,
   borrowCandidatesOf,
   decisionFromAmendDraft,
+  suggestionDraftFrom,
 } from '../../_shared/lib/boardAmend';
 import {
   fromMinor,
@@ -171,9 +172,15 @@ export function BoardLineDecisionPanel({
     edit({ ...draft, ...(held ?? {}), buy_qty: '0' });
   };
 
-  /** Back to the engine's own composition, and that is the verdict. */
+  /**
+   * Back to the engine's own composition, and that is the verdict.
+   *
+   * `suggestionDraftFrom`, never `draftFor`: on a covered line the panel opens on what was
+   * DECIDED, so resetting to that put the frozen numbers back and called it the suggestion -
+   * SO404352 line 22 stayed at 8 / 16 under a pill reading Approved.
+   */
   const approveSuggestion = () => {
-    const fresh = draftFor(contribution, null);
+    const fresh = suggestionDraftFrom(contribution);
     setDraft(fresh);
     setReason('');
     setDirty(false);

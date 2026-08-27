@@ -492,7 +492,41 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     );
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Approved');
   });
+
+  /**
+   * The inputs RESET TO THE SUGGESTION, and the suggestion is the engine's, not the frozen
+   * composition (C9). SO404352 line 22 was confirmed at 8 from BRW-AM plus 16 from the pool
+   * while the engine suggests 9 plus 15: Approve suggestion left the two inputs reading 8 and
+   * 16, and the confirmation posted them, so the revision never moved.
+   */
+  it('resets the inputs to the engine’s numbers, not to the composition the revision froze', () => {
+    renderPanel({
+      covered: true,
+      decision: {
+        revision_no: 4,
+        confirmed_at: '2026-08-18T02:00:00',
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+          { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    // Amend opens on what was DECIDED: the planner edits their own numbers.
+    expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(8);
+    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(16);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+
+    expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(9);
+    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(15);
+  });
 });
+
 
 /**
  * The saved amendment overlays the engine's suggestion on reopen: collapsing an amended row
