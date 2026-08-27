@@ -10,7 +10,10 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 const hasPermission = vi.fn((_slug: string) => true);
@@ -79,7 +82,10 @@ beforeEach(() => {
   hasPermission.mockImplementation(() => true);
 });
 
-function mockData(rows: StockTransfer[], overrides: Partial<ReturnType<typeof useBoardTransfers>> = {}) {
+function mockData(
+  rows: StockTransfer[],
+  overrides: Partial<ReturnType<typeof useBoardTransfers>> = {},
+) {
   useBoardTransfers.mockReturnValue({
     data: { data: rows },
     isLoading: false,
@@ -104,7 +110,9 @@ describe('BoardTransfersPanel: columns (D6)', () => {
       'State',
       'Proposed at',
     ]) {
-      expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument();
+      expect(
+        screen.getByRole('columnheader', { name: header }),
+      ).toBeInTheDocument();
     }
     expect(screen.getByText('ST-000015')).toBeInTheDocument();
     expect(screen.getByText('BRW to BRW-AM')).toBeInTheDocument();
@@ -116,7 +124,9 @@ describe('BoardTransfersPanel: hidden when empty (D4)', () => {
   it('renders nothing when the list is empty and nothing was just confirmed', () => {
     mockData([]);
 
-    const { container } = render(<BoardTransfersPanel soNumbers={['SO404352']} />);
+    const { container } = render(
+      <BoardTransfersPanel soNumbers={['SO404352']} />,
+    );
 
     expect(container).toBeEmptyDOMElement();
   });
@@ -141,12 +151,16 @@ describe('BoardTransfersPanel: Approve and Approve all proposed (D7)', () => {
     // Nothing has moved yet: approving commits somebody to a physical movement, so it is
     // confirmed first, in the transfers page's own words.
     expect(approveMutate).not.toHaveBeenCalled();
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('Approve ST-000015?');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Approve ST-000015?',
+    );
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
       '15 SRTWB7518 BRW to BRW-AM',
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve', hidden: false }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Approve', hidden: false }),
+    );
     expect(approveMutate).toHaveBeenCalledWith('transfer-1');
   });
 
@@ -161,15 +175,24 @@ describe('BoardTransfersPanel: Approve and Approve all proposed (D7)', () => {
   });
 
   it('names the count in the Approve all confirmation, then approves every proposed row', () => {
-    mockData([transferOf({ id: 't-1' }), transferOf({ id: 't-2', transfer_no: 'ST-000016' })]);
+    mockData([
+      transferOf({ id: 't-1' }),
+      transferOf({ id: 't-2', transfer_no: 'ST-000016' }),
+    ]);
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all proposed (2)' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Approve all proposed (2)' }),
+    );
 
     expect(approveAllMutate).not.toHaveBeenCalled();
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(
-      'Approve 2 proposed transfers?',
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Approve 2 proposed transfers?');
+    // The count, not the movements: the rows are on the page already.
+    expect(dialog).toHaveTextContent(
+      'Every proposed transfer listed on this page is approved.',
     );
+    expect(dialog).not.toHaveTextContent('BRW to BRW-IB');
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(approveAllMutate).toHaveBeenCalledWith(['t-1', 't-2']);
@@ -188,7 +211,9 @@ describe('BoardTransfersPanel: Approve and Approve all proposed (D7)', () => {
 
 describe('BoardTransfersPanel: nothing at all without the view grant (D9)', () => {
   it('renders no panel and asks for no list', () => {
-    hasPermission.mockImplementation((slug: string) => slug !== 'inventory.stock_transfers.view');
+    hasPermission.mockImplementation(
+      (slug: string) => slug !== 'inventory.stock_transfers.view',
+    );
     mockData([transferOf()]);
 
     const { container } = render(
@@ -211,17 +236,23 @@ describe('BoardTransfersPanel: nothing at all without the view grant (D9)', () =
 
 describe('BoardTransfersPanel: no buttons without inventory.stock_transfers.edit (D9)', () => {
   it('lists the transfers with no Approve button at all', () => {
-    hasPermission.mockImplementation((slug: string) => slug !== 'inventory.stock_transfers.edit');
+    hasPermission.mockImplementation(
+      (slug: string) => slug !== 'inventory.stock_transfers.edit',
+    );
     mockData([transferOf()]);
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);
 
     expect(screen.getByText('ST-000015')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve' }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Approve all proposed/ }),
     ).not.toBeInTheDocument();
-    expect(hasPermission).toHaveBeenCalledWith('inventory.stock_transfers.edit');
+    expect(hasPermission).toHaveBeenCalledWith(
+      'inventory.stock_transfers.edit',
+    );
   });
 
   it('an approved row carries no verb either way - Mark moved belongs to the transfer record', () => {
@@ -229,7 +260,9 @@ describe('BoardTransfersPanel: no buttons without inventory.stock_transfers.edit
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);
 
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Approve' }),
+    ).not.toBeInTheDocument();
   });
 });
 

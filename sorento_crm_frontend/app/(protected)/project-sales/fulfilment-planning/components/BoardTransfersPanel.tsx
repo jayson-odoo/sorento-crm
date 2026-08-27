@@ -90,7 +90,9 @@ export function BoardTransfersPanel({
    * it is confirmed first, with the SAME words the transfers page uses (the movement itself,
    * under the document number): one act, one sentence, wherever it is pressed from.
    */
-  const [pending, setPending] = React.useState<StockTransfer | 'all' | null>(null);
+  const [pending, setPending] = React.useState<StockTransfer | 'all' | null>(
+    null,
+  );
 
   const rows = React.useMemo<StockTransfer[]>(() => data?.data ?? [], [data]);
   const proposedRows = React.useMemo(
@@ -107,7 +109,9 @@ export function BoardTransfersPanel({
       {
         id: 'transfer_no',
         accessorFn: (row) => row.transfer_no,
-        header: ({ column }) => <DataGridColumnHeader title="Transfer no" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Transfer no" column={column} />
+        ),
         // The document number IS the way to the movement's own record, where it is marked
         // moved or cancelled - the two verbs this panel deliberately does not carry.
         cell: ({ row }) => (
@@ -127,10 +131,15 @@ export function BoardTransfersPanel({
       {
         id: 'item_code',
         accessorFn: (row) => row.item_code ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Product" column={column} />
+        ),
         cell: ({ row }) => (
           <div className="min-w-0">
-            <div className="truncate text-sm" title={row.original.item_code ?? ''}>
+            <div
+              className="truncate text-sm"
+              title={row.original.item_code ?? ''}
+            >
               {row.original.item_code || 'Not stated'}
             </div>
             <div
@@ -147,8 +156,11 @@ export function BoardTransfersPanel({
       },
       {
         id: 'route',
-        accessorFn: (row) => `${row.from_location ?? ''} ${row.to_location ?? ''}`,
-        header: ({ column }) => <DataGridColumnHeader title="From / To" column={column} />,
+        accessorFn: (row) =>
+          `${row.from_location ?? ''} ${row.to_location ?? ''}`,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="From / To" column={column} />
+        ),
         // One cell, because it is one fact: a movement is the PAIR, and split over two
         // columns a reader has to hold the left one in their head to read the right one.
         cell: ({ row }) => {
@@ -168,7 +180,9 @@ export function BoardTransfersPanel({
       {
         id: 'qty',
         accessorFn: (row) => row.qty,
-        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Qty" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate text-sm font-medium tabular-nums">
             {row.original.qty}
@@ -181,7 +195,9 @@ export function BoardTransfersPanel({
       {
         id: 'kind',
         accessorFn: (row) => row.kind,
-        header: ({ column }) => <DataGridColumnHeader title="Kind" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Kind" column={column} />
+        ),
         // Section 2's own words, so the transfer says where the stock came from the way the
         // board said it a moment ago.
         cell: ({ row }) => (
@@ -199,7 +215,9 @@ export function BoardTransfersPanel({
       {
         id: 'for',
         accessorFn: (row) => `${row.so_number ?? ''} ${row.so_line_no ?? ''}`,
-        header: ({ column }) => <DataGridColumnHeader title="For" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="For" column={column} />
+        ),
         cell: ({ row }) => {
           const label = row.original.so_number
             ? `${row.original.so_number} · line ${row.original.so_line_no ?? '?'}`
@@ -225,11 +243,15 @@ export function BoardTransfersPanel({
       {
         id: 'state',
         accessorFn: (row) => row.state,
-        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="State" column={column} />
+        ),
         cell: ({ row }) => (
           <span
             className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(
-              row.original.state === 'proposed' ? 'pending' : row.original.state,
+              row.original.state === 'proposed'
+                ? 'pending'
+                : row.original.state,
             )}`}
           >
             {TRANSFER_STATE_LABEL[row.original.state]}
@@ -242,7 +264,9 @@ export function BoardTransfersPanel({
       {
         id: 'proposed_at',
         accessorFn: (row) => row.proposed_at ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Proposed at" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Proposed at" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="block truncate text-sm tabular-nums">
             {row.original.proposed_at
@@ -336,7 +360,10 @@ export function BoardTransfersPanel({
 
       {/* Confirm before the movement is committed to, in the transfers page's own words
           (`StockTransferActions`). `AlertDialog`, never `confirm()`. */}
-      <AlertDialog open={pending !== null} onOpenChange={(next) => !next && setPending(null)}>
+      <AlertDialog
+        open={pending !== null}
+        onOpenChange={(next) => !next && setPending(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -346,16 +373,21 @@ export function BoardTransfersPanel({
                   }?`
                 : `Approve ${pending?.transfer_no ?? ''}?`}
             </AlertDialogTitle>
+            {/* Approve all names the count only: the twenty movements are the rows on the
+                page already, and a paragraph repeating them was a wall (the captain, 28 Aug
+                2026: "just remove the details here"). One transfer still states its move. */}
             <AlertDialogDescription>
               {pending === 'all'
-                ? proposedRows.map(movementOf).join(' · ')
+                ? 'Every proposed transfer listed on this page is approved.'
                 : pending
                   ? movementOf(pending)
                   : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={approve.isPending || approveAll.isPending}>
+            <AlertDialogCancel
+              disabled={approve.isPending || approveAll.isPending}
+            >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
