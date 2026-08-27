@@ -739,11 +739,12 @@ describe('the trend verdict (2026-08-11 markup; advisory line removed P6, 25 Aug
   });
 });
 
-describe('product health (2026-08-11 markup)', () => {
+describe('product health, by movement only (AC-R12)', () => {
   const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
     product_id: 'p1', avg_sell_price: 100, sell_source: 'orders', sold_qty: 240,
     on_hand: 40, avg_monthly_out: 20, turnover_months: 2, no_movement: false,
     lifecycle_decision: null, lifecycle_decided_at: null,
+    sold_recent_qty: 50, bought_recent_qty: 30, movement_class: 'fast_moving',
     ...over,
   });
   const rising: TrajectoryEntry = {
@@ -752,15 +753,16 @@ describe('product health (2026-08-11 markup)', () => {
     months: [], customers: [], agents: [], agents_available: false,
   };
 
-  it('closes the row with the margin the item really earns, and the amount behind it', () => {
-    // rec fixture: unit_cost 10 vs sells 100 -> 90% margin, RM 90.00 margin amount.
+  it('closes the row with the movement class, never a margin', () => {
     renderGrid([line()], {}, [], undefined, undefined, undefined, () => econ());
-    expect(screen.getByText('Margin 90% (RM 90.00)')).toBeInTheDocument();
+    expect(screen.getByText('Fast moving')).toBeInTheDocument();
+    expect(screen.queryByText(/Margin/)).not.toBeInTheDocument();
   });
 
-  it('asks to consider discontinuing a dead product, with the whole case behind it', () => {
+  it('asks to consider discontinuing a dead product, with the counts behind it', () => {
     const dead = econ({ no_movement: true, avg_monthly_out: 0, turnover_months: null,
-                        sold_qty: 0, on_hand: 25 });
+                        sold_qty: 0, on_hand: 25, sold_recent_qty: 0,
+                        bought_recent_qty: 0, movement_class: 'dead' });
     renderGrid(
       [line()], {}, [], undefined, undefined,
       () => ({ ...rising, verdict: 'quiet' as const, change_pct: null }),
@@ -769,22 +771,20 @@ describe('product health (2026-08-11 markup)', () => {
 
     // Click the cell's own trigger (the column header is also named "Product health").
     fireEvent.click(screen.getByText('Consider discontinuing'));
-    // The verdict is named in one line and the case is the factor list under it - the
-    // prose sentence and the AutoCount footer were removed (AC-5).
     expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
-    expect(screen.getByText(/nothing left this product/i)).toBeInTheDocument();
-    expect(screen.queryByText(/marking it in AutoCount stays your job/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/nothing delivered in the last 3 months/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing received in the last 6 months/i)).toBeInTheDocument();
   });
 
-  it('states the thin margin on the row itself, with no advisory beside the decision (P6)', () => {
-    // Base cost 92 (cash 9200 over 100 units) vs sells 100 -> 8% margin, below the floor.
+  it('a product bought but not sold lately is Slow moving, never a margin verdict', () => {
     renderGrid(
       [line({ order_qty: 100, recommended_qty: 100, unit_cost: 92, cash_impact: 9200 })],
-      {}, [], undefined, undefined, () => rising, () => econ(),
+      {}, [], undefined, undefined, () => rising,
+      () => econ({ sold_recent_qty: 0, movement_class: 'slow_moving' }),
     );
 
-    expect(screen.getByText(/Margin 8%/)).toBeInTheDocument();
-    expect(screen.queryByText(/Consider \d+ (more|less)/)).not.toBeInTheDocument();
+    expect(screen.getByText('Slow moving')).toBeInTheDocument();
+    expect(screen.queryByText(/Margin/)).not.toBeInTheDocument();
   });
 });
 
@@ -793,13 +793,15 @@ describe('the discontinue decision and the MOQ gap (2026-08-11 markup)', () => {
     product_id: 'p1', avg_sell_price: 100, sell_source: 'orders', sold_qty: 240,
     on_hand: 40, avg_monthly_out: 20, turnover_months: 2, no_movement: false,
     lifecycle_decision: null, lifecycle_decided_at: null,
+    sold_recent_qty: 50, bought_recent_qty: 30, movement_class: 'fast_moving',
     ...over,
   });
 
   it('offers Keep and Discontinue, and records the click', () => {
     const onLifecycle = vi.fn();
     const dead = econ({ no_movement: true, avg_monthly_out: 0, turnover_months: null,
-                        sold_qty: 0, on_hand: 25 });
+                        sold_qty: 0, on_hand: 25, sold_recent_qty: 0,
+                        bought_recent_qty: 0, movement_class: 'dead' });
     renderGrid([line()], {}, [], undefined, undefined, undefined, () => dead, onLifecycle);
 
     fireEvent.click(screen.getByText('Consider discontinuing'));

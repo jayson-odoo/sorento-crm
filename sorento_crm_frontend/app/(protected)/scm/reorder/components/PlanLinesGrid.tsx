@@ -68,8 +68,8 @@ import { PlanLineDecisionCell } from './PlanLineDecisionCell';
 import { PlanPriceCell } from './PlanPriceCell';
 import { PlanSupplierCell } from './PlanSupplierCell';
 import {
-  discontinueAdvice,
-  marginOf,
+  MOVEMENT_SORT,
+  healthVerdict,
   moqGap,
   moqGapNote,
   type ProductEconomics,
@@ -460,6 +460,7 @@ export function PlanLinesGrid({
   onOpenPhoto,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
+  healthWindows,
   onDecideLifecycle,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -526,6 +527,8 @@ export function PlanLinesGrid({
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
+  /** The windows the movement class was judged on, so the popup can say them. */
+  healthWindows?: { sold_window_months?: number; bought_window_months?: number };
   /** Record (or withdraw) the buyer's keep-or-discontinue answer. Absent = read-only. */
   onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -1342,31 +1345,23 @@ export function PlanLinesGrid({
       },
       {
         id: 'health',
-        // The rows the buyer should re-question float up: discontinue candidates first,
-        // then the margin problems, then the healthy book.
+        // The rows the buyer should re-question float up: dead stock first, then the
+        // items with no history at all, then the slow book, then what is still moving.
         accessorFn: (row) => {
           const econ = economicsFor?.(row);
-          if (!econ) return 9;
-          const margin = marginOf(row.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(econ, margin, trendFor?.(row), healthThresholds);
-          if (advice?.consider) return 0;
-          return { negative: 1, thin: 2, unknown: 3, healthy: 4 }[margin.tone];
+          return econ ? MOVEMENT_SORT[econ.movement_class] : 9;
         },
         header: ({ column }) => (
           <DataGridColumnHeader title="Product health" visibility column={column} />
         ),
         cell: ({ row }) => {
           const econ = economicsFor?.(row.original);
-          if (!econ) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          const margin = marginOf(
-            row.original.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(
-            econ, margin, trendFor?.(row.original), healthThresholds);
+          const health = healthVerdict(econ, healthWindows);
+          if (!econ || !health) return <span className="text-muted-foreground">{EM_DASH}</span>;
           return (
             <StopClick>
               <PlanHealthCell
-                margin={margin}
-                advice={advice}
+                health={health}
                 econ={econ}
                 onDecideLifecycle={onDecideLifecycle}
               />
@@ -1493,6 +1488,7 @@ export function PlanLinesGrid({
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
+     healthWindows,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
   );
 

@@ -207,6 +207,7 @@ export function PlanLinesSection({
         onOpenPhoto={planLines.requestProductImages}
         economicsFor={planLines.economicsFor}
         healthThresholds={planLines.healthThresholds}
+        healthWindows={planLines.healthWindows}
         onDecideLifecycle={planLines.decideLifecycle}
         staleAfterDays={planLines.staleAfterDays}
       />

@@ -1,15 +1,12 @@
 /**
- * Margin and discontinue verdicts (2026-08-11 markup).
+ * Movement health, and the MOQ pump-up beside it.
  *
- * Pinned hardest: a thin margin alone never suggests discontinuing a product that still
- * sells, an unknown side never renders as a number, and every factor travels with its
- * figure so the verdict can be argued with.
+ * Pinned hardest (AC-R12): the four classes read exactly as the captain named them, no
+ * margin figure survives anywhere, and every factor travels with its count so the verdict
+ * can be argued with.
  */
 import { describe, expect, it } from 'vitest';
-import { discontinueAdvice, marginOf, moqGap, type ProductEconomics } from './productHealth';
-import type { TrajectoryEntry } from './trajectory';
-
-const THRESHOLDS = { margin_floor_pct: 15, dead_turnover_months: 6 };
+import { MOVEMENT_SORT, healthVerdict, moqGap, type ProductEconomics } from './productHealth';
 
 const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
   product_id: 'p1',
@@ -22,80 +19,71 @@ const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
   no_movement: false,
   lifecycle_decision: null,
   lifecycle_decided_at: null,
+  sold_recent_qty: 50,
+  bought_recent_qty: 30,
+  movement_class: 'fast_moving',
   ...over,
 });
 
-const trend = (verdict: TrajectoryEntry['verdict']): TrajectoryEntry => ({
-  verdict, recent_qty: 0, previous_qty: 0, change_pct: null, year_ago_qty: null,
-  year_change_pct: null, window_months: 12, months: [], customers: [], agents: [],
-  agents_available: false,
+describe('healthVerdict', () => {
+  it('sold and bought reads Fast moving, and asks for nothing', () => {
+    const v = healthVerdict(econ())!;
+    expect(v.label).toBe('Fast moving');
+    expect(v.tone).toBe('success');
+    expect(v.consider).toBe(false);
+    expect(v.suggestion).toBeNull();
+  });
+
+  it('sold with nothing bought reads Slow moving', () => {
+    const v = healthVerdict(econ({ bought_recent_qty: 0, movement_class: 'slow_moving' }))!;
+    expect(v.label).toBe('Slow moving');
+    expect(v.consider).toBe(false);
+  });
+
+  it('neither, with stock still on hand, reads Dead and says what to consider', () => {
+    const v = healthVerdict(
+      econ({ sold_recent_qty: 0, bought_recent_qty: 0, on_hand: 40, movement_class: 'dead' }),
+    )!;
+    expect(v.label).toBe('Dead');
+    expect(v.consider).toBe(true);
+    expect(v.suggestion).toBe('Consider discontinuing');
+  });
+
+  it('neither and nothing on hand reads No history, which is not a verdict on the product', () => {
+    const v = healthVerdict(
+      econ({ sold_recent_qty: 0, bought_recent_qty: 0, on_hand: 0, movement_class: 'no_history' }),
+    )!;
+    expect(v.label).toBe('No history');
+    expect(v.consider).toBe(false);
+    expect(v.suggestion).toBeNull();
+  });
+
+  it('every factor travels with its count, and names its own window', () => {
+    const v = healthVerdict(econ(), { sold_window_months: 3, bought_window_months: 6 })!;
+    expect(v.factors).toEqual([
+      'Sold: 50 delivered in the last 3 months.',
+      'Bought: 30 received in the last 6 months.',
+      'On hand: 40 across every location.',
+    ]);
+  });
+
+  it('carries no margin figure at all', () => {
+    const v = healthVerdict(econ())!;
+    expect(v.factors.join(' ')).not.toMatch(/margin/i);
+  });
+
+  it('no economics is no verdict, never a default one', () => {
+    expect(healthVerdict(undefined)).toBeNull();
+  });
 });
 
-describe('marginOf', () => {
-  it('healthy when the sell clears the floor over the cost', () => {
-    expect(marginOf(60, econ(), 15)).toMatchObject({ tone: 'healthy', pct: 40 });
-  });
-
-  it('thin below the floor, negative below cost', () => {
-    expect(marginOf(90, econ(), 15).tone).toBe('thin');
-    expect(marginOf(120, econ(), 15).tone).toBe('negative');
-  });
-
-  it('unknown when either side is missing - never a guess', () => {
-    expect(marginOf(null, econ(), 15).tone).toBe('unknown');
-    expect(marginOf(60, econ({ avg_sell_price: null, sell_source: null }), 15).tone).toBe('unknown');
-    // Zero cost is the zero-price problem, not a 100% margin.
-    expect(marginOf(0, econ(), 15).tone).toBe('unknown');
-  });
-});
-
-describe('discontinueAdvice', () => {
-  it('suggests discontinuing only when demand dies AND the stock stops moving', () => {
-    const out = discontinueAdvice(
-      econ({ turnover_months: 14, sold_qty: 6, avg_monthly_out: 0.5 }),
-      marginOf(90, econ(), 15),
-      trend('falling'),
-      THRESHOLDS,
-    );
-    expect(out?.consider).toBe(true);
-  });
-
-  it('a hot seller with a thin margin is a pricing conversation, not a discontinuation', () => {
-    const out = discontinueAdvice(econ(), marginOf(90, econ(), 15), trend('rising'), THRESHOLDS);
-    expect(out?.consider).toBe(false);
-  });
-
-  it('dead stock with no movement at all still qualifies', () => {
-    const dead = econ({ no_movement: true, avg_monthly_out: 0, turnover_months: null,
-                        sold_qty: 0, on_hand: 25 });
-    const out = discontinueAdvice(dead, marginOf(60, dead, 15), undefined, THRESHOLDS);
-    expect(out?.consider).toBe(true);
-    expect(out?.factors.join(' ')).toContain('nothing left this product');
-  });
-
-  it('carries every factor with its number, verdict or not', () => {
-    const out = discontinueAdvice(econ(), marginOf(60, econ(), 15), trend('rising'), THRESHOLDS);
-    const text = out?.factors.join(' ') ?? '';
-    expect(text).toContain('240 sold');
-    expect(text).toContain('2 months of stock');
-    expect(text).toContain('Margin: 40%');
-    expect(text).toContain('Cash tied up: 2,400');
-  });
-
-  it('no economics, no opinion', () => {
-    expect(discontinueAdvice(undefined, marginOf(60, undefined, 15), undefined, THRESHOLDS)).toBeNull();
-  });
-
-  it('selling below cost on a falling book qualifies even when the stock still turns', () => {
-    // 2026-08-11: "why high margin then we consider discontinue, but low margin then we
-    // don't?" - fast turnover does not redeem a loss-maker whose demand is dying.
-    const out = discontinueAdvice(econ(), marginOf(120, econ(), 15), trend('falling'), THRESHOLDS);
-    expect(out?.consider).toBe(true);
-  });
-
-  it('a loss-maker still rising stays a pricing conversation', () => {
-    const out = discontinueAdvice(econ(), marginOf(120, econ(), 15), trend('rising'), THRESHOLDS);
-    expect(out?.consider).toBe(false);
+describe('MOVEMENT_SORT', () => {
+  it('floats the rows the buyer should re-question to the top of the column', () => {
+    expect(
+      (['fast_moving', 'dead', 'no_history', 'slow_moving'] as const)
+        .slice()
+        .sort((a, b) => MOVEMENT_SORT[a] - MOVEMENT_SORT[b]),
+    ).toEqual(['dead', 'no_history', 'slow_moving', 'fast_moving']);
   });
 });
 

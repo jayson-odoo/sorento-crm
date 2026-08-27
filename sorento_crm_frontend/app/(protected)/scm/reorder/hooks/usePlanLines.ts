@@ -585,6 +585,11 @@ export function usePlanLines(runId: string | null, enabled = true) {
       margin_floor_pct: 15,
       dead_turnover_months: 6,
     },
+    /** The movement windows the health class was judged on (AC-R12). */
+    healthWindows: {
+      sold_window_months: economics.data?.sold_window_months,
+      bought_window_months: economics.data?.bought_window_months,
+    },
     amendLevel,
     updateMoq,
     levelSuggestions: levels.data?.suggestions ?? {},

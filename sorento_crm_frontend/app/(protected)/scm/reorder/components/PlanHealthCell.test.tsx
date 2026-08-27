@@ -1,15 +1,15 @@
 /**
- * The health popover's margin arithmetic.
+ * The health cell, now that it reads MOVEMENT rather than margin (AC-R12).
  *
- * > "Current health popover says 'Margin 33.3% vs list price' with no numbers." The popup
- * >  must show the three figures the badge is computed from - never a bare percentage, and
- * >  never a fabricated one when the selling price is not on file.
+ * The pill is one of four classes; only Dead carries an ask ("Consider discontinuing");
+ * the popup shows the counts the class was drawn from; and no margin figure appears
+ * anywhere - a CNY cost against a MYR price was an exchange rate wearing a verdict.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PlanHealthCell } from './PlanHealthCell';
-import { marginOf, type DiscontinueAdvice, type ProductEconomics } from '../lib/productHealth';
+import { healthVerdict, type MovementClass, type ProductEconomics } from '../lib/productHealth';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -27,193 +27,118 @@ const econ = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({
   no_movement: false,
   lifecycle_decision: null,
   lifecycle_decided_at: null,
+  sold_recent_qty: 50,
+  bought_recent_qty: 30,
+  movement_class: 'fast_moving',
   ...over,
 });
+
+/** The four worlds, each shaped so its own class is the only one the rules can reach. */
+const world: Record<MovementClass, Partial<ProductEconomics>> = {
+  fast_moving: { sold_recent_qty: 50, bought_recent_qty: 30, movement_class: 'fast_moving' },
+  slow_moving: { sold_recent_qty: 50, bought_recent_qty: 0, movement_class: 'slow_moving' },
+  dead: { sold_recent_qty: 0, bought_recent_qty: 0, on_hand: 40, movement_class: 'dead' },
+  no_history: { sold_recent_qty: 0, bought_recent_qty: 0, on_hand: 0, movement_class: 'no_history' },
+};
+
+function cellFor(klass: MovementClass, over: Partial<ProductEconomics> = {}) {
+  const e = econ({ ...world[klass], ...over });
+  return <PlanHealthCell health={healthVerdict(e)} econ={e} />;
+}
 
 function open() {
   fireEvent.click(screen.getByRole('button', { name: /product health/i }));
 }
 
-describe('PlanHealthCell - margin arithmetic', () => {
-  it('renders the selling price, cost and margin figures, with the percentage', () => {
-    render(
-      <PlanHealthCell margin={marginOf(60, econ(), 15)} advice={null} econ={econ()} />,
-    );
-    open();
-
-    expect(screen.getByText('Selling price')).toBeInTheDocument();
-    expect(screen.getByText('RM 90.00')).toBeInTheDocument();
-    expect(screen.getByText('Cost')).toBeInTheDocument();
-    expect(screen.getByText('RM 60.00')).toBeInTheDocument();
-    expect(screen.getByText('Margin')).toBeInTheDocument();
-    expect(screen.getByText('RM 30.00 (33.3%)')).toBeInTheDocument();
+describe('PlanHealthCell - the movement class', () => {
+  it.each([
+    ['fast_moving', 'Fast moving'],
+    ['slow_moving', 'Slow moving'],
+    ['dead', 'Dead'],
+    ['no_history', 'No history'],
+  ] as const)('reads %s as "%s"', (klass, label) => {
+    render(cellFor(klass));
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it('never fabricates a percentage when the selling price is not set', () => {
-    const noSell = econ({ avg_sell_price: null, sell_source: null });
-    render(<PlanHealthCell margin={marginOf(60, noSell, 15)} advice={null} econ={noSell} />);
-    open();
-
-    expect(screen.getByText('Selling price not set - margin unknown.')).toBeInTheDocument();
-    expect(screen.queryByText(/%\)/)).not.toBeInTheDocument();
+  it('asks the buyer to reconsider a dead product, and only a dead one', () => {
+    render(cellFor('dead'));
+    expect(screen.getByText('Consider discontinuing')).toBeInTheDocument();
   });
 
-  it('names the cost as the missing side when the cost is not set', () => {
-    render(<PlanHealthCell margin={marginOf(null, econ(), 15)} advice={null} econ={econ()} />);
-    open();
+  it.each(['fast_moving', 'slow_moving', 'no_history'] as const)(
+    'never asks about a %s product',
+    (klass) => {
+      render(cellFor(klass));
+      expect(screen.queryByText('Consider discontinuing')).not.toBeInTheDocument();
+    },
+  );
 
-    expect(screen.getByText('Cost not set - margin unknown.')).toBeInTheDocument();
-  });
-
-  it('treats a zero cost as unset rather than a 100% margin', () => {
-    render(<PlanHealthCell margin={marginOf(0, econ(), 15)} advice={null} econ={econ()} />);
-    open();
-
-    expect(screen.getByText('Cost not set - margin unknown.')).toBeInTheDocument();
-  });
-
-  it('renders nothing at all when there is no economics opinion for the product', () => {
-    render(<PlanHealthCell margin={null} advice={null} econ={null} />);
-
+  it('renders absence when there is no movement on file, never a class', () => {
+    render(<PlanHealthCell health={null} econ={null} />);
     expect(screen.queryByRole('button', { name: /product health/i })).not.toBeInTheDocument();
   });
 });
 
-describe('PlanHealthCell - pill content (Fix C, user feedback, 2026-08-12)', () => {
-  it('shows the margin amount alongside the percentage, no subtitle', () => {
-    // unit_cost 60 vs sells 90 -> 33.3%, RM 30.00.
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={null} econ={econ()} />);
-
-    expect(screen.getByText('Margin 33.3% (RM 30.00)')).toBeInTheDocument();
-    expect(screen.queryByText(/vs list price/i)).not.toBeInTheDocument();
-  });
-
-  it('drops the "vs list price - nothing sold" subtitle for a list-price-only margin', () => {
-    const noSales = econ({ avg_sell_price: 90, sell_source: 'list_price', sold_qty: 0 });
-    render(<PlanHealthCell margin={marginOf(60, noSales, 15)} advice={null} econ={noSales} />);
-
-    expect(screen.getByText('Margin 33.3% (RM 30.00)')).toBeInTheDocument();
-    expect(screen.queryByText('vs list price - nothing sold')).not.toBeInTheDocument();
-    // The nuance still lives in the popover body, just not on the pill.
+describe('PlanHealthCell - no margin anywhere', () => {
+  it('shows neither a margin figure nor "Margin unknown"', () => {
+    render(cellFor('fast_moving', { avg_sell_price: null, sell_source: null }));
     open();
-    expect(
-      screen.getByText('No sales in the window, so the margin compares against the list price.'),
-    ).toBeInTheDocument();
+
+    expect(screen.queryByText(/Margin/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Selling price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cost')).not.toBeInTheDocument();
   });
 
-  it('keeps "Margin unknown" (no amount) when the margin cannot be computed', () => {
-    const noSell = econ({ avg_sell_price: null, sell_source: null });
-    render(<PlanHealthCell margin={marginOf(60, noSell, 15)} advice={null} econ={noSell} />);
+  it('shows the counts the class was drawn from instead', () => {
+    render(cellFor('fast_moving'));
+    open();
 
-    expect(screen.getByText('Margin unknown')).toBeInTheDocument();
-    expect(screen.queryByText(/RM/)).not.toBeInTheDocument();
+    expect(screen.getByText('Sold: 50 delivered in the last 3 months.')).toBeInTheDocument();
+    expect(screen.getByText('Bought: 30 received in the last 6 months.')).toBeInTheDocument();
+    expect(screen.getByText('On hand: 40 across every location.')).toBeInTheDocument();
+  });
+
+  it('says nothing moved rather than leaving a count out', () => {
+    render(cellFor('dead'));
+    open();
+
+    expect(screen.getByText('Sold: nothing delivered in the last 3 months.')).toBeInTheDocument();
+    expect(screen.getByText('Bought: nothing received in the last 6 months.')).toBeInTheDocument();
   });
 });
 
-describe('PlanHealthCell - the popover answers, it does not editorialise (AC-5)', () => {
-  const advice = (consider: boolean, factors: string[] = ['Sold 240 in the window']): DiscontinueAdvice => ({
-    consider,
-    factors,
-  });
-
-  it('names the suggestion as a discontinue in one line', () => {
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(true)} econ={econ()} />);
+describe('PlanHealthCell - the buyer answers', () => {
+  it('names the suggestion as the verdict, not as prose', () => {
+    render(cellFor('dead'));
     open();
-
     expect(screen.getByText('Suggestion: Discontinue')).toBeInTheDocument();
   });
 
-  it('names the suggestion as keep selling in the same one line', () => {
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(false)} econ={econ()} />);
+  it('a living product suggests keeping it', () => {
+    render(cellFor('fast_moving'));
     open();
-
     expect(screen.getByText('Suggestion: Keep selling')).toBeInTheDocument();
   });
 
-  it('shows a dash rather than claiming "keep selling" when there is no verdict', () => {
-    // `discontinueAdvice` returns null only when there are no economics, and the grid
-    // renders a bare dash in that case, so this branch is defensive rather than a state
-    // the plan screen reaches today. It stays because the prop allows null and the
-    // alternative - defaulting to "Keep selling" - is a claim the system never made.
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={null} econ={econ()} />);
+  it('records the buyer choosing against the suggestion', () => {
+    const onDecide = vi.fn();
+    const e = econ(world.dead);
+    render(<PlanHealthCell health={healthVerdict(e)} econ={e} onDecideLifecycle={onDecide} />);
     open();
 
-    expect(screen.getByText('Suggestion: -')).toBeInTheDocument();
-    expect(screen.queryByText(/Suggestion: Keep selling/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep selling' }));
+    expect(onDecide).toHaveBeenCalledWith('p1', 'keep');
   });
 
-  it('offers neither button as the suggested one when there is no verdict', () => {
-    // The suggestion is what the outlined button MEANS. Outlining Keep selling here would
-    // put a recommendation on screen that nothing computed.
-    render(
-      <PlanHealthCell
-        margin={marginOf(60, econ(), 15)}
-        advice={null}
-        econ={econ()}
-        onDecideLifecycle={() => {}}
-      />,
-    );
+  it('a second click on the recorded answer withdraws it', () => {
+    const onDecide = vi.fn();
+    const e = econ({ ...world.dead, lifecycle_decision: 'discontinue' });
+    render(<PlanHealthCell health={healthVerdict(e)} econ={e} onDecideLifecycle={onDecide} />);
+    expect(screen.getByText('You chose: discontinue')).toBeInTheDocument();
     open();
 
-    const keep = screen.getByRole('button', { name: 'Keep selling' });
-    const stop = screen.getByRole('button', { name: 'Discontinue' });
-    // Both plain: the outline variant is the marker the suggested button carries.
-    expect(keep.className).not.toMatch(/border-input/);
-    expect(stop.className).not.toMatch(/border-input/);
-    expect(screen.queryByText('suggested')).not.toBeInTheDocument();
-  });
-
-  it('still outlines the suggested button when there IS a verdict', () => {
-    render(
-      <PlanHealthCell
-        margin={marginOf(60, econ(), 15)}
-        advice={{ consider: false, factors: [] }}
-        econ={econ()}
-        onDecideLifecycle={() => {}}
-      />,
-    );
-    open();
-
-    expect(screen.getByRole('button', { name: 'Keep selling' }).className).toMatch(/border-input/);
-  });
-
-  it('drops the two prose verdicts it used to open with', () => {
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(false)} econ={econ()} />);
-    open();
-
-    expect(screen.queryByText('The product is earning its place.')).not.toBeInTheDocument();
-    expect(
-      screen.queryByText('The factors argue for discontinuing this product.'),
-    ).not.toBeInTheDocument();
-  });
-
-  it('drops the AutoCount footer', () => {
-    render(<PlanHealthCell margin={marginOf(60, econ(), 15)} advice={advice(true)} econ={econ()} />);
-    open();
-
-    expect(screen.queryByText(/Based on our own orders and stock only/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/AutoCount/)).not.toBeInTheDocument();
-  });
-
-  it('keeps the factor lines, the list-price note, both buttons and the suggested hint', () => {
-    const noSales = econ({ avg_sell_price: 90, sell_source: 'list_price', sold_qty: 0 });
-    render(
-      <PlanHealthCell
-        margin={marginOf(60, noSales, 15)}
-        advice={advice(true, ['Turnover 14 months', 'Demand falling'])}
-        econ={noSales}
-        onDecideLifecycle={() => {}}
-      />,
-    );
-    open();
-
-    expect(screen.getByText('Turnover 14 months')).toBeInTheDocument();
-    expect(screen.getByText('Demand falling')).toBeInTheDocument();
-    expect(
-      screen.getByText('No sales in the window, so the margin compares against the list price.'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Keep selling' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Discontinue' })).toBeInTheDocument();
-    expect(screen.getByText('suggested')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '✓ Discontinue' }));
+    expect(onDecide).toHaveBeenCalledWith('p1', null);
   });
 });

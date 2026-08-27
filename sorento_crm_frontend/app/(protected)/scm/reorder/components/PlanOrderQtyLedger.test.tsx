@@ -390,16 +390,16 @@ describe('order-qty ledger - the buy', () => {
     ).toBeInTheDocument();
   });
 
-  it('manual mode names the cover-window source', () => {
+  it('manual mode names the days the level itself covers', () => {
     renderLedger({
       line: line({
         policy_type: 'reorder_level', reorder_level: 50, order_qty: 40, recommended_qty: 40,
         forecast_daily_demand: 20, suggestion_basis: { lead_time_days: 30, safety_days: 14 },
       }),
     });
-    expect(screen.getByRole('checkbox', { name: 'Add 1,200' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Add 880' })).toBeInTheDocument();
     expect(
-      screen.getByText('(next 60d demand at 20.0/day - cover window per policy)'),
+      screen.getByText('(next 44d demand at 20.0/day - lead time plus safety days)'),
     ).toBeInTheDocument();
   });
 
