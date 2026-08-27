@@ -108,6 +108,7 @@ from app.services.scm.front_planning_engine import (
     Component,
     attribute_sources,
     group_take_reason,
+    group_water_reason,
     pool_reason,
     pool_reserve_capacity,
     propose_line,
@@ -339,6 +340,28 @@ class _SpoRow:
     #: Who it is coming from. Display only, and defaulted so every existing construction of
     #: this row keeps working; the sheet does not read it, the stock drill-down does.
     supplier_name: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _WaterAtLocation:
+    """What one group location has ON THE WATER for one line, split by the line's own date.
+
+    The group's net is date-blind by design (section 1d: `on hand + SPO - SO`), but what a
+    line may DRAW off that water is not - an SPO landing after the required date covers
+    nothing (captain, 27 August 2026). So both halves are carried: the timely quantity, which
+    question 1 may offer, and the late quantity, which the proof names with its date and
+    never draws.
+    """
+
+    location: str
+    #: Arriving on or before the line's required date, so drawable.
+    timely_qty: Decimal
+    #: The day the WHOLE of `timely_qty` has landed by - the date a planner promises against.
+    arrival_date: Optional[date]
+    #: Arriving after it. Named in question 1's sentence, never offered.
+    late_qty: Decimal
+    #: The earliest of the late arrivals: the soonest this water could be counted at all.
+    late_from: Optional[date]
 
 
 @dataclass
@@ -633,6 +656,14 @@ class ProjectSupplyService:
         # Ladder v4's own reader (`app.services.scm.group_netting`), built off the pile
         # cache above and thrown away with it. `None` means "not built for this span yet".
         self._netting_cache: Optional[GroupNetting] = None
+        # Open SPO rows WITH THEIR DATES for this request's products at every active
+        # warehouse, read once. The pile's own `spo_qty` is a total with no arrival in it,
+        # and question 1 may only draw the share that lands by the line's required date, so
+        # the documents themselves have to be in hand - at the group's siblings too, not
+        # only at the line's own location. `None` means "not read for this span yet".
+        self._spo_by_location_cache: Optional[
+            Dict[Tuple[str, str], List[_SpoRow]]
+        ] = None
         # Every active warehouse by id, read once: the span the nets are summed over.
         self._active_warehouses_cache: Optional[Dict[str, Warehouse]] = None
         # Warehouse and project rows this request has already read, by id. A donor list is
@@ -1133,14 +1164,27 @@ class ProjectSupplyService:
         belongs to this question - which is what "SPO stays inside the group net" means when
         it is the only reading of the pile.
 
-        WHAT IS ON THE WATER IS OFFERED TOO, at this line's own location, because the group's
-        net counts it (`on hand + SPO - SO`, AutoCount's own Available) while `_free_at`
-        counts only what is on the floor. Without that, a group whose cover is an SPO would
-        have an offer and no location to point at, and the cover would be lost to a Buy -
-        which is the double purchase rung 1 existed to prevent, and exactly what AC-V2
-        refuses. Bounded by the group's own SPO and by what is left of the offer, so this
-        adds the water and nothing else: stock a location holds but has reserved is still
-        out, the same as under v4.
+        WHAT IS ON THE WATER IS OFFERED TOO, because the group's net counts it (`on hand +
+        SPO - SO`, AutoCount's own Available) while `_free_at` counts only what is on the
+        floor. Without that, a group whose cover is an SPO would have an offer and no
+        location to point at, and the cover would be lost to a Buy - which is the double
+        purchase rung 1 existed to prevent, and exactly what AC-V2 refuses.
+
+        THE WATER IS DATED AND IT IS DISTRIBUTED (captain, 27 August 2026). Two rules, and
+        both were missing:
+
+        * only water arriving ON OR BEFORE this line's required date may be drawn. The NET
+          stays date-blind, because it is the group's position and not this line's promise;
+          what THIS line may take out of it is not. Late water is named in question 1's own
+          sentence with its date and never offered (`_group_water`);
+        * it is drawn AT THE LOCATION IT IS COMING TO, in the same order the floor is drawn,
+          not booked wholesale at `fact.own_code`. "40: 20 from BRW-IB, 20 on the water to
+          MWH-IB arriving 3 Sep" is checkable against the cell's own table; "40 from BRW-IB"
+          against a BRW-IB holding nothing is not.
+
+        A water candidate is marked `water` and carries the day the whole of it has landed
+        by; `propose_line` composes it as `timely_spo`, never as a Reserve, so no hold is
+        written against goods that are not on a floor.
         """
         if not fact.product_id or not fact.group_code:
             return []
@@ -1163,26 +1207,83 @@ class ProjectSupplyService:
             if capacity > _ZERO:
                 out.append({"location": code, "qty": capacity})
                 left -= capacity
-        on_the_water = min(
-            left,
-            max(
-                sum(
-                    (_dec(getattr(entry, "spo_qty", 0)) for entry in fact.group_net_by_location),
-                    _ZERO,
-                ),
-                _ZERO,
-            ),
+        # THEN the water, in the same order, so the floor is always spent first: stock on a
+        # shelf can be picked today and a promise cannot.
+        for water in self._group_water(fact):
+            if left <= _ZERO:
+                break
+            take = min(water.timely_qty, left)
+            if take <= _ZERO:
+                continue
+            out.append(
+                {
+                    "location": water.location,
+                    "qty": take,
+                    "water": True,
+                    "arrival_date": water.arrival_date,
+                }
+            )
+            left -= take
+        return out
+
+    def group_water_for(self, fact: _LineFacts) -> List[_WaterAtLocation]:
+        """What each of the group's locations has on the water for this line, timely and
+        late, public so the board's question 1 can name the late half it did not draw."""
+        return self._group_water(fact)
+
+    def _group_water(self, fact: _LineFacts) -> List[_WaterAtLocation]:
+        """The group's open SPO rows, per location, split on this line's required date.
+
+        In the same draw order the floor uses (own location first, then the siblings by
+        code), so the two halves of question 1 read as one walk. A location with no open SPO
+        at all is left out entirely - there is nothing to offer and nothing to name.
+
+        An UNDATED line (no required date) has nothing to be late for, so every open row
+        counts as timely; that is the same boundary `timely_refs` has always used.
+        """
+        if not fact.product_id or not fact.group_code:
+            return []
+        siblings = self._group_sibling_warehouses(fact)
+        ordered = sorted(
+            siblings.items(), key=lambda item: (item[0] != fact.own_code, item[0])
         )
-        if on_the_water > _ZERO and fact.own_code:
-            # Booked at this line's own location, because that is where the order is booked.
-            # WHICH document it is stands on the cell's location table and on the
-            # order-inquiry row, where Link SPO ties one SPO to one line.
-            for entry in out:
-                if entry["location"] == fact.own_code:
-                    entry["qty"] += on_the_water
-                    break
-            else:
-                out.insert(0, {"location": fact.own_code, "qty": on_the_water})
+        rows_by_location = self._spo_by_location()
+        out: List[_WaterAtLocation] = []
+        for code, warehouse in ordered:
+            timely = _ZERO
+            late = _ZERO
+            arrival: Optional[date] = None
+            late_from: Optional[date] = None
+            for ref in rows_by_location.get((fact.product_id, str(warehouse.id))) or []:
+                qty = max(_dec(ref.qty), _ZERO)
+                if qty <= _ZERO:
+                    continue
+                on_time = fact.required_date is None or (
+                    ref.arrival_date is not None
+                    and ref.arrival_date <= fact.required_date
+                )
+                if on_time:
+                    timely += qty
+                    if ref.arrival_date is not None and (
+                        arrival is None or ref.arrival_date > arrival
+                    ):
+                        arrival = ref.arrival_date
+                else:
+                    late += qty
+                    if ref.arrival_date is None:
+                        continue
+                    if late_from is None or ref.arrival_date < late_from:
+                        late_from = ref.arrival_date
+            if timely > _ZERO or late > _ZERO:
+                out.append(
+                    _WaterAtLocation(
+                        location=code,
+                        timely_qty=timely,
+                        arrival_date=arrival,
+                        late_qty=late,
+                        late_from=late_from,
+                    )
+                )
         return out
 
     def _group_pile_members(self, fact: _LineFacts) -> List[Dict[str, Any]]:
@@ -1566,6 +1667,7 @@ class ProjectSupplyService:
         )
         self._pile_cache = None
         self._netting_cache = None
+        self._spo_by_location_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
         pool_piles = self._pile_facts()
@@ -1575,13 +1677,17 @@ class ProjectSupplyService:
         ) = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
-        spo = self._spo_rows(product_ids, warehouse_ids)
+        # ONE dated SPO read for the whole request, at every active warehouse: question 1
+        # draws water at the group's SIBLINGS as well as at the line's own location, and the
+        # attribution below wants the same rows. Two identical narrow reads used to stand
+        # here, so the wider span costs a query rather than adding one.
+        spo = self._spo_by_location()
 
         attribution = self._attribution(
             product_ids,
             warehouse_ids,
             warehouses,
-            self._spo_rows(product_ids, warehouse_ids),
+            spo,
             exclude_line_ids=exclude_line_ids,
             # Only these lines are asking, so only these lines' queues are described. Every
             # other line of the pile still counts toward them - it is named, not counted, that
@@ -1710,12 +1816,19 @@ class ProjectSupplyService:
         proposing different quantities for one line is the exact failure this module keeps
         being repaired for.
 
-        Rung 1 is netted here rather than in the ladder because `timely_qty` is read by
+        `timely_qty` is netted here rather than in the ladder because it is read by
         everything downstream - the trail, the confirm-time recheck, the frozen snapshot -
         and a figure that means "arriving" in one place and "arriving and free for this
         line" in another is two numbers under one name. `MWH-IB`'s SPO of 110 is real and is
         still shown (`timely_qty_before_group_net`); what it is not is available to a line
         whose group already owes 2,335 against it.
+
+        LADDER V5, second pass (captain, 27 August 2026): `timely_qty` is now exactly the
+        WATER SHARE question 1 offers - what `_group_take_candidates` marks `water`, and not
+        a unit more. The two halves of that question come off ONE ledger, so a confirmation
+        cannot post 80 of timely SPO beside a 40 Reserve against a group that only ever
+        offered 40 of each. Capping at `group_offer` alone let exactly that through, because
+        the floor share was never subtracted from it.
         """
         netting = self.netting()
         group = netting.group_net(fact.product_id, fact.group_code)
@@ -1728,7 +1841,14 @@ class ProjectSupplyService:
         )
         fact.timely_qty_before_group_net = fact.timely_qty
         if fact.group_code:
-            fact.timely_qty = min(fact.timely_qty, fact.group_offer)
+            fact.timely_qty = sum(
+                (
+                    _dec(candidate.get("qty"))
+                    for candidate in self._group_take_candidates(fact)
+                    if candidate.get("water")
+                ),
+                _ZERO,
+            )
 
     def _group_offer(self, fact: _LineFacts, group: Any) -> Decimal:
         """What the group's net leaves for this line: `max(group_net + its own open
@@ -2444,6 +2564,11 @@ class ProjectSupplyService:
                 fact.product_id, str(source.id), live_qty
             )
         for candidate in self._group_take_candidates(fact):
+            # The FLOOR half only. A `water` candidate is incoming supply, judged against
+            # `fact.timely_qty` above; seeding Reserve capacity with it would let a hold be
+            # written against goods that are not on a floor for anybody to pick.
+            if candidate.get("water"):
+                continue
             location = candidate["location"]
             source = self._warehouse_by_code(location)
             if source is None:
@@ -3583,13 +3708,16 @@ class ProjectSupplyService:
             if candidate == location:
                 return pool_reason(str(location), qty, fact.pools_net)
         for candidate in self._group_take_candidates(fact):
-            if candidate["location"] == location:
-                return group_take_reason(
-                    str(location),
-                    _dec(candidate["qty"]),
-                    fact.group_code,
-                    fact.group_offer if fact.group_code else None,
-                )
+            # A confirmed RESERVE is floor stock by definition; the water half of question 1
+            # is confirmed as `timely_spo` and reads through `_timely_reason`.
+            if candidate.get("water") or candidate["location"] != location:
+                continue
+            return group_take_reason(
+                str(location),
+                _dec(candidate["qty"]),
+                fact.group_code,
+                fact.group_offer if fact.group_code else None,
+            )
         return f"free stock at {location} covers the need by the required date"
 
     def _timely_reason(self, fact: _LineFacts) -> str:
@@ -4039,6 +4167,7 @@ class ProjectSupplyService:
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
         self._netting_cache = None
+        self._spo_by_location_cache = None
         # Eager, not lazy: a project hot-selling line's pool draw is capped against the
         # pool's signed availability on every read, not only when a donor list is asked for.
         pool_piles = self._pile_facts()
@@ -4105,7 +4234,7 @@ class ProjectSupplyService:
         ) = self._classification(product_ids)
         levels = self._reorder_levels(product_ids, pool_ids)
         discontinued = self._discontinued(product_ids)
-        spo = self._spo_rows(product_ids, warehouse_ids)
+        spo = self._spo_by_location()
         attribution = self._attribution(
             product_ids,
             warehouse_ids,
@@ -4598,6 +4727,23 @@ class ProjectSupplyService:
         water.
         """
         return self._spo_rows(product_ids, warehouse_ids)
+
+    def _spo_by_location(self) -> Dict[Tuple[str, str], List[_SpoRow]]:
+        """Every open SPO row for this request's products, at EVERY active warehouse, once.
+
+        The span is wide for the same reason `_pile_facts`' is (ladder v4): question 1 reads
+        the whole ownership GROUP, and the water it may draw sits at the group's siblings as
+        often as at the line's own location. A read narrowed to the demand rows' warehouses
+        would leave the sibling's SPO with a quantity in the pile's net and no date beside
+        it, and a draw with no date is exactly the promise this rule refuses to make.
+
+        One query, cached for the span the fact builders reset together with the pile.
+        """
+        if self._spo_by_location_cache is None:
+            self._spo_by_location_cache = self._spo_rows(
+                self._request_product_ids, set(self._active_warehouses())
+            )
+        return self._spo_by_location_cache
 
     def _spo_rows(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]

@@ -8,9 +8,10 @@ What v5 changes, and so what is pinned here:
 
 * **AC-V2** incoming is NOT a rung. An SPO is inside the ownership group's net already
   (AutoCount's Available counts it), so a line whose group nets positive only because of an
-  SPO is served from the GROUP - question 1 - and the composition carries no `timely_spo`
-  component at all. Under v4 the same line was covered by rung 1 and the group rung was
-  told the SPO had spent its offer.
+  SPO is served from the GROUP - question 1. The KIND survives there (`timely_spo` under
+  `rung: group_take`): what is on the water is not a hold on a floor, and only the share of
+  it landing by the required date is drawn at all. Under v4 the same line was covered by
+  rung 1 and the group rung was told the SPO had spent its offer.
 * **AC-V7** the pool is walked before another group's stock, and a line that both could
   cover comes off the pool.
 * **AC-V6** dealer hot-selling refuses the WHOLE pile, not the line's own site's share of
@@ -66,8 +67,10 @@ def test_an_spo_covers_its_line_through_the_group_net_not_through_a_rung_of_its_
     this line's own 40 netted out, so the group offers the whole 40 - and the answer is
     question 1, `group_take`, not a rung called Incoming.
 
-    Under v4 this same fixture proposed `timely_spo 40`. The quantity is identical; what
-    changed is which question answers it, and that is the whole of 1e's first bullet.
+    Under v4 this same fixture answered from a rung of its own. The quantity is identical
+    and so is the KIND (`timely_spo` - these goods are on the water and a Reserve would be a
+    hold on stock nobody can pick, captain 27 August 2026); what changed is which question
+    answers it, and that is the whole of 1e's first bullet.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -81,18 +84,27 @@ def test_an_spo_covers_its_line_through_the_group_net_not_through_a_rung_of_its_
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["reserve"], (
+    assert [c["rung"] for c in components] == ["group_take"], (
         "the SPO is inside the group's net, so the group answers the line"
     )
-    assert [c["rung"] for c in components] == ["group_take"]
+    assert [c["kind"] for c in components] == ["timely_spo"], (
+        "and what it hands over is water, not a hold on a floor"
+    )
     assert components[0]["qty"] == "40"
     assert components[0]["source_location"] == own.warehouse_code
     assert "group" in components[0]["reason"]
+    assert "on the water" in components[0]["reason"]
 
 
-def test_no_composition_the_engine_writes_carries_an_incoming_component():
-    """AC-V2, the general form: whatever the facts, `timely_spo` is a kind the v5 engine
-    never proposes. It survives only on frozen snapshots taken under an older ladder."""
+def test_no_composition_the_engine_writes_carries_the_retired_incoming_rung():
+    """AC-V2, the general form: whatever the facts, `incoming` is a RUNG the v5 engine never
+    walks. It survives only on frozen snapshots taken under an older ladder.
+
+    The KIND `timely_spo` does still appear, under question 1's own rung, because part of
+    what the ownership group's net can cover a line with is on the water rather than on a
+    floor (captain, 27 August 2026). A rung is a question the ladder asks; a kind is what
+    the answer is made of, and only the first of those was retired.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -106,7 +118,8 @@ def test_no_composition_the_engine_writes_carries_an_incoming_component():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert "timely_spo" not in [c["kind"] for c in components]
+    assert "incoming" not in [c["rung"] for c in components]
+    assert [(c["kind"], c["rung"]) for c in components] == [("timely_spo", "group_take")]
 
 
 def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():

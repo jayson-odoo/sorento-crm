@@ -1,10 +1,10 @@
 """What counts as incoming supply on an SPO allocation. ONE rule, four readers.
 
-`scm.on_order_v`, the fulfilment ladder's rung 1 (`project_supply_service._spo_rows`, which
-also feeds the board's cell popover), the order inquiry's inbound pool and the coverage
-screen's "already on order" figure all have to answer the same question, or the planner is
-shown one number and the engine decides on another. The clauses live here so there is one
-copy in Python; the view repeats them in SQL and names this module.
+`scm.on_order_v`, the fulfilment ladder's question 1 (`project_supply_service._spo_rows` and
+`_group_water`, which also feed the board's cell popover), the order inquiry's inbound pool
+and the coverage screen's "already on order" figure all have to answer the same question, or
+the planner is shown one number and the engine decides on another. The clauses live here so
+there is one copy in Python; the view repeats them in SQL and names this module.
 
 **TRUST THE BOOK** (captain's ruling, 26 August 2026). An SPO line is incoming supply while
 it is OPEN and something is still to come on it - allocated minus received above zero, a
@@ -17,13 +17,19 @@ existing. Dropping 715 open lines because their dates are old would tell the pla
 
 What a passed date DOES change is the wording, not the arithmetic. The row is stated as
 OVERDUE wherever it is named - "SPO-2026/08-0061 arrives on 1 Aug 2026 (overdue 25 days)" -
-so a buyer reading the trail or the popover can see which promise is being leaned on and go
-and chase it. That is the honest treatment: visible, not silently dropped and not silently
-counted as if it were fresh.
+so a buyer reading the popover or the order-inquiry row can see which promise is being
+leaned on and go and chase it. That is the honest treatment: visible, not silently dropped
+and not silently counted as if it were fresh.
 
-Rung 1 is unchanged by this: it needs `expected_date <= required_date`, which a past date
-always satisfies, and a row with NO date can never be timely, so it covers nobody however
-open it is.
+LADDER V5 (section 1e, and the water ruling of 27 August 2026) reads these rows twice, and
+the two readings are deliberately different:
+
+* the ownership GROUP's net counts every open row with NO arrival-date term at all, because
+  it states the group's position rather than any one line's promise;
+* what a LINE may draw off that water is only the share arriving on or before its own
+  required date. A past date always satisfies that test, so an overdue promise still covers
+  its line and is named with its date; a row dated after the line, or carrying no date at
+  all, is named in question 1's own sentence and drawn by nobody.
 """
 from __future__ import annotations
 

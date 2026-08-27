@@ -1540,9 +1540,10 @@ def test_an_spo_arriving_before_the_required_date_covers_its_line_through_the_gr
 
     THERE IS NO RUNG 1 ANY MORE. The document is inside the ownership group's net, where
     AutoCount already counts it (`on hand + SPO - SO`), so what answers the line is question
-    1 - our own location - and the composition is a `reserve` at the group. Which document
-    it is stands on the cell's own location table and on the order-inquiry row, where Link
-    SPO ties a particular SPO to a particular line.
+    1 - our own location. The KIND is still `timely_spo` (captain, 27 August 2026): these
+    goods are on the water, and a Reserve would be a hold on stock no picker can walk to.
+    Which document it is stands on the cell's own location table and on the order-inquiry
+    row, where Link SPO ties a particular SPO to a particular line.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -1560,29 +1561,29 @@ def test_an_spo_arriving_before_the_required_date_covers_its_line_through_the_gr
         components = _components(proposal)
 
     assert spo_number  # the document exists; the ladder simply does not have a rung for it
-    assert [c["kind"] for c in components] == ["reserve"]
+    assert [c["kind"] for c in components] == ["timely_spo"]
     assert components[0]["qty"] == "40"
     assert components[0]["rung"] == "group_take"
     assert components[0]["source_location"] == own.warehouse_code
+    assert "on the water" in components[0]["reason"]
     assert "group" in components[0]["reason"]
 
 
-def test_an_spo_arriving_after_the_required_date_is_still_inside_the_groups_net():
-    """THE CONSEQUENCE OF PUTTING SPO INSIDE THE NET, said out loud (section 1d/1e).
+def test_a_late_spo_is_inside_the_groups_net_and_outside_what_the_line_may_draw():
+    """THE TWO HALVES OF THE WATER RULE (captain, 27 August 2026), in one fixture.
 
-    Under v3 and v4 a late SPO was refused by rung 1's own date test, and the group rung
-    could not offer it either because that rung was additionally capped at each location's
-    FLOOR stock. Ladder v5 has neither: `group_net` is `on hand - SO + SPO` over every open
-    incoming row with no arrival-date term at all (`group_netting`'s docstring says so), and
-    the offer is that net. So a group whose only cover is a late SPO offers it.
+    The NET stays date-blind: `group_net` is `on hand - SO + SPO` over every open incoming
+    row with no arrival-date term at all (`group_netting`'s docstring says so), because it
+    states the GROUP's position and not this line's promise. The DRAW is not: an SPO landing
+    after the required date covers nothing on that date, so question 1 does not offer it and
+    the line buys.
 
-    Pinned rather than argued with, because it follows directly from the captain's ruling
-    that the group's net is THE reading of availability, and because a test that silently
-    changed answer here would be the one place the change hid.
+    Before this ruling the same fixture proposed `group_take 40` off water arriving five
+    days late, which is a promise the goods cannot keep.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
-        _group, sites = _group_sites(db)
+        group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         _spo_line(db, product, own, qty=40, arrives=REQUIRED_DATE + timedelta(days=5))
         db.commit()
@@ -1590,9 +1591,16 @@ def test_an_spo_arriving_after_the_required_date_is_still_inside_the_groups_net(
         order, _line, _cso, _cline = _seed_line(
             db, company_id, project, product, own, qty_ordered="40",
         )
-        components = _components(ProjectSupplyService(db).proposal_for(order))
+        service = ProjectSupplyService(db)
+        components = _components(service.proposal_for(order))
+        # Read AFTER the proposal, so the netting reader is the one the ladder just used.
+        net = service.netting().group_net(str(product.id), group).net
 
-    assert [c["rung"] for c in components] == ["group_take"]
+    # The net counts the water: 40 coming against this line's own 40 owed.
+    assert net == Decimal("0")
+    # And not a unit of it is drawn, because it lands after the required date.
+    assert [c["rung"] for c in components] == ["buy"]
+    assert components[0]["qty"] == "40"
 
 
 def test_a_past_dated_promise_is_still_inside_the_groups_net():
@@ -1620,7 +1628,7 @@ def test_a_past_dated_promise_is_still_inside_the_groups_net():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert spo_number
-    assert [c["kind"] for c in components] == ["reserve"]
+    assert [c["kind"] for c in components] == ["timely_spo"]
     assert components[0]["qty"] == "40"
     assert components[0]["rung"] == "group_take"
 

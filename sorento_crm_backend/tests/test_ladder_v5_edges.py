@@ -18,7 +18,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import event
+
+from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
 from .test_fulfilment_board import (  # noqa: F401  (helpers, not fixtures)
@@ -131,21 +134,18 @@ def test_question_one_names_the_whole_line_rule_when_it_had_stock_but_not_enough
 # --------------------------------------------------------------------------- #
 
 
-def test_a_late_spo_backing_the_groups_only_cover_is_silent_in_the_trail_but_named_in_the_table():
-    """CAPTAIN'S OPEN QUESTION (not ruled): `app/services/scm/spo_supply.py`'s own module
-    docstring says a passed promise is "stated as OVERDUE wherever it is named ... so a
-    buyer reading the TRAIL or the popover can see which promise is being leaned on and go
-    and chase it." Ladder v5 folds the SPO into the ownership group's net (section 1e's
-    first bullet) and question 1 never reads the document's own date at all - a group
-    covered ONLY by a promise 40 days overdue answers "Yes, took N" in exactly the same
-    words it would for stock already on the shelf.
+def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated():
+    """THE CAPTAIN'S RULING ON THE WATER, 27 August 2026, first half.
 
-    Pinned as a SPLIT rather than argued with: the DRILL-DOWN table (`stock_detail`, which
-    backs the frontend's `StockDocumentsPanel`) still carries `overdue_days` and the
-    frontend still renders "(overdue N days)" from it - that half is right, and this test
-    proves it. The trail's own sentence is the half that does not name it. Left for the
-    captain: should question 1's own why-sentence also say "overdue N days" when its only
-    cover is a late promise, the way the retired rung-1 sentence (`spo_reason`) did?
+    "Overdue" and "late for this line" are two different facts and the trail had been
+    conflating them. This promise is 40 days past its own date and still arrives well before
+    the line's required date, so it DOES cover the line - drawn at question 1, as `timely_spo`
+    (goods on the water are not a hold on a floor) with the arrival date in the sentence, so
+    a planner can check the promise they are leaning on.
+
+    The DRILL-DOWN table (`stock_detail`, behind the frontend's `StockDocumentsPanel`) keeps
+    carrying `overdue_days`, which is where "go and chase this one" belongs: question 1
+    answers "can we cover the line", not "is the supplier behind".
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -153,9 +153,10 @@ def test_a_late_spo_backing_the_groups_only_cover_is_silent_in_the_trail_but_nam
         # `overdue_days` is measured against the WALL CLOCK (`spo_supply.overdue_days`'s
         # own default), not against the board's `as_of` dial - so the arrival is dated off
         # `date.today()`, never off the fixture's own `TODAY` constant.
+        arrives = date.today() - timedelta(days=40)
         late = _incoming(
             db, product, own, spo_number="ZZT-SPO-LATE", allocated=40, received=0,
-            arrives=date.today() - timedelta(days=40),
+            arrives=arrives,
         )
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="40", required_date=WHEN, warehouse=own)
@@ -165,18 +166,55 @@ def test_a_late_spo_backing_the_groups_only_cover_is_silent_in_the_trail_but_nam
         own_step = _step(contribution, "own")
         assert own_step["answer"] == "yes", "the group net offers it (section 1e/1d)"
         assert own_step["took"] == "40"
-        assert "overdue" not in own_step["why"].lower(), (
-            "current behaviour: the group's net absorbs the late promise silently"
+        assert "on the water" in own_step["why"]
+        assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
+            ("timely_spo", "group_take")
+        ]
+        assert f"arriving {arrives.day} " in contribution["sources"][0]["reason"], (
+            "the date the goods land by is in the sentence, not left to the table"
         )
-        assert own_step["note"] is None or "overdue" not in own_step["note"].lower()
 
         detail = _service(db).stock_detail(str(product.id), str(own.id))
         incoming_row = next(
             row for row in detail["incoming"] if row["spo_number"] == late.spo_number
         )
         assert incoming_row["overdue_days"] == 40, (
-            "the table still carries the raw fact, even though the trail's prose does not"
+            "chasing the supplier is the table's job, and it still carries the raw fact"
         )
+
+
+def test_water_arriving_after_the_required_date_is_named_with_its_date_and_never_drawn():
+    """THE CAPTAIN'S RULING ON THE WATER, second half: "30 on the water, arrives 1 Mar, not
+    counted".
+
+    The group's NET counts this SPO (it is the group's position, date-blind by design), so
+    the offer question 1 computes is positive - and not a unit of it may be drawn, because
+    it lands after the line needs it. Both facts are in the one sentence, because either on
+    its own reads as a defect: a positive net with a Buy beside it looks like arithmetic
+    nobody did, and a silent refusal looks like stock that does not exist.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTW{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=0)
+        arrives = WHEN + timedelta(days=180)
+        _incoming(
+            db, product, own, spo_number="ZZT-SPO-AFTER", allocated=30, received=0,
+            arrives=arrives,
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="30", required_date=WHEN, warehouse=own)
+
+        contribution = _contribution(db, order, product)
+
+        own_step = _step(contribution, "own")
+        assert own_step["answer"] == "no"
+        assert own_step["took"] == "0"
+        assert "30 to " + own.warehouse_code in own_step["why"], own_step["why"]
+        assert f"arriving {arrives.day} " in own_step["why"], own_step["why"]
+        assert "after the required date" in own_step["why"]
+        assert [s["kind"] for s in contribution["sources"]] == ["buy"]
+        assert contribution["qty_proposed_buy"] == "30"
 
 
 # --------------------------------------------------------------------------- #
@@ -484,3 +522,156 @@ def test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count(
         seen_lines = sum(len(cell["contributions"]) for cell in board["cells"])
         assert seen_lines == line_count, "the seed actually reached the board"
         assert calls["n"] <= 40, calls["n"]
+
+
+# --------------------------------------------------------------------------- #
+# 8. One ledger behind question 1's two halves (the water ruling, 27 Aug 2026)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_floor_and_the_water_of_question_one_come_off_one_ledger_at_confirm():
+    """Review finding S6/S7. 80 owed, 40 on the floor and 40 on the water arriving in time:
+    the group nets 0 and offers this line 80, which is exactly 40 + 40 and not 80 of each.
+
+    The confirm-time recheck used to bound `timely_spo_qty` at the whole `group_offer`
+    without subtracting the floor share, so a planner could post `reserve 40 + timely_spo 80`
+    and promise the same pile twice. It is bounded at the WATER SHARE question 1 actually
+    offered now, and the Reserve half is bounded at the floor candidates alone.
+    """
+    from app.models.project_so import ProjectSalesOrderLine
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTL{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=40)
+        _incoming(
+            db, product, own, spo_number="ZZT-SPO-HALF", allocated=40, received=0,
+            arrives=WHEN - timedelta(days=3),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core = _line(db, order, product, qty="80", required_date=WHEN, warehouse=own)
+
+        contribution = _contribution(db, order, product)
+        # The engine's own answer: half floor, half water, both under question 1.
+        assert [(s["kind"], s["qty"], s["rung"]) for s in contribution["sources"]] == [
+            ("reserve", "40", "group_take"),
+            ("timely_spo", "40", "group_take"),
+        ]
+
+        pso_id = _adopt(db, str(order.id))
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == core.id,
+            )
+            .first()
+        )
+        actor = _user(db, f"{MARKER} planner")
+
+        with pytest.raises(AppException) as refused:
+            _confirm(
+                db, pso_id, actor,
+                [
+                    {
+                        "project_line_id": str(mirror.id),
+                        "reserve": [{"warehouse_id": str(own.id), "qty": "40"}],
+                        "timely_spo_qty": "80",
+                    }
+                ],
+            )
+        detail = refused.value.detail
+        said = str(detail.get("failing_lines") or detail)
+        assert "Timely SPO cover is now 40, not 80" in said, said
+
+
+def test_the_composition_question_one_offered_confirms_without_complaint():
+    """The other side of S6/S7: `reserve 40 + timely_spo 40` is exactly what the engine
+    proposed, so the recheck it is judged by must accept it. A bound that refused the
+    proposal's own answer would be a worse defect than the one it was tightened to close."""
+    from app.models.project_so import ProjectSalesOrderLine, SOSupplyDecision
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own = _warehouse(db, f"ZZTL{_uid()[:5]}-BB"[:20])
+        _stock(db, product, own, on_hand=40)
+        _incoming(
+            db, product, own, spo_number="ZZT-SPO-HALF2", allocated=40, received=0,
+            arrives=WHEN - timedelta(days=3),
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core = _line(db, order, product, qty="80", required_date=WHEN, warehouse=own)
+
+        pso_id = _adopt(db, str(order.id))
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == core.id,
+            )
+            .first()
+        )
+        actor = _user(db, f"{MARKER} planner")
+        _confirm(
+            db, pso_id, actor,
+            [
+                {
+                    "project_line_id": str(mirror.id),
+                    "reserve": [{"warehouse_id": str(own.id), "qty": "40"}],
+                    "timely_spo_qty": "40",
+                }
+            ],
+        )
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == pso_id)
+            .order_by(SOSupplyDecision.revision_no.desc())
+            .first()
+        )
+        snapshot = next(
+            snap for snap in decision.line_snapshots
+            if snap.get("core_line_id") == str(core.id)
+        )
+        assert snapshot["reserve_qty"] == "40"
+        assert snapshot["timely_spo_qty"] == "40"
+
+
+def test_the_water_is_drawn_at_the_location_it_is_coming_to_not_at_the_lines_own():
+    """Review finding S2. The group's SPO used to be summed across every `*-<group>` site
+    and booked wholesale at `fact.own_code`, so a cell read "40 from BRW-BB" beside a BRW-BB
+    holding 20 - a number the location table directly contradicts.
+
+    It is distributed now, per location, in the same order the floor is drawn: floor first
+    (stock a picker can walk to), then the water at the site it is actually coming to.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        stem = _uid()[:4]
+        own = _warehouse(db, f"ZZTA{stem}-BB"[:20])
+        sibling = _warehouse(db, f"ZZTB{stem}-BB"[:20])
+        _stock(db, product, own, on_hand=20)
+        _stock(db, product, sibling, on_hand=0)
+        arrives = WHEN - timedelta(days=1)
+        _incoming(
+            db, product, sibling, spo_number="ZZT-SPO-SIB", allocated=20, received=0,
+            arrives=arrives,
+        )
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="40", required_date=WHEN, warehouse=own)
+
+        contribution = _contribution(db, order, product)
+
+        assert [
+            (s["kind"], s["qty"], s["location"]) for s in contribution["sources"]
+        ] == [
+            ("reserve", "20", own.warehouse_code),
+            ("timely_spo", "20", sibling.warehouse_code),
+        ]
+        own_step = _step(contribution, "own")
+        assert own_step["answer"] == "yes"
+        assert own_step["took"] == "40"
+        assert own_step["from"] == f"{own.warehouse_code}, {sibling.warehouse_code}"
+        assert f"{sibling.warehouse_code} (on the water)" in own_step["why"], own_step["why"]
+        water_source = contribution["sources"][1]
+        assert f"arriving {arrives.day} " in water_source["reason"], water_source["reason"]

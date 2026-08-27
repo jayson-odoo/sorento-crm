@@ -790,19 +790,22 @@ def _apply_placed_offset(
     than `reserve`, which is already the ladder's own capacity-capped, affordable figure,
     so a redirect never claims more pool cover than the line was actually offered.
 
-    **The OLD relabelling still applies to whatever `placed_qty` the pool cannot cover,
-    and it can now only ever draw on `incoming`, never on `reserve`.** `redirect_qty =
-    min(placed_qty, reserve)` means `reserve - redirect_qty` is ALWAYS zero at the exact
-    moment there is anything left to relabel (`remaining = placed_qty - redirect_qty >
-    0`): either `placed_qty` fit entirely inside `reserve` (`redirect_qty == placed_qty`,
-    `remaining == 0`, nothing to relabel) or it did not (`redirect_qty == reserve`, so
-    `reserve` is fully spent on the redirect already). A pure-Buy proposal with no pool
-    source at all (`reserve == 0`) falls straight into this: `redirect_qty` is 0 and the
-    whole `placed_qty` is `remaining`, trimmed off `incoming`/timely SPO and added onto
-    Buy exactly as before the ruling, with `sources`/`trail` trimmed in step
-    (`_trim_sources_for_offset` / `_annotate_trail_for_offset`) so a stored proposal's own
-    trail narrative never again claims a rung took stock the aggregate no longer credits
-    it with (the original defect this function shipped with, on the same live row).
+    **THE WATER IS OFFSET FIRST** (ladder v5's second pass, 27 August 2026). A placed PO is
+    expected supply this line has already ordered, and so is the SPO share question 1 draws
+    off the ownership group's net (`timely_spo`) - two promises of the same delivery, and
+    counting both would promise the line twice. So `incoming` is relabelled onto Buy before
+    anything is redirected: a PO replaces expected supply before it displaces stock on a
+    floor, which is what the pool redirect does. Under v4 the live ladder proposed no
+    incoming at all, so the order was invisible; under v5 it decides the answer.
+
+    **Whatever `placed_qty` the water cannot cover then falls to the pool redirect**, capped
+    at `reserve` so it never claims more pool cover than the line was actually offered. A
+    pure-Buy proposal with no pool source at all (`reserve == 0`) redirects nothing, and the
+    whole `placed_qty` is relabelled off `incoming` and added onto Buy exactly as before the
+    ruling, with `sources`/`trail` trimmed in step (`_trim_sources_for_offset` /
+    `_annotate_trail_for_offset`) so a stored proposal's own trail narrative never again
+    claims a rung took stock the aggregate no longer credits it with (the original defect
+    this function shipped with, on the same live row).
     """
     if placed_qty <= _ZERO:
         return proposal
@@ -813,20 +816,19 @@ def _apply_placed_offset(
     sources = list(out.get("sources") or [])
     trail = list(out.get("trail") or [])
 
-    # The overlap the pool can actually stand in for. Capped at `reserve` (never invents
-    # cover the ladder did not offer) and at `placed_qty` (never redirects more than was
-    # really placed). `reserve` itself is untouched either way - the redirect acts on the
-    # real PO rows at Apply (`_apply_placed_redirect`), never on this figure.
-    redirect_qty = min(placed_qty, reserve)
-    remaining = placed_qty - redirect_qty
-
-    if remaining > _ZERO:
-        take = min(remaining, incoming)
+    # 1. The water. Relabelled onto Buy, because the PO already bought it.
+    take = min(placed_qty, incoming)
+    if take > _ZERO:
         incoming -= take
         buy += take
-        if take > _ZERO:
-            sources, cuts = _trim_sources_for_offset(sources, "timely_spo", take)
-            trail = _annotate_trail_for_offset(trail, cuts, frozenset({"incoming"}), po_number)
+        sources, cuts = _trim_sources_for_offset(sources, "timely_spo", take)
+        trail = _annotate_trail_for_offset(trail, cuts, frozenset({"incoming"}), po_number)
+
+    # 2. What is left of the placed quantity, against the pool take. Capped at `reserve`
+    #    (never invents cover the ladder did not offer). `reserve` itself is untouched -
+    #    the redirect acts on the real PO rows at Apply (`_apply_placed_redirect`), never
+    #    on this figure.
+    redirect_qty = min(placed_qty - take, reserve)
 
     out["qty_proposed_reserve"] = qty_text(reserve)
     out["qty_proposed_incoming"] = qty_text(incoming)

@@ -1334,12 +1334,15 @@ def test_apply_placed_offset_full_redirect_when_the_pool_alone_covers_it():
     assert out["trail"][0].get("note") is None  # nothing relabelled, nothing to narrate
 
 
-def test_apply_placed_offset_partial_redirect_relabels_the_remainder_off_incoming():
-    """Pool covers only 5 of the placed 12 (`qty_proposed_reserve` 5); the remaining 7
-    cannot redirect - by construction there is nothing left of Reserve to spend it
-    against (`redirect_qty = min(placed_qty, reserve)` already consumed all of it) - so
-    it falls to the OLD relabel, off `qty_proposed_incoming` only, trimmed and narrated
-    exactly as `_trim_sources_for_offset` / `_annotate_trail_for_offset` describe."""
+def test_apply_placed_offset_relabels_the_water_before_it_redirects_the_pool():
+    """LADDER V5, second pass (27 August 2026): a placed PO is expected supply, and so is
+    the water question 1 draws off the group's net. Two promises of one delivery, so the
+    PO relabels the WATER first and only what is left of it reaches the pool redirect.
+
+    9 on the water and 5 in the pool against 12 placed: the whole 9 becomes Buy, and 3 of
+    the placed quantity redirects to replenish the pool. Under the old order the redirect
+    ate 5 of the 12 first and left 2 of the water standing beside a PO that had already
+    bought it."""
     proposal = {
         "qty_proposed_reserve": "5",
         "qty_proposed_incoming": "9",
@@ -1356,20 +1359,40 @@ def test_apply_placed_offset_partial_redirect_relabels_the_remainder_off_incomin
         ],
     }
     out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-2")
-    assert out["qty_proposed_reserve"] == "5"  # untouched - fully spent on the redirect
-    assert out["qty_proposed_incoming"] == "2"  # 9 - 7 relabelled
-    assert out["qty_proposed_buy"] == "7"
-    assert out["placed_redirect_qty"] == "5"
+    assert out["qty_proposed_reserve"] == "5"  # untouched - the pool take always stands
+    assert out["qty_proposed_incoming"] == "0"  # the whole 9 was already bought
+    assert out["qty_proposed_buy"] == "9"
+    assert out["placed_redirect_qty"] == "3"  # 12 - 9, and 3 <= the pool's 5
 
-    incoming_source = next(s for s in out["sources"] if s["kind"] == "timely_spo")
-    assert incoming_source["qty"] == "2"
+    assert not [s for s in out["sources"] if s["kind"] == "timely_spo"]
     reserve_source = next(s for s in out["sources"] if s["kind"] == "reserve")
     assert reserve_source["qty"] == "5"  # untouched
 
     incoming_step = next(s for s in out["trail"] if s["kind"] == "incoming")
-    assert "7 already placed on PO-2, kept as the buy" in incoming_step["note"]
+    assert "9 already placed on PO-2, kept as the buy" in incoming_step["note"]
     pool_step = next(s for s in out["trail"] if s["kind"] == "pool")
     assert pool_step.get("note") is None  # the redirect-eligible rung is never narrated here
+
+
+def test_apply_placed_offset_redirects_the_whole_placed_qty_when_there_is_no_water():
+    """The other side of the same order: nothing on the water, so nothing is relabelled and
+    the pool redirect gets the whole placed quantity - exactly the captain's 21 Aug ruling,
+    unchanged. What moved is only WHICH of the two goes first when both are on the table."""
+    proposal = {
+        "qty_proposed_reserve": "5",
+        "qty_proposed_incoming": "0",
+        "qty_proposed_buy": "7",
+        "sources": [{"kind": "reserve", "qty": "5", "location": "BRW"}],
+        "trail": [
+            {"step": 2, "kind": "pool", "location": "BRW", "taken": "5",
+             "remaining_after": "7", "outcome": "took"},
+        ],
+    }
+    out = planning_change_service._apply_placed_offset(proposal, Decimal("12"), "PO-3")
+    assert out["qty_proposed_reserve"] == "5"
+    assert out["qty_proposed_incoming"] == "0"
+    assert out["qty_proposed_buy"] == "7"
+    assert out["placed_redirect_qty"] == "5"
 
 
 def test_apply_placed_offset_is_a_noop_with_nothing_placed():

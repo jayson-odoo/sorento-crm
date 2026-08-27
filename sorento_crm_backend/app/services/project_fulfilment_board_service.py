@@ -83,6 +83,7 @@ from app.services.scm.front_planning_engine import (
     RUNG_BUY,
     RUNG_INCOMING,
     TIMELY_SPO,
+    date_text,
     pool_reserve_capacity,
     qty_text,
 )
@@ -2164,6 +2165,11 @@ class FulfilmentBoardService:
         group_take_candidates = (
             [] if outside_window else self.supply.group_take_candidates_for(fact)
         )
+        # What the group has ON THE WATER, both halves. The timely half is already inside
+        # `group_take_candidates`; the late half is named in the sentence and drawn by
+        # nobody (captain, 27 August 2026), because a promise landing after the required
+        # date covers nothing and silence about it reads as "there is none".
+        group_water = [] if outside_window else self.supply.group_water_for(fact)
         group_taken = took_at("group_take")
         group_offered = sum((_dec(c.get("qty")) for c in group_take_candidates), _ZERO)
         add(
@@ -2184,7 +2190,9 @@ class FulfilmentBoardService:
             why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
-                else self._group_take_why(outcome, group_take_candidates, fact)
+                else self._group_take_why(
+                    outcome, group_take_candidates, fact, group_water
+                )
             ),
         )
 
@@ -2647,7 +2655,11 @@ class FulfilmentBoardService:
         return f"{shown} (+{more} more)" if more > 0 else shown
 
     def _group_take_why(
-        self, outcome: str, candidates: List[Dict[str, Any]], fact: Any
+        self,
+        outcome: str,
+        candidates: List[Dict[str, Any]],
+        fact: Any,
+        water: Sequence[Any] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -2661,7 +2673,10 @@ class FulfilmentBoardService:
 
         LADDER V5 (section 1e): there is no rung above this one for the group's SPO to be
         spent on. The water is inside the net, and inside this question's own offer, so a
-        group whose only cover is an SPO answers Yes here.
+        group whose only cover is an SPO answers Yes here - but only the share of it landing
+        by the required date (captain, 27 August 2026). The rest is NAMED, with its date,
+        and never drawn: "30 on the water, arrives 1 Mar, not counted" is the one sentence
+        that tells a planner why a group with stock coming still bought.
         """
         if outcome == "none_needed":
             return _COVERED_BEFORE
@@ -2672,6 +2687,7 @@ class FulfilmentBoardService:
             )
         net = _dec(getattr(fact, "group_net", _ZERO))
         offer = _dec(getattr(fact, "group_offer", _ZERO))
+        late = self._late_water_clause(water)
         if not candidates:
             # LADDER V4 (section 1d): the group is ONE pile, so the sentence is about the
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
@@ -2680,23 +2696,60 @@ class FulfilmentBoardService:
                 return (
                     f"The {fact.group_code} group nets {qty_text(net)}, so there is "
                     "nothing left for this line - whatever sits at any one of its "
-                    "locations is already owed at another."
+                    f"locations is already owed at another.{late}"
                 )
             return (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
                 f"{qty_text(offer)} for this line, and none of it sits free at a location "
-                "this line can draw from."
+                f"this line can draw from.{late}"
             )
+        # WHERE it came from, and whether it was floor or water: the two halves of this
+        # question are one walk, and "20 from BRW-IB, 20 on the water to MWH-IB" is a
+        # sentence a planner can check against the cell's own table.
+        drawn = ", ".join(
+            (
+                f"{c['location']} (on the water)"
+                if c.get("water")
+                else str(c["location"])
+            )
+            for c in candidates
+        )
         if outcome == "took":
-            taken_at = ", ".join(c["location"] for c in candidates)
             return (
                 f"The {fact.group_code} group nets {qty_text(net)}, leaving "
-                f"{qty_text(offer)} for this line; it was drawn at {taken_at}."
+                f"{qty_text(offer)} for this line; it was drawn at {drawn}.{late}"
             )
-        offered_at = ", ".join(c["location"] for c in candidates)
         return (
             f"The {fact.group_code} group nets {qty_text(net)}, leaving {qty_text(offer)} "
-            f"for this line at {offered_at}. {_WHOLE_LINE_RULE_DROPPED}"
+            f"for this line at {drawn}. {_WHOLE_LINE_RULE_DROPPED}{late}"
+        )
+
+    @staticmethod
+    def _late_water_clause(water: Sequence[Any]) -> str:
+        """"30 on the water to MWH-IB, arriving 1 Mar 2027, after the required date, so it
+        is not counted." - said whenever the group holds a promise this line cannot use.
+
+        The NET counts it (it is the group's position, not this line's promise) and the DRAW
+        does not, and those two facts read as a contradiction unless the row says both. The
+        captain asked for the date by name: a buyer who can see 1 March can go and chase it.
+        """
+        late = [entry for entry in water if _dec(getattr(entry, "late_qty", 0)) > _ZERO]
+        if not late:
+            return ""
+        named = ", ".join(
+            f"{qty_text(_dec(entry.late_qty))} to {entry.location}"
+            + (
+                f" arriving {date_text(entry.late_from)}"
+                if getattr(entry, "late_from", None)
+                else " on an unstated date"
+            )
+            for entry in late[:3]
+        )
+        more = len(late) - 3
+        tail = f" (+{more} more)" if more > 0 else ""
+        return (
+            f" The group also has {named}{tail} on the water after the required date, so "
+            "none of that is counted here."
         )
 
     @staticmethod

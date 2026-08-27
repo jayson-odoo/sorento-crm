@@ -34,8 +34,15 @@ to run even beyond the reserve window on the grounds that supply already on its 
 already bought. What retired it is that an SPO is INSIDE the ownership group's net already -
 AutoCount's Available is ``on hand + SPO - SO`` - so rung 1 and the group rung were two
 readings of one pile, netted against each other to keep the arithmetic honest. One reading
-is simpler and cannot drift. A particular SPO reaches a particular line through Link SPO on
-that line's order-inquiry row, which is where purchasing was already doing it.
+is simpler and cannot drift.
+
+It is still a KIND, though, and question 1 still answers with it: part of what the group's
+net can cover a line with is on the water rather than on a floor, so the caller marks those
+candidates ``water`` and this module composes them as ``timely_spo`` with question 1's own
+rung. Only water arriving on or before the line's required date is offered - the caller
+applies that test, because only it holds the documents - and late water is named in the
+proof's own sentence and never drawn. A LATE SPO reaches a particular line through Link SPO
+on that line's order-inquiry row, which is where purchasing was already doing it.
 
 The fourth question - **can we borrow from the same agent's other order in this group?** -
 is not a rung here at all (ruled 25 August 2026): it is a manual pick in Amend, made by a
@@ -63,11 +70,13 @@ ZERO = Decimal("0")
 # The four component kinds of the balance invariant (PLAN 3.1):
 #   open_so_qty = timely_spo_coverage + reserve_qty + borrow_qty + buy_qty
 #
-# `TIMELY_SPO` is HISTORY under ladder v5 (section 1e): the engine proposes no component of
-# that kind any more, and no confirmation taken from a v5 proposal carries one. The kind
-# stays because decisions frozen under v3 and v4 do carry it, and the board still renders
-# them - a snapshot is evidence of what was promised, and a reader that dropped a kind would
-# quietly change what a past promise said.
+# `TIMELY_SPO` is no longer a RUNG under ladder v5 (section 1e), but it is still a KIND: what
+# question 1 draws off the water inside its own ownership group's net is incoming supply, not
+# stock on a floor, and calling it a Reserve would write a hold against goods nobody can pick
+# (captain, 27 August 2026). Such a component carries `rung=RUNG_GROUP_TAKE` - it is question
+# 1's answer, and the strip totals it under "Use own location" with the rest of that question.
+# The old rung-1 spelling (`rung=RUNG_INCOMING`) survives only on decisions frozen under v3
+# and v4, which the board still renders: a snapshot is evidence of what was promised.
 TIMELY_SPO = "timely_spo"
 RESERVE = "reserve"
 BORROW = "borrow"
@@ -166,8 +175,12 @@ def qty_text(value: Decimal) -> str:
     return format(_dec(value).normalize(), "f")
 
 
-def _date_text(value: date) -> str:
-    """"31 Oct 2026" - the captain's own wording, day first, no leading zero."""
+def date_text(value: date) -> str:
+    """"31 Oct 2026" - the captain's own wording, day first, no leading zero.
+
+    Public beside `qty_text`: the board writes sentences about the same documents this
+    module does, and a second spelling of a date is a second vocabulary.
+    """
     return f"{value.day} {_MONTHS[value.month - 1]} {value.year}"
 
 
@@ -247,7 +260,7 @@ def spo_reason(
     is how a label reads when nobody looked at real data; the older `202703-S0011` spelling
     still needs the word.
     """
-    when = _date_text(arrival_date) if arrival_date else "an unstated date"
+    when = date_text(arrival_date) if arrival_date else "an unstated date"
     named = spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
     if overdue_days > 0:
         day = "day" if overdue_days == 1 else "days"
@@ -262,7 +275,7 @@ def spo_reason(
 
 
 def _coverage_date_reason(coverage_until: date) -> str:
-    return f"Beyond purchasing's coverage ({_date_text(coverage_until)}) - buy now"
+    return f"Beyond purchasing's coverage ({date_text(coverage_until)}) - buy now"
 
 
 def pool_reserve_capacity(
@@ -323,6 +336,32 @@ def pool_reason(location: str, qty: Decimal, pools_net: Any) -> str:
     )
 
 
+def group_water_reason(
+    location: str,
+    qty: Decimal,
+    group_code: Optional[str],
+    group_offer: Optional[Decimal],
+    arrival_date: Optional[date],
+) -> str:
+    """Question 1's OTHER answer: the share of the group's offer that is still on the water.
+
+    The group's net is `on hand + SPO - SO`, so part of what question 1 may hand this line is
+    an SPO rather than a unit on a shelf. Drawn only when it lands on or before the required
+    date (the caller applies that test and passes the LATEST such arrival here), and never
+    called a Reserve: a hold cannot be written against goods that are not on the floor.
+
+    `arrival_date` is the day the whole of this draw has landed by, which is the date a
+    planner needs before promising it - not the earliest of several documents.
+    """
+    when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
+    if group_offer is None or not group_code:
+        return f"{location} has {qty_text(qty)} on the water{when}"
+    return (
+        f"{location} has {qty_text(qty)} of the {qty_text(group_offer)} the {group_code} "
+        f"group can cover this line with on the water{when}"
+    )
+
+
 def group_take_reason(
     location: str, qty: Decimal, group_code: Optional[str], group_offer: Optional[Decimal]
 ) -> str:
@@ -377,6 +416,10 @@ def propose_line(
     open_qty: Any,
     line_no: Optional[int] = None,
     required_date: Optional[date] = None,
+    #: Accepted and NOT read. The rungs name their own `source_location` from the candidate
+    #: lists the caller hands over, so the line's own location takes no part in the
+    #: arithmetic here. Kept on the signature because every caller states it and the ladder's
+    #: own logs read better with it; the day a log stops naming it, it goes.
     fulfilment_location: Optional[str] = None,
     group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
@@ -404,7 +447,8 @@ def propose_line(
     1. the ownership group: `group_take_candidates`, already capped by the caller to the
        GROUP's own position (`group_offer`) and already in draw order - this line's own
        location first, then its siblings by site. An SPO to any of those locations is inside
-       that net, which is why there is no incoming rung above this one;
+       that net, which is why there is no incoming rung above this one; a candidate marked
+       `water` is that SPO share, and it is composed as `timely_spo` rather than `reserve`;
     2. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
        bounded by `pools_net` and by each pool's own free stock;
     3. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
@@ -476,11 +520,25 @@ def propose_line(
         if not location or capacity <= ZERO:
             continue
         take = min(remaining, capacity)
+        # Water inside the group's own net (`candidate["water"]`): incoming supply, and said
+        # so. Same rung - it is question 1's answer either way - and a different kind,
+        # because a Reserve is a hold on stock a picker can walk to.
+        water = bool(candidate.get("water"))
         components.append(
             Component(
-                kind=RESERVE,
+                kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
-                reason=group_take_reason(str(location), take, group_code, group_offer),
+                reason=(
+                    group_water_reason(
+                        str(location),
+                        take,
+                        group_code,
+                        group_offer,
+                        candidate.get("arrival_date"),
+                    )
+                    if water
+                    else group_take_reason(str(location), take, group_code, group_offer)
+                ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
             )
