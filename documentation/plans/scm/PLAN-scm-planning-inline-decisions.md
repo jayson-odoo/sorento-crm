@@ -1,6 +1,6 @@
 # PLAN - Fulfilment planning: decide in the row, one Confirm, transfers on the page; sales orders list tidy-up
 
-Status: **PHASE 1 DONE** 2026-08-27 (worktree commit, browser-checked on :3010; Phase 2 next). GO given 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
+Status: **PHASE 2 DONE, PHASE 3 IN REVIEW** 2026-08-27 (feature branch e120cfffe: 291 pytest, 2382 vitest, single alembic head 439; reviewer + /code-review + browser evidence running). GO given 2026-08-27 (captain: "okay can start", after the lavish pass, R15). Building on branch `feat/scm-planning-inline-decisions` off `main` `3a5e42970` (#347). UAC: `scm-planning-inline-decisions-acceptance-criteria.md`. Review artifact: `documentation/plans/scm/mockups/planning-inline-decisions-plan.html` (lavish).
 
 ## 0. What the captain asked (27 Aug, after walking SO404352 on `/project-sales/fulfilment-planning`)
 
@@ -28,6 +28,7 @@ Two pages.
 | R12 | Gear | Undo all, Back to sales orders |
 | R13 | Commit section | removed. A **Stock transfers** panel sits above the product matrix listing every open (`proposed`) transfer for the orders on the board, Approve per row and Approve all, using the existing stock-transfer endpoints. Survives reload (it lists, it does not remember the click). Buy rows: a count linking to Order Inquiries |
 | R14 | Confirm-time guard | the server refuses a reserve that exceeds on hand minus what other lines have already confirmed at that location; the message names the location and the earlier order |
+| R16 | Reconfirm keeps transfers (captain to confirm in the PR; ruled by the governing session 27 Aug from the evidence run) | a confirm no longer cancels every open transfer of the order: a transfer whose movement (line, product, from, to, kind) and qty are unchanged is kept with its state and approval and re-pointed to the new revision; changed or vanished movements are cancelled and re-proposed; `transfers_kept` is reported beside `transfers_written`. Without it, Approve-on-the-board is undone by the next Confirm of any other line |
 | R15 | Drawer copy | no tooltips or explanatory icons on the numbers; SO qty is the other lines, full stop. Dropdown menus carry no header row (no "Start" inside the Start menu). Header bar order: gear, then the Confirm CTA on the far right |
 
 ## 2. Facts found while mapping (verified 27 Aug, not to rediscover)
@@ -65,7 +66,7 @@ Two pages.
 
 | Item | Change |
 | --- | --- |
-| C1 Columns | per R8. Rank, Ordered, Delivered removed from the definition (the saved `listingKey` layout drops unknown keys on merge). Decision column `size 160`, pill only |
+| C1 Columns | per R8. Rank, Ordered, Delivered removed from the definition (the saved `listingKey` layout drops unknown keys on merge). Decision column `size 110`, pill only |
 | C2 Pill | Suggested (grey) · Approved (green) · Amended (blue) · Confirmed (green outline, no rev) · Rejected (red) · covered / unplannable as today. Warning triangle when `suspected_system_issue`. Buttons leave the cell |
 | C3 Expand | `getExpandedRowModel` + `meta.expandedContent` on the `so_number` column, whole row toggles, one row open at a time (opening another closes the first; an unsaved edit prompts). Expanded panel = `BoardLineDecisionPanel` (new), bg-muted like reorder's `GroupMembersPanel` |
 | C4 Panel layout | left: Ordered / Delivered / Outstanding / Incoming by the delivery date (read-only strip). Middle: Reserve (per location qty inputs, own + group + pools, with each location's Available beside the input), Borrow (existing rows + Add a borrow), Buy (switch + reason, as today). Right: Decision summary (composition that will be confirmed), the "N short / N over" hint (R9), **Why this differs** textarea (required when `amendNeedsReason`), **checkbox "This might be a system problem, flag it for investigation"**, buttons **Approve suggestion** (resets to the suggestion, verdict approved), **Save amendment** (verdict amended), **Reject** (verdict rejected, reason required). Confirmed rows open read-only with an **Amend** button that unlocks the same panel (a re-confirm is a new revision, the pill still says Confirmed) |
@@ -81,12 +82,13 @@ Two pages.
 | D3 Commit section | `OrderCommitRow`, `standings` UI and the copy block removed. Confirm result toast: "N lines confirmed · T transfers proposed · I inquiry rows"; failing lines still pinned per row as today |
 | D4 Stock transfers panel | new `BoardTransfersPanel` **above the matrix**, below the composition cards. Data: `GET /api/v1/inventory/stock-transfers?so_numbers=SO404352,...&state=proposed,approved` (new `so_numbers` filter on the list route, joins `so_line_id → sales_order_lines → sales_orders.so_number`). Columns: Transfer no, Product, From → To, Qty, Kind, For (SO · line), State, Proposed at, action. **Approve** per row (state `proposed`) and **Approve all proposed**, via `approveStockTransfer` / `bulkApproveStockTransfers`; invalidate + toast. Hidden when the list is empty and nothing was just confirmed; users without `inventory.stock_transfers.edit` see the list without buttons. Buy summary line: "I order inquiry rows raised" linking to `/project-sales/order-inquiries` |
 | D5 Flag on the wire | `ConfirmLine.suspected_system_issue: bool = False` → stored on the decision line beside `amend_reason` (`so_line_allocations` / decision-line table, one migration), echoed on the board contribution's `decision` so the pill shows it after reload, and counted as `suspected_issues` in `ConfirmResult` |
+| D7 Transfer reconcile (R16) | `stock_transfer_service`: reconcile open transfers against the new revision instead of cancel-all; `ConfirmResult.transfers_kept`; toast shows kept when > 0. Tests: `tests/test_stock_transfer_reconcile.py` |
 | D6 Guard (R14) | in `ProjectSupplyService.confirm`, per reserve component: `qty <= on_hand(warehouse) - confirmed_holds_by_other_lines(product, warehouse)`; otherwise `AppException 409` with `{line, warehouse_code, on_hand, held_by: [{so_number, line_no, qty}], asked}` and the message "BRW-AM: 10 on hand, 1 already reserved by SO383850, you asked 15". The FE pins it on the row like other `ConfirmSupplyError`s |
 
 ### E. Migrations (this lane's first commit)
 
-1. `438_merge_430_437` : merge of `430_plan_row_price_supplier` + `437_merge_uat_main_and_sets` (no DDL).
-2. `439_decision_suspected_issue` : `suspected_system_issue BOOLEAN NOT NULL DEFAULT false` on the decision-line table. `down_revision = "438_merge_430_437"`. Ids ≤ 32 chars. Applied to the dev DB via `Operations.context`, never stamped.
+1. main merged its own heads while this lane was open (#348, `438_merge_price_supplier_sets`); this lane adds no merge revision.
+2. `439_decision_suspected_issue` : `suspected_system_issue BOOLEAN NOT NULL DEFAULT false` on `projects.so_supply_decisions` (revision level, any line flagged); the per-line flag is frozen in the decision's `line_snapshots` beside `amend_reason`, because `so_line_allocations` is per component and a line covered only by timely SPO writes no component row. `down_revision = "438_merge_price_supplier_sets"`. Ids ≤ 32 chars. Applied to the dev DB via `Operations.context`, never stamped.
 
 ## 4. Out of scope
 

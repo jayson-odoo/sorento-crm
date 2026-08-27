@@ -50,6 +50,12 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 - D10 If a confirm raised Buy rows the panel's footer reads "I order inquiry rows raised" linking to Order Inquiries.
 - D11 `GET /api/v1/inventory/stock-transfers?so_numbers=SO404352` returns only transfers whose line belongs to SO404352 (pytest).
 
+## D2. Reconfirm and transfers (R16)
+
+- D12 Approve the BRW → BRW-AM transfer on the board, then amend a different line of SO404352 and Confirm: the approved transfer keeps its number, its Approved state and its approver; the toast reports it under "kept".
+- D13 Amend line 22 from 15 to 16 from BRW and Confirm: the old transfer is cancelled and a 16-unit one is proposed (or the proposed row updated, per the plan); an amendment that removes the BRW component cancels it with nothing new.
+- D14 pytest covers unchanged-kept, grown, shrunk, vanished and new movements.
+
 ## E. Guard
 
 - E1 Amending SO404352 line 22 to Reserve 15 from BRW-AM (on hand 10, 1 already confirmed by SO383850) and confirming returns 409; the row is pinned with "BRW-AM: 10 on hand, 1 already reserved by SO383850, you asked 15"; nothing on that order is written.
@@ -57,6 +63,6 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 
 ## F. Migrations and hygiene
 
-- F1 `alembic heads` on the branch shows exactly one head; `438_merge_430_437` has no DDL; `439_decision_suspected_issue` adds the boolean with default false.
+- F1 `alembic heads` on the branch shows exactly one head; `439_decision_suspected_issue` chains on main's `438_merge_price_supplier_sets` (#348 merged the two heads while this lane was open) and adds the boolean with default false.
 - F2 `response_model` for the board contribution decision and for `ConfirmResult` declares `suspected_system_issue` / `suspected_issues` (a test asserts the field is present in the JSON).
 - F3 vitest and pytest for every file in plan section 5 pass; no new Playwright spec; an agent-browser evidence run over A1, B1, C4, D6, D7 is attached to the PR.
