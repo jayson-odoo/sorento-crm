@@ -36,6 +36,7 @@ from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
     allocation_suggestion_service,
     consolidated_packing_list,
+    supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
     spo_conversion_service,
@@ -43,6 +44,7 @@ from app.services.scm import (
     supplier_notice_service,
 )
 from app.services.scm.upload_intake import read_upload, read_upload_retained
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -198,6 +200,127 @@ def get_supplier_stock_list_file(
 # --------------------------------------------------------------------------- #
 
 
+class SupplierCodeAliasWrite(BaseModel):
+    supplier_id: str
+    #: The supplier's spelling, verbatim - it is what their file says.
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+    #: Exactly one of the two (R19, R20). A supplier who sells the whole WC writes our SET
+    #: code, and no product carries it, so a picker that could only answer with a product
+    #: had no way to say what the code means. The service refuses both and neither.
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+
+
+@router.get("/supplier-code-aliases")
+def list_supplier_code_aliases(
+    supplier_id: str = Query(..., description="Whose codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What this supplier's codes have been ruled to mean - automatic and by hand (R16)."""
+    return {"data": supplier_code_alias_service.list_for_supplier(db, supplier_id)}
+
+
+@router.get("/supplier-code-aliases/unmatched")
+def list_unmatched_supplier_codes(
+    supplier_id: str = Query(..., description="Whose unbound codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The codes this supplier sent that bind to nothing we hold - the list somebody comes
+    back to answer (R16). Declared before the `{alias_id}` routes so the literal path is not
+    swallowed by the parameter."""
+    return {"data": supplier_code_alias_service.unmatched_for_supplier(db, supplier_id)}
+
+
+@router.post("/supplier-code-aliases", status_code=status.HTTP_201_CREATED)
+def create_supplier_code_alias(
+    body: SupplierCodeAliasWrite,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"This code is that product" - or that SET. Replaces any earlier ruling and RE-BINDS
+    the rows already uploaded under it, so the loading plan and the PI convert show the
+    answer today rather than after the next upload."""
+    out = supplier_code_alias_service.create(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        product_id=body.product_id,
+        product_set_id=body.product_set_id,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+class SupplierCodeDismiss(BaseModel):
+    supplier_id: str
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+
+
+@router.post("/supplier-code-aliases/dismiss", status_code=status.HTTP_201_CREATED)
+def dismiss_supplier_code(
+    body: SupplierCodeDismiss,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"That code is not one of ours." Takes it out of the queue and UNBINDS the rows already
+    uploaded under it, so nothing goes on being offered to the plan under a code nobody
+    claims. Forget (the DELETE below) puts it back.
+
+    Declared before the `{alias_id}` route so the literal path is not swallowed by the
+    parameter."""
+    out = supplier_code_alias_service.dismiss(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+class SupplierCodeRematch(BaseModel):
+    supplier_id: str
+
+
+@router.post("/supplier-code-aliases/rematch")
+def rematch_supplier_codes(
+    body: SupplierCodeRematch,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Run the ladder again over what is still unbound (R18).
+
+    Master data moves after a file lands - a product added, an alias recorded elsewhere - and
+    the rows uploaded before it stay unbound under a code the ladder can now answer. Without
+    this the only way to make them catch up is to upload the same file again.
+
+    No `response_model`: the three counts ARE the answer the screen reports, and a model
+    would be one more place for them to be dropped. Declared before the `{alias_id}` route so
+    the literal path is not swallowed by the parameter."""
+    out = supplier_code_alias_service.rematch(
+        db, supplier_id=body.supplier_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
+@router.delete("/supplier-code-aliases/{alias_id}")
+def delete_supplier_code_alias(
+    alias_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Forget the ruling, and put the rows back to whatever the ladder says now."""
+    out = supplier_code_alias_service.delete(
+        db, alias_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
 @router.get("/container-sizes")
 def get_container_sizes(
     _user: dict = Depends(_READ),
@@ -211,7 +334,8 @@ class ContainerSizeWrite(BaseModel):
     code: str = Field(..., min_length=1, max_length=30)
     label: Optional[str] = None
     #: Internal LOADABLE volume, not the nominal external size. A 40HQ is sold as 76 cbm and
-    #: packs about 68, and planning to the brochure figure is how a container arrives short.
+    #: is planned to 65 here (the captain's ruling, 26 Aug), and planning to the brochure
+    #: figure is how a container arrives short.
     cbm: float = Field(..., gt=0)
     is_default: bool = False
     is_active: bool = True
@@ -464,11 +588,16 @@ def list_supplier_notices(
 @router.get("/supplier-notices/{notice_id}/document")
 def supplier_notice_document(
     notice_id: str,
+    kind: str = Query("pdf", pattern="^(pdf|xlsx)$"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """A short-lived link to the document, so Ms Tee can send it by hand too (AC-F3)."""
-    return supplier_notice_service.document_url(db, notice_id)
+    """A short-lived link to one of the notice's files, so Ms Tee can send it by hand (AC-F3).
+
+    `kind=xlsx` is the supplier's own stock list with the quantity to load filled in (AC-C4);
+    it exists on a container request and not on a loading notice.
+    """
+    return supplier_notice_service.document_url(db, notice_id, kind=kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -511,6 +640,14 @@ class SpoLineConfirm(BaseModel):
     # single `warehouse_id` field the second amendment introduced is now the one-split case of
     # this list, not a separate field.
     location_splits: list[SpoLocationSplit] = Field(default_factory=list)
+    # Which PO takes to draw from (F7, AC-G1). None means "every take you re-derive", which
+    # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
+    # falls to what those takes cover.
+    po_take_ids: Optional[list[str]] = None
+    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
+    # project half is written as links; the retail half steers the split on screen and has
+    # no row of its own to hang a link on.
+    so_line_ids: list[str] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):
@@ -743,7 +880,7 @@ def export_consolidated_packing_list(
     return Response(
         content=consolidated_packing_list.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 
@@ -841,5 +978,5 @@ def export_spo_worksheet(
     return Response(
         content=spo_conversion_service.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )

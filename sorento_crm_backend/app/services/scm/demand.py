@@ -596,3 +596,88 @@ SELECT product_id,
 FROM legs
 GROUP BY product_id, warehouse_id
 """
+
+
+def horizon_project_need_dates_sql() -> str:
+    """WHEN the project quantity `horizon_committed_select_sql` counts is owed, per product.
+
+    The DATE companion of that function's two project legs, and a companion is the point: a
+    date read under looser conditions than the quantity describes need the plan is not
+    planning for. That is what it did - the date came off `summary_order_service`, whose own
+    rule is the Order Summary's (`state = 'raised'` alone, no remainder test, no horizon), so
+    a row already placed on a purchase order could still make a product rank as urgent.
+
+    So the predicates below are the project legs' own, condition for condition: the ACTIVE
+    decision, `verb IN ('ORDER','ORDER_BACK')`, `state IN ('raised','partly_linked')`, the
+    un-linked remainder `oir.qty > COALESCE(linked, 0)`, the form leg's `supply_decision_id
+    IS NULL` and its retail-shadow `NOT EXISTS`, and the same `:horizon` bind in each. A row
+    the quantity leg excludes contributes no date, and a row it counts contributes its own.
+
+    A THIRD copy of the leg shape, and it lives here for the reason the second one does (see
+    `horizon_committed_select_sql`): `COMMITTED_V_SQL` is frozen for the migration/downgrade
+    pair and must stay copy-pasteable, so the variants sit beside it where the next person
+    changing one finds the others.
+
+    The confirmed leg dates off the inquiry row and falls back to the reconciled core line's
+    required date, which is the rule the Order Summary established and the only one the two
+    documents can both answer. `MIN` over an all-NULL group is NULL and is dropped: a Buy
+    nobody has dated contributes no date at all, rather than a guess.
+    """
+    return """
+WITH legs AS (
+    SELECT sol.product_id,
+           COALESCE(oir.delivery_date, sol.required_date) AS needed
+    FROM projects.order_inquiry_rows oir
+    JOIN projects.so_supply_decisions d
+      ON d.id = oir.supply_decision_id
+     AND d.state = 'active'
+    JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+    JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) lk ON TRUE
+    WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
+      AND oir.qty > 0
+      AND oir.qty > COALESCE(lk.linked, 0)
+      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+           OR oir.delivery_date <= CAST(:horizon AS date))
+    UNION ALL
+    SELECT fp.id AS product_id,
+           oir.delivery_date AS needed
+    FROM projects.order_inquiry_rows oir
+    JOIN products fp
+      ON fp.product_code = oir.item_code
+     AND fp.company_id = oir.company_id
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(l.qty), 0) AS linked
+        FROM projects.order_inquiry_links l
+        WHERE l.row_id = oir.id
+    ) flk ON TRUE
+    WHERE oir.supply_decision_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM projects.sales_order_lines fpsl
+          JOIN sales_order_lines fsol ON fsol.id = fpsl.core_sales_order_line_id
+          JOIN sales_orders fso ON fso.id = fsol.sales_order_id
+          WHERE fpsl.id = oir.so_line_id
+            AND fso.demand_class IS DISTINCT FROM 'project'
+            AND fso.status = 'open'
+            AND fsol.line_status = 'open'
+            AND fsol.purchasing_status <> 'covered'
+            AND GREATEST(COALESCE(fsol.qty_required, fsol.qty_ordered)
+                       - COALESCE(fsol.qty_delivered, 0), 0) > 0)
+      AND oir.verb IN ('ORDER', 'ORDER_BACK')
+      AND oir.state IN ('raised', 'partly_linked')
+      AND oir.qty > 0
+      AND oir.qty > COALESCE(flk.linked, 0)
+      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+           OR oir.delivery_date <= CAST(:horizon AS date))
+)
+SELECT product_id, MIN(needed) AS needed
+FROM legs
+WHERE needed IS NOT NULL
+GROUP BY product_id
+"""

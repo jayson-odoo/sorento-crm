@@ -583,6 +583,101 @@ def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
     assert str(shipment.supplier_id) == str(w.kailu.id)
 
 
+def test_the_update_schema_carries_the_container_workbook_fields(db):
+    """The container's paperwork and costs, and the line's measurements, save through the PUT.
+
+    Same trap as the per-line supplier above and the clearance dates before it: a field the
+    schema does not declare is dropped by `exclude_unset` and the save still returns 200, so
+    every one of these has to be asserted rather than assumed from the model having a column.
+    `InboundShipmentUpdate` does NOT inherit `InboundShipmentBase`, which is precisely how a
+    header field lands on one and not the other.
+    """
+    w = World(db)
+    payload = InboundShipmentUpdate(
+        seal_number="J0713349",
+        shipper="SHENZHEN XINDESHENG TRADING CO.,LTD",
+        forwarder_order_ref="CNH1098313",
+        clearance_cost=Decimal("2700.00"),
+        china_freight_cost=Decimal("13950.00"),
+        insurance_rate=Decimal("1.0000"),
+        shipment_lines=[
+            InboundShipmentLineCreate(
+                product_id=str(w.tap.id),
+                quantity_shipped=490,
+                supplier_id=str(w.kailu.id),
+                material="不锈钢",
+                pcs_per_carton=Decimal("10"),
+                carton_length_cm=Decimal("34.00"),
+                carton_width_cm=Decimal("24.00"),
+                carton_height_cm=Decimal("30.00"),
+                net_weight_per_carton=Decimal("7.000"),
+                gross_weight_per_carton=Decimal("8.300"),
+            )
+        ],
+    )
+
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(str(shipment.id), payload, updated_by=None)
+    db.commit()
+
+    db.refresh(shipment)
+    assert shipment.seal_number == "J0713349"
+    assert shipment.shipper == "SHENZHEN XINDESHENG TRADING CO.,LTD"
+    assert shipment.forwarder_order_ref == "CNH1098313"
+    assert float(shipment.clearance_cost) == pytest.approx(2700)
+    assert float(shipment.china_freight_cost) == pytest.approx(13950)
+    assert float(shipment.insurance_rate) == pytest.approx(1)
+
+    line = w.lines(shipment.id)[0]
+    assert line.material == "不锈钢"
+    assert float(line.pcs_per_carton) == pytest.approx(10)
+    assert [
+        float(line.carton_length_cm),
+        float(line.carton_width_cm),
+        float(line.carton_height_cm),
+    ] == [34.0, 24.0, 30.0]
+    assert float(line.net_weight_per_carton) == pytest.approx(7)
+    assert float(line.gross_weight_per_carton) == pytest.approx(8.3)
+
+
+def test_the_container_workbook_fields_travel_back_out_on_the_read():
+    """`response_model` silently DROPS a field it does not declare.
+
+    The write path above proves the columns are stored. This proves they come back: the
+    detail response, the list response and the line response all have to name them, or the
+    Details tab reads blank on a container somebody has just filled in and the save looks
+    like it did not work.
+    """
+    from app.schemas.procurement import (
+        InboundShipmentLineResponse,
+        InboundShipmentListItemResponse,
+        InboundShipmentResponse,
+    )
+
+    header = {
+        "seal_number",
+        "shipper",
+        "forwarder_order_ref",
+        "clearance_cost",
+        "china_freight_cost",
+        "insurance_rate",
+    }
+    assert header <= set(InboundShipmentResponse.model_fields)
+    assert header <= set(InboundShipmentListItemResponse.model_fields)
+
+    line = {
+        "material",
+        "pcs_per_carton",
+        "carton_length_cm",
+        "carton_width_cm",
+        "carton_height_cm",
+        "net_weight_per_carton",
+        "gross_weight_per_carton",
+    }
+    assert line <= set(InboundShipmentLineResponse.model_fields)
+
+
 # --------------------------------------------------------------------------- #
 # packing_list_service.apply - the same story through a workbook                #
 # --------------------------------------------------------------------------- #

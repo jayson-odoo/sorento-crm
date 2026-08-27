@@ -448,8 +448,13 @@ def test_create_marks_source_system_crm_spo_and_records_the_pull():
         assert po_line.line_status == "open"
         assert float(po_line.qty_ordered) == 40
 
-        pulls = json.loads(po_line.source_ref)
-        assert pulls == [{"po_line_id": str(source_line.id), "qty": 40.0}]
+        # `source_ref` carries the pull AND what the SPO line was ticked to cover; the
+        # older bare-list encoding still reads, which is what `parse_source_ref` is for.
+        recorded = json.loads(po_line.source_ref)
+        assert recorded["pulls"] == [{"po_line_id": str(source_line.id), "qty": 40.0}]
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == [
+            (str(source_line.id), 40.0)
+        ]
         db.refresh(source_line)
         assert float(source_line.qty_received) == 40, "the source PO line's own accounting must advance"
 

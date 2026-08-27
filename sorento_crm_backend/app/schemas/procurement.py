@@ -181,6 +181,17 @@ class InboundShipmentLineBase(BaseModel):
     # Volume as the packing list stated it, and the supplier's own note on the line.
     cbm: Optional[Decimal] = None
     remarks: Optional[str] = None
+    # What the container workbook measures the line by (AC-F3.5). Editable on the packing
+    # list, because the supplier's file is where they come from and it is not always right.
+    # Lengths in centimetres, weights per CARTON - the sheet multiplies them by the carton
+    # count itself rather than storing a line total that could disagree with its inputs.
+    material: Optional[str] = None
+    pcs_per_carton: Optional[Decimal] = None
+    carton_length_cm: Optional[Decimal] = None
+    carton_width_cm: Optional[Decimal] = None
+    carton_height_cm: Optional[Decimal] = None
+    net_weight_per_carton: Optional[Decimal] = None
+    gross_weight_per_carton: Optional[Decimal] = None
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):
@@ -240,7 +251,36 @@ class ClearanceFields(BaseModel):
     source_sheet: Optional[str] = None
 
 
-class InboundShipmentBase(ClearanceFields):
+class ContainerWorkbookFields(BaseModel):
+    """The container's own header lines and its costs, as the workbook prints them.
+
+    Deliberately NOT on `ClearanceFields`: that interface is mirrored one-for-one by the
+    frontend's and pinned by `tests/test_container_status_schema.py`, so a field added there
+    that the Container Status sheet does not contribute would fail a parity check that is
+    about a different document entirely.
+
+    One class rather than two hand-kept field lists, because `InboundShipmentUpdate` does
+    NOT inherit `InboundShipmentBase`: a field added to one and forgotten on the other is
+    accepted by the PUT and silently dropped (`update_shipment` setattrs whatever
+    `exclude_unset` yields), which reads as a save that did not work.
+    """
+
+    #: Printed as `SEAL NO :` and again as `封号:` in the footer.
+    seal_number: Optional[str] = None
+    #: Who shipped it, which is not always the factory that made it.
+    shipper: Optional[str] = None
+    #: The forwarder's booking reference (`SO :` on the sheet, `订单号:` in the footer).
+    #: Named for what it is - "SO" in this codebase is a sales order.
+    forwarder_order_ref: Optional[str] = None
+
+    #: Typed per container. The footer splits clearance and China freight by each company's
+    #: share of the volume, and insurance by its share of the amount.
+    clearance_cost: Optional[Decimal] = None
+    china_freight_cost: Optional[Decimal] = None
+    insurance_rate: Optional[Decimal] = None
+
+
+class InboundShipmentBase(ClearanceFields, ContainerWorkbookFields):
     shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: date
@@ -260,7 +300,7 @@ class InboundShipmentCreate(InboundShipmentBase):
     shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
-class InboundShipmentUpdate(ClearanceFields):
+class InboundShipmentUpdate(ClearanceFields, ContainerWorkbookFields):
     """Everything editable on a packing list, INCLUDING the clearance fields.
 
     They are here because the workbook is not the only way these dates arrive:

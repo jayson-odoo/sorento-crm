@@ -1403,3 +1403,73 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(screen.getByRole('menuitemcheckbox', { name: 'Decided' })).toBeInTheDocument();
   });
 });
+
+/**
+ * Browser pass 4, findings 4 and 5 - two links to the same SPO line, and the date on them.
+ *
+ * A line CAN be linked twice to one SPO line: the SPO covers it in two goes, and each link
+ * carries its own quantity. The key was kind + document + line label, so the second row
+ * collided with the first and React warned in the console.
+ */
+describe('SalesOrderDetail - two links to the same SPO line', () => {
+  /** One planned line carrying two links to the SAME SPO line - `planned` lives in another
+   *  block, so the line is stated here rather than reached for across it. */
+  const twoLinks = () =>
+    so({
+      lines: [
+        {
+          id: 'l-planned',
+          sku: 'SKU-PLANNED',
+          product_name: 'Planned line',
+          qty_ordered: 10,
+          qty_delivered: 0,
+          uom: 'PCS',
+          warehouse_code: 'BRW-BB',
+          line_status: 'open',
+          required_date: '2026-08-30',
+          linked_to: [
+            {
+              kind: 'spo',
+              document: 'SPO-2026/08-0061',
+              line_label: 'L4',
+              qty: '10',
+              location: 'BRW',
+              expected_date: '2026-09-14',
+            },
+            {
+              kind: 'spo',
+              document: 'SPO-2026/08-0061',
+              line_label: 'L4',
+              qty: '5',
+              location: 'BRW',
+              expected_date: '2026-09-14',
+            },
+          ],
+        } as unknown as SalesOrderLine,
+      ],
+      line_count: 1,
+    });
+
+  it('renders both rows without a duplicate-key warning', () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText(/SPO-2026\/08-0061 L4/)).toHaveLength(2);
+    expect(
+      warn.mock.calls.some((call) => String(call[0]).includes('same key')),
+    ).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('states when the goods are due (AC-G7)', () => {
+    useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText(/14\/09\/2026|2026-09-14/).length).toBeGreaterThanOrEqual(1);
+  });
+});

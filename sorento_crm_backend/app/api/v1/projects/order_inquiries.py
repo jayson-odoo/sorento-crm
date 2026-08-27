@@ -47,6 +47,7 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -305,7 +306,7 @@ def export_order_inquiry_worklist(
         return Response(
             content=body,
             media_type=WORKLIST_XLSX,
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -528,7 +529,7 @@ async def export_order_inquiry(
             media_type=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

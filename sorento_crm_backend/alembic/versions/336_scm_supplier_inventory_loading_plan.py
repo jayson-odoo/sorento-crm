@@ -29,12 +29,18 @@ depends_on = None
 
 
 #: (code, label, cbm). Internal loadable volume, not the nominal external size: a 40HQ is
-#: sold as 76 cbm and packs about 68 in practice, and planning to the brochure figure is how
-#: a container arrives one pallet short of the manifest.
+#: sold as 76 cbm and planning to the brochure figure is how a container arrives one pallet
+#: short of the manifest.
+#:
+#: The 40HQ figure was 68 here until 26 Aug, when the captain ruled it to 65 - what Ms Tee
+#: actually loads to (Q3, `PLAN-scm-fulfilment-feedback.md`). Changed AT THE SEED as well as
+#: in the data migration that corrects already-seeded databases (428), because a CI database
+#: is built with `create_all` + these seed helpers and never runs a migration body: leaving
+#: 68 here would give a fresh install the old capacity for ever.
 _CONTAINER_SIZES = (
     ("20GP", "20ft standard", 28.0),
     ("40GP", "40ft standard", 58.0),
-    ("40HQ", "40ft high cube", 68.0),
+    ("40HQ", "40ft high cube", 65.0),
 )
 
 

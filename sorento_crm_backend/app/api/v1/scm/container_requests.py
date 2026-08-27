@@ -12,15 +12,22 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.services.scm import container_request_service
+from app.services.scm import container_request_service, supplier_notice_service
+from app.utils.http import content_disposition
 
 router = APIRouter()
+
+#: What the two on-demand documents are served as.
+_MEDIA_TYPES = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
 
 # The same two permissions the Loading Plan screen already reads and writes under (copied from
 # `fulfilment.py`) - a container request is an earlier stage of that screen, not a new
@@ -45,8 +52,22 @@ class ContainerRequestBuildBody(BaseModel):
 
 
 class ContainerRequestLine(BaseModel):
-    product_id: str
+    """One reviewed line. It names a product OR one of our product sets, never both.
+
+    A set line carries no product id at all (R19): the supplier sells the whole WC under a
+    code our catalogue does not hold, so the ask goes out under the set code and naming one
+    member here would make the document disagree with the row it came from.
+    """
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
     qty: float = Field(..., gt=0)
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "ContainerRequestLine":
+        if bool(self.product_id) == bool(self.product_set_id):
+            raise ValueError("name either a product or a product set on each line")
+        return self
 
 
 class ContainerRequestBody(BaseModel):
@@ -75,6 +96,57 @@ def build_container_request(
         supplier_id=body.supplier_id,
         include_lines=include_lines,
         plan_horizon_date=body.plan_horizon_date,
+    )
+
+
+@router.get("/container-requests/history")
+def container_request_history(
+    supplier_id: str,
+    product_ids: list[str] = Query(default=[]),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What these products were ordered, per month, for the last twelve full months.
+
+    A GET with the product ids repeated, because it is a pure read scoped to the page on
+    screen (AC-B8) - the caller asks again when it pages, and the answer is cacheable.
+    Declared BEFORE the `/container-requests` POST above it is irrelevant, but it must stay
+    ahead of any future `/container-requests/{id}` route: a static segment behind a path
+    parameter never matches (the SLA route-shadowing lesson).
+    """
+    return container_request_service.history(
+        db, supplier_id=supplier_id, product_ids=product_ids
+    )
+
+
+@router.post("/container-requests/document")
+def container_request_document(
+    body: ContainerRequestBody,
+    format: str = Query("xlsx", pattern="^(xlsx|pdf)$"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The request as a file for the lines currently on screen, WITHOUT sending anything (R23).
+
+    Behind the READ permission, not the write one: nothing is created, nothing leaves the
+    building, and the supplier is told nothing - it is the same ask the screen is already
+    showing, in a form that can be read, checked or forwarded by hand. `POST` because the
+    lines are the body: they are Ms Tee's edits, not a stored plan this could re-derive.
+
+    Ahead of `POST /container-requests` in this file for readability only; a static segment
+    under a path parameter is the shadowing trap (the SLA lesson), and there is no
+    `/container-requests/{id}` here.
+    """
+    content, filename = supplier_notice_service.request_document(
+        db,
+        supplier_id=body.supplier_id,
+        lines=[ln.model_dump() for ln in body.lines],
+        fmt=format,
+    )
+    return Response(
+        content=content,
+        media_type=_MEDIA_TYPES[format],
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

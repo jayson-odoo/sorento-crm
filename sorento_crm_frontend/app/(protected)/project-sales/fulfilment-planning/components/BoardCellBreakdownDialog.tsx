@@ -17,6 +17,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { StatCard } from '@/components/scm/StatCard';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -573,16 +574,12 @@ export function BoardCellBreakdownDialog({
               decision.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
             )}
           >
-            <div
-              data-testid="cell-quantity-needed"
-              className="rounded-lg border border-border p-3"
-            >
-              <p className="text-xs text-muted-foreground">Quantity needed</p>
-              <p className="text-2xl font-semibold tabular-nums">{cell.total_qty}</p>
-              <p className="text-xs text-muted-foreground">
-                {`${decided} decided`}
-              </p>
-            </div>
+            <StatCard
+              testId="cell-quantity-needed"
+              label="Quantity needed"
+              value={cell.total_qty}
+              sub={`${decided} decided`}
+            />
 
             <CompositionCard
               testId="cell-suggestion"

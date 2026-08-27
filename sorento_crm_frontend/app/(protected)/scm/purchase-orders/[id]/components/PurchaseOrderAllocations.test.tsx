@@ -115,3 +115,93 @@ describe('PurchaseOrderAllocations', () => {
     ).toBeTruthy();
   });
 });
+
+describe('F7 - an SPO that pulled from this line', () => {
+  /** The same DC1 line, its quantity taken by a CRM SPO rather than by an inquiry. */
+  const withSpo: PurchaseOrderLineAllocation = {
+    ...DC1_LINE,
+    placements: [
+      {
+        kind: 'spo',
+        spo_number: 'CRM-SPO-2026/08-0007',
+        packing_list: 'FSCU8103365',
+        qty: 500,
+        warehouses: [
+          { warehouse_code: 'BRW', qty: 300 },
+          { warehouse_code: 'MWH', qty: 200 },
+        ],
+        arrival_date: '2026-09-14',
+        inquiry_no: null,
+        so_number: null,
+        customer: null,
+        agent: null,
+        needed_at: null,
+        location_differs: false,
+      },
+    ],
+  };
+
+  it('names the SPO and the container it is on (AC-G7)', () => {
+    render(<PurchaseOrderAllocations allocations={[withSpo]} />);
+
+    expect(screen.getByText('SPO')).toBeInTheDocument();
+    expect(screen.getByText('CRM-SPO-2026/08-0007')).toBeInTheDocument();
+    expect(screen.getByText('FSCU8103365')).toBeInTheDocument();
+  });
+
+  it('says where it is landing, and how much at each', () => {
+    render(<PurchaseOrderAllocations allocations={[withSpo]} />);
+
+    // The landings, then when the container is due beside them (AC-G7).
+    expect(screen.getByText(/BRW 300, MWH 200 - due 2026-09-14/)).toBeInTheDocument();
+  });
+
+  it('leaves an order-inquiry placement reading exactly as it did', () => {
+    render(<PurchaseOrderAllocations allocations={[DC1_LINE]} />);
+
+    expect(screen.getByText('OI-000001')).toBeInTheDocument();
+    expect(screen.getByText('SO416191')).toBeInTheDocument();
+    expect(screen.queryByText('SPO')).not.toBeInTheDocument();
+  });
+});
+
+describe('F7 - when the SPO take actually lands', () => {
+  const withSpo: PurchaseOrderLineAllocation = {
+    ...DC1_LINE,
+    placements: [
+      {
+        kind: 'spo',
+        spo_number: 'CRM-SPO-2026/08-0007',
+        packing_list: 'FSCU8103365',
+        qty: 500,
+        warehouses: [{ warehouse_code: 'BRW', qty: 500 }],
+        arrival_date: '2026-09-14',
+        inquiry_no: null,
+        so_number: null,
+        customer: null,
+        agent: null,
+        needed_at: null,
+        location_differs: false,
+      },
+    ],
+  };
+
+  it('states the arrival date beside where it lands (AC-G7)', () => {
+    render(<PurchaseOrderAllocations allocations={[withSpo]} />);
+
+    // The date used to be a FALLBACK for having no warehouse, so on a real take - which
+    // always has one - it never appeared at all.
+    expect(screen.getByText(/BRW 500/)).toBeInTheDocument();
+    expect(screen.getByText(/2026-09-14|14\/09\/2026/)).toBeInTheDocument();
+  });
+
+  it('still says something when the container has no date yet', () => {
+    render(
+      <PurchaseOrderAllocations
+        allocations={[{ ...withSpo, placements: [{ ...withSpo.placements[0], arrival_date: null }] }]}
+      />,
+    );
+
+    expect(screen.getByText(/BRW 500/)).toBeInTheDocument();
+  });
+});

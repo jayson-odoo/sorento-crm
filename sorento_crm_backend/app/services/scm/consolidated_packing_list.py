@@ -38,8 +38,6 @@ UNASSIGNED = "Unassigned"
 #: Catalogue dimensions are millimetres; volume is cubic metres.
 _MM3_PER_M3 = 1_000_000_000.0
 
-_COLUMNS = ["FACTORY", "NO", "MODEL", "DESCRIPTION", "QTY", "CTN QTY", "CBM", "LOGO", "REMARKS"]
-
 NOT_ON_PLAN = "Not on the loading plan"
 
 
@@ -257,6 +255,25 @@ def build(db: Session, shipment_id: str) -> dict:
                 "cartons": int(line.cartons_count or 0),
                 "cbm": cbm,
                 "remarks": line.remarks,
+                # What the container workbook measures the line by. All optional: a line
+                # nobody measured prints an empty cell, and the sheet's own formula for
+                # that row is left off rather than dividing by a figure nobody stated.
+                "material": line.material,
+                "pcs_per_carton": _f(line.pcs_per_carton),
+                "carton_length_cm": _f(line.carton_length_cm),
+                "carton_width_cm": _f(line.carton_width_cm),
+                "carton_height_cm": _f(line.carton_height_cm),
+                "net_weight": _f(line.net_weight_per_carton),
+                # `weight_per_carton` is the column the line has always had, and every
+                # packing list that states one weight states the GROSS. Read as the fallback
+                # rather than migrated, so the containers already carrying it keep it.
+                "gross_weight": _f(
+                    line.gross_weight_per_carton
+                    if line.gross_weight_per_carton is not None
+                    else line.weight_per_carton
+                ),
+                "unit_cost": _f(line.unit_cost),
+                "currency": line.currency,
                 "discrepancies": [],
             }
         )
@@ -329,6 +346,38 @@ def build(db: Session, shipment_id: str) -> dict:
         "container_no": shipment.shipping_container_number,
         "bl_no": shipment.bill_of_lading_number,
         "status": shipment.shipment_status,
+        # The twelve lines the workbook prints above the goods. Every one of them is a
+        # column on the container already - nothing here is worked out, and the factory
+        # list is the one derived value, read off the lines that were actually loaded.
+        "header": {
+            "loading_date": _iso(shipment.loading_date),
+            "etd": _iso(shipment.etd_date),
+            # The REVISED eta where there is one: `eta_delay_date` is the accurate figure
+            # and `estimated_arrival_date` is what was first published (migration 314).
+            "eta": _iso(shipment.eta_delay_date or shipment.estimated_arrival_date),
+            "container_no": shipment.shipping_container_number,
+            "seal_number": shipment.seal_number,
+            "forwarder_order_ref": shipment.forwarder_order_ref,
+            "consignee": shipment.consignee,
+            "shipper": shipment.shipper,
+            # The sheet calls the China-side forwarder the china agent.
+            "china_agent": shipment.china_forwarder,
+            # Only the factories we were actually told about: the group of lines whose
+            # factory nobody named is called `Unassigned` on the blocks below, and printing
+            # that word on the header line would read as a company on the bill of lading.
+            "factories": ", ".join(
+                f["supplier_name"] for f in factories if f.get("supplier_id")
+            ),
+            "free_days": shipment.free_days_available,
+            "delivery_warehouse": shipment.delivery_warehouse,
+        },
+        # Typed per container. The sheet's footer apportions the first two by each
+        # company's share of the volume and the third by its share of the amount.
+        "costs": {
+            "clearance_cost": _f(shipment.clearance_cost),
+            "china_freight_cost": _f(shipment.china_freight_cost),
+            "insurance_rate": _f(shipment.insurance_rate),
+        },
         "factories": factories,
         "total": _totals(all_lines),
         # Both rows always, zeros included: an absent company reads as a missing figure
@@ -344,8 +393,67 @@ def build(db: Session, shipment_id: str) -> dict:
 # the workbook
 # --------------------------------------------------------------------------- #
 
+#: The sheet, its columns and its arithmetic are `FSCU8103365.xlsx` tab `RMB` - the file Ms
+#: Tee builds by hand and the one the forwarder, the factories and our own clearance agent
+#: all read. It is copied exactly on purpose: a workbook that is nearly the familiar one is
+#: worse than none, because every reader has to work out which column moved.
+#:
+#: Two headers, because `SIZE (CM)` spans three columns and `NW` / `GW` state their unit on
+#: the second line. Row 15 is the wide header, row 16 the sub-header, lines start on 18.
+_SHEET_TITLE = "RMB"
+_HEADER_ROW = 15
+_SUBHEADER_ROW = 16
+_FIRST_LINE_ROW = 18
 
-_WIDTHS = [28, 6, 22, 40, 10, 10, 10, 12, 46]
+#: (column letter, row-15 label, row-16 label). A blank row-16 label means the row-15 cell
+#: is merged down over both.
+_COLUMNS_SPEC = [
+    ("A", "FACTORY", None),
+    ("B", "NO", None),
+    ("C", "MODEL", None),
+    ("D", "DESCRIPTION", None),
+    ("E", "MATERIAL", None),
+    ("F", "QTY", None),
+    ("G", "PCS / CTN", None),
+    ("H", "CTN QTY", None),
+    ("I", "SIZE (CM)", "L"),
+    ("J", None, "W"),
+    ("K", None, "H"),
+    ("L", "CBM\n/ CTN", None),
+    ("M", "TOTAL CBM", None),
+    ("N", "NW", "KG"),
+    ("O", "GW", "KG"),
+    ("P", "TOTAL NW", "KG"),
+    ("Q", "TOTAL GW", "KG"),
+    ("R", "LOGO", None),
+    ("S", "REMARKS", None),
+    ("T", "RMB", None),
+    ("U", "TOTAL RMB", None),
+    ("V", None, None),
+]
+
+#: As measured off the source file, so a printed sheet lines up with the ones already filed.
+_WIDTHS = {
+    "A": 18.86, "B": 7.29, "C": 27.86, "D": 45.86, "E": 10.71, "F": 9.0, "G": 8.0,
+    "H": 7.71, "I": 8.57, "J": 7.71, "K": 7.71, "L": 9.57, "M": 10.14, "N": 9.14,
+    "O": 8.29, "P": 11.57, "Q": 11.43, "R": 15.14, "S": 29.29, "T": 15.57, "V": 15.57,
+}
+
+#: The header block above the lines: (row, label, payload key on `header`).
+_HEADER_BLOCK = [
+    (1, "LOADING : ", "loading_date"),
+    (2, "ETD :", "etd"),
+    (3, "ETA : ", "eta"),
+    (4, "CONTAINER :", "container_no"),
+    (5, "SEAL NO : ", "seal_number"),
+    (6, "SO :", "forwarder_order_ref"),
+    (7, "CONSIGNEE :", "consignee"),
+    (8, "SHIPPER :", "shipper"),
+    (9, "CHINA AGENT : ", "china_agent"),
+    (10, "FACTORY :", "factories"),
+    (11, "FREE DAYS : ", "free_days"),
+    (12, "DELIVERY WAREHOUSE : ", "delivery_warehouse"),
+]
 
 
 def _container_label(payload: dict) -> str:
@@ -362,108 +470,264 @@ def _remarks(line: dict) -> str:
     return "; ".join(parts)
 
 
+def _blocks(payload: dict) -> list[dict]:
+    """The sheet's blocks: one per factory, and one more for its MOCHA goods.
+
+    MOCHA is invoiced separately, so its lines are listed under their own heading even
+    though the same factory packed them - the footer's per-company apportionment has to be
+    readable off the blocks above it, and a mixed block cannot be read that way.
+
+    Split HERE rather than in `build`, because a factory is one supplier however its goods
+    are invoiced: the screen that reads `build` shows one card per factory, and splitting it
+    upstream would put the same factory on the page twice.
+    """
+    out: list[dict] = []
+    for factory in payload.get("factories") or []:
+        name = factory.get("supplier_name") or UNASSIGNED
+        # What the factory was asked for and never sent goes under its FIRST block,
+        # whichever company that is: a factory that loaded MOCHA goods only still owes what
+        # it did not load, and hanging the list off the SORENTO block would drop it.
+        owed = list(factory.get("not_packed") or [])
+        for company in COMPANIES:
+            lines = [ln for ln in factory["lines"] if ln.get("company") == company]
+            if not lines:
+                continue
+            out.append(
+                {
+                    "name": name if company == SORENTO else f"{name} ({company})",
+                    "company": company,
+                    "lines": lines,
+                    "not_packed": owed,
+                }
+            )
+            owed = []
+    return out
+
+
+def _f_or_none(value) -> Optional[float]:
+    """A number Excel can add up, or nothing. Decimals arrive as strings on some paths."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def to_xlsx(payload: dict) -> bytes:
-    """The same list as the file that used to be typed by hand, as an in-memory workbook."""
+    """The container workbook in the FSCU layout, arithmetic included as FORMULAS.
+
+    The derived cells (carton count, volume, line weights, line amount, every subtotal) are
+    written as formulas rather than as computed numbers on purpose. The recipient corrects a
+    quantity or a carton size in Excel - that is what the sheet is for - and a workbook of
+    frozen numbers would keep printing the old totals underneath the corrected line.
+    """
     import openpyxl
-    from openpyxl.styles import Font
+    from openpyxl.styles import Alignment, Font
     from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
     ws = wb.active or wb.create_sheet()
-    ws.title = "PACKING LIST"
+    ws.title = _SHEET_TITLE
     bold = Font(bold=True)
+    centred = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    factory_names = ", ".join(
-        f["supplier_name"] for f in payload["factories"] if f.get("supplier_name")
-    )
-    for label, value in (
-        ("CONTAINER", _container_label(payload)),
-        ("BL", payload.get("bl_no")),
-        ("STATUS", payload.get("status")),
-        ("FACTORY", factory_names),
+    header = payload.get("header") or {}
+    costs = payload.get("costs") or {}
+
+    # ---- the header block ------------------------------------------------- #
+    for row, label, key in _HEADER_BLOCK:
+        ws.cell(row=row, column=1, value=label).font = bold
+        value = header.get(key)
+        if key == "free_days" and value is not None:
+            value = f"{_qty(value)} FREEDAYS"
+        ws.cell(row=row, column=2, value=value)
+
+    # ---- the two-row column header ---------------------------------------- #
+    for letter, top, sub in _COLUMNS_SPEC:
+        if top is not None:
+            cell = ws[f"{letter}{_HEADER_ROW}"]
+            cell.value = top
+            cell.font = bold
+            cell.alignment = centred
+        if sub is not None:
+            cell = ws[f"{letter}{_SUBHEADER_ROW}"]
+            cell.value = sub
+            cell.font = bold
+            cell.alignment = centred
+        # A column with a row-16 label of its own keeps two cells; everything else is one
+        # header merged down over both rows.
+        if sub is None and top is not None:
+            ws.merge_cells(f"{letter}{_HEADER_ROW}:{letter}{_SUBHEADER_ROW}")
+    ws.merge_cells(f"I{_HEADER_ROW}:K{_HEADER_ROW}")
+    ws.merge_cells(f"V{_HEADER_ROW}:V{_SUBHEADER_ROW}")
+
+    # ---- one block per factory -------------------------------------------- #
+    row = _FIRST_LINE_ROW
+    number = 1
+    subtotal_rows: list[tuple[str, int]] = []  # (company, subtotal row)
+    line_rows: list[int] = []
+
+    for block in _blocks(payload):
+        first_row = row
+        for line in block["lines"]:
+            qty = line.get("qty") or 0
+            pcs = _f_or_none(line.get("pcs_per_carton"))
+            length = _f_or_none(line.get("carton_length_cm"))
+            width = _f_or_none(line.get("carton_width_cm"))
+            height = _f_or_none(line.get("carton_height_cm"))
+            net = _f_or_none(line.get("net_weight"))
+            gross = _f_or_none(line.get("gross_weight"))
+            price = _f_or_none(line.get("unit_cost"))
+            cartons = line.get("cartons")
+
+            ws.cell(row=row, column=1, value=block["name"])
+            ws.cell(row=row, column=2, value=number)
+            ws.cell(row=row, column=3, value=line.get("product_code"))
+            ws.cell(row=row, column=4, value=line.get("product_name"))
+            ws.cell(row=row, column=5, value=line.get("material"))
+            ws.cell(row=row, column=6, value=_qty(qty))
+            ws.cell(row=row, column=7, value=pcs)
+            # The carton count is DERIVED where the factory stated how many pieces go in a
+            # box, and stated where it did not - the source file does exactly this, because
+            # some factories give the carton count and no pack size.
+            ws.cell(
+                row=row,
+                column=8,
+                value=f"=F{row}/G{row}" if pcs else (cartons if cartons else None),
+            )
+            ws.cell(row=row, column=9, value=length)
+            ws.cell(row=row, column=10, value=width)
+            ws.cell(row=row, column=11, value=height)
+            has_size = None not in (length, width, height)
+            if has_size:
+                ws.cell(row=row, column=12, value=f"=I{row}*J{row}*K{row}/10^6")
+                ws.cell(row=row, column=13, value=f"=H{row}*L{row}")
+            else:
+                # Nothing measured the carton, so the volume is whatever the packing list
+                # itself stated (or our catalogue worked out). Written flat: a formula with
+                # no inputs would print a zero the container is then planned against.
+                ws.cell(row=row, column=13, value=line.get("cbm"))
+            ws.cell(row=row, column=14, value=net)
+            ws.cell(row=row, column=15, value=gross)
+            if net is not None:
+                ws.cell(row=row, column=16, value=f"=N{row}*H{row}")
+            if gross is not None:
+                ws.cell(row=row, column=17, value=f"=O{row}*H{row}")
+            ws.cell(row=row, column=18, value=line.get("brand"))
+            ws.cell(row=row, column=19, value=_remarks(line))
+            ws.cell(row=row, column=20, value=price)
+            if price is not None:
+                ws.cell(row=row, column=21, value=f"=T{row}*F{row}")
+
+            line_rows.append(row)
+            number += 1
+            row += 1
+
+        last_row = row - 1
+        # The block's own amount, merged down its rows: it is the figure the factory is paid,
+        # and it sits beside its lines rather than under them.
+        ws.cell(row=first_row, column=22, value=f"=SUM(U{first_row}:U{last_row})").font = bold
+        if last_row > first_row:
+            ws.merge_cells(f"V{first_row}:V{last_row}")
+
+        for column in ("F", "G", "H", "M", "P", "Q", "U"):
+            cell = ws[f"{column}{row}"]
+            cell.value = f"=SUM({column}{first_row}:{column}{last_row})"
+            cell.font = bold
+        ws[f"V{row}"].value = f"=V{first_row}"
+        ws[f"V{row}"].font = bold
+        subtotal_rows.append((block["company"], row))
+        row += 1
+
+        # What the factory was asked for and never sent. Quantities left empty on purpose:
+        # a zero here would be summed above as goods that shipped.
+        for missing in block["not_packed"]:
+            ws.cell(row=row, column=3, value=missing["product_code"])
+            ws.cell(row=row, column=4, value=missing["product_name"])
+            ws.cell(
+                row=row,
+                column=19,
+                value=f"Not packed - loading plan asked {_num(missing['planned_qty'])}",
+            )
+            row += 1
+
+    # ---- the rule, then the container's own totals ------------------------- #
+    for column in range(1, 23):
+        ws.cell(row=row, column=column, value="-")
+    row += 1
+
+    total_row = row
+    for column in ("F", "G", "H", "M", "P", "Q", "U"):
+        cell = ws[f"{column}{total_row}"]
+        # Summed off the SUBTOTALS, not off the line range: a plain range would swallow the
+        # subtotal rows sitting inside it and count every quantity twice.
+        refs = ",".join(f"{column}{r}" for _company, r in subtotal_rows)
+        cell.value = f"=SUM({refs})" if refs else 0
+        cell.font = bold
+    row += 2
+
+    # ---- the split, and what each company owes on it ----------------------- #
+    # Clearance and China freight follow the VOLUME, insurance follows the AMOUNT: that is
+    # how the forwarder bills them and how the source file apportions them.
+    clearance = _f_or_none(costs.get("clearance_cost"))
+    freight = _f_or_none(costs.get("china_freight_cost"))
+    insurance_rate = _f_or_none(costs.get("insurance_rate"))
+
+    company_rows: dict[str, int] = {}
+    for company in COMPANIES:
+        rows_for = [r for c, r in subtotal_rows if c == company]
+        cbm_ref = ",".join(f"M{r}" for r in rows_for)
+        amount_ref = ",".join(f"U{r}" for r in rows_for)
+        ws.cell(row=row, column=12, value=company).font = bold
+        ws.cell(row=row, column=13, value=f"=SUM({cbm_ref})" if cbm_ref else 0)
+        if clearance is not None:
+            ws.cell(row=row, column=14, value=f"=M{row}/M{total_row}*{clearance}")
+        if insurance_rate is not None:
+            ws.cell(row=row, column=15, value=f"=U{row}/U{total_row}*{insurance_rate}")
+        if freight is not None:
+            ws.cell(row=row, column=16, value=f"=M{row}/M{total_row}*{freight}")
+        ws.cell(row=row, column=20, value=company).font = bold
+        ws.cell(row=row, column=21, value=f"=SUM({amount_ref})" if amount_ref else 0)
+        company_rows[company] = row
+        row += 1
+
+    split_rows = [company_rows[c] for c in COMPANIES]
+    # The volume and the amount always total; a cost only totals when it was typed. Summing
+    # two blank cells prints 0, and a zero under CLEARANCE reads as a container that cost
+    # nothing to clear rather than as one nobody has priced yet.
+    totalled = ["M", "U"]
+    if clearance is not None:
+        totalled.append("N")
+    if insurance_rate is not None:
+        totalled.append("O")
+    if freight is not None:
+        totalled.append("P")
+    for column in totalled:
+        cell = ws[f"{column}{row}"]
+        cell.value = "=" + "+".join(f"{column}{r}" for r in split_rows)
+        cell.font = bold
+    row += 1
+
+    for column, label in (
+        (13, "CBM"),
+        (14, "CLEARANCE"),
+        (15, "INSURANCE"),
+        (16, "CHINA FREIGHT"),
+        (21, "TOTAL AMOUNT"),
     ):
-        ws.append([label, value])
-        ws.cell(row=ws.max_row, column=1).font = bold
-    ws.append([])
+        ws.cell(row=row, column=column, value=label).font = bold
+    # The three identifiers a forwarder quotes back at us, in the wording their own
+    # paperwork uses.
+    ws.cell(row=row, column=3, value=f"订单号:{header.get('forwarder_order_ref') or ''}")
+    ws.cell(row=row + 1, column=3, value=f"柜号:{_container_label(payload)}")
+    ws.cell(row=row + 2, column=3, value=f"封号:{header.get('seal_number') or ''}")
 
-    ws.append(list(_COLUMNS))
-    for col in range(1, len(_COLUMNS) + 1):
-        ws.cell(row=ws.max_row, column=col).font = bold
-
-    for factory in payload["factories"]:
-        name = factory.get("supplier_name") or UNASSIGNED
-        for i, line in enumerate(factory["lines"], start=1):
-            ws.append(
-                [
-                    name if i == 1 else None,
-                    i,
-                    line["product_code"],
-                    line["product_name"],
-                    line["qty"],
-                    line["cartons"],
-                    line["cbm"],
-                    line.get("brand"),
-                    _remarks(line),
-                ]
-            )
-        subtotal = factory["subtotal"]
-        ws.append(
-            [
-                f"{name} subtotal",
-                None,
-                None,
-                None,
-                subtotal["qty"],
-                subtotal["cartons"],
-                subtotal["cbm"],
-                None,
-                None,
-            ]
-        )
-        for col in range(1, len(_COLUMNS) + 1):
-            ws.cell(row=ws.max_row, column=col).font = bold
-        # What was asked for and never came, under the factory that owed it. QTY is left
-        # empty on purpose: a zero here would be summed as a quantity that shipped.
-        for missing in factory.get("not_packed") or []:
-            ws.append(
-                [
-                    None,
-                    None,
-                    missing["product_code"],
-                    missing["product_name"],
-                    None,
-                    None,
-                    None,
-                    None,
-                    f"Not packed - loading plan asked {_num(missing['planned_qty'])}",
-                ]
-            )
-
-    total = payload["total"]
-    ws.append(
-        ["TOTAL", None, None, None, total["qty"], total["cartons"], total["cbm"], None, None]
-    )
-    for col in range(1, len(_COLUMNS) + 1):
-        ws.cell(row=ws.max_row, column=col).font = bold
-
-    for row in payload["split"]:
-        ws.append(
-            [
-                row["company"],
-                None,
-                None,
-                None,
-                row["qty"],
-                row["cartons"],
-                row["cbm"],
-                None,
-                None,
-            ]
-        )
-        ws.cell(row=ws.max_row, column=1).font = bold
-
-    for i, width in enumerate(_WIDTHS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
+    for letter, width in _WIDTHS.items():
+        ws.column_dimensions[letter].width = width
+    # The header block and the column headers stay put while the lines scroll: a container
+    # runs to sixty rows and a factory column nobody can see is a column nobody reads.
+    ws.freeze_panes = f"A{_SUBHEADER_ROW + 1}"
 
     buf = BytesIO()
     wb.save(buf)
