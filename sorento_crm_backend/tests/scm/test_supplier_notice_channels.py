@@ -403,6 +403,30 @@ def test_the_contact_picker_puts_the_suppliers_own_number_first():
         assert all(c["suggested"] is False for c in out["data"][1:])
 
 
+def test_the_suppliers_own_contact_is_offered_even_past_the_first_twenty():
+    # AC-C3. The picker took the first twenty contacts alphabetically and only THEN sorted the
+    # supplier's own to the top, so in a workspace with more than twenty matching contacts the
+    # one contact this picker exists to offer was usually not in the answer at all.
+    with pg_session() as db:
+        _wechat_channel(db)
+        phone = f"+86138{uuid.uuid4().int % 100000000:08d}"
+        w = _world(db, phone=phone)
+        for i in range(25):
+            _contact(
+                db,
+                phone=f"+86139{uuid.uuid4().int % 100000000:08d}",
+                name=f"{MARKER} A{i:03d}",
+            )
+        # Last alphabetically, so the twenty-row page can never reach it.
+        mine = _contact(db, phone=phone, name=f"{MARKER} Zzz")
+
+        out = svc.chat_contacts(db, supplier_id=str(w.supplier.id), query=MARKER)
+
+        assert out["data"][0]["id"] == mine
+        assert out["data"][0]["suggested"] is True
+        assert [c["id"] for c in out["data"]].count(mine) == 1
+
+
 def test_the_contact_picker_says_when_no_wechat_channel_is_connected():
     with pg_session() as db:
         w = _world(db)

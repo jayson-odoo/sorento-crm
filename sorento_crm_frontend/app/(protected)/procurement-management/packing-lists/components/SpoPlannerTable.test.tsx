@@ -879,6 +879,33 @@ describe('R22 - the destinations expand under the row', () => {
     expect(screen.queryByText(/SRTWT9000 - destinations/)).not.toBeInTheDocument();
   });
 
+  it('Expand all opens only the lines that CAN be split', async () => {
+    // `toggleAllRowsExpanded(true)` ignores `getRowCanExpand`, so it opened a row under every
+    // covered line too, saying "No destination can be chosen for this line" - and that row's
+    // own chevron is disabled, so nothing on screen could close it again.
+    state.suggestion = suggestion({
+      lines: [
+        plannerLine(),
+        plannerLine({
+          shipment_line_id: 'sl-2',
+          item_code: 'SRTWT9000',
+          cannot_convert: true,
+          reason: 'No PO to pull from - raise the PO in AutoCount first.',
+          suggested_qty: 0,
+          po_covered_qty: 0,
+        }),
+      ],
+    });
+    renderTable();
+
+    fireEvent.click(await screen.findByRole('button', { name: /expand all/i }));
+
+    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    expect(
+      screen.queryByText('No destination can be chosen for this line.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('Expand all and Collapse all say why when no line can be split', async () => {
     state.suggestion = suggestion({
       lines: [

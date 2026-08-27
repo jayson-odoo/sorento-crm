@@ -624,6 +624,11 @@ def _document_label(plan: LoadingPlan, pi_number: Optional[str]) -> str:
     return "No file"
 
 
+#: "the caller did not look this up", which is not the same as "the caller looked and found
+#: nothing". `None` cannot tell those apart, and the difference is a query per row.
+_UNSET: Any = object()
+
+
 def record_dict(
     db: Session,
     plan: LoadingPlan,
@@ -631,7 +636,7 @@ def record_dict(
     supplier_name: Optional[str] = None,
     supplier_email: Optional[str] = None,
     notice: Optional[dict] = None,
-    pi_number: Optional[str] = None,
+    pi_number: Any = _UNSET,
 ) -> dict[str, Any]:
     """One plan, in the shape the list and the record page both read.
 
@@ -640,6 +645,10 @@ def record_dict(
     caller has already fetched them for a whole page; a single-row caller lets them be looked
     up here. The name and the address travel together (one row, one join), so a caller that
     named the supplier has already answered both.
+
+    `pi_number` defaults to `_UNSET` rather than to None because the list DOES pass None - it
+    is what "this supplier has no un-converted proforma" looks like - and reading that as "not
+    provided" ran the batch query again for every such row on the page.
     """
     if supplier_name is None:
         row = _supplier_row(db, str(plan.supplier_id)) or {}
@@ -647,8 +656,12 @@ def record_dict(
         supplier_email = row.get("email")
     if notice is None:
         notice = _latest_notice_channels(db, [str(plan.id)]).get(str(plan.id))
-    if pi_number is None and plan.document_kind == "proforma":
-        pi_number = _proforma_numbers(db, [str(plan.supplier_id)]).get(str(plan.supplier_id))
+    if pi_number is _UNSET:
+        pi_number = (
+            _proforma_numbers(db, [str(plan.supplier_id)]).get(str(plan.supplier_id))
+            if plan.document_kind == "proforma"
+            else None
+        )
     return {
         "id": str(plan.id),
         "supplier_id": str(plan.supplier_id),

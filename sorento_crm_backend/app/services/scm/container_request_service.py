@@ -49,6 +49,7 @@ Two moves, two functions:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date
 from typing import Any, Optional
@@ -74,6 +75,8 @@ from app.services.scm.demand import (
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 from app.services.scm.trajectory import month_shift
+
+logger = logging.getLogger(__name__)
 
 
 def _pool_predicate(alias: str = "w") -> str:
@@ -1089,8 +1092,22 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
         total_qty += row["suggested_qty"]
         if row.get("cbm_per_unit") is not None:
             total_cbm += row["suggested_qty"] * float(row["cbm_per_unit"])
-    loading_plan_service.stamp_request_totals(db, plan, qty=total_qty, cbm=total_cbm)
-    db.commit()
+    # Best-effort, and never on a cancelled plan. This route is behind the READ permission
+    # because it computes a suggestion, and the stamp is only a cache of a figure the list
+    # would otherwise re-derive per row - so a write that cannot go through must not turn a
+    # read into a 500, and a plan that has been called off is a record, not a form (AC-A8).
+    if plan.status != "cancelled":
+        try:
+            loading_plan_service.stamp_request_totals(db, plan, qty=total_qty, cbm=total_cbm)
+            db.commit()
+        except Exception:  # noqa: BLE001 - the suggestion is the answer; the cache is not
+            db.rollback()
+            logger.warning(
+                "container request build: could not cache the totals on plan %s; the "
+                "suggestion is unaffected",
+                plan_id,
+                exc_info=True,
+            )
     out["plan"] = loading_plan_service.record_dict(db, plan)
     return out
 

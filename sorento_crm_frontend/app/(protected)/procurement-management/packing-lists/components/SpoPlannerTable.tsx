@@ -992,7 +992,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               variant="ghost"
               disabled={nothingToExpand}
               title={nothingToExpand ? 'No line can be split yet' : undefined}
-              onClick={() => table.toggleAllRowsExpanded(true)}
+              // Only the lines that CAN be split. `toggleAllRowsExpanded(true)` ignores
+              // `getRowCanExpand`, so it opened a split panel under every covered line too -
+              // a panel with a disabled editor and nothing to do in it.
+              onClick={() =>
+                table.setExpanded(
+                  Object.fromEntries(
+                    table
+                      .getRowModel()
+                      .rows.filter((r) => r.getCanExpand())
+                      .map((r) => [r.id, true]),
+                  ),
+                )
+              }
             >
               <ChevronsUpDown className="size-4" aria-hidden />
               Expand all
@@ -1003,7 +1015,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               variant="ghost"
               disabled={nothingToExpand}
               title={nothingToExpand ? 'No line can be split yet' : undefined}
-              onClick={() => table.toggleAllRowsExpanded(false)}
+              onClick={() => table.setExpanded({})}
             >
               <ChevronsDownUp className="size-4" aria-hidden />
               Collapse all

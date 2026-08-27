@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   Ban,
@@ -261,7 +262,19 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
   const doSend = async (options: ContainerRequestSendOptions) => {
-    if (unsavedCount > 0) await save.mutateAsync(editedMap);
+    if (unsavedCount > 0) {
+      // A save that fails ABORTS the send. Unhandled, it left an unhandled rejection and the
+      // request went out anyway, carrying quantities the plan does not hold - which is the
+      // one disagreement between the document and the screen this rule exists to prevent.
+      try {
+        await save.mutateAsync(editedMap);
+      } catch (e) {
+        toast.error(
+          `${(e as Error).message} The request was not sent.`.trim(),
+        );
+        return;
+      }
+    }
     send.mutate(
       { planId, supplierId, supplierName, lines, options },
       {

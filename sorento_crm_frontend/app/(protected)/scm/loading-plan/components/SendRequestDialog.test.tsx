@@ -127,6 +127,34 @@ describe('SendRequestDialog', () => {
     );
   });
 
+  it('sends to an address typed but never committed with Add (AC-C2)', async () => {
+    // It used to be dropped: the sender saw the address they had just typed sitting in the
+    // box, pressed Send, and the request went to the OTHER addresses. What is on screen is
+    // what they mean.
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: 'ms.tee@sorento.com.my' } });
+    fireEvent.click(sendButton());
+
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipients: ['sales@jinbaichuan.cn', 'ms.tee@sorento.com.my'],
+        }),
+      ),
+    );
+  });
+
+  it('refuses to send on a typed address that is not one, and sends nothing', () => {
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: 'not-an-address' } });
+    fireEvent.click(sendButton());
+
+    expect(screen.getByText('not-an-address is not an email address.')).toBeTruthy();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('refuses an address that is not one, inline, and does not add it (AC-C2)', () => {
     renderDialog();
 

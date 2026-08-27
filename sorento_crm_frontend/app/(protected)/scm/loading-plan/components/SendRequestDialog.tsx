@@ -160,9 +160,42 @@ export function SendRequestDialog({
     setDraftError(null);
   };
 
+  /**
+   * An address typed but never committed with Add.
+   *
+   * It used to be dropped on Send: the sender saw the address they had just typed sitting in
+   * the box, pressed Send, and the request went to the OTHER addresses - or was refused as
+   * addressed to nobody. What is on screen is what the sender means, so Send commits it.
+   */
+  const pendingDraft = draft.trim();
+  const draftIsNew =
+    !!pendingDraft && !recipients.some((r) => r.toLowerCase() === pendingDraft.toLowerCase());
+
   const canSend =
     !isBusy &&
-    (channel === 'email' ? recipients.length > 0 : chatConnected && !!chatContactId);
+    (channel === 'email'
+      ? recipients.length > 0 || (draftIsNew && EMAIL_RE.test(pendingDraft))
+      : chatConnected && !!chatContactId);
+
+  const submit = () => {
+    let addresses = recipients;
+    if (channel === 'email' && draftIsNew) {
+      if (!EMAIL_RE.test(pendingDraft)) {
+        setDraftError(`${pendingDraft} is not an email address.`);
+        return;
+      }
+      addresses = [...recipients, pendingDraft];
+      setRecipients(addresses);
+      setDraft('');
+      setDraftError(null);
+    }
+    onSend({
+      channel,
+      recipients: addresses,
+      chatContactId: channel === 'chat' ? chatContactId || null : null,
+      note,
+    });
+  };
 
   const refusal = (() => {
     if (!error) return null;
@@ -339,14 +372,7 @@ export function SendRequestDialog({
           <Button
             disabled={!canSend}
             data-testid="send-confirm"
-            onClick={() =>
-              onSend({
-                channel,
-                recipients,
-                chatContactId: channel === 'chat' ? chatContactId || null : null,
-                note,
-              })
-            }
+            onClick={submit}
           >
             {isBusy ? (
               <LoaderCircle className="size-4 animate-spin" />

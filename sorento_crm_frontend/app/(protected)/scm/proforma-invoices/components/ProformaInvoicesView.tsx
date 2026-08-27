@@ -97,6 +97,18 @@ const CONVERT_PERMISSION = 'scm.reorder.run';
 
 /** Keyed off the read permission plus a stable id, never the record's own path - so the
  *  column choice survives the visit and cannot collide with another SCM listing. */
+/** `proforma-invoices-20260828.xlsx`. A file called `export.xlsx` is unfindable an hour later,
+ *  and the same stem the container-request documents use. */
+function exportFilename(): string {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('');
+  return `proforma-invoices-${stamp}.xlsx`;
+}
+
 const LISTING_KEY = 'scm.dashboard.view::proforma-invoices';
 
 /** The filter's own vocabulary, in the words the column uses. */
@@ -585,8 +597,11 @@ export function ProformaInvoicesView() {
               // is ticked.
               bulkActions={[]}
               // The toolbar renders no Export button of its own here - the gear owns it,
-              // and `openExport` below opens the SAME selected-rows export dialog.
-              exportConfig={false}
+              // and `openExport` below opens the SAME selected-rows export dialog. The
+              // config still travels, so the file is named for what is in it: with
+              // `exportConfig={false}` every export downloaded as `export.xlsx`.
+              showExport={false}
+              exportConfig={{ filename: exportFilename() }}
               primaryAction={({ openExport }) => (
                 <>
                   {/* Gear LEFT of the CTA, the same split-button shape the PI detail page

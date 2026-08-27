@@ -65,6 +65,30 @@ describe('DataGridListToolbar', () => {
     expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
 
+  it('hides its own Export button when the page owns it, and keeps the filename', () => {
+    // A page whose right cluster owns Export used to say `exportConfig={false}`, which also
+    // threw away the filename - so the file downloaded as `export.xlsx`. `showExport` is the
+    // same shape as `showColumns`: hide the control, keep the configuration.
+    const openers: Array<() => void> = [];
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{
+          showExport: false,
+          exportConfig: { filename: 'proforma-invoices-20260828.xlsx' },
+          primaryAction: ({ openExport }) => {
+            openers.push(openExport);
+            return <button type="button" onClick={openExport}>Export from the gear</button>;
+          },
+        }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Export from the gear' }));
+    expect(screen.getByRole('button', { name: /download excel/i })).toBeInTheDocument();
+  });
+
   it('hides the search while rows are selected, unless the page opts out (D2/H)', () => {
     render(
       <Harness

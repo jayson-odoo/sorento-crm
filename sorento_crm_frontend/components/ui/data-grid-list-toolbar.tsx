@@ -162,6 +162,15 @@ export type DataGridListToolbarProps<TData extends object> = {
   exportConfig?: ListToolbarExport<TData> | ListToolbarListQueryExport | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
+  /**
+   * Show the toolbar's OWN Export button. Default true.
+   *
+   * The same shape as `showColumns`, and for the same reason: a page whose right cluster owns
+   * Export itself (the proforma-invoice book's gear, AC-E2) hides the toolbar's button and
+   * calls `openExport` from its own menu. It used to say `exportConfig={false}` for this,
+   * which also threw away the `filename` - so the file the user got was called `export.xlsx`.
+   */
+  showExport?: boolean;
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
@@ -245,6 +254,7 @@ export function DataGridListToolbar<TData extends object>({
   filters,
   exportConfig,
   showColumns = true,
+  showExport = true,
   primaryAction,
   secondaryActions = [],
   bulkActions = [],
@@ -363,7 +373,7 @@ export function DataGridListToolbar<TData extends object>({
     filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
 
   const exportButtonEl =
-    exportConfig === false ? null : exportEnabled ? (
+    exportConfig === false || !showExport ? null : exportEnabled ? (
       <Button
         variant="outline"
         size="sm"

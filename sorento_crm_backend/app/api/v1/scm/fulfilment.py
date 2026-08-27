@@ -608,20 +608,12 @@ def delete_loading_plan(
 # --------------------------------------------------------------------------- #
 
 
-@router.post("/loading-plans/{plan_id}/notices", status_code=status.HTTP_201_CREATED)
-def approve_loading_plan(
-    plan_id: str,
-    _user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """Approve the plan and tell the supplier: one action, every channel (AC-F1).
-
-    Behind the operator permission, not the read one: this sends mail to an outside party.
-    """
-    _plan_or_404(db, plan_id)
-    return supplier_notice_service.approve_and_notify(
-        db, plan_id, actor=_actor(_user)
-    )
+# `POST /loading-plans/{plan_id}/notices` (`approve_and_notify`) is gone. It was the stage-2
+# CBM-fit surface's send, it wrote one notice per channel, it never stamped the plan `sent`,
+# and after part 4 turned `scm.loading_plan` into the plan record nothing reached it: the
+# frontend panel that called it is mounted on no page. A route that cannot be reached and
+# would leave a plan lying about its own status is worse than no route. The service function
+# and its tests stay for now; issue #360 owns the rest of that dead surface.
 
 
 @router.get("/loading-plans/{plan_id}/notices")

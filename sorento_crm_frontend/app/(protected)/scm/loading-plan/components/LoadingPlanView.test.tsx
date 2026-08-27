@@ -140,6 +140,8 @@ const PLAN: LoadingPlanRecord = {
 const state = {
   plan: PLAN,
   rows: [ENGINE_ROW],
+  /** Make the pre-send Save refuse, which used to leave an unhandled rejection and send anyway. */
+  saveFails: false,
 };
 
 const saveEdits = vi.fn();
@@ -164,6 +166,7 @@ vi.mock('../../hooks/useFulfilment', () => ({
     },
     mutateAsync: async (v: unknown) => {
       saveEdits(v);
+      if (state.saveFails) throw new Error('The quantities could not be saved.');
       return state.plan;
     },
     isPending: false,
@@ -218,6 +221,7 @@ describe('LoadingPlanView (the record)', () => {
     vi.clearAllMocks();
     state.plan = { ...PLAN };
     state.rows = [ENGINE_ROW];
+    state.saveFails = false;
   });
 
   it('titles the record with the supplier and states started, cut-off and document', () => {
@@ -295,6 +299,21 @@ describe('LoadingPlanView (the record)', () => {
         }),
       ),
     );
+  });
+
+  it('a Save that fails aborts the send rather than sending the old quantities', async () => {
+    // The await had no catch: the rejection went unhandled and the request went out anyway,
+    // carrying quantities the plan does not hold - the one disagreement between the document
+    // and the screen the save-first rule exists to prevent.
+    state.saveFails = true;
+    renderView();
+    fireEvent.click(screen.getByTestId('type-qty'));
+
+    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(saveEdits).toHaveBeenCalled());
+    expect(sendRequest).not.toHaveBeenCalled();
   });
 
   it('asks before leaving with unsaved quantities, and leaves once confirmed', async () => {
@@ -382,6 +401,7 @@ describe('LoadingPlanView, measured against what is SAVED', () => {
     state.plan = { ...PLAN, line_edits: { 'row-a': 4000 } };
     // What the server sends back once that edit is saved: the engine still says 4242.
     state.rows = [{ ...ENGINE_ROW, suggested_qty: 4000 }];
+    state.saveFails = false;
   });
 
   it('a saved edit is not something to save again', () => {
@@ -421,6 +441,7 @@ describe('LoadingPlanView, changing the cut-off with edits on the screen', () =>
     vi.clearAllMocks();
     state.plan = { ...PLAN };
     state.rows = [ENGINE_ROW];
+    state.saveFails = false;
   });
 
   it('asks before the new cut-off drops the typed quantities, and drops them for real', async () => {

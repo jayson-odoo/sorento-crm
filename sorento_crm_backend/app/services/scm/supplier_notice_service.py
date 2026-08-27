@@ -901,11 +901,33 @@ def chat_contacts(db: Session, *, supplier_id: str, query: Optional[str] = None)
             | RespondContact.phone_number.ilike(like)
             | RespondContact.respond_io_id.ilike(like)
         )
-    rows = (
+
+    # The supplier's own number is asked for SEPARATELY, because the alphabetical page below
+    # is capped: taking twenty rows and only then sorting the supplier's contact to the top
+    # meant that in a workspace with more than twenty matching contacts the one contact this
+    # picker exists to offer was usually not in the answer at all. Digits against digits, the
+    # same comparison `_digits` makes in Python, because two systems write one number two ways.
+    mine: list = []
+    if phone:
+        mine = (
+            q.filter(
+                func.regexp_replace(
+                    func.coalesce(RespondContact.phone_number, ""), r"[^0-9]", "", "g"
+                )
+                == phone
+            )
+            .order_by(func.lower(func.coalesce(RespondContact.name, RespondContact.phone_number)))
+            .limit(_CHAT_CONTACT_LIMIT)
+            .all()
+        )
+
+    seen = {str(c.id) for c in mine}
+    page = (
         q.order_by(func.lower(func.coalesce(RespondContact.name, RespondContact.phone_number)))
         .limit(_CHAT_CONTACT_LIMIT)
         .all()
     )
+    rows = mine + [c for c in page if str(c.id) not in seen]
 
     data = [
         {
