@@ -18,6 +18,7 @@ import {
   getLoadingPlanList,
   getPlanNotices,
   getSpoSuggestion,
+  getSupplierChatContacts,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
@@ -25,6 +26,7 @@ import {
   sendContainerRequest,
   updateLoadingPlanCutOff,
   type ContainerRequestLine,
+  type ContainerRequestSendOptions,
   type LoadingPlanCreate,
   type LoadingPlanListParams,
   type LoadingPlanRecord,
@@ -231,25 +233,48 @@ export function useSupplierNotices(supplierId: string | null) {
   });
 }
 
+/**
+ * Who a chat send could be addressed to, searched on the server (AC-C3).
+ *
+ * `enabled` rather than a null supplier: the list is only fetched once the Chat option is
+ * chosen, so opening the dialog to send an email never queries Respond.io at all.
+ */
+export function useSupplierChatContacts(
+  supplierId: string | null,
+  query: string,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: [...KEY, 'chat-contacts', supplierId, query],
+    queryFn: () => getSupplierChatContacts(supplierId as string, query),
+    enabled: enabled && !!supplierId,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useSendContainerRequest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
       planId,
       lines,
+      options,
     }: {
       planId: string;
       supplierId: string;
       supplierName: string;
       lines: ContainerRequestLine[];
-    }) => sendContainerRequest(planId, lines),
+      options?: ContainerRequestSendOptions;
+    }) => sendContainerRequest(planId, lines, options),
     onSuccess: (_out, { planId, supplierId, supplierName }) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
       void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
       void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
       toast.success(`Request sent to ${supplierName}.`);
     },
-    onError: (e: Error) => toast.error(e.message),
+    // No toast: the send dialog stays open on a refusal and prints the reason beside the
+    // field that can fix it (AC-C5). A toast would say the same thing where it cannot be
+    // acted on, and would vanish while she is still reading it.
   });
 }
 

@@ -65,6 +65,36 @@ export async function extractApiError(
   return fallbackMessage;
 }
 
+/** An API refusal the caller has to BRANCH on, not just show. */
+export interface CodedError extends Error {
+  /** `AppException`'s own `code` - e.g. `over_capacity`, `no_recipients`. Null when the body
+   *  carries none. */
+  code: string | null;
+}
+
+/**
+ * The same message `extractApiError` produces, carrying the backend's machine-readable
+ * `code` alongside it.
+ *
+ * Used only where the caller must tell one refusal from another (an over-capacity convert
+ * asks a question; a send refused for want of a WeChat channel says something different from
+ * one refused for want of an address). The response is cloned so the shared extractor still
+ * gets an unread body - this reads the code, it does not re-implement the message.
+ */
+export async function codedError(response: Response, fallback: string): Promise<CodedError> {
+  const clone = response.clone();
+  const message = await extractApiError(response, fallback);
+  const error = new Error(message) as CodedError;
+  error.code = null;
+  try {
+    const body = (await clone.json()) as { code?: unknown };
+    if (typeof body?.code === 'string') error.code = body.code;
+  } catch {
+    // A refusal with no JSON body carries no code. The message above still stands.
+  }
+  return error;
+}
+
 /**
  * Build URLSearchParams for DataGrid-backed list endpoints.
  * Uses page (1-based), limit, sort, dir, query, plus any extra params.

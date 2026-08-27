@@ -62,7 +62,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { codedError, extractApiError, type CodedError } from '@/lib/api-client';
 import {
   filenameFromContentDisposition,
   saveBlobAs,
@@ -376,34 +376,10 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** An API refusal the caller has to BRANCH on, not just show. */
-export interface CodedError extends Error {
-  /** `AppException`'s own `code` - e.g. `over_capacity`. Null when the body carries none. */
-  code: string | null;
-}
-
-/**
- * The same message `extractApiError` produces, carrying the backend's machine-readable
- * `code` alongside it.
- *
- * Used only where the caller must tell one refusal from another (an over-capacity convert
- * asks a question; every other refusal is just reported). The response is cloned so the
- * shared extractor still gets an unread body - this reads the code, it does not re-implement
- * the message.
- */
-async function codedError(res: Response, fallback: string): Promise<CodedError> {
-  const clone = res.clone();
-  const message = await extractApiError(res, fallback);
-  const error = new Error(message) as CodedError;
-  error.code = null;
-  try {
-    const body = (await clone.json()) as { code?: unknown };
-    if (typeof body?.code === 'string') error.code = body.code;
-  } catch {
-    // A refusal with no JSON body carries no code. The message above still stands.
-  }
-  return error;
-}
+/** Re-exported: `CodedError` and its reader moved to `lib/api-client`, beside
+ *  `extractApiError`, when the supplier-request send needed the same branch (S3, AC-C5).
+ *  One owner, one implementation; the callers already importing it from here keep working. */
+export type { CodedError };
 
 /** `{ "<document index>": "<invoice id>" }` - which blocks of THIS file revise which
  *  invoice already on file. One file holds several documents, so the answer is per

@@ -98,14 +98,22 @@ describe('useSendContainerRequest', () => {
       supplierId: 'sup-1',
       supplierName: 'Foshan Ceramics',
       lines: [{ product_id: 'p1', qty: 10 }],
+      options: { channel: 'email', recipients: ['sales@foshan.test'] },
     });
 
     await waitFor(() => expect(success).toHaveBeenCalled());
-    expect(sendContainerRequest).toHaveBeenCalledWith('plan-1', [{ product_id: 'p1', qty: 10 }]);
+    expect(sendContainerRequest).toHaveBeenCalledWith(
+      'plan-1',
+      [{ product_id: 'p1', qty: 10 }],
+      { channel: 'email', recipients: ['sales@foshan.test'] },
+    );
     expect(success).toHaveBeenCalledWith('Request sent to Foshan Ceramics.');
   });
 
-  it('surfaces the server\'s own failure message rather than a generic one', async () => {
+  it('leaves a refusal on the mutation for the dialog to print, not on a toast (AC-C5)', async () => {
+    // S3: the send dialog stays open on a refusal and says the reason beside the field that
+    // can fix it. A toast would say the same thing where it cannot be acted on, and would
+    // take it away while she is still reading it.
     sendContainerRequest.mockRejectedValue(new Error('This supplier has no email on file.'));
     const { result } = renderHook(() => useSendContainerRequest(), { wrapper });
 
@@ -114,7 +122,9 @@ describe('useSendContainerRequest', () => {
       lines: [{ product_id: 'p1', qty: 10 }],
     });
 
-    await waitFor(() => expect(error).toHaveBeenCalledWith('This supplier has no email on file.'));
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe('This supplier has no email on file.');
+    expect(error).not.toHaveBeenCalled();
     expect(success).not.toHaveBeenCalled();
   });
 });

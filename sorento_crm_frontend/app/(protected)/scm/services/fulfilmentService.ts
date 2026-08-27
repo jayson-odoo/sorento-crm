@@ -30,7 +30,12 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import {
+  buildDataGridParams,
+  codedError,
+  extractApiError,
+  type CodedError,
+} from '@/lib/api-client';
 import {
   filenameFromContentDisposition,
   saveBlobAs,
@@ -307,6 +312,9 @@ export interface LoadingPlanRecord {
   id: string;
   supplier_id: string;
   supplier_name: string | null;
+  /** The address the send dialog's To field opens with (AC-C2). Null when the supplier has
+   *  none on file, which is a state the dialog says out loud rather than hiding. */
+  supplier_email: string | null;
   /** When somebody started planning this container. The row has no number: it is named by
    *  supplier and start time, exactly as a reorder run is. */
   started_at: string;
@@ -320,8 +328,11 @@ export interface LoadingPlanRecord {
   /** The latest notice for this plan, so the list can say how and when it went out. */
   sent_channel: 'email' | 'chat' | null;
   sent_at: string | null;
-  /** When the supplier first opened the link. Always null until S3 lands the tracking. */
+  /** When the supplier first opened the link, and when they last did (AC-C8). Both read off
+   *  the plan's LATEST notice, so a resent plan never reports the opens of a retired link. */
   opened_at: string | null;
+  last_opened_at: string | null;
+  open_count: number;
   cancelled_at: string | null;
   cancelled_by: string | null;
   /** The typed quantities, `row_key -> qty`. Applied to `suggested_qty` by the build. */
@@ -441,6 +452,13 @@ export async function getFulfilmentSuppliers(
  * channel that has nothing to send to yet, both land there with a reason, and the document is
  * still produced so it can be sent by hand.
  */
+/** One WeChat contact a chat send was addressed to (`recipients` on a chat notice). */
+export interface NoticeChatRecipient {
+  respond_contact_id: string;
+  name: string | null;
+  channel: string;
+}
+
 export interface SupplierNotice {
   id: string;
   supplier_id: string;
@@ -449,6 +467,14 @@ export interface SupplierNotice {
   notice_type: string;
   channel: 'email' | 'chat';
   recipient: string | null;
+  /** Everybody this send named (AC-C2): the email addresses, or the one WeChat contact.
+   *  Null on a notice written before migration 442 that never had an address either. */
+  recipients: string[] | NoticeChatRecipient[] | null;
+  /** When the supplier FIRST opened the link. Never moves (AC-C7). */
+  opened_at: string | null;
+  last_opened_at: string | null;
+  /** Every open of the link and of the documents behind it. 0 = "Not opened yet". */
+  open_count: number;
   status: 'pending' | 'sent' | 'failed' | 'skipped';
   status_reason: string | null;
   sent_at: string | null;
@@ -782,16 +808,110 @@ export type ContainerRequestLine = { qty: number } & (
   | { product_set_id: string; product_id?: undefined }
 );
 
+/**
+ * How one send goes out (R9, AC-C1). ONE channel per send, never both.
+ *
+ * `recipients` omitted (undefined) means "the supplier's own address" - the shape a caller
+ * written before the send dialog existed already used. An EMPTY list is refused by the
+ * backend (`no_recipients`), because a dialog that has just asked who to send to cannot
+ * answer "nobody".
+ */
+export interface ContainerRequestSendOptions {
+  channel: 'email' | 'chat';
+  /** Email only. Every chip in the To field. */
+  recipients?: string[];
+  /** Chat only: `respond_contacts.id` of the WeChat contact this is addressed to. */
+  chatContactId?: string;
+  /** One line in the sender's own words, prepended to the bilingual body. Max 2000. */
+  note?: string;
+}
+
+/**
+ * Every way the backend can refuse a send (`supplier_notice_service.request_and_notify`).
+ *
+ * Named as a union rather than left as loose strings because the dialog SHOWS a different
+ * sentence per code, and a typo in one of them would otherwise fall through to the generic
+ * message with nothing to catch it.
+ */
+/** Re-exported so the send dialog reads its refusal off the service it called, rather than
+ *  reaching past the layer into `lib/api-client` for a type. */
+export type { CodedError };
+
+export type ContainerRequestSendRefusal =
+  | 'no_recipients'
+  | 'invalid_recipient'
+  | 'unknown_channel'
+  | 'wechat_channel_missing'
+  | 'chat_contact_required'
+  | 'chat_contact_not_found'
+  | 'chat_contact_unreachable'
+  | 'template_missing';
+
 export async function sendContainerRequest(
   planId: string,
   lines: ContainerRequestLine[],
+  options?: ContainerRequestSendOptions,
 ): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
   const res = await apiFetch('/api/v1/scm/container-requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId, lines }),
+    body: JSON.stringify({
+      plan_id: planId,
+      lines,
+      ...(options
+        ? {
+            channel: options.channel,
+            // `null` (not omitted) when the dialog holds no chips would be read as "the
+            // supplier's own address"; the dialog never sends that, but stating it here
+            // keeps the two ends honest about what null means.
+            recipients: options.channel === 'email' ? (options.recipients ?? null) : null,
+            chat_contact_id: options.chatContactId ?? null,
+            note: options.note?.trim() ? options.note.trim() : null,
+          }
+        : {}),
+    }),
   });
-  return readJson(res, 'Failed to send the request to the supplier');
+  // Coded, not just messaged: the dialog stays open on a refusal and says which of the eight
+  // things went wrong beside the field that can fix it (AC-C5).
+  if (!res.ok) throw await codedError(res, 'Failed to send the request to the supplier');
+  return (await res.json()) as { notices: SupplierNotice[]; document_filename: string };
+}
+
+/**
+ * Who a chat request can be sent to (AC-C3).
+ *
+ * `wechat_connected` is a fact about the WORKSPACE, not about this supplier: with no WeChat
+ * channel connected in Respond.io there is nothing any contact could be reached on, so the
+ * dialog disables the whole Chat option with `unavailable_reason` rather than offering a
+ * picker whose every choice would fail.
+ */
+export interface SupplierChatContact {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  channel: string | null;
+  /** This contact's number matches the supplier's - preselected in the picker. */
+  suggested: boolean;
+}
+
+export interface SupplierChatContacts {
+  data: SupplierChatContact[];
+  total: number;
+  wechat_connected: boolean;
+  wechat_channel_name: string | null;
+  unavailable_reason: string | null;
+}
+
+export async function getSupplierChatContacts(
+  supplierId: string,
+  query?: string,
+): Promise<SupplierChatContacts> {
+  const params = new URLSearchParams({ supplier_id: supplierId });
+  if (query?.trim()) params.set('query', query.trim());
+  const res = await apiFetch(
+    `/api/v1/scm/supplier-notices/chat-contacts?${params.toString()}`,
+  );
+  return readJson(res, 'Failed to load the chat contacts');
 }
 
 /**

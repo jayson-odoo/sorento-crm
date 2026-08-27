@@ -52,7 +52,7 @@ import AttachmentPreviewModal, {
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
-import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtDate } from '../../lib/format';
 import {
   useCancelLoadingPlan,
   useContainerRequestBuild,
@@ -67,11 +67,14 @@ import {
 import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
 import {
   deleteLoadingPlan,
+  type CodedError,
   type ContainerRequestRow,
+  type ContainerRequestSendOptions,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
+import { SendRequestDialog } from './SendRequestDialog';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
 
@@ -202,11 +205,11 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   const goBack = () => router.push('/scm/loading-plan');
 
-  /** Send saves first (R6), so the document and the screen can never disagree. */
-  const doSend = async () => {
+  /** Send saves first (R6, AC-A15), so the document and the screen can never disagree. */
+  const doSend = async (options: ContainerRequestSendOptions) => {
     if (editedCount > 0) await save.mutateAsync(editedMap);
     send.mutate(
-      { planId, supplierId, supplierName, lines },
+      { planId, supplierId, supplierName, lines, options },
       {
         onSuccess: () => {
           setEdits({});
@@ -420,22 +423,30 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         readOnly={readOnly}
       />
 
-      <ConfirmActionDialog
+      <SendRequestDialog
         open={sendOpen}
-        onOpenChange={setSendOpen}
-        title={`Send this request to ${supplierName}?`}
-        description={
-          <>
-            {lines.length} product{lines.length === 1 ? '' : 's'}, {fmtInt(totalQty)} units in
-            total.
-            {editedCount > 0 ? ' Your typed quantities are saved first.' : ''} The supplier
-            receives the request document by email when an address is on file; the document is
-            available either way.
-          </>
-        }
-        confirmLabel="Send"
+        onOpenChange={(next) => {
+          setSendOpen(next);
+          // A refusal belongs to the send that was refused: reopening the dialog must not
+          // greet her with the reason the LAST attempt failed.
+          if (!next) send.reset();
+        }}
+        supplierId={supplierId}
+        supplierName={supplierName}
+        supplierEmail={plan.supplier_email}
+        lineCount={lines.length}
+        totalQty={totalQty}
+        unsavedCount={editedCount}
         isBusy={send.isPending || save.isPending}
-        onConfirm={() => void doSend()}
+        error={(send.error as CodedError | null) ?? null}
+        onSend={({ channel, recipients, chatContactId, note }) =>
+          void doSend({
+            channel,
+            recipients,
+            chatContactId: chatContactId ?? undefined,
+            note,
+          })
+        }
       />
 
       <ConfirmActionDialog
