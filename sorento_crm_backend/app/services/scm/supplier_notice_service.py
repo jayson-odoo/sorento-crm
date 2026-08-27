@@ -560,6 +560,7 @@ def request_and_notify(
     supplier_id: str,
     lines: list[dict],
     actor: Optional[str] = None,
+    loading_plan_id: Optional[str] = None,
 ) -> dict:
     """Send a container request - the S13 sibling of `approve_and_notify`.
 
@@ -617,7 +618,9 @@ def request_and_notify(
     for channel in CHANNELS:
         notice = SupplierNotice(
             supplier_id=str(supplier_id),
-            loading_plan_id=None,
+            # The plan this ask belongs to (part 4, R1). It was None while a container
+            # request had no row behind it; the list's Sent column reads this link.
+            loading_plan_id=loading_plan_id,
             notice_type="container_request",
             channel=channel,
             document_filename=filename,

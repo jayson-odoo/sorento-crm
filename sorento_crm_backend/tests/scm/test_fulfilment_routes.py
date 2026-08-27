@@ -24,6 +24,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.scm import LoadingPlan
 from tests.scm.conftest import as_user, requires_pg, seed_user
 from tests.scm.test_outstanding_import_routes import as_company_user
 
@@ -247,69 +248,6 @@ def test_container_sizes_are_configured_not_hardcoded(scm_app):
     assert sizes and all({"code", "cbm", "is_default"} <= set(s) for s in sizes)
 
 
-def test_a_plan_is_created_with_its_lines_and_fill_rate(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    supplier_id, code = _seed(db)
-    client = TestClient(app)
-    client.post(
-        "/api/v1/scm/supplier-inventory/apply",
-        files={"file": ("stock.xlsx", _workbook([[code, "a", 10, 0, 1.0, ""]]), _XLSX)},
-        data={"supplier_id": supplier_id},
-    )
-
-    r = client.post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 1, "container_cbm": 6},
-    )
-
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["capacity_cbm"] == 6
-    assert body["planned_cbm"] == 6
-    assert body["fill_rate"] == 1.0
-    assert body["lines"][0]["status"] == "partial"
-    assert body["lines"][0]["deferral_reason"] == "over_capacity"
-
-
-def test_changing_the_container_count_re_runs_without_re_uploading(scm_app):
-    # AC-E6, over the wire: same plan id, more capacity, no file in the request.
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    supplier_id, code = _seed(db)
-    client = TestClient(app)
-    client.post(
-        "/api/v1/scm/supplier-inventory/apply",
-        files={"file": ("stock.xlsx", _workbook([[code, "a", 10, 0, 1.0, ""]]), _XLSX)},
-        data={"supplier_id": supplier_id},
-    )
-    plan = client.post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 1, "container_cbm": 6},
-    ).json()
-
-    r = client.patch(f"/api/v1/scm/loading-plans/{plan['id']}", json={"container_count": 2})
-
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["id"] == plan["id"]
-    assert body["capacity_cbm"] == 12
-    assert body["lines"][0]["status"] == "allocated"
-
-
-def test_a_container_size_nobody_configured_is_a_400_not_a_silent_default(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    supplier_id, _ = _seed(db)
-
-    r = TestClient(app).post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_type": "45ZZ"},
-    )
-
-    assert r.status_code == 400, r.text
-
-
 def test_a_plan_that_does_not_exist_is_a_404(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
@@ -319,60 +257,17 @@ def test_a_plan_that_does_not_exist_is_a_404(scm_app):
     assert r.status_code == 404
 
 
-def test_a_plan_is_hard_deleted_with_its_lines(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    supplier_id, code = _seed(db)
-    client = TestClient(app)
-    client.post(
-        "/api/v1/scm/supplier-inventory/apply",
-        files={"file": ("stock.xlsx", _workbook([[code, "a", 10, 0, 1.0, ""]]), _XLSX)},
-        data={"supplier_id": supplier_id},
-    )
-    plan = client.post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 1, "container_cbm": 6},
-    ).json()
-
-    r = client.delete(f"/api/v1/scm/loading-plans/{plan['id']}")
-
-    assert r.status_code == 204
-    assert db.execute(
-        text("SELECT count(*) FROM scm.loading_plan_line WHERE plan_id = :p"), {"p": plan["id"]}
-    ).scalar() == 0
-
-
-def test_creating_a_plan_requires_the_operator_permission(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_user(app, gcu, gcuk, seed_user(db, None))
-
-    r = TestClient(app).post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": str(uuid.uuid4()), "container_count": 1, "container_cbm": 6},
-    )
-
-    assert r.status_code == 403, r.text
-
-
-def test_a_plan_with_no_containers_is_rejected_by_validation(scm_app):
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    supplier_id, _ = _seed(db)
-
-    r = TestClient(app).post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 0, "container_cbm": 6},
-    )
-
-    assert r.status_code == 422, r.text
-
-
 # --------------------------------------------------------------------------- #
 # container sizes are configuration (AC-E3)
 # --------------------------------------------------------------------------- #
 
 
 def test_a_container_size_can_be_added_and_becomes_plannable(scm_app):
+    # The plan ROUTE no longer runs the CBM fit (part 4, R1: `POST /loading-plans` starts a
+    # record), so what a new size has to satisfy is the allocator that reads it. The fit
+    # itself is `test_loading_plan.py`'s subject and is not re-derived here.
+    from app.services.scm import loading_plan_service
+
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     supplier_id, code = _seed(db)
@@ -390,12 +285,10 @@ def test_a_container_size_can_be_added_and_becomes_plannable(scm_app):
     )
 
     assert created.status_code == 201, created.text
-    plan = client.post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 1, "container_type": size_code},
+    plan = loading_plan_service.build(
+        db, supplier_id=supplier_id, container_count=1, container_type=size_code
     )
-    assert plan.status_code == 201, plan.text
-    assert plan.json()["capacity_cbm"] == 4
+    assert float(plan.capacity_cbm) == 4
 
 
 def test_two_sizes_cannot_share_a_code(scm_app):
@@ -428,6 +321,8 @@ def test_only_one_size_is_the_default(scm_app):
 
 
 def test_a_size_is_hard_deleted_and_the_plans_built_from_it_keep_their_volume(scm_app):
+    from app.services.scm import loading_plan_service
+
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     supplier_id, code = _seed(db)
@@ -442,15 +337,16 @@ def test_a_size_is_hard_deleted_and_the_plans_built_from_it_keep_their_volume(sc
         "/api/v1/scm/container-sizes", json={"code": size_code, "cbm": 4}
     ).json()["sizes"]
     size_id = next(s["id"] for s in size if s["code"] == size_code)
-    plan = client.post(
-        "/api/v1/scm/loading-plans",
-        json={"supplier_id": supplier_id, "container_count": 1, "container_type": size_code},
-    ).json()
+    plan = loading_plan_service.build(
+        db, supplier_id=supplier_id, container_count=1, container_type=size_code
+    )
+    plan_id = str(plan.id)
 
     assert client.delete(f"/api/v1/scm/container-sizes/{size_id}").status_code == 204
 
-    still = client.get(f"/api/v1/scm/loading-plans/{plan['id']}").json()
-    assert still["capacity_cbm"] == 4
+    db.expire_all()
+    still = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).one()
+    assert float(still.capacity_cbm) == 4
 
 
 def test_editing_a_size_requires_the_operator_permission(scm_app):

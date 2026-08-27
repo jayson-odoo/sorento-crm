@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -43,12 +43,15 @@ def _actor(user: Optional[dict]) -> Optional[str]:
 
 
 class ContainerRequestBuildBody(BaseModel):
-    supplier_id: str
-    # "Plan until" (captain, 20 Aug): mirrors the reorder run's own `plan_horizon_date`
-    # (`app.schemas.scm_reorder`), but this build has no stored run row to carry a column on -
-    # it recomputes on every call - so the horizon travels as a request field instead. `None`
-    # (omitted, the default) means no cutoff, today's behaviour.
-    plan_horizon_date: Optional[date] = None
+    """Which PLAN to build (part 4, R2).
+
+    It used to be `{supplier_id, plan_horizon_date}`, because the build recomputed on every
+    call and had no row to read them off. It has one now, and the row is also where the typed
+    quantities live - so a body naming only a supplier could not say which plan's edits to
+    apply. The old form is refused by validation; the loading-plan page was its only caller.
+    """
+
+    plan_id: str
 
 
 class ContainerRequestLine(BaseModel):
@@ -71,7 +74,7 @@ class ContainerRequestLine(BaseModel):
 
 
 class ContainerRequestBody(BaseModel):
-    supplier_id: str
+    plan_id: str
     lines: list[ContainerRequestLine] = Field(
         ..., min_length=1, description="Ms Tee's reviewed lines, edited quantities included."
     )
@@ -84,19 +87,19 @@ def build_container_request(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """What to ask this supplier for, ranked by the active priority policy. Persists nothing.
+    """What to ask this plan's supplier for, ranked by the active priority policy.
 
-    `include_lines` adds the open SO lines behind every demand row (see the service
-    docstring) - off by default since most callers only need the aggregate rows.
-    `body.plan_horizon_date` narrows open SO need to what is required on or before it
-    (undated demand always counted) - see `container_request_service.build`.
+    Reads the supplier and the sales order cut-off off the plan row and applies its saved
+    quantities, so the grid, the document and the send can never disagree about what is being
+    asked for. `include_lines` adds the open SO lines behind every demand row - off by default
+    since most callers only need the aggregate rows.
     """
-    return container_request_service.build(
-        db,
-        supplier_id=body.supplier_id,
-        include_lines=include_lines,
-        plan_horizon_date=body.plan_horizon_date,
-    )
+    try:
+        return container_request_service.build_for_plan(
+            db, plan_id=body.plan_id, include_lines=include_lines
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 @router.get("/container-requests/history")
@@ -137,9 +140,13 @@ def container_request_document(
     under a path parameter is the shadowing trap (the SLA lesson), and there is no
     `/container-requests/{id}` here.
     """
+    try:
+        plan = container_request_service._plan_or_404(db, body.plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     content, filename = supplier_notice_service.request_document(
         db,
-        supplier_id=body.supplier_id,
+        supplier_id=str(plan.supplier_id),
         lines=[ln.model_dump() for ln in body.lines],
         fmt=format,
     )
@@ -156,10 +163,17 @@ def send_container_request(
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Send the reviewed request: one notice per channel, the same act as approving a plan."""
-    return container_request_service.send(
-        db,
-        supplier_id=body.supplier_id,
-        lines=[ln.model_dump() for ln in body.lines],
-        actor=_actor(_user),
-    )
+    """Send the reviewed request: one notice per channel, the same act as approving a plan.
+
+    The notices carry `loading_plan_id` and the plan flips to `sent`, so the list can say what
+    went out and when, and the plan can no longer be deleted (Q5).
+    """
+    try:
+        return container_request_service.send(
+            db,
+            plan_id=body.plan_id,
+            lines=[ln.model_dump() for ln in body.lines],
+            actor=_actor(_user),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

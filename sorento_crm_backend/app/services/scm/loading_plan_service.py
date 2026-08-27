@@ -426,10 +426,13 @@ def _supplier_name(db: Session, supplier_id: str) -> Optional[str]:
 
 
 def serialize(db: Session, plan: LoadingPlan, *, with_lines: bool = True) -> dict[str, Any]:
+    """The stage-2 CBM fit, with the record fields alongside it.
+
+    Spreads `record_dict` rather than re-listing its keys: one table, one row, so a lifecycle
+    column added below must not reach the FE through one builder and not the other.
+    """
     out: dict[str, Any] = {
-        "id": str(plan.id),
-        "supplier_id": str(plan.supplier_id),
-        "supplier_name": _supplier_name(db, str(plan.supplier_id)),
+        **record_dict(db, plan),
         "container_type": plan.container_type,
         "container_count": plan.container_count,
         "container_cbm": _f(plan.container_cbm),
@@ -509,3 +512,297 @@ def unfinished_at_supplier(db: Session, supplier_id: str) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# =========================================================================== #
+# The plan as a RECORD (part 4, R1-R6)
+#
+# Everything above this line is the stage-2 CBM fit. Everything below is the plan a buyer
+# actually works on: started, edited, sent or cancelled. They share a table because they are
+# the same thing at two stages (R1), and `supplier_notices.loading_plan_id` already points at
+# it - a second "container plan" table would have been this row under a second name.
+# =========================================================================== #
+
+#: What a plan can be. `opened` is deliberately absent: an open is an event that repeats, and
+#: a status that flipped back and forth would lie about the decision.
+PLAN_STATUSES = ("planning", "sent", "cancelled")
+
+#: The chip the list opens on. A cancelled plan is a decision already made, and a list that
+#: opens on it hides the work in front of somebody.
+ACTIVE_STATUSES = ("planning", "sent")
+
+DOCUMENT_KINDS = ("stock_list", "proforma", "none")
+
+#: What the list may sort by, mapped to the column that answers it. A caller-supplied name
+#: that is not here falls back to the default order rather than reaching the SQL.
+_SORTABLE = {
+    "started_at": "created_at",
+    "supplier_name": "supplier_name",
+    "plan_horizon_date": "plan_horizon_date",
+    "to_request_qty": "to_request_qty",
+    "sent_at": "sent_at",
+    "status": "status",
+}
+
+
+def _latest_notice_channels(db: Session, plan_ids: list[str]) -> dict[str, dict]:
+    """The newest notice per plan: which channel it went on, and when.
+
+    One query for the whole page rather than one per row - the list prints this in a column,
+    and a per-row lookup is what turns a 25-row page into 25 round trips.
+    """
+    if not plan_ids:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (n.loading_plan_id)
+                   n.loading_plan_id::text AS plan_id, n.channel, n.sent_at, n.created_at
+              FROM supplier_notices n
+             WHERE n.loading_plan_id = ANY(CAST(:ids AS uuid[]))
+             ORDER BY n.loading_plan_id,
+                      n.sent_at DESC NULLS LAST, n.created_at DESC, n.id DESC
+            """
+        ),
+        {"ids": plan_ids},
+    ).mappings().all()
+    return {
+        r["plan_id"]: {
+            "channel": r["channel"],
+            "sent_at": r["sent_at"].isoformat() if r["sent_at"] else None,
+        }
+        for r in rows
+    }
+
+
+def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
+    """The newest un-converted proforma per supplier, for the Document label.
+
+    Read at display time rather than pinned on the plan: unlike the stock list (whose own
+    snapshot date IS pinned, on `inventory_as_of`), a proforma stand-in has no column of its
+    own here, and the drift it can show is the same one R2 already states in the open - the
+    supplier's current statement is what a plan reads.
+    """
+    if not supplier_ids:
+        return {}
+    rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (pi.supplier_id)
+                   pi.supplier_id::text AS supplier_id, pi.pi_number
+              FROM scm.proforma_invoice pi
+             WHERE pi.supplier_id = ANY(CAST(:ids AS uuid[]))
+               AND COALESCE(pi.status, 'current') = 'current'
+             ORDER BY pi.supplier_id, pi.invoice_date DESC NULLS LAST,
+                      pi.created_at DESC, pi.id DESC
+            """
+        ),
+        {"ids": supplier_ids},
+    ).mappings().all()
+    return {r["supplier_id"]: r["pi_number"] for r in rows}
+
+
+def _document_label(plan: LoadingPlan, pi_number: Optional[str]) -> str:
+    """Ready to print. "No file" is a real answer, not a missing one."""
+    if plan.document_kind == "stock_list":
+        when = plan.inventory_as_of.strftime("%d/%m/%Y") if plan.inventory_as_of else None
+        return f"Stock list {when}" if when else "Stock list"
+    if plan.document_kind == "proforma":
+        return f"Proforma invoice {pi_number}" if pi_number else "Proforma invoice"
+    return "No file"
+
+
+def record_dict(
+    db: Session,
+    plan: LoadingPlan,
+    *,
+    supplier_name: Optional[str] = None,
+    notice: Optional[dict] = None,
+    pi_number: Optional[str] = None,
+) -> dict[str, Any]:
+    """One plan, in the shape the list and the record page both read.
+
+    ONE builder for both, so a column cannot reach the grid and be missing from the record
+    behind it. `supplier_name` / `notice` / `pi_number` are passed in when a caller has
+    already fetched them for a whole page; a single-row caller lets them be looked up here.
+    """
+    if supplier_name is None:
+        supplier_name = _supplier_name(db, str(plan.supplier_id))
+    if notice is None:
+        notice = _latest_notice_channels(db, [str(plan.id)]).get(str(plan.id))
+    if pi_number is None and plan.document_kind == "proforma":
+        pi_number = _proforma_numbers(db, [str(plan.supplier_id)]).get(str(plan.supplier_id))
+    return {
+        "id": str(plan.id),
+        "supplier_id": str(plan.supplier_id),
+        "supplier_name": supplier_name,
+        # The plan is named by supplier + start time, exactly as a reorder run is. There is
+        # no plan number to mint and nothing for a person to memorise.
+        "started_at": plan.created_at.isoformat() if plan.created_at else None,
+        "plan_horizon_date": (
+            plan.plan_horizon_date.isoformat() if plan.plan_horizon_date else None
+        ),
+        "document_kind": plan.document_kind,
+        "document_label": _document_label(plan, pi_number),
+        "source_attachment_id": (
+            str(plan.source_attachment_id) if plan.source_attachment_id else None
+        ),
+        "status": plan.status,
+        "sent_channel": (notice or {}).get("channel"),
+        "sent_at": plan.sent_at.isoformat() if plan.sent_at else None,
+        # S3 lands open tracking on the notice. Until then the column is honestly empty
+        # rather than carrying an invented figure.
+        "opened_at": None,
+        "cancelled_at": plan.cancelled_at.isoformat() if plan.cancelled_at else None,
+        "cancelled_by": plan.cancelled_by,
+        "line_edits": plan.line_edits or {},
+        "to_request_qty": _f(plan.to_request_qty),
+        "to_request_cbm": _f(plan.to_request_cbm),
+    }
+
+
+def list_records(
+    db: Session,
+    *,
+    page: int = 1,
+    limit: int = 25,
+    sort: Optional[str] = None,
+    direction: str = "desc",
+    query: Optional[str] = None,
+    status: Optional[str] = None,
+) -> dict[str, Any]:
+    """The plans list (R3): server-paged, server-sorted, searched by supplier name."""
+    from app.models.procurement import Supplier
+
+    q = db.query(LoadingPlan, Supplier.supplier_name).join(
+        Supplier, Supplier.id == LoadingPlan.supplier_id
+    )
+    if status in (None, "", "active"):
+        q = q.filter(LoadingPlan.status.in_(ACTIVE_STATUSES))
+    elif status in PLAN_STATUSES:
+        q = q.filter(LoadingPlan.status == status)
+    if query and query.strip():
+        q = q.filter(Supplier.supplier_name.ilike(f"%{query.strip()}%"))
+
+    total = q.count()
+    column = _SORTABLE.get(sort or "", "created_at")
+    order = (
+        Supplier.supplier_name
+        if column == "supplier_name"
+        else getattr(LoadingPlan, column)
+    )
+    order = order.desc() if direction == "desc" else order.asc()
+    # Ended with the id, because two plans started in the same transaction share `created_at`
+    # and a non-total order pages differently on every request.
+    rows = (
+        q.order_by(order, LoadingPlan.id)
+        .offset(max(page - 1, 0) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    plans = [p for p, _name in rows]
+    notices = _latest_notice_channels(db, [str(p.id) for p in plans])
+    numbers = _proforma_numbers(
+        db, sorted({str(p.supplier_id) for p in plans if p.document_kind == "proforma"})
+    )
+    return {
+        "data": [
+            record_dict(
+                db,
+                p,
+                supplier_name=name,
+                notice=notices.get(str(p.id)) or {},
+                pi_number=numbers.get(str(p.supplier_id)),
+            )
+            for p, name in rows
+        ],
+        "total": total,
+    }
+
+
+def create_record(
+    db: Session,
+    *,
+    supplier_id: str,
+    plan_horizon_date: Optional[date],
+    document_kind: str,
+    source_attachment_id: Optional[str],
+    actor: Optional[str] = None,
+) -> LoadingPlan:
+    """Start a plan. Raises `ValueError` when the supplier is not one this caller can see.
+
+    `inventory_as_of` is stamped from the supplier's CURRENT stock-list snapshot, which is
+    what pins the Document label: a newer list uploaded later changes the plan's numbers (R2,
+    stated in the open) but must not rewrite which file this plan was started from.
+    """
+    if _supplier_name(db, supplier_id) is None:
+        raise ValueError("Supplier not found")
+    as_of = None
+    if document_kind == "stock_list":
+        as_of = db.execute(
+            text(
+                "SELECT max(as_of) FROM scm.supplier_inventory WHERE supplier_id = CAST(:s AS uuid)"
+            ),
+            {"s": supplier_id},
+        ).scalar()
+    plan = LoadingPlan(
+        id=str(uuid.uuid4()),
+        supplier_id=supplier_id,
+        status="planning",
+        plan_horizon_date=plan_horizon_date,
+        document_kind=document_kind,
+        source_attachment_id=source_attachment_id,
+        inventory_as_of=as_of,
+        line_edits={},
+        created_by=actor,
+    )
+    db.add(plan)
+    db.flush()
+    return plan
+
+
+def has_notices(db: Session, plan_id: str) -> bool:
+    return bool(
+        db.execute(
+            text("SELECT 1 FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) LIMIT 1"),
+            {"p": plan_id},
+        ).first()
+    )
+
+
+def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None) -> LoadingPlan:
+    """Cancel, and retire the link the supplier still holds (Q4).
+
+    Both halves, always: a cancelled plan whose link still answers is a supplier packing an
+    ask nobody is going to place.
+    """
+    from app.services.scm import supplier_notice_service
+
+    plan.status = "cancelled"
+    plan.cancelled_at = datetime.utcnow()
+    plan.cancelled_by = actor
+    supplier_notice_service._retire_public_tokens(db, str(plan.supplier_id))
+    db.flush()
+    return plan
+
+
+def save_edits(db: Session, plan: LoadingPlan, edits: dict[str, float]) -> LoadingPlan:
+    """Replace the typed quantities WHOLE (R6). Not a patch: what is not in the map is not an
+    edit any more, so a cleared cell cannot survive as a stale override."""
+    plan.line_edits = {str(k): float(v) for k, v in (edits or {}).items()}
+    db.flush()
+    return plan
+
+
+def stamp_request_totals(
+    db: Session, plan: LoadingPlan, *, qty: float, cbm: Optional[float]
+) -> None:
+    """What the last build of this plan asked for, cached for the list's "To request" column.
+
+    Written by the build rather than re-derived per listed row: the suggestion is many queries
+    over the supplier's whole stock list, and a 25-row page would be 25 of them.
+    """
+    plan.to_request_qty = qty
+    plan.to_request_cbm = cbm
+    db.flush()

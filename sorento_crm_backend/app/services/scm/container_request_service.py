@@ -49,6 +49,7 @@ Two moves, two functions:
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import Any, Optional
 
@@ -1009,6 +1010,65 @@ def _sources(
     }
 
 
+def _plan_or_404(db: Session, plan_id: str):
+    """The plan row this build belongs to (R2). `ValueError` when it is not this caller's.
+
+    A malformed id takes the same branch as an unknown one: the column is a uuid, so letting
+    the value reach the query turns a typo in a URL into a 500.
+    """
+    from app.models.scm import LoadingPlan
+
+    try:
+        uuid.UUID(str(plan_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("Loading plan not found")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
+    if plan is None:
+        raise ValueError("Loading plan not found")
+    return plan
+
+
+def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) -> dict:
+    """The same read, scoped to a plan (R2).
+
+    Supplier and cut-off are read off the ROW rather than the request, the plan's saved
+    quantities are applied to `suggested_qty` before the payload leaves, and the engine's own
+    answer rides along as `engine_qty` so the formula tooltip and `Save (N)` still have it.
+
+    The supplier stock snapshot stays per supplier and is replaced whole (the S7 rule), so a
+    newer stock list changes an older open plan's numbers. That is the correct reading - the
+    plan asks for what the supplier holds NOW - and it is why a plan somebody is done with is
+    cancelled rather than left open.
+
+    The totals are stamped back onto the row for the list's "To request" column: it is a cache
+    of a derived figure, because re-deriving it per listed row is one full suggestion run per
+    row of the grid.
+    """
+    from app.services.scm import loading_plan_service
+
+    plan = _plan_or_404(db, plan_id)
+    out = build(
+        db,
+        supplier_id=str(plan.supplier_id),
+        include_lines=include_lines,
+        plan_horizon_date=plan.plan_horizon_date,
+    )
+    edits = plan.line_edits or {}
+    total_qty = 0.0
+    total_cbm = 0.0
+    for row in out["rows"]:
+        row["engine_qty"] = row["suggested_qty"]
+        if row["row_key"] in edits:
+            row["suggested_qty"] = float(edits[row["row_key"]])
+        total_qty += row["suggested_qty"]
+        if row.get("cbm_per_unit") is not None:
+            total_cbm += row["suggested_qty"] * float(row["cbm_per_unit"])
+    loading_plan_service.stamp_request_totals(db, plan, qty=total_qty, cbm=total_cbm)
+    db.commit()
+    out["plan"] = loading_plan_service.record_dict(db, plan)
+    return out
+
+
 def build(
     db: Session,
     *,
@@ -1367,18 +1427,30 @@ def history(
     return result
 
 
-def send(db: Session, *, supplier_id: str, lines: list[dict], actor: Optional[str] = None) -> dict:
-    """Send the reviewed request. Thin wrapper - the S8 notice machinery lives in
+def send(db: Session, *, plan_id: str, lines: list[dict], actor: Optional[str] = None) -> dict:
+    """Send the reviewed request for one plan. Thin wrapper - the S8 notice machinery lives in
     `supplier_notice_service.request_and_notify`, so a request and a Loading Plan approval
     cannot drift into two different ways of talking to a supplier.
 
-    The supplier is re-checked here too (company-scoped, same as `build`), even though
-    `request_and_notify` checks it again internally: a caller that skipped `build` (or whose
-    supplier moved company between the two calls) still gets a clean 404 before anything is
-    rendered or queued, rather than reaching the notice machinery on a value this stage never
-    validated.
+    The plan is what is sent, not a supplier (R2): its notices carry `loading_plan_id`, so the
+    list can say when and on which channel the ask went out, and the row flips to `sent`. The
+    supplier is re-checked here too (company-scoped, same as `build`), so a plan whose supplier
+    moved company between the two calls fails cleanly before anything is rendered or queued.
     """
+    from datetime import datetime as _datetime
+
+    from app.services.scm import loading_plan_service
+
+    plan = _plan_or_404(db, plan_id)
+    supplier_id = str(plan.supplier_id)
     _supplier(db, supplier_id)
-    return supplier_notice_service.request_and_notify(
-        db, supplier_id=supplier_id, lines=lines, actor=actor
+    out = supplier_notice_service.request_and_notify(
+        db, supplier_id=supplier_id, lines=lines, actor=actor, loading_plan_id=plan_id
     )
+    # After the notices, never before: a send that failed to render must not leave a plan
+    # claiming it went out.
+    plan.status = "sent"
+    plan.sent_at = _datetime.utcnow()
+    db.commit()
+    out["plan"] = loading_plan_service.record_dict(db, plan)
+    return out

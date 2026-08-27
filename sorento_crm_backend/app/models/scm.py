@@ -1294,15 +1294,18 @@ class SupplierInventory(Base, CompanyScopedMixin):
 
 
 class LoadingPlan(Base, CompanyScopedMixin):
-    """One attempt at filling containers at one supplier, on one day.
+    """One container plan at one supplier: what to ask them for, and what became of the ask.
 
-    Kept as a row rather than computed on demand because the container count is a DECISION
-    (AC-E6: change it and the plan re-runs), and because what Ms Tee sent the supplier has to
-    still be readable after the order book moves underneath it.
+    THE plan row since part 4 (R1). It was a stage-2 CBM fit before that, and the columns
+    below still carry both halves: `status` / `plan_horizon_date` / `document_kind` /
+    `line_edits` are the plan a buyer works on, and `container_*` / `planned_cbm` /
+    `deferred_count` are the CBM fit that was cut on the captain's 20 Aug ruling. A second
+    "container plan" table would have been the same row under a second name, and
+    `supplier_notices.loading_plan_id` already points here.
 
-    Capacity is `container_count * container_cbm` and both halves are stored, not just the
-    product: "three 40HQ" is the sentence a person says, and a plan that only remembers
-    "196.5 cbm" cannot be re-read or re-run.
+    Kept as a row rather than computed on demand because two people have to be able to open
+    the same plan, and because what was sent to a supplier has to stay readable after the
+    order book moves underneath it.
     """
     __tablename__ = "loading_plan"
 
@@ -1312,8 +1315,33 @@ class LoadingPlan(Base, CompanyScopedMixin):
     )
     container_type = Column(String(30), nullable=True)
     container_count = Column(Integer, nullable=False, server_default=text("1"))
-    container_cbm = Column(Numeric, nullable=False)
-    capacity_cbm = Column(Numeric, nullable=False)
+    #: Nullable since 441: the CBM fit is the stage-2 half, and a plan started from a stock
+    #: list has no container chosen yet (the supplier decides that when they pack).
+    container_cbm = Column(Numeric, nullable=True)
+    capacity_cbm = Column(Numeric, nullable=True)
+
+    #: `planning` -> `sent` (a notice went out) or `cancelled`. Never `opened`: an open is an
+    #: event that repeats, and a status that flipped back and forth would lie.
+    status = Column(String(20), nullable=False, server_default=text("'planning'"))
+    #: "Sales order cut-off". NULL means every open order counts, the same words and the same
+    #: rule the reorder run uses.
+    plan_horizon_date = Column(Date, nullable=True)
+    #: `stock_list` | `proforma` | `none` - which document the plan was started from.
+    document_kind = Column(String(20), nullable=False, server_default=text("'none'"))
+    #: The retained sheet itself, so the record can offer "View uploaded list". Not an FK:
+    #: attachments are pruned on their own schedule and a pruned file must not delete a plan.
+    source_attachment_id = Column(UUID(as_uuid=False), nullable=True)
+    #: The typed quantities, `row_key -> qty`. Replaced whole on save (R6), never patched: a
+    #: cleared cell must not survive as a stale override.
+    line_edits = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    #: What the LAST build of this plan asked for. A cache of a derived figure, so the list
+    #: can print a "To request" column without running one full suggestion per listed row.
+    to_request_qty = Column(Numeric, nullable=True)
+    to_request_cbm = Column(Numeric, nullable=True)
+
+    sent_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String, nullable=True)
 
     policy_id = Column(
         UUID(as_uuid=False), ForeignKey("scm.priority_policy.id", ondelete="SET NULL"),
