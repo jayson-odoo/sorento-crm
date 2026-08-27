@@ -47,8 +47,15 @@ def _no_pdf_no_storage(monkeypatch):
 
 
 def _world(db) -> World:
-    """One supplier holding one product the order book owes a customer."""
+    """One supplier holding one product the order book owes a customer.
+
+    The supplier carries an address because a send with nothing to address is refused since
+    S3 (422 `no_recipients`, AC-C2) - these tests are about the plan's lifecycle, not about
+    who the request is addressed to.
+    """
     w = World(db)
+    w.supplier.email = f"{MARKER}-supplier@example.test"
+    db.flush()
     w.stock("A", packed=50, cbm=0.5)
     _so(db, w, "A", 20)
     return w

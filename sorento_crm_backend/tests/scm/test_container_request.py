@@ -930,7 +930,7 @@ def test_send_goes_to_every_address_the_sender_named(scm_app):
     r = TestClient(app).post(
         SEND_URL,
         json={
-            "supplier_id": str(w.supplier.id),
+            "plan_id": _plan(db, w),
             "lines": [{"product_id": str(product.id), "qty": 5}],
             "channel": "email",
             "recipients": [f"{MARKER}-one@example.com", f"{MARKER}-two@example.com"],
@@ -956,7 +956,7 @@ def test_send_refuses_an_address_that_is_not_one(scm_app):
     r = TestClient(app).post(
         SEND_URL,
         json={
-            "supplier_id": str(w.supplier.id),
+            "plan_id": _plan(db, w),
             "lines": [{"product_id": str(product.id), "qty": 5}],
             "recipients": ["not-an-address"],
         },
