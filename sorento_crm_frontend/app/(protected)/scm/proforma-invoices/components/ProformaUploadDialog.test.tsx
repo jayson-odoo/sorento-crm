@@ -706,3 +706,64 @@ describe('ProformaUploadDialog - unticking the offer files a new invoice', () =>
     );
   });
 });
+
+/**
+ * Opened from the loading plan, the supplier is already known - the plan was built for it,
+ * and the proforma is what stands in for a missing stock list (Q2). Asking again would let
+ * the document be filed against a supplier the plan behind the dialog knows nothing about.
+ */
+describe('ProformaUploadDialog - a supplier the caller already knows', () => {
+  function openDialogForSupplier() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onApplied = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProformaUploadDialog
+          open
+          onOpenChange={() => {}}
+          onApplied={onApplied}
+          supplierId="sup-1"
+          supplierOption={{ value: 'sup-1', label: 'Kailu Hardware Factory' }}
+        />
+      </QueryClientProvider>,
+    );
+    return { onApplied };
+  }
+
+  it('states the supplier instead of offering the picker', () => {
+    openDialogForSupplier();
+
+    expect(screen.queryByLabelText('Supplier')).not.toBeInTheDocument();
+    expect(screen.getByTestId('proforma-fixed-supplier')).toHaveTextContent(
+      'Kailu Hardware Factory',
+    );
+  });
+
+  it('lets the file be dropped straight away, with no pick to make first', () => {
+    openDialogForSupplier();
+    pickFile();
+
+    expect(testButton()).toBeEnabled();
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('carries that supplier on the preview and the apply', async () => {
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [],
+      summary: {},
+    });
+    openDialogForSupplier();
+    const file = pickFile();
+
+    // Read on pick (R13): no Test click, the dialog probes for a revision candidate itself.
+    await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null));
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() =>
+      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null, {}, []),
+    );
+  });
+});

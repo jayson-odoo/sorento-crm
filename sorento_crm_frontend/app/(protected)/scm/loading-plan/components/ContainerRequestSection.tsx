@@ -14,6 +14,7 @@ import {
 import {
   Check,
   Download,
+  FileText,
   Info,
   LayoutGrid,
   Link2,
@@ -206,6 +207,7 @@ export function ContainerRequestSection({
   supplierName,
   planHorizonDate = null,
   onUploadStockList,
+  onUploadProforma,
 }: {
   supplierId: string;
   supplierName: string;
@@ -213,6 +215,9 @@ export function ContainerRequestSection({
    *  means no cutoff, today's behaviour. */
   planHorizonDate?: string | null;
   onUploadStockList: () => void;
+  /** The other document that answers "what do they hold" (Q2). Optional so a caller with no
+   *  proforma dialog behind it keeps the single CTA. */
+  onUploadProforma?: () => void;
 }) {
   const build = useContainerRequestBuild(supplierId, planHorizonDate);
   const send = useSendContainerRequest();
@@ -806,10 +811,18 @@ export function ContainerRequestSection({
           <p className="text-2xs text-muted-foreground">
             No open customer demand on what they supply, and nothing of theirs on file.
           </p>
-          <Button size="sm" variant="outline" onClick={onUploadStockList}>
-            <Upload className="size-4" />
-            Upload stock list
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button size="sm" variant="outline" onClick={onUploadStockList}>
+              <Upload className="size-4" />
+              Upload stock list
+            </Button>
+            {onUploadProforma ? (
+              <Button size="sm" variant="outline" onClick={onUploadProforma}>
+                <FileText className="size-4" />
+                Upload proforma invoice
+              </Button>
+            ) : null}
+          </div>
         </Card>
         {unmatchedCard}
         {noticesCard}

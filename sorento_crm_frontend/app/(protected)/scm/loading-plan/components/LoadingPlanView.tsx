@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Container, Eye, Upload } from 'lucide-react';
+import { Container, Eye, FileText, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { useStockListApplied, useSupplierStockListFile } from '../../hooks/useFulfilment';
 import { getFulfilmentSuppliers } from '../../services/fulfilmentService';
+import { ProformaUploadDialog } from '../../proforma-invoices/components/ProformaUploadDialog';
 import { StockListUploadDialog } from './StockListUploadDialog';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
@@ -46,6 +47,10 @@ export function LoadingPlanView() {
   // only place that reads it.
   const [planHorizonDate, setPlanHorizonDate] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
+  // The same supplier's proforma, uploaded from here (Q2): where there is no stock list the
+  // build reads their newest un-converted PI as what they hold, so the document that makes
+  // the plan readable is asked for on the screen that needs it, not on another one.
+  const [proformaUploadOpen, setProformaUploadOpen] = useState(false);
   const [stockListPreviewOpen, setStockListPreviewOpen] = useState(false);
 
   const stockListFile = useSupplierStockListFile(supplierId || null);
@@ -120,6 +125,15 @@ export function LoadingPlanView() {
               <Upload className="size-4" />
               Upload stock list
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => setProformaUploadOpen(true)}
+              disabled={!supplierId}
+              data-testid="open-proforma-upload"
+            >
+              <FileText className="size-4" />
+              Upload proforma invoice
+            </Button>
           </div>
         </div>
       </Card>
@@ -131,7 +145,8 @@ export function LoadingPlanView() {
           </span>
           <p className="text-sm font-medium">Choose a supplier to plan a container.</p>
           <p className="text-2xs text-muted-foreground">
-            The plan is built from their stock list and your open purchase orders with them.
+            The plan is built from their stock list or newest proforma invoice, and your open
+            purchase orders with them.
           </p>
         </Card>
       ) : (
@@ -144,6 +159,7 @@ export function LoadingPlanView() {
           supplierName={supplierName}
           planHorizonDate={planHorizonDate || null}
           onUploadStockList={() => setUploadOpen(true)}
+          onUploadProforma={() => setProformaUploadOpen(true)}
         />
         </>
       )}
@@ -154,6 +170,18 @@ export function LoadingPlanView() {
           onOpenChange={setUploadOpen}
           supplierId={supplierId}
           supplierName={supplierName}
+          onApplied={() => invalidateSupplier(supplierId)}
+        />
+      ) : null}
+
+      {supplierId ? (
+        <ProformaUploadDialog
+          open={proformaUploadOpen}
+          onOpenChange={setProformaUploadOpen}
+          supplierId={supplierId}
+          supplierOption={supplierOption}
+          // The build re-reads on the same key the stock list invalidates: an uploaded PI
+          // stands in for the missing list straight away, without a manual refresh.
           onApplied={() => invalidateSupplier(supplierId)}
         />
       ) : null}

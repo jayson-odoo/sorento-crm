@@ -5,7 +5,8 @@
  * was cut on the captain's 20 Aug live-test ruling ("don't need stage 2") - see
  * LoadingPlanView.tsx's own docstring. What is left to assert here is the supplier picker
  * itself: nothing is shown before a supplier is chosen, choosing one renders the request
- * section, and the "View uploaded list" control only appears once a stock-list file exists.
+ * section, the "View uploaded list" control only appears once a stock-list file exists, and
+ * both upload routes (stock list, proforma invoice) wait on a supplier being chosen.
  * Everything the request section itself does (the deferred-line reasoning, the ranked table,
  * sending to the supplier) is covered in ContainerRequestSection.test.tsx.
  */
@@ -65,6 +66,26 @@ vi.mock('../../hooks/useFulfilment', () => ({
 // The request section renders inside this view too. Its own behaviour is covered in
 // ContainerRequestSection.test.tsx; here it only has to prove it mounted for the chosen
 // supplier, so this stub keeps the suite from also depending on that component's own hooks.
+// The proforma dialog is the other way to answer "what do they hold" (Q2), opened from this
+// toolbar. Its own behaviour is covered in ProformaUploadDialog.test.tsx; here it only has to
+// prove it opened for the supplier already chosen on this screen.
+vi.mock('../../proforma-invoices/components/ProformaUploadDialog', () => ({
+  ProformaUploadDialog: ({
+    open,
+    supplierId,
+    supplierOption,
+  }: {
+    open: boolean;
+    supplierId?: string | null;
+    supplierOption?: { value: string; label: string } | null;
+  }) =>
+    open ? (
+      <div data-testid="proforma-upload-dialog">
+        Proforma upload for {supplierOption?.label ?? supplierId}
+      </div>
+    ) : null,
+}));
+
 vi.mock('./ContainerRequestSection', () => ({
   ContainerRequestSection: ({ supplierName }: { supplierName: string }) => (
     <div data-testid="container-request-section">Request section for {supplierName}</div>
@@ -144,5 +165,27 @@ describe('LoadingPlanView - a supplier is chosen', () => {
     await chooseSupplier();
 
     expect(screen.getByTestId('open-stock-upload')).toBeEnabled();
+  });
+
+  it('enables the upload-proforma toolbar button once a supplier is chosen', async () => {
+    renderView();
+    // Whose invoice it is has no answer yet, so there is nothing to file it against.
+    expect(screen.getByTestId('open-proforma-upload')).toBeDisabled();
+
+    await chooseSupplier();
+
+    expect(screen.getByTestId('open-proforma-upload')).toBeEnabled();
+  });
+
+  it('opens the proforma upload against the supplier already chosen here', async () => {
+    renderView();
+    await chooseSupplier();
+
+    expect(screen.queryByTestId('proforma-upload-dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('open-proforma-upload'));
+
+    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
+      'Proforma upload for Foshan Ceramics',
+    );
   });
 });

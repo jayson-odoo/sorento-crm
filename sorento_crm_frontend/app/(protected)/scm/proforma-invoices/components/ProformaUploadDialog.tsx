@@ -42,6 +42,11 @@ import {
  * The dropzone stays closed until one is picked, because the file never says reliably who
  * wrote it (AC journey step 1).
  *
+ * The one screen where those two questions ARE the same question passes the answer in
+ * (`supplierId` / `supplierOption`): the loading plan is built for one supplier, so the
+ * proforma that stands in for their missing stock list (Q2) is theirs by construction, and
+ * the picker becomes a line of text.
+ *
  * Currency is asked for LAST and usually not at all - the document usually states it
  * (`RMB`, `单价(元)`) and the supplier's price list often does too, so the field is the last
  * resort rather than the first question (AC-P3.1). Where one of them answered, the preview
@@ -68,12 +73,20 @@ export function ProformaUploadDialog({
   open,
   onOpenChange,
   onApplied,
+  supplierId: fixedSupplierId = null,
+  supplierOption: fixedSupplierOption = null,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   onApplied?: (result: ProformaApplyResult) => void;
+  /** Opened from a screen that already knows whose document this is - the loading plan,
+   *  where the supplier was picked before the plan was built. Asking a second time invites
+   *  a different answer than the plan behind the dialog stands on, so the picker is replaced
+   *  by the name. Absent, the dialog asks, as it does on the proforma-invoices list. */
+  supplierId?: string | null;
+  supplierOption?: SearchableSelectOption | null;
 }) {
-  const [supplierId, setSupplierId] = useState<string | null>(null);
+  const [supplierId, setSupplierId] = useState<string | null>(fixedSupplierId);
   // The picked option's own label, alongside the id - server-searched (below), so the
   // trigger and the "Uploading as ..." line cannot assume the chosen supplier is sitting in
   // whatever unfiltered first page happens to be cached (S8-followup: KAILU HARDWARE
@@ -95,13 +108,13 @@ export function ProformaUploadDialog({
   // from the last upload would silently file - or price - the next one under it.
   useEffect(() => {
     if (open) {
-      setSupplierId(null);
-      setSupplierOption(null);
+      setSupplierId(fixedSupplierId);
+      setSupplierOption(fixedSupplierOption);
       setCurrency('');
       setRevisionOf({});
       setOffered([]);
     }
-  }, [open]);
+  }, [open, fixedSupplierId, fixedSupplierOption]);
 
   const upload = useTwoStepUpload<ProformaInvoicePreview, ProformaApplyResult>({
     open,
@@ -208,23 +221,32 @@ export function ProformaUploadDialog({
 
         <DialogBody className="space-y-4">
           <div>
-            <Label htmlFor="proforma-supplier" className="mb-1 block text-xs">
+            <Label
+              htmlFor={fixedSupplierId ? undefined : 'proforma-supplier'}
+              className="mb-1 block text-xs"
+            >
               Supplier
             </Label>
-            <SearchableSelect
-              id="proforma-supplier"
-              value={supplierId ?? ''}
-              onChange={(v: string) => setSupplierId(v || null)}
-              onOptionChange={setSupplierOption}
-              // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
-              // caps at 100 rows, so a client-filtered static list silently hid any supplier
-              // past that page. `fetchOptions` re-queries as the user types (debounced by
-              // `SearchableSelect` itself).
-              fetchOptions={(query) => getFulfilmentSuppliers(query)}
-              selectedOption={supplierOption ?? undefined}
-              placeholder="Choose a supplier"
-              disabled={upload.previewing || upload.applying}
-            />
+            {fixedSupplierId ? (
+              <p className="text-sm font-medium" data-testid="proforma-fixed-supplier">
+                {supplierName ?? EM_DASH}
+              </p>
+            ) : (
+              <SearchableSelect
+                id="proforma-supplier"
+                value={supplierId ?? ''}
+                onChange={(v: string) => setSupplierId(v || null)}
+                onOptionChange={setSupplierOption}
+                // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
+                // caps at 100 rows, so a client-filtered static list silently hid any supplier
+                // past that page. `fetchOptions` re-queries as the user types (debounced by
+                // `SearchableSelect` itself).
+                fetchOptions={(query) => getFulfilmentSuppliers(query)}
+                selectedOption={supplierOption ?? undefined}
+                placeholder="Choose a supplier"
+                disabled={upload.previewing || upload.applying}
+              />
+            )}
           </div>
 
           <FileDropzone
