@@ -10,6 +10,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import type {
   BoardCellLocation,
@@ -453,6 +454,43 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save amendment' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Amend' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Approve suggestion on an unlocked confirmed row is a REAL verdict, and it reaches the
+   * draft as one. It looked like it did - the inputs snapped back to the suggestion and the
+   * pill read Approved - while `confirmLinesFor` dropped every covered line the planner had
+   * not amended, so the press wrote nothing and the reload showed the old revision.
+   */
+  it('takes Approve suggestion on the unlocked row, and the pill reads Approved', () => {
+    const contribution = contributionOf({ covered: true, decision: frozen });
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contribution}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+
+    expect(onDecide).toHaveBeenCalledWith({
+      verdict: 'approved',
+      suspected_system_issue: false,
+    });
+    // The row the planner is looking at afterwards: Approved, not the Confirmed the covered
+    // flag alone would print, because the draft's verdict outranks what is in the database.
+    render(
+      <BoardDecisionPill
+        contribution={contribution}
+        decision={onDecide.mock.calls[0][0] as BoardDecision}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Approved');
   });
 });
 

@@ -31,8 +31,18 @@ export interface DecisionRowExpansion {
   setDirty: (dirty: boolean) => void;
   /** Toggle a row, asking first when the open one holds unsaved work. */
   requestRow: (key: string) => void;
+  /**
+   * Close the CONTAINER the open row lives in - the cell dialog's X, its Escape key and its
+   * backdrop - asking first when that row holds unsaved work.
+   *
+   * The prompt guarded one gesture and not the three easiest ones on the screen: the dialog
+   * closed on any of them and the half-composed decision went with it, without a word.
+   */
+  requestClose: (close: () => void) => void;
   /** The row the planner asked for while the open one still held that work. */
   pending: string | null;
+  /** Whether the unsaved-work question is on screen, for either reason. */
+  prompting: boolean;
   keepEditing: () => void;
   discard: () => void;
 }
@@ -41,6 +51,8 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   const [dirty, setDirty] = React.useState(false);
   const [pending, setPending] = React.useState<string | null>(null);
+  /** The container's own close, held back until the question has been answered. */
+  const [pendingClose, setPendingClose] = React.useState<(() => void) | null>(null);
 
   const openKey = React.useMemo(() => {
     if (typeof expanded === 'boolean') return null;
@@ -65,11 +77,33 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
     [dirty, openKey, openRow],
   );
 
-  const keepEditing = React.useCallback(() => setPending(null), []);
+  const requestClose = React.useCallback(
+    (close: () => void) => {
+      if (!dirty) {
+        close();
+        return;
+      }
+      // The state holds the callback itself, so the updater has to RETURN it rather than be
+      // mistaken for one.
+      setPendingClose(() => close);
+    },
+    [dirty],
+  );
+
+  const keepEditing = React.useCallback(() => {
+    setPending(null);
+    setPendingClose(null);
+  }, []);
   const discard = React.useCallback(() => {
+    if (pendingClose) {
+      openRow(null);
+      setPendingClose(null);
+      pendingClose();
+      return;
+    }
     openRow(pending ? pending : null);
     setPending(null);
-  }, [openRow, pending]);
+  }, [openRow, pending, pendingClose]);
 
   return {
     expanded,
@@ -77,7 +111,9 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
     openKey,
     setDirty,
     requestRow,
+    requestClose,
     pending,
+    prompting: pending !== null || pendingClose !== null,
     keepEditing,
     discard,
   };
@@ -90,15 +126,14 @@ export function useDecisionRowExpansion(): DecisionRowExpansion {
 export function UnsavedDecisionPrompt({ state }: { state: DecisionRowExpansion }) {
   return (
     <AlertDialog
-      open={state.pending !== null}
+      open={state.prompting}
       onOpenChange={(next) => !next && state.keepEditing()}
     >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Leave this decision unsaved?</AlertDialogTitle>
           <AlertDialogDescription>
-            The composition you typed on this line has not been saved. Closing the row
-            discards it.
+            The composition you typed on this line has not been saved. Closing it discards it.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

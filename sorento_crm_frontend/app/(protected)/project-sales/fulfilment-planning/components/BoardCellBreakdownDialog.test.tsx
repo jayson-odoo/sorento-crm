@@ -97,6 +97,7 @@ function renderDialog(
   draft: BoardDraft = {},
 ) {
   const onDecide = vi.fn();
+  const onClose = vi.fn();
   // A client is needed even here (nothing in this describe block opens a query itself): every
   // item-flag chip now carries a Proof button (`ClassificationProofPopover`), and `useQuery`
   // requires a provider in the tree to mount at all, whether or not it is `enabled`.
@@ -110,11 +111,11 @@ function renderDialog(
         bucketLabel="31 Aug 2026"
         draft={draft}
         onDecide={onDecide}
-        onClose={vi.fn()}
+        onClose={onClose}
       />
     </QueryClientProvider>,
   );
-  return { onDecide };
+  return { onDecide, onClose };
 }
 
 /**
@@ -609,6 +610,48 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     expect(screen.queryByTestId(`line-decision-${first}`)).not.toBeInTheDocument();
+  });
+
+  /**
+   * THE SAME QUESTION WHEN THE WHOLE DIALOG GOES (C5).
+   *
+   * Opening another row asked before it threw an unsaved composition away; the X, Escape and a
+   * backdrop click did not, and those are the three easiest gestures on the screen. The draft
+   * went in silence, which is the loss the prompt exists to prevent - so the close path routes
+   * through the same prompt, and the dialog stays open until it is answered.
+   */
+  it('asks before the dialog itself closes over an unsaved edit (C5)', () => {
+    const { onClose } = renderDialog([demand()]);
+    const key = 'so-a|1|WESERP10B|2026-08-31';
+
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Typing, not yet saved.' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText('Leave this decision unsaved?')).toBeInTheDocument();
+
+    // Keep editing leaves everything where it was: the dialog open and the row still typed in.
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId(`line-decision-${key}`)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes at once when no decision is half-typed', () => {
+    const { onClose } = renderDialog([demand()]);
+
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Leave this decision unsaved?')).not.toBeInTheDocument();
   });
 
   it('approve suggestion, from the row, writes into the draft with no reason and no flag', () => {

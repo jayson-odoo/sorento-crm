@@ -159,11 +159,13 @@ export function standingsFor(
     count(key, decision.verdict !== 'rejected');
   }
   for (const key of covered) {
-    // A covered line the planner has NOT amended is carried by the server on the next confirm
-    // (the body never names it - `confirmLinesFor`), so it is decided after the press without
-    // being posted by it.
+    // A covered line the planner has given NO verdict on is carried by the server on the next
+    // confirm (the body never names it - `confirmLinesFor`), so it is decided after the press
+    // without being posted by it. An amendment and an approval are both posted, so neither is
+    // carried; this has to follow `lineFor` or the two describe different presses.
+    const verdict = draft[key]?.verdict;
     const salesOrderId = owners.get(key);
-    if (salesOrderId && draft[key]?.verdict !== 'amended') {
+    if (salesOrderId && verdict !== 'amended' && verdict !== 'approved') {
       carried.set(salesOrderId, (carried.get(salesOrderId) ?? 0) + 1);
     }
     count(key, true);
@@ -310,7 +312,15 @@ function lineFor(
   // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
   // nothing to derive - the board proposes nothing for a covered line, and inventing one
   // would overwrite a person's composition with the engine's opinion of it.
-  if (contribution.covered && !isAmendment(decision)) return null;
+  //
+  // AN EXPLICIT VERDICT IS NOT SILENCE, though, and both of them are posted: an AMENDMENT as
+  // composed, and an APPROVAL as the engine's suggestion, down the same branch an uncovered
+  // approval takes. A planner who amends a confirmed line, changes their mind and presses
+  // Approve suggestion has asked for the suggestion to be written; this swallowed it, so the
+  // pill read Approved, the Confirm counter never moved and a reload showed the old revision.
+  if (contribution.covered && !isAmendment(decision) && decision?.verdict !== 'approved') {
+    return null;
+  }
   if (decision?.verdict === 'rejected') return null;
 
   const discontinued = Boolean(contribution.item_flags?.discontinued);

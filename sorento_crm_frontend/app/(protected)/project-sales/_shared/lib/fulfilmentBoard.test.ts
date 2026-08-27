@@ -1406,6 +1406,68 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     const lines = confirmLinesFor(orphan, 'so-a', { [keyOf(2)]: { verdict: 'approved' } });
     expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
+
+  /**
+   * AN EXPLICIT APPROVAL ON A COVERED LINE IS A DECISION, AND IT IS POSTED (C11).
+   *
+   * Silence on a covered line means "leave it as the database has it", which is why an
+   * untouched one is never named. Pressing Approve suggestion is not silence: the planner
+   * amended a confirmed line, changed their mind, and asked for the engine's composition
+   * back. The board swallowed it - the pill read Approved, the Confirm counter stayed where
+   * it was and the press wrote nothing, so a reload showed the old revision unchanged. An
+   * approved covered line goes down the same derivation branch an approved uncovered one
+   * does, and the confirmation writes a new revision at the suggestion.
+   */
+  it('posts the suggestion for a covered line the planner APPROVED (C11)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(1)]: { verdict: 'approved' },
+    });
+
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+    const approved = lines.find((entry) => entry.project_line_id === 'pl-so-a-1')!;
+    // The engine's own composition for the line, exactly as the panel resets the inputs to
+    // it: nothing re-derived here, and no `amend_reason` - an approval is not an override.
+    expect(approved.buy_qty).toBe('33');
+    expect(approved.borrow.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-mwh-ib', '10'],
+    ]);
+    expect(approved.reserve).toEqual([]);
+    expect(approved.amend_reason).toBeUndefined();
+  });
+
+  it('still posts nothing for a covered line nobody touched', () => {
+    expect(confirmLinesFor(contributions, 'so-a', {}).map((entry) => entry.project_line_id))
+      .toEqual(['pl-so-a-2']);
+  });
+
+  it('still posts nothing for a covered line the planner REJECTED', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(1)]: { verdict: 'rejected', reason: 'The site cancelled it.' },
+    });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+  });
+
+  it('counts the approved covered line on the Confirm button, and the untouched one not', () => {
+    // The counter reads the same rule the body does, so "Confirm (N)" and what the press
+    // posts cannot disagree - the defect was visible as a button stuck at 0.
+    expect(plannedLineCount(contributions, 'so-a', {})).toBe(1);
+    expect(
+      plannedLineCount(contributions, 'so-a', { [keyOf(1)]: { verdict: 'approved' } }),
+    ).toBe(2);
+  });
+
+  it('counts an approved covered line as committing, not as carried', () => {
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const draft = { [keyOf(1)]: { verdict: 'approved' as const } };
+    const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
+    expect(standing.carried_count).toBe(0);
+    expect(
+      commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length),
+    ).toEqual({ committing: 2, leaving_undecided: 0, blocked: 0 });
+  });
 });
 
 /**

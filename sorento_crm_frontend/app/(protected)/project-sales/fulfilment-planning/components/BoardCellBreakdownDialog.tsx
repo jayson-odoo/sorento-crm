@@ -186,7 +186,7 @@ export function BoardCellBreakdownDialog({
    * keeps, so both readings of the board ask the same question before discarding an edit.
    */
   const expansion = useDecisionRowExpansion();
-  const { expanded, setExpanded, openKey, setDirty, requestRow } = expansion;
+  const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } = expansion;
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
 
   /**
@@ -533,7 +533,11 @@ export function BoardCellBreakdownDialog({
   );
 
   return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
+    /* THE X, ESCAPE AND THE BACKDROP ARE ALSO A DISCARD (C5). An expanded panel holding a
+       half-composed decision is thrown away by any of them, and the row-switch prompt guarded
+       only the fourth gesture, so the three easiest ways out of the dialog lost the draft in
+       silence. `requestClose` asks first and closes only once the question is answered. */
+    <Dialog open onOpenChange={(next) => !next && requestClose(onClose)}>
       <DialogContent
         data-testid="cell-dialog-content"
         className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-[95vw]"
