@@ -1365,7 +1365,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     openTab('Lines');
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    expect(within(row).getByText('Shared 10 (BRW)')).toBeInTheDocument();
+    expect(within(row).getByText('BRW 10 (BRW)')).toBeInTheDocument();
     expect(within(row).getByText('Buy 10')).toBeInTheDocument();
   });
 
