@@ -1,6 +1,6 @@
 # PLAN: SCM fulfilment feedback, part 4 (loading plan list, supplier document fidelity, PI Start, packing list fixes, SPO planner redesign)
 
-**Status:** BUILDING. S6 and S5 built on slot B (branch `feat/scm-fulfilment-feedback-p4-b`, 2026-08-28).
+**Status:** BUILDING. S6, S5 and S7 part 1 (the expanded row) built on slot B (branch `feat/scm-fulfilment-feedback-p4-b`, 2026-08-28).
 **Lane:** worktree `.claude/worktrees/scm-fulfilment-p4`, branch `feat/scm-fulfilment-feedback-p4` off `origin/main` `741469185` (#353). No stack slot yet (:3000/:8000 = inline-decisions lane, :3050 = oi-draft, :3060 = reorder revamp).
 **UAC:** `scm-fulfilment-feedback-p4-acceptance-criteria.md`. **Review artifact:** `mockups/fulfilment-feedback-p4-plan.html` (lavish).
 **Predecessor:** `PLAN-scm-fulfilment-feedback.md` (part 3, MERGED #347). R1-R25 there stand unless a ruling below names one.
@@ -139,6 +139,8 @@ the route suite's own seeding workaround is deleted.
 **R21. Four cells open the lightbox.** PO covers -> `PlanRowDialog kind="po_takes"`: the PO candidates (issue date ASC, R-Q8), a checkbox per row, the suggested takes PRE-TICKED, qty taken per row, footer "n of m POs · covers X of packed Y"; ticking feeds the same client cascade (`cascadeTake`) as today. SO covered -> `kind="so_coverage"`: open demand lines, project first then retail (AC-G3), pre-ticked to the packed quantity, "Unassigned N" footer. On hand -> `kind="on_hand"` (the location table, `useLocationStock`, site pools first). Incoming SPO -> `kind="spo"` (the R8 drill rows). The two Popovers are deleted; `SpoPlannerTable` shrinks to the grid and the dialog requests.
 
 **R22. Locations live in the expanded row, full width; coverage lives in the SO covered lightbox.** Each line expands (chevron in the Location cell; cell text = "No location" / `BRW` / "3 locations", second line "N unassigned" as today). The expanded area is a small table: destination rows (warehouse `SearchableSelect`, qty input, remove), an "Unassigned" row (remainder, read-only, turns destructive when the split exceeds the SPO qty), "Add location". The "What this covers" list is NOT in the row: captain (27 Aug) wants SO coverage in the lightbox like PO covers, so the SO covered dialog carries per-line Location and the Unassigned footer. Toolbar gains Expand all / Collapse all (the revamp lane's `leftActions` prop on `DataGridListToolbar`, copied; deduped at merge). `LocationSplitPopover` is deleted. The split model and validation (`splitMismatch`, `overTicked`) are unchanged.
+
+**BUILT 28 Aug (slot B, part 1 of S7).** The Location cell is a chevron button (`aria-expanded`, text unchanged: "No location" / `BRW` / "3 locations" with "N unassigned" beneath) and the row's `meta.expandedContent` renders `LocationSplitPanel` full width: destination rows (clearable `SearchableSelect`, qty, remove), the Unassigned remainder (destructive when the rows ask for more than the SPO holds) and Add location, in their own horizontal scroll container for 375px. `SoCoveredDrillTrigger`, `SoCoveredDrillPopover` and `soTakesForLine` are deleted with the coverage list. The toolbar gained Expand all / Collapse all (`table.toggleAllRowsExpanded`). `PoTakesDrillPopover` and `SoCoverageDrillPopover` are UNTOUCHED, waiting for R21's shared dialog (part 2).
 
 ## 8. Slices, order, slots
 

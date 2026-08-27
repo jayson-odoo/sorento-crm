@@ -738,37 +738,138 @@ describe('F7 - the quantity the operator typed is theirs', () => {
 });
 
 /**
- * Browser pass 4, finding 3 - the destinations popover has to say the same thing the cell
- * does. Untick an order whose warehouse is also the suggested one and the SPLIT does not
- * move (both parts land in the same place); the cell says "16 + 127 unassigned" and the
- * popover said "BRW 145" with no sign that 127 of it belongs to nobody.
+ * R22 / AC-G4, AC-G5, AC-G6 - the destinations live in the EXPANDED ROW, not a popover.
+ *
+ * The chevron in the Location cell opens a full-width panel holding the destination rows,
+ * the Unassigned remainder and Add location. What it does NOT hold is the coverage list:
+ * which orders this SPO is for moved to the SO covered lightbox (captain, 27 Aug).
  */
-describe('F7 - the destinations popover names the unassigned share too', () => {
+describe('R22 - the destinations expand under the row', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [plannerLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
   });
 
-  it('breaks the split into what is claimed and what is not', async () => {
+  /** The Location cell reads "2 locations" for the default split - and IS the chevron. */
+  const chevron = async () => await screen.findByRole('button', { name: /BRW|locations/ });
+  const qtyRow = (n: number) =>
+    screen.getByRole('spinbutton', { name: `Quantity for destination ${n}` });
+
+  it('opens the destination rows from the Location cell (AC-G4)', async () => {
     renderTable();
-    // Untick the BRW order - BRW is also the suggested warehouse, so the split total there
-    // is unchanged and only this reading can tell the two apart.
-    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SI26-0100' }));
 
-    fireEvent.click(screen.getByRole('button', { name: /BRW|locations/ }));
+    const trigger = await chevron();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /add location/i })).not.toBeInTheDocument();
 
-    expect(await screen.findByText(/Unassigned/)).toBeInTheDocument();
-    expect(screen.getByText('70')).toBeInTheDocument();
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    // 40 to the project row's BRW plus the unassigned 30, and 30 to the retail row's MWH.
+    expect(qtyRow(1)).toHaveValue(70);
+    expect(qtyRow(2)).toHaveValue(30);
+    expect(screen.getByRole('button', { name: /add location/i })).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('says nothing about unassigned when every piece is claimed', async () => {
+  it('carries no coverage list - that is the SO covered lightbox (AC-G4)', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+
+    await screen.findByText(/SRTWT7443 - destinations/);
+    expect(screen.queryByText(/What this covers/i)).not.toBeInTheDocument();
+  });
+
+  it('states the remainder as Unassigned, and turns destructive when the split exceeds the SPO qty', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+    await screen.findByText(/SRTWT7443 - destinations/);
+
+    // The default split adds up exactly, so nothing is left over.
+    expect(screen.getByText('Unassigned').parentElement).not.toHaveClass('text-destructive');
+
+    fireEvent.change(qtyRow(1), { target: { value: '200' } });
+
+    const unassigned = screen.getByText('Unassigned').parentElement as HTMLElement;
+    expect(unassigned).toHaveClass('text-destructive');
+    expect(unassigned).toHaveTextContent('-130');
+    expect(screen.getByText(/location split does not add up/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+  });
+
+  it('removing a destination leaves its quantity unassigned', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+    await screen.findByText(/SRTWT7443 - destinations/);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove destination' })[1]);
+
+    expect(qtyRow(1)).toHaveValue(70);
+    expect(screen.queryByRole('spinbutton', { name: 'Quantity for destination 2' })).not.toBeInTheDocument();
+    expect(screen.getByText('Unassigned').parentElement).toHaveTextContent('30');
+  });
+
+  it('Add location adds a row for what is left over, and it reaches the create', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+    await screen.findByText(/SRTWT7443 - destinations/);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove destination' })[1]);
+
+    fireEvent.click(screen.getByRole('button', { name: /add location/i }));
+
+    // The remaining 30 lands on the row that was just added, at the warehouse not already
+    // used - so the split adds up again and Create SPO is allowed.
+    expect(qtyRow(2)).toHaveValue(30);
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0].location_splits).toEqual([
+      { warehouse_id: 'wh-1', qty: 70 },
+      { warehouse_id: 'wh-2', qty: 30 },
+    ]);
+  });
+
+  it('Expand all opens every line and Collapse all closes them (AC-G5)', async () => {
     state.suggestion = suggestion({
-      lines: [plannerLine({ packed_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
+      lines: [plannerLine(), plannerLine({ shipment_line_id: 'sl-2', item_code: 'SRTWT9000' })],
+    });
+    renderTable();
+    await screen.findAllByRole('button', { name: /BRW|locations/ });
+
+    fireEvent.click(screen.getByRole('button', { name: /expand all/i }));
+
+    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    expect(screen.getByText(/SRTWT9000 - destinations/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /collapse all/i }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/SRTWT7443 - destinations/)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/SRTWT9000 - destinations/)).not.toBeInTheDocument();
+  });
+
+  it('a line nothing can be sent for does not expand', async () => {
+    state.suggestion = suggestion({
+      lines: [
+        plannerLine({
+          cannot_convert: true,
+          reason: 'No PO to pull from - raise the PO in AutoCount first.',
+          suggested_qty: 0,
+          po_covered_qty: 0,
+        }),
+      ],
     });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /BRW|locations/ }));
-
-    expect(screen.queryByText(/Unassigned/)).not.toBeInTheDocument();
+    expect(await screen.findByText('No location')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'No location' })).not.toBeInTheDocument();
   });
 });
