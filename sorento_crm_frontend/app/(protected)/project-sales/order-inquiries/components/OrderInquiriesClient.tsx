@@ -641,14 +641,10 @@ export function OrderInquiriesClient() {
   // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
   // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
-  // How many rows the default filter is about (AC-D12). PHASE2: drop the addition once
-  // the summary's `ack` facet carries `to_confirm` itself (plan section 5.2) - the
-  // server counts the filtered set, and adding two facets here is only right because
-  // awaiting and changed never overlap.
-  const toConfirmCount = summary.data?.ack
-    ? (summary.data.ack.to_confirm ??
-      summary.data.ack.awaiting + summary.data.ack.changed)
-    : undefined;
+  // How many rows the default filter is about (AC-D12), off the server's own facet: it
+  // counts the filtered set, and a client that added two of the other counts together
+  // would be answering a different question the moment either gained a state.
+  const toConfirmCount = summary.data?.ack?.to_confirm;
 
   // What the chip above the grid says, so the buyer can see WHY the list is short and
   // take the narrowing off in one press (AC-D12).

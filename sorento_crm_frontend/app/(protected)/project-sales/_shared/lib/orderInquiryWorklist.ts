@@ -102,35 +102,19 @@ export function flowExclusionLabel(verb: string): string | null {
   return NON_ORDER_FLOW_LABEL[verb] ?? 'Not an ORDER row';
 }
 
-/** `2026-08-27T00:00:00` or `2026-08-27` to a day count, else null. */
-function dayNumber(value: string | null | undefined): number | null {
-  const text = (value ?? '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  const ms = Date.parse(`${text}T00:00:00Z`);
-  return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
-}
-
 /**
  * How many days late this document is for this row (AC-D17).
  *
- * The server's own `late_days` is the answer whenever it sends one. The fallback below
- * is computed from the two dates the link already carries, and it exists only so the
- * column reads correctly before the field is on the wire.
- *
- * PHASE2: remove the fallback branch once `OrderInquiryLinkOut.late_days` ships
- * (plan section 5.1); `late_days ?? null` is all that should be left.
+ * The server derives it from the row's delivery date and the document's expected date and
+ * sends `late_days` beside `late`, so this reads it rather than computing a second answer
+ * from the same two dates - the two could then differ, and the one on screen would be the
+ * one nobody could reproduce.
  */
 export function lateDaysOf(
   /** Structural, so the sales-order detail's own link shape reads here too. */
   link: { late?: boolean; late_days?: number | null; expected_date?: string | null },
-  deliveryDate?: string | null,
 ): number | null {
-  if (typeof link.late_days === 'number') return link.late_days > 0 ? link.late_days : null;
-  if (!link.late) return null;
-  const due = dayNumber(deliveryDate);
-  const lands = dayNumber(link.expected_date);
-  if (due === null || lands === null) return null;
-  return lands > due ? lands - due : null;
+  return typeof link.late_days === 'number' && link.late_days > 0 ? link.late_days : null;
 }
 
 /**
@@ -153,7 +137,6 @@ export function linkedSummary(
   qty: string | null | undefined,
   linkedQty: string | null | undefined,
   links: OrderInquiryLink[] | null | undefined,
-  deliveryDate?: string | null,
 ): {
   headline: string;
   documents: {
@@ -196,7 +179,7 @@ export function linkedSummary(
     // is its WORST line's: a document half of which lands on time is still late for the
     // half that does not.
     if (link.late) entry.late = true;
-    const days = lateDaysOf(link, deliveryDate);
+    const days = lateDaysOf(link);
     if (days !== null && (entry.lateDays === null || days > entry.lateDays)) {
       entry.lateDays = days;
     }

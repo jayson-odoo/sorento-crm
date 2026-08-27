@@ -374,11 +374,11 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
 
   if (isLoading) return <LoadingBody />;
   if (isError || !data) {
-    // PHASE2: `GET /order-inquiries/spo/{spo_number}` is not built yet (plan section 5),
-    // so every SPO lands here. Once it answers, this reads as a genuine failure again.
+    // A number no allocation carries answers 404, which is the honest reading of a
+    // document this system does not hold - a shipping order the book has never named.
     return (
       <p className="text-sm text-muted-foreground">
-        This shipping order cannot be read yet.
+        This shipping order could not be found.
       </p>
     );
   }

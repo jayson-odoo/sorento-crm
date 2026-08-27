@@ -292,33 +292,21 @@ export async function rejectOrderInquiryRow(
  * bulk action now that the row actions column is gone, and asking for the reason once
  * per row would make refusing twenty rows twenty dialogs.
  *
- * PHASE2: `POST {BASE}/order-inquiries/reject` does not exist yet, so this loops the
- * per-row endpoint. Replace the whole body with the single call once it ships - the
- * signature and the result shape are already the batch's.
+ * ONE call, and the server takes it all or nothing: a press that half happened leaves the
+ * buyer to work out which half from a screen that has already moved on.
  */
 export async function rejectOrderInquiryRows(
   rowIds: string[],
   reason: string,
 ): Promise<OrderInquiryBulkRejectResult> {
-  const results: NonNullable<OrderInquiryBulkRejectResult['results']> = [];
-  for (const rowId of rowIds) {
-    try {
-      await rejectOrderInquiryRow(rowId, reason);
-      results.push({ row_id: rowId, ok: true });
-    } catch (error) {
-      results.push({
-        row_id: rowId,
-        ok: false,
-        error: error instanceof Error ? error.message : 'Failed to reject this row',
-      });
-    }
-  }
-  const rejected = results.filter((entry) => entry.ok).length;
-  // A batch where nothing at all went through is a failure, not a quiet zero.
-  if (rejected === 0 && results.length > 0) {
-    throw new Error(results[0].error ?? 'Failed to reject those rows');
-  }
-  return { rejected, results };
+  const response = await apiFetch(`${BASE}/order-inquiries/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds, reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject those rows'));
+  return response.json();
 }
 
 /**
@@ -462,11 +450,10 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       raised_by: params.raised_by,
       linked: params.linked,
       kind: params.kind,
-      // PHASE2: remove this branch. The backend's `ack` filter is a closed set of the
-      // four stored states and answers 422 on `to_confirm`; plan section 5.2 adds it to
-      // the list, the summary facet and the export. Until then the page's default filter
-      // narrows to `awaiting` alone, which is the larger half of what it means.
-      ack: params.ack === 'to_confirm' ? 'awaiting' : params.ack,
+      // `to_confirm` travels as itself: the server reads it as awaiting OR changed on the
+      // list, the summary facet and the export alike (R3), so the page's default filter is
+      // one value rather than two the client would have to union.
+      ack: params.ack,
     },
   );
 }
@@ -553,8 +540,8 @@ export async function getOrderInquiryPoDetail(poId: string): Promise<OrderInquir
  * allocation lines and who they are spoken for by. Addressed by NUMBER - an SPO has no
  * purchase order id behind it, and the number is what the link on screen carries.
  *
- * PHASE2: `GET {BASE}/order-inquiries/spo/{spo_number}` is not built yet, so this 404s
- * and the dialog shows its empty state. Nothing to remove here when it ships.
+ * The number is percent-encoded because it carries a slash (`SPO-2026/08-0015`); the
+ * route takes the rest of the path as one parameter for exactly that reason.
  */
 export async function getOrderInquirySpoDetail(
   spoNumber: string,

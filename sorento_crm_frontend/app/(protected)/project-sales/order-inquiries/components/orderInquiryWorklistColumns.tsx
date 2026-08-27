@@ -306,7 +306,6 @@ export function useOrderInquiryWorklistColumns({
             row.original.qty,
             row.original.linked_qty,
             row.original.links,
-            row.original.delivery_date,
           );
           // The same bar the schedule draws, off the same three kinds (AC-I14), so the
           // two views of this worklist cannot read differently: an unlinked row is a

@@ -910,7 +910,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 const titleLabel = `${link.document}${labelled ? ` ${labelled}` : ''} ${
                   link.qty
                 }${due ? ` due ${due}` : ''}`;
-                const lateDays = lateDaysOf(link, row.original.required_date);
+                const lateDays = lateDaysOf(link);
                 return (
                   <span
                     // The INDEX is always in the key. One line can be linked to the same
