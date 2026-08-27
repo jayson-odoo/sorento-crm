@@ -34,9 +34,11 @@ service) or a vitest (ledger card); the two named rows are the browser proof on 
   100 excluded), lead time 30 THEN ADU = 10, safety stock = 10 x 14 = 140, suggested level =
   10 x 30 + 140 = 440, and the popover names ADU 10 / day, lead 30 d, safety 140. Sales-order
   lines play no part in ADU.
-- **AC-R12 health by movement.** GIVEN sales and purchases in the window THEN "Fast moving";
-  sales only THEN "Slow moving"; neither with stock on hand THEN "Dead - consider
-  discontinuing"; neither and no stock THEN "No history". No margin figure anywhere.
+- **AC-R12 health by movement.** GIVEN DO lines in the last 3 months AND a GRN receipt in
+  the last 6 months THEN "Fast moving"; DO lines only THEN "Slow moving"; neither with stock
+  on hand THEN "Dead - consider discontinuing"; neither and no stock THEN "No history". A
+  purchase order issued without a receipt does not count as bought. No margin figure
+  anywhere.
 - **AC-R13 price switch.** GIVEN a row reading "Ask new price" WHEN the buyer switches it to
   "Use last price" THEN the decision carries `price_mode = use_last`, the row's cost uses the
   last price, and the draft PO line carries it.

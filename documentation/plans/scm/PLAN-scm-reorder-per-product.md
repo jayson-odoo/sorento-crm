@@ -95,11 +95,17 @@ the popover can show the three terms. Reorder qty stays `level - net`.
 
 ### Product health, by movement only
 No margin: costs are often CNY and selling prices MYR, and no exchange rate is trusted.
-Over the same window, all locations:
+"Sold" = delivery-order lines in the last 3 months; "bought" = GRN receipts
+(`picking_lines.qty_accepted` by `picking_date`, the receipt pickings that roll onto
+`purchase_order_lines.qty_received`) in the last 6 months - a receipt, never a purchase
+order issued, because a PO is a promise and a GRN is stock in; six months because a 30-90
+day lead would otherwise hide a live product. All locations:
 - **Fast moving** - sold AND bought in the window.
 - **Slow moving** - sold in the window, nothing bought.
 - **Dead** - nothing sold and nothing bought, stock on hand > 0 -> "Consider discontinuing".
 - **No history** - nothing sold, nothing bought, nothing on hand.
+"Purchased N in the last 3 months" on the card reads the same receipts. Net's incoming stays
+the PO book (`qty_ordered - qty_received` open) plus unreceived SPO.
 The column reads the class and, for Dead, the suggestion. "Margin unknown" goes.
 
 ### Price and supplier are the buyer's to change
