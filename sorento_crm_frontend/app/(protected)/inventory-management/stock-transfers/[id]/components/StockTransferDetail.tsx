@@ -2,7 +2,13 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, FileText, History } from 'lucide-react';
+import { ArrowLeft, FileText, History, Settings } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -124,20 +130,25 @@ export function StockTransferDetail({ id }: { id: string }) {
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <StockTransferNavigation transferId={transfer.id} />
+              {/* One verb on the header (the captain, 27 Aug): Approve. "Mark moved" is
+                  bookkeeping nobody presses here, and Cancel sits behind the gear so the
+                  header does not offer the undoing beside the doing. */}
               {can.approve ? (
                 <Button size="sm" onClick={() => setAction('approve')}>
                   Approve
                 </Button>
               ) : null}
-              {can.markMoved ? (
-                <Button size="sm" onClick={() => setAction('mark-moved')}>
-                  Mark moved
-                </Button>
-              ) : null}
               {can.cancel ? (
-                <Button variant="outline" size="sm" onClick={() => setAction('cancel')}>
-                  Cancel
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" aria-label="More actions">
+                      <Settings className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => setAction('cancel')}>Cancel</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ) : null}
               {backLink}
             </div>

@@ -443,15 +443,6 @@ export function StockTransfersPanel({
                     Approve
                   </DropdownMenuItem>
                 ) : null}
-                {can.markMoved ? (
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      setActing({ transfer: row.original, action: 'mark-moved' })
-                    }
-                  >
-                    Mark moved
-                  </DropdownMenuItem>
-                ) : null}
                 {can.cancel ? (
                   <DropdownMenuItem
                     variant="destructive"

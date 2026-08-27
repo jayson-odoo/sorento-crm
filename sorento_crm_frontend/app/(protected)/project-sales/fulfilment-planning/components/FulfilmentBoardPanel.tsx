@@ -1242,6 +1242,13 @@ export function FulfilmentBoardPanel({
                 >
                   Order Inquiries
                 </Link>
+                ; a Use BRW or Borrow other location becomes a{' '}
+                <Link
+                  href="/inventory-management/stock-transfers"
+                  className="text-primary hover:underline"
+                >
+                  stock transfer
+                </Link>
                 .
               </p>
             </CardHeader>
