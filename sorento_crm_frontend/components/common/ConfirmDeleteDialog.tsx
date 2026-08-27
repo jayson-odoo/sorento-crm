@@ -27,9 +27,6 @@ export interface ConfirmDeleteDialogProps {
   onDelete: () => Promise<void>;
   queryKeysToInvalidate?: unknown[][];
   successMessage?: string;
-  /** The confirm button's own word. Defaults to Delete; a detach or a forget says what it
-   *  actually does, so the button and the question in the description agree. */
-  confirmLabel?: string;
   /** Called after successful delete (before closing) */
   onSuccess?: () => void;
   /** The destructive button's own verb, when it is not a delete ("Reset planning"). */
@@ -44,7 +41,6 @@ export function ConfirmDeleteDialog({
   onDelete,
   queryKeysToInvalidate = [],
   successMessage = 'Deleted successfully',
-  confirmLabel = 'Delete',
   onSuccess,
   confirmLabel = 'Delete',
 }: ConfirmDeleteDialogProps) {
