@@ -69,15 +69,29 @@ the rows before re-running, not to widen the migration:
   * `picking_lines.po_line_id` - a GRN drawn against an SPO line. NULL the column on those
     rows; the GRN keeps its `spo_number_raw` and `grn_spo_matching` re-places it against the
     allocation, which is the link it should have had.
-  * `projects.order_inquiry_rows.po_line_id` / `scm.loading_plan_line.po_line_id` /
-    `scm.plan_exception.purchase_order_id` - all measured 0. If one is not, the row was
-    placed on a document that is not a purchase order and belongs on the SPO through
-    section I's Link SPO, so clear the column and re-place it there.
+  * `projects.order_inquiry_rows.po_line_id` / `scm.loading_plan_line.po_line_id` - both
+    measured 0. If one is not, the row was placed on a document that is not a purchase
+    order and belongs on the SPO through section I's Link SPO, so clear the column and
+    re-place it there.
+
+The referrers the delete has to check are indexed first (`index_line_referrers`): three of
+them had no index on the foreign-key column, and Postgres checks a deletion one row at a
+time, so 80k deleted lines meant 80k sequential scans of a 36k-row table. That is why the
+third prod attempt never came back within the deploy's health window.
+
+`scm.plan_exception.purchase_order_id` is NOT a blocker: the migration clears it itself.
+A plan exception is a finding a batch derives from the open purchase-order lines it can
+see, and while the SPO documents sat in `purchase_orders` a batch could raise one ABOUT a
+shipping order as if it were an order still with a supplier (prod held exactly one such
+row on 27 Aug 2026, which is what refused the first deploy of this migration; the dev copy
+had 0). The finding keeps its type, quantity and readings and loses only the document it
+named, and the next batch regenerates it against the allocation. Nothing else on the
+exception can point at an allocation, so NULL is the only shape it can take.
 
 Not restored by the downgrade: each SPO document's own row id (nothing references it -
-measured 0 on both `scm.shipment_line_spo_link.purchase_order_id` and
-`scm.plan_exception.purchase_order_id`) and its `source_ref`. Every LINE id round-trips,
-because an allocation is created carrying the id of the line it replaces.
+measured 0 on `scm.shipment_line_spo_link.purchase_order_id`, and the plan-exception link
+was cleared on the way up) and its `source_ref`. Every LINE id round-trips, because an
+allocation is created carrying the id of the line it replaces.
 """
 import logging
 
@@ -101,8 +115,9 @@ MOVED_SOURCES = ("scm_spo_history", "scm_po_history", "scm_upload")
 
 #: Every foreign key that can point INTO an SPO document, with the schema its table lives in.
 #: Checked before the move: a reference with nowhere to go stops the migration rather than
-#: being cascaded or NULLed behind the operator's back. All eight measured 0 on the dev copy
-#: except `scm.order_link_claim`, which is handled explicitly below.
+#: being cascaded or NULLed behind the operator's back. All measured 0 on the dev copy
+#: except `scm.order_link_claim` and `scm.plan_exception.purchase_order_id`, which are
+#: handled explicitly below (re-pointed, and cleared, respectively).
 _LINE_REFERENCES = (
     (None, "picking_lines", "po_line_id"),
     (None, "spo_allocations", "po_line_id"),
@@ -112,7 +127,6 @@ _LINE_REFERENCES = (
 )
 _DOCUMENT_REFERENCES = (
     ("scm", "shipment_line_spo_link", "purchase_order_id"),
-    ("scm", "plan_exception", "purchase_order_id"),
 )
 
 #: Shipment states that mean the goods have landed. Kept verbatim from migration 337, whose
@@ -289,6 +303,45 @@ def add_claim_spo_side(bind) -> None:
         )
 
 
+_LINE_REFERRER_INDEXES = (
+    # (schema, table, column, index name): every foreign key that points at a purchase
+    # order line or document from a table `move_spo_documents` does not itself rewrite.
+    ("scm", "order_link_claim", "po_line_id", "ix_scm_order_link_claim_po_line"),
+    ("scm", "loading_plan_line", "po_line_id", "ix_scm_loading_plan_line_po_line"),
+    ("scm", "shipment_line_spo_link", "purchase_order_line_id",
+     "ix_scm_shipment_spo_link_po_line"),
+    ("scm", "plan_exception", "purchase_order_id", "ix_scm_plan_exception_purchase_order"),
+)
+
+
+def index_line_referrers(bind) -> int:
+    """Index every foreign key the delete below has to check, BEFORE it runs.
+
+    Postgres verifies `ON DELETE SET NULL` / `CASCADE` one deleted row at a time, with a
+    lookup on the referring column - and without an index that lookup is a sequential scan
+    of the referrer. Measured on the prod copy (27 Aug 2026): `scm.order_link_claim` holds
+    36,312 rows and one such scan costs ~9 ms warm, so deleting the 79,968 SPO lines spent
+    ~12 minutes on that one check alone (plus ~4 more on the two other unindexed
+    referrers) - against a 240 s deploy health window. Prod refused the migration twice on
+    the guard, then the third run simply never finished (run 33069456556).
+
+    Idempotent, and the indexes are the right shape permanently (the models declare them
+    too), so the downgrade does not drop them. Returns how many were created.
+    """
+    created = 0
+    for module, table, column, name in _LINE_REFERRER_INDEXES:
+        schema = _schema(bind, module)
+        if not _table_exists(bind, schema, table):
+            continue
+        if not _has_column(bind, table, column, schema=schema):
+            continue
+        if _has_index(bind, name, schema=schema):
+            continue
+        op.create_index(name, table, [column], schema=schema)
+        created += 1
+    return created
+
+
 def repoint_spo_claims(bind) -> dict:
     """Point every claim naming an `SPO-` document at the allocation it now means.
 
@@ -428,6 +481,26 @@ def reference_counts(bind) -> dict:
     return counts
 
 
+def clear_plan_exceptions_on_spo_documents(bind) -> int:
+    """NULL `scm.plan_exception.purchase_order_id` where it names an SPO document.
+
+    The exception is a derived finding (see the module docstring); the document it named is
+    about to become allocations, which the column cannot point at. Returns the row count so
+    the operator sees what was cleared. Idempotent: a second run finds nothing to clear.
+    """
+    scm = _schema(bind, "scm")
+    if not _table_exists(bind, scm, "plan_exception"):
+        return 0
+    result = bind.execute(
+        sa.text(
+            f"UPDATE {_qualified(bind, 'scm', 'plan_exception')} SET purchase_order_id = NULL "
+            "WHERE purchase_order_id IN "
+            "(SELECT id FROM purchase_orders WHERE po_number LIKE 'SPO-%')"
+        )
+    )
+    return result.rowcount or 0
+
+
 def move_spo_documents(bind) -> dict:
     """Every `SPO-` document in `purchase_orders`, as `spo_allocations` rows. Set-based.
 
@@ -435,6 +508,10 @@ def move_spo_documents(bind) -> dict:
     references those ids today, and keeping them is what lets the downgrade put the same
     lines back rather than a copy of them.
     """
+    cleared = clear_plan_exceptions_on_spo_documents(bind)
+    if cleared:
+        print(f"migration 420: cleared purchase_order_id on {cleared} plan exception(s) "
+              "that named an SPO document")
     blocking = {name: n for name, n in reference_counts(bind).items() if n}
     if blocking:
         # Loudly, with the numbers. There is no column on any of these tables that could
@@ -749,6 +826,8 @@ def upgrade() -> None:
     widen_allocations(bind)
     # Before the move, so the claim half exists the moment the rows it points at do.
     add_claim_spo_side(bind)
+    # Before the move too: its DELETE checks every referrer once per deleted line.
+    index_line_referrers(bind)
     move_spo_documents(bind)
     # After it, because a claim can only be pointed at an allocation that has been written.
     repoint_spo_claims(bind)

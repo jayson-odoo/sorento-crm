@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -32,7 +32,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.scm import OrderLinkClaim
+from app.models.scm import OrderLinkClaim, PlanException, PlanExceptionBatch
 
 from ._pg_fixture import blank_session
 
@@ -291,6 +291,49 @@ def test_a_reference_with_nowhere_to_go_refuses_loudly():
 
     assert "spo_allocations.po_line_id" in str(raised.value)
     assert "1" in str(raised.value)
+
+
+def test_a_plan_exception_about_an_spo_document_is_cleared_not_refused():
+    """The one reference the migration resolves itself: a finding a batch raised ABOUT an
+    SPO document while it was filed as a purchase order (prod held one on 27 Aug 2026 and
+    the first deploy refused on it). The finding stays, its document link goes, the SPO
+    still moves.
+    """
+    with blank_session() as db:
+        world = _book(db)
+        batch = PlanExceptionBatch(
+            id=_uid(), company_id=world["company_id"], as_of=date.today(),
+            generated_at=datetime.now(), delta_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        on_spo = PlanException(
+            id=_uid(), company_id=world["company_id"], batch_id=batch.id,
+            product_id=world["product"].id, warehouse_id=world["brw_ib"].id,
+            exception_type="supply_surplus", quantity=Decimal("10"),
+            purchase_order_id=world["live"].id, po_expected_date=SOON, status="open",
+        )
+        on_po = PlanException(
+            id=_uid(), company_id=world["company_id"], batch_id=batch.id,
+            product_id=world["product"].id, warehouse_id=world["brw_bb"].id,
+            exception_type="supply_surplus", quantity=Decimal("3"),
+            purchase_order_id=world["keep"].id, po_expected_date=SOON, status="open",
+        )
+        db.add_all([on_spo, on_po])
+        db.commit()
+        on_spo_id, on_po_id = on_spo.id, on_po.id
+        live_id, keep_id = world["live"].id, world["keep"].id
+
+        _migration().move_spo_documents(db.connection())
+        db.commit()
+        db.expunge_all()
+
+        assert db.get(PlanException, on_spo_id).purchase_order_id is None
+        assert db.get(PlanException, on_spo_id).quantity == Decimal("10")
+        # A finding about a real purchase order keeps its link.
+        assert db.get(PlanException, on_po_id).purchase_order_id == keep_id
+        assert len(_allocations(db, "SPO-2026/08-0061")) == 3
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == live_id).count() == 0
 
 
 # ------------------------------------------------------------------- the claim it clears
@@ -621,3 +664,48 @@ def test_an_item_less_claim_anchors_on_the_documents_first_line():
         assert result["item_less"] == 1
         row = db.query(OrderLinkClaim).filter(OrderLinkClaim.id == claim_id).one()
         assert row.spo_allocation_id == _allocations(db, "SPO-2023/01-0001")[0].id
+
+
+def _index_names(db) -> set:
+    return {
+        row[0] for row in db.execute(text(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE schemaname = current_schema() || '_scm'
+            """
+        ))
+    }
+
+
+def test_every_referrer_the_delete_checks_is_indexed_first():
+    """Deleting 80k SPO lines makes Postgres look up each one in every referring table;
+    with no index on the referring column that is a sequential scan per deleted row, which
+    is what kept prod's third attempt from finishing inside the deploy's health window."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    wanted = {
+        "ix_scm_order_link_claim_po_line",
+        "ix_scm_loading_plan_line_po_line",
+        "ix_scm_shipment_spo_link_po_line",
+        "ix_scm_plan_exception_purchase_order",
+    }
+    with blank_session() as db:
+        _book(db)
+        module = _migration()
+        context = MigrationContext.configure(connection=db.connection())
+        with Operations.context(context):
+            # The scratch schema is built by create_all from the models, which now declare
+            # the indexes; prod's schema is the one built before they did.
+            assert _index_names(db) >= wanted
+            scm = db.execute(text("SELECT current_schema()")).scalar() + "_scm"
+            for name in wanted:
+                db.execute(text(f'DROP INDEX "{scm}"."{name}"'))
+            assert not (_index_names(db) & wanted)
+            assert module.index_line_referrers(db.connection()) == len(wanted)
+            assert _index_names(db) >= wanted
+            # A schema already shaped is left alone.
+            assert module.index_line_referrers(db.connection()) == 0
+            # The whole upgrade still runs on top of it.
+            module.upgrade()
+            assert _index_names(db) >= wanted
