@@ -625,12 +625,27 @@ def _open_lines(
             SELECT sol.product_id::text AS product_id, so.so_number, so.demand_class,
                    so.order_date, sol.required_date,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
+                   pj.title AS project_title,
+                   COALESCE(NULLIF(sa.person_label, ''), NULLIF(sa.sales_agent, '')) AS agent_label,
+                   sol.unit_price AS unit_price,
                    CASE WHEN so.demand_class = 'project'
                         THEN GREATEST({qty} - COALESCE(lk.placed, 0), 0)
                         ELSE {qty} END AS qty
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            -- The person, then the code: `person_label` is who the buyer would name, and
+            -- `sales_agent` is the AutoCount code every row has - so a row that carries only
+            -- the code still says something rather than nothing.
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
+            -- The project this order was published for (R15's own book): at most one project
+            -- SO per core order (`uq_projects_so_core_order`), so the join cannot multiply a
+            -- line and cannot move the total the dialog foots. Company-matched by hand
+            -- because raw SQL sees no scoped loader. Blank for an adopted order, which
+            -- carries no registration at all.
+            LEFT JOIN projects.sales_orders pso
+                   ON pso.so_id = so.id AND pso.company_id = so.company_id
+            LEFT JOIN projects.projects pj ON pj.id = pso.project_id
             {_PLACED_ON_LINE_SQL}
             WHERE sol.product_id::text = ANY(:pids)
               AND so.status = 'open'
@@ -660,6 +675,12 @@ def _open_lines(
             "item_code": catalogue.get(r["product_id"], {}).get("item_code"),
             "so_number": r["so_number"],
             "customer_label": r["customer_label"],
+            # Who this is for, who sold it and at what price - the three columns AC-B2 asks
+            # of the Project / Retail lightbox beside the customer. All three are labels, so
+            # a row that has none of them still lists.
+            "project_title": r["project_title"],
+            "agent_label": r["agent_label"],
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             "demand_class": r["demand_class"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,

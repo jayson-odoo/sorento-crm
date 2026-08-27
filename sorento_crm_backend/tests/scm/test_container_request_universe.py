@@ -28,6 +28,8 @@ from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import ProductSupplier
 from app.models.product import Product
 from app.models.project_so import OrderInquiry, OrderInquiryRow, ProjectSalesOrder
+from app.models.projects import Project
+from app.models.sales_agent import SalesAgent
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
 from app.services.scm import container_request_service as svc
 from tests._pg_fixture import pg_session
@@ -266,6 +268,50 @@ def _proforma(
         )
         db.flush()
     return pi
+
+
+def _agent(db, w: World, *, code: str, person: str | None) -> SalesAgent:
+    """The salesperson on the order: the person when one is named, the code otherwise."""
+    product = db.query(Product).filter(Product.id == w.product("A").id).one()
+    agent = SalesAgent(
+        id=_uid(),
+        company_id=str(product.company_id),
+        sales_agent=f"{code}-{uuid.uuid4().hex[:6]}" if person else code,
+        person_label=person,
+    )
+    db.add(agent)
+    db.flush()
+    return agent
+
+
+def _publish_for_project(db, w: World, line: SalesOrderLine, *, title: str) -> None:
+    """The project this core order was published for - the mirror row plus its project.
+
+    Nothing else of `_place`'s chain: this is about the LABEL the lightbox prints, not the
+    netting, so an inquiry row and a placement link would only change the quantity.
+    """
+    product = db.query(Product).filter(Product.id == line.product_id).one()
+    company_id = str(product.company_id)
+    project = Project(
+        id=_uid(),
+        company_id=company_id,
+        project_code=f"{MARKER}-PJ-{uuid.uuid4().hex[:6]}",
+        title=title,
+        normalised_title=title.casefold(),
+    )
+    db.add(project)
+    db.flush()
+    db.add(
+        ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=project.id,
+            so_id=line.sales_order_id,
+            provisional_ref=f"{MARKER}-PR-{uuid.uuid4().hex[:8]}",
+            status="published",
+        )
+    )
+    db.flush()
 
 
 def _row(result: dict, w: World, key: str) -> dict:
@@ -587,6 +633,53 @@ def test_the_open_so_lines_foot_to_the_whole_need():
         assert listed == row["open_so_need"] == 110
         assert {ln["demand_class"] for ln in out["lines"]} == {"retail", "project"}
         assert row["so_count"] == 2
+
+
+def test_an_open_line_names_its_project_its_agent_and_its_price():
+    # AC-B2: the Project / Retail lightbox lists Sales order, Customer, Project, Agent, Price,
+    # Qty, Required. The three that were not on the payload are asserted HERE rather than in
+    # the dialog's own test, because a field the service stops emitting is invisible to a
+    # component test that mocks the payload.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        agent = _agent(db, w, code="ZZAG", person="Wong Mei Ling")
+        retail = _retail_need(db, w, "A", 40)
+        retail.sales_agent_id = agent.id
+        db.query(SalesOrderLine).filter(SalesOrderLine.sales_order_id == retail.id).update(
+            {"unit_price": 12.5}
+        )
+        project_line = _project_need(db, w, "A", 10)
+        _publish_for_project(db, w, project_line, title=f"{MARKER} Tropicana Gardens")
+        db.flush()
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+
+        by_class = {ln["demand_class"]: ln for ln in out["lines"]}
+        assert by_class["retail"]["agent_label"] == "Wong Mei Ling"
+        assert by_class["retail"]["unit_price"] == 12.5
+        # A retail order is for a customer, not a project - the column is blank, not absent.
+        assert by_class["retail"]["project_title"] is None
+        assert by_class["project"]["project_title"] == f"{MARKER} Tropicana Gardens"
+        # Nothing was said about who sold it or what it costs, and nothing is invented.
+        assert by_class["project"]["agent_label"] is None
+        assert by_class["project"]["unit_price"] is None
+
+
+def test_the_agent_falls_back_to_the_code_when_nobody_is_named():
+    # `person_label` is the person; `sales_agent` is the AutoCount code every row has. A row
+    # carrying only the code says "SLS01", never a dash.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        agent = _agent(db, w, code=f"{MARKER}SLS01", person=None)
+        so = _retail_need(db, w, "A", 5)
+        so.sales_agent_id = agent.id
+        db.flush()
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+
+        assert out["lines"][0]["agent_label"] == f"{MARKER}SLS01"
 
 
 def test_a_row_with_packed_zero_but_unfinished_stock_is_still_a_row():
