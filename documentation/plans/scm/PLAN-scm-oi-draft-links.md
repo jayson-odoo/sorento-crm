@@ -403,7 +403,7 @@ run is in section 14.
 | S3 | preview and write counted `stated` on opposite sides of the product lookup, so a book with an unknown SKU had them closing different rows | one resolver for both (`_spo_line_plans` + `_spo_stated_keys` + `_spo_counts`); a line naming no product leaves no key on either side |
 | S4 | every press of Auto link all deleted and rewrote identical links and appended "Unlinked from X; Re-dealt by ..." to the note | the take is compared with what the row holds as a multiset (`_same_placement`); an identical answer skips the row whole |
 | S5 | the PO-confirm cascade did not pass `redeal_drafts=True`, so a plan-generated purchase order could not take the draft it was bought for | both passes now pass it (safe once B1 landed) |
-| S6 | `awaiting_acknowledgement_rows` counted `awaiting` in `raised` / `partly_linked`, so a drafted row (`placed`) vanished from the plan page's chip; the FE tile was hardcoded `awaitingRows={0}` as well | the count is `ack_state in (awaiting, changed)` with `state not in (cancelled, actioned)` - the To confirm set the page itself opens on - and `ReorderPlanningView` reads `summary.awaiting_rows` |
+| S6 | `awaiting_acknowledgement_rows` counted `awaiting` in `raised` / `partly_linked`, so a drafted row (`placed`) vanished from the count | the count is `ack_state in (awaiting, changed)` with `state not in (cancelled, actioned)` - the To confirm set the page itself opens on. BACKEND ONLY: the plan page's tile stays hidden per the 27 Aug ruling (see below) |
 | S7 | is `committed_v` netting a draft | ruled, no code change: section 12 above |
 | S8 | `ordered = qty + received` is a float on INTEGER columns, and `line_status` was decided on the unrounded remainder | `_spo_quantities` rounds both figures (preferring the file's own `qty_ordered`, as `_settled_quantities` does) and the status follows the two integers |
 | N1 | the R11 pool gate read the location with the book's raw code as a fallback, while the listing's own read (`link_candidate_products`) can only read the warehouse | the gate reads the WAREHOUSE code only; the raw code is still what the row DISPLAYS |
@@ -434,12 +434,15 @@ now includes `changed` rows (`tests/test_order_inquiry_handshake_edges.py` expec
 expected +1). A row CS has amended since purchasing read it is work in front of purchasing, and
 it is what the page's own To confirm filter has meant since R3.
 
-**Flagged, not resolved by this round:** `ReorderPlanningView.tsx` carried the comment
-"Hidden (the captain, 27 Aug): an awaiting row is not demand, and the tile only asked why"
-beside its hardcoded `awaitingRows={0}` (it arrived on main with PR #345, not on this branch).
-S6 asked for the chip to be wired, citing `PLAN-scm-oi-handshake.md` section 7 ("the awaiting
-count is LIVE"), so it is wired - the tile hides itself at 0, so a clear day still reads as
-three tiles. If the 27 Aug ruling stands, revert that one line.
+**The tile stays hidden (captain, 27 Aug, reaffirmed 28 Aug).** S6 also asked for the plan
+page's To confirm tile to be wired to `summary.awaiting_rows`, citing `PLAN-scm-oi-handshake.md`
+section 7. `ReorderPlanningView.tsx` holds the opposite ruling beside its hardcoded
+`awaitingRows={0}` - "an awaiting row is not demand, and the tile only asked why" - and that
+ruling stands: **only the BACKEND count was corrected**, `awaitingRows={0}` is unchanged, and the
+plan page shows three tiles as before. The corrected count is still on the wire
+(`ReorderRunSummary.awaiting_rows`) for the Order Inquiries page's own reading, and
+`ReorderStatTiles` is still tested to render the tile correctly when a caller hands it a count -
+so wiring it later is one line, if the ruling ever changes.
 
 ## 14. Review-round test run (28 Aug)
 
@@ -457,10 +460,11 @@ first:
   (`late_days` on the wire), `test_supply_inquiry_handoff.py::test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_balance_exception`
   (the placed row is confirmed before the reconfirm).
 
-**vitest**: `app/(protected)/project-sales` + `app/(protected)/scm/reorder`, **3646 passed /
-0 failed** (225 files), including three To confirm cases added to `ReorderStatTiles.test.tsx`,
-two to `ReorderPlanningView.test.tsx` (the tile reading `summary.awaiting_rows`, and no tile at
-0) and three Unlink-selected confirmation cases in `OrderInquiriesClient.test.tsx`.
+**vitest**: `app/(protected)/project-sales` + `app/(protected)/scm/reorder`, **3644 passed /
+0 failed** (225 files), including three To confirm cases added to `ReorderStatTiles.test.tsx`
+(the tile renders its count and stays away at 0 - the component's own contract, unwired on the
+plan page per the 27 Aug ruling) and three Unlink-selected confirmation cases in
+`OrderInquiriesClient.test.tsx`.
 
 `npx tsc --noEmit` clean on every touched file (the repo's standing errors are all in other
 suites' test files). eslint clean on the touched files apart from one pre-existing

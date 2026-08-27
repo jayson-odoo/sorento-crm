@@ -592,12 +592,8 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         total={decisionProgress?.total ?? 0}
         cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={summary?.total_cash_impact ?? 0}
-        // The run summary's own LIVE count (`PLAN-scm-oi-handshake.md` section 7): every
-        // other figure here is frozen in the run log, this one is a COUNT taken now, and
-        // it is the work the plan itself cannot see - the plan counts confirmed rows only.
-        // Hardcoded to 0 since the tile landed, so the number never reached the screen.
-        // The tile hides itself at 0, so a clear day still reads as three tiles.
-        awaitingRows={summary?.awaiting_rows ?? 0}
+        // Hidden (the captain, 27 Aug): an awaiting row is not demand, and the tile only asked why.
+        awaitingRows={0}
         undecidedFilterActive={decidedFilter === 'undecided'}
         onToggleUndecidedFilter={toggleUndecidedFilter}
       />
