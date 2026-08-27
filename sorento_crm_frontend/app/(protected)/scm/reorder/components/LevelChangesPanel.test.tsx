@@ -26,8 +26,9 @@ const suggestion = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   suggested_quantity: null,
   master_reorder_quantity: null,
   basis: {
-    months: [], months_studied: 3, total_qty: 36, avg_monthly: 12, cover_months: 2,
-    raw_level: 24, moq: null, order_multiple: null, trend: 'rising', no_movement: false,
+    adu: 0.4, lead_time_days: 30, lead_time_source: 'supplier', safety_days: 14,
+    safety_stock: 5.6, window_days: 90, window_qty: 36, raw_level: 17.6,
+    months: [], no_movement: false,
   },
   ...over,
 });

@@ -1643,9 +1643,9 @@ describe('PlanLinesGrid - the product row is the plan row on a per-product run',
       current_level: null, suggested_level: 12, suggested_at: null, amended_level: null,
       amended_at: null, amended_by: null, master_reorder_quantity: null,
       suggested_quantity: 12,
-      basis: { months: [], months_studied: 3, total_qty: 36, avg_monthly: 6,
-               cover_months: 2, raw_level: 12, moq: null, order_multiple: null,
-               trend: null, no_movement: false },
+      basis: { months: [], adu: 0.2, lead_time_days: 30, lead_time_source: 'supplier',
+               safety_days: 14, safety_stock: 2.8, window_days: 90, window_qty: 18,
+               raw_level: 8.8, no_movement: false },
     };
     renderProductGrid([needsLevelRow], (l) =>
       l.product_id === 'p-b2155' ? suggestion : undefined,

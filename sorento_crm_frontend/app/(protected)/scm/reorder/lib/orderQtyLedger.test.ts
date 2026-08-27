@@ -185,17 +185,17 @@ describe('lineBreachStatus', () => {
 });
 
 describe('forecastAddOn - names its source', () => {
-  it('manual mode: the horizon comes from the level suggestion cover-months', () => {
+  it('manual mode: the horizon is the days the level itself covers', () => {
     const addOn = forecastAddOn({
       policy_type: 'reorder_level',
       forecast_daily_demand: 20,
-      suggestion_basis: { cover_months: 2 },
+      suggestion_basis: { lead_time_days: 45, safety_days: 14 },
     });
     expect(addOn).toMatchObject({
-      qty: 1200,
-      horizonDays: 60,
+      qty: 1180,
+      horizonDays: 59,
       ratePerDay: 20,
-      sourceLabel: 'cover window per policy',
+      sourceLabel: 'lead time plus safety days',
       trendNote: null,
     });
   });

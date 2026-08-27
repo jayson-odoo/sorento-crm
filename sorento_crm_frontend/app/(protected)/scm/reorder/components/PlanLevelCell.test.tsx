@@ -49,14 +49,14 @@ const suggestion = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
       { month: '2026-06', qty: 12 },
       { month: '2026-07', qty: 12 },
     ],
-    months_studied: 3,
-    total_qty: 36,
-    avg_monthly: 12,
-    cover_months: 2,
-    raw_level: 24,
-    moq: null,
-    order_multiple: null,
-    trend: 'rising',
+    adu: 0.4,
+    lead_time_days: 30,
+    lead_time_source: 'supplier',
+    safety_days: 14,
+    safety_stock: 5.6,
+    window_days: 90,
+    window_qty: 36,
+    raw_level: 17.6,
     no_movement: false,
   },
   ...over,
@@ -81,9 +81,22 @@ describe('PlanLevelCell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
 
-    expect(screen.getByText(/Averaged 12 a month over the last 3 months/)).toBeInTheDocument();
-    expect(screen.getByText(/rounds up/)).toBeInTheDocument();
+    expect(screen.getByText(/36 left the warehouses over the last 90 days/)).toBeInTheDocument();
+    expect(screen.getByText(/30 day lead needs 12/)).toBeInTheDocument();
     expect(screen.getByText(/Based on our own outgoing orders only/)).toBeInTheDocument();
+  });
+
+  it('names the three terms the level is made of (AC-R11)', () => {
+    render(<PlanLevelCell suggestion={suggestion()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /level suggestion/i }));
+
+    expect(screen.getByText('ADU')).toBeInTheDocument();
+    expect(screen.getByText('0.4 / day')).toBeInTheDocument();
+    expect(screen.getByText('Lead time')).toBeInTheDocument();
+    expect(screen.getByText('30 d')).toBeInTheDocument();
+    expect(screen.getByText('Safety')).toBeInTheDocument();
+    expect(screen.getByText('5.6 (14 d)')).toBeInTheDocument();
   });
 
   it('renders absence when there is no suggestion, never a zero', () => {

@@ -132,20 +132,17 @@ export function composeMixture(
   return { stockQty, usePo, buy };
 }
 
-/** Matches `scm.reorder_policy.level_cover_months`'s column default (migration 273_scm_
- *  module_schema). Used only as a fallback when a row's own `suggestion_basis` never ran
- *  (no movement history yet) - the live policy value is not threaded onto the frozen row. */
-const DEFAULT_LEVEL_COVER_MONTHS = 2;
-
-/** Days in a month, for turning a cover-months horizon into the "next Xd" the ledger states -
- *  matches how `suggest_level`'s own `cover_months` is a month count, not a day count. */
-const DAYS_PER_MONTH = 30;
+/** The days a manual level covers when the row's own `suggestion_basis` never ran (no
+ *  movement history yet): the engine's own lead-time and safety-day fallbacks
+ *  (`reorder_level_service.DEFAULT_LEAD_TIME_DAYS` + `LEVEL_SAFETY_DAYS`). */
+const DEFAULT_LEVEL_LEAD_DAYS = 30;
+const DEFAULT_LEVEL_SAFETY_DAYS = 14;
 
 /** Named per mode, so the "+ Add" label can say WHERE its horizon came from rather than
  *  leaving the buyer to trust a bare day count (user feedback: "the label must name its
  *  source"). */
 const FORECAST_SOURCE_LABEL = {
-  manual: 'cover window per policy',
+  manual: 'lead time plus safety days',
   auto: 'review period per policy',
 } as const;
 
@@ -175,7 +172,7 @@ export interface ForecastAddOn {
  * Auto mode uses the policy's own review window (`rec.review_days`, the same window the
  * order-up-to derivation already folds in). Manual mode has no review window - the level
  * basis exists specifically because a forecast term is not part of its trigger - so it
- * borrows the level suggestion's own cover-months horizon instead, converted to days.
+ * borrows the days the LEVEL itself covers: its lead time plus its safety days (AC-R11).
  *
  * `qty` can come back `0` (a falling trend that ate the whole flat proposal) - that is
  * DIFFERENT from returning `null` (no measurable demand at all, so there is nothing to
@@ -187,7 +184,7 @@ export function forecastAddOn(
     policy_type?: string | null;
     forecast_daily_demand?: number | null;
     review_days?: number | null;
-    suggestion_basis?: { cover_months?: number } | null;
+    suggestion_basis?: { lead_time_days?: number; safety_days?: number } | null;
   },
   trend?: TrajectoryEntry,
 ): ForecastAddOn | null {
@@ -195,7 +192,10 @@ export function forecastAddOn(
   if (rate == null || rate <= 0) return null;
   const manual = rec.policy_type === 'reorder_level';
   const horizonDays = manual
-    ? Math.round((rec.suggestion_basis?.cover_months ?? DEFAULT_LEVEL_COVER_MONTHS) * DAYS_PER_MONTH)
+    ? Math.round(
+        (rec.suggestion_basis?.lead_time_days ?? DEFAULT_LEVEL_LEAD_DAYS) +
+          (rec.suggestion_basis?.safety_days ?? DEFAULT_LEVEL_SAFETY_DAYS),
+      )
     : Math.round(rec.review_days ?? 0);
   if (!(horizonDays > 0)) return null;
   const flatQty = Math.round(rate * horizonDays);

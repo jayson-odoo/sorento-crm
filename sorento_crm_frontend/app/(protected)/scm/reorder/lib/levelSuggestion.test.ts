@@ -4,14 +4,16 @@ import {
   levelActionLabel,
   levelKey,
   levelRowsForExport,
+  levelTerms,
   type LevelSuggestion,
 } from './levelSuggestion';
 
 /**
- * The wording over the S13f level suggestion.
+ * The wording over the level suggestion.
  *
  * Rules under test: the row states the ACTION ("Set AutoCount level to N"), the current
- * level always travels beside it, and the popup shows the sums - never a bare verdict.
+ * level always travels beside it, and the popup names the THREE TERMS the level is made
+ * of (AC-R11: ADU a day, the lead time, the safety stock) - never a bare verdict.
  */
 
 const entry = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
@@ -30,15 +32,16 @@ const entry = (over: Partial<LevelSuggestion> = {}): LevelSuggestion => ({
   suggested_quantity: null,
   master_reorder_quantity: null,
   basis: {
+    // 900 over 90 days = 10 a day; a 30 day lead needs 300, 14 days of safety adds 140.
+    adu: 10,
+    lead_time_days: 30,
+    lead_time_source: 'supplier',
+    safety_days: 14,
+    safety_stock: 140,
+    window_days: 90,
+    window_qty: 900,
+    raw_level: 440,
     months: [],
-    months_studied: 3,
-    total_qty: 36,
-    avg_monthly: 12,
-    cover_months: 2,
-    raw_level: 24,
-    moq: null,
-    order_multiple: null,
-    trend: 'rising',
     no_movement: false,
   },
   ...over,
@@ -68,39 +71,37 @@ describe('levelActionLabel', () => {
 
 describe('describeLevelSuggestion', () => {
   it('walks the arithmetic in words a person says', () => {
-    expect(describeLevelSuggestion(entry())).toBe(
-      'Averaged 12 a month over the last 3 months; 2 months of cover makes 24. Orders are rising, so it rounds up.',
+    expect(describeLevelSuggestion(entry({ suggested_level: 440 }))).toBe(
+      '900 left the warehouses over the last 90 days, so 10 a day. ' +
+        'A 30 day lead needs 300, and 14 days of safety adds 140: 440, rounded up to 440.',
     );
   });
 
-  it('says the rounding leaned down when the book is dying', () => {
+  it('says so when the 30 day lead time is only a stand-in', () => {
     const text = describeLevelSuggestion(
-      entry({
-        suggested_level: 28,
-        basis: { ...entry().basis, avg_monthly: 11.33, cover_months: 2.5, raw_level: 28.33, trend: 'falling' },
-      }),
+      entry({ basis: { ...entry().basis, lead_time_source: 'default' } }),
     );
-    expect(text).toMatch(/rounds down/);
-  });
-
-  it('names the supplier constraint when one lifted the number', () => {
-    const text = describeLevelSuggestion(
-      entry({
-        suggested_level: 30,
-        basis: { ...entry().basis, moq: 30, raw_level: 24 },
-      }),
-    );
-    expect(text).toMatch(/minimum order of 30/i);
+    expect(text).toMatch(/No lead time is on file/i);
   });
 
   it('a no-movement zero says nothing moved, never a bare 0', () => {
     const text = describeLevelSuggestion(
       entry({
         suggested_level: 0,
-        basis: { ...entry().basis, avg_monthly: 0, total_qty: 0, raw_level: 0, no_movement: true, trend: null },
+        basis: { ...entry().basis, adu: 0, window_qty: 0, safety_stock: 0, raw_level: 0, no_movement: true },
       }),
     );
-    expect(text).toMatch(/nothing left this location/i);
+    expect(text).toMatch(/nothing left the warehouses/i);
+  });
+});
+
+describe('levelTerms', () => {
+  it('names the three terms the level is made of, each with its figure', () => {
+    expect(levelTerms(entry())).toEqual([
+      { label: 'ADU', value: '10 / day' },
+      { label: 'Lead time', value: '30 d' },
+      { label: 'Safety', value: '140 (14 d)' },
+    ]);
   });
 });
 
@@ -126,7 +127,8 @@ describe('levelRowsForExport', () => {
       current_level: 20,
       suggested_level: 24,
       engine_level: null,
-      trend: 'rising',
+      adu: 10,
+      lead_time_days: 30,
     });
   });
 });
@@ -151,9 +153,11 @@ function entryForZero(over: Partial<LevelSuggestion> = {}): LevelSuggestion {
     product_id: 'p9', warehouse_id: 'w1', product_code: 'SRT-900', product_name: 'Dust',
     warehouse_code: 'BRW', warehouse_name: 'Branch West',
     current_level: null, current_source: null, suggested_level: 0, suggested_at: null,
-    amended_level: null, amended_at: null,
-    basis: { months: [], months_studied: 3, total_qty: 0, avg_monthly: 0, cover_months: 2,
-             raw_level: 0, moq: null, order_multiple: null, trend: null, no_movement: true },
+    amended_level: null, amended_at: null, suggested_quantity: null,
+    master_reorder_quantity: null,
+    basis: { adu: 0, lead_time_days: 30, lead_time_source: 'default', safety_days: 14,
+             safety_stock: 0, window_days: 90, window_qty: 0, raw_level: 0, months: [],
+             no_movement: true },
     ...over,
   };
 }

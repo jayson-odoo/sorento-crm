@@ -12,6 +12,7 @@ import {
   describeLevelSuggestion,
   effectiveLevel,
   levelActionLabel,
+  levelTerms,
   quantityActionLabel,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
@@ -28,9 +29,10 @@ const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.def
  *
  * Always an ASK. The engine writes only the suggestion; the stored level is the buyer's
  * and the change happens in AutoCount, by them. The popup carries the full derivation -
- * the months studied, the average, the cover, the trend that leaned the rounding - and a
- * field to put the buyer's own figure beside the engine's. An amendment never hides the
- * engine's number: "you set 30; engine said 24" stays on the row.
+ * the three terms the level is made of (ADU a day, the lead time, the safety stock) and
+ * the months behind the average - and a field to put the buyer's own figure beside the
+ * engine's. An amendment never hides the engine's number: "you set 30; engine said 24"
+ * stays on the row.
  */
 export function PlanLevelCell({
   suggestion,
@@ -100,6 +102,17 @@ export function PlanLevelCell({
       <PopoverPortal>
         <PopoverContent className="w-96 text-xs" align="start">
           <p className="font-medium text-foreground">{describeLevelSuggestion(suggestion)}</p>
+
+          {/* The three terms, each with its own figure: a level nobody can take apart is
+              a level nobody argues with, and the sentence above is prose either way. */}
+          <div className="mt-2 grid grid-cols-3 gap-2 border-t pt-2 text-2xs">
+            {levelTerms(suggestion).map((t) => (
+              <div key={t.label}>
+                <p className="text-muted-foreground">{t.label}</p>
+                <p className="tabular-nums font-medium text-foreground">{t.value}</p>
+              </div>
+            ))}
+          </div>
 
           {/* The months behind the average, as bars with the exact figure on each, so
               the arithmetic can be checked at a glance rather than taken on faith

@@ -394,7 +394,7 @@ describe('order-qty ledger - the buy', () => {
     renderLedger({
       line: line({
         policy_type: 'reorder_level', reorder_level: 50, order_qty: 40, recommended_qty: 40,
-        forecast_daily_demand: 20, suggestion_basis: { cover_months: 2 },
+        forecast_daily_demand: 20, suggestion_basis: { lead_time_days: 30, safety_days: 14 },
       }),
     });
     expect(screen.getByRole('checkbox', { name: 'Add 1,200' })).toBeInTheDocument();
