@@ -24,7 +24,13 @@ const KEY = ['scm', 'proforma-invoices'] as const;
 
 export function useProformaInvoices(
   supplierId: string | null,
-  opts: { limit?: number; offset?: number; placement?: ProformaPlacement | null } = {},
+  opts: {
+    limit?: number;
+    offset?: number;
+    placement?: ProformaPlacement | null;
+    /** The list toolbar's search box: PI number, supplier, container or BL. */
+    query?: string | null;
+  } = {},
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };
   return useQuery({
@@ -33,6 +39,7 @@ export function useProformaInvoices(
       'list',
       supplierId,
       opts.placement ?? 'all',
+      opts.query ?? '',
       opts.limit ?? 25,
       opts.offset ?? 0,
     ],

@@ -1,6 +1,10 @@
 /**
- * The proforma-invoice list: what is on file per supplier. Read-only besides delete - a
- * proforma is the supplier's document, and the correction path is re-upload or delete.
+ * The proforma-invoice list, on the standard `DataGridListToolbar`.
+ *
+ * What this pins: the search box reaches the service, the two filters live behind ONE
+ * Filters popover that says what it is filtering, the whole row opens the invoice, the
+ * primary CTA is Upload, and deleting is a bulk action on the selection rather than a
+ * destructive button sitting in every row under the cursor.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -37,9 +41,10 @@ vi.mock('sonner', () => ({
   },
 }));
 
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/proforma-invoices',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -61,11 +66,19 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options?: Array<{ value: string; label: string }>;
     placeholder?: string;
   }) => (
-    // Labelled by its own id, so the supplier filter and the packing-list filter are two
-    // different controls to a test rather than two elements answering to "Supplier".
+    // Labelled by its own id, so the supplier filter, the packing-list filter AND the
+    // pagination's own page-size select (which is a SearchableSelect too, and so goes
+    // through this same mock) are three different controls to a test rather than three
+    // elements answering to "Supplier".
     <select
       id={id}
-      aria-label={id === 'proforma-placement-filter' ? 'Packing list filter' : 'Supplier'}
+      aria-label={
+        id === 'proforma-placement-filter'
+          ? 'Packing list filter'
+          : id === 'proforma-supplier-filter'
+            ? 'Supplier'
+            : (id ?? 'select')
+      }
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
     >
@@ -101,18 +114,23 @@ vi.mock('./ProformaUploadDialog', () => ({
 const state = {
   data: undefined as { data: ProformaInvoiceListRow[]; total: number } | undefined,
   isLoading: false,
-  deleteInvoice: vi.fn(),
   convertInvoices: vi.fn(),
   bulkDeleteInvoices: vi.fn(),
 };
 
+/** Every argument list the list hook was called with, so a test can assert what the screen
+ *  ASKED the service for rather than what it happened to render. */
+const listCalls: unknown[][] = [];
+
 vi.mock('../../hooks/useProformaInvoices', () => ({
-  useProformaInvoices: () => ({ data: state.data, isLoading: state.isLoading }),
+  useProformaInvoices: (...args: unknown[]) => {
+    listCalls.push(args);
+    return { data: state.data, isLoading: state.isLoading };
+  },
   // The convert dialog reads the one invoice it is about, and this supplier's open drafts
   // to offer as a target (F10). Neither is what this suite is testing.
   useProformaInvoice: () => ({ data: undefined, isLoading: false }),
   useDraftShipments: () => ({ data: [], isLoading: false }),
-  useDeleteProformaInvoice: () => ({ mutateAsync: state.deleteInvoice }),
   useConvertProformaInvoicesToDraftShipment: () => ({
     mutateAsync: state.convertInvoices,
     isPending: false,
@@ -174,10 +192,31 @@ function renderView() {
   );
 }
 
+/** The two filters live behind the toolbar's Filters popover now, so a test opens it the
+ *  way a person does. Radix opens a dropdown on POINTERDOWN, not on click, so a plain
+ *  `click` here is a silent no-op. */
+function openFilters() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^Filters/ }), {
+    button: 0,
+    ctrlKey: false,
+    pointerType: 'mouse',
+  });
+}
+
+function searchBox(): HTMLInputElement {
+  return screen.getByLabelText('Search proforma invoices') as HTMLInputElement;
+}
+
+/** The last `{ limit, offset, placement, query }` the list hook was asked for. */
+function lastListOptions(): Record<string, unknown> {
+  return listCalls[listCalls.length - 1][1] as Record<string, unknown>;
+}
+
 beforeEach(() => {
+  listCalls.length = 0;
+  push.mockReset();
   state.data = { data: [], total: 0 };
   state.isLoading = false;
-  state.deleteInvoice = vi.fn().mockResolvedValue(undefined);
   state.convertInvoices = vi.fn().mockResolvedValue({
     shipment_id: 'ship-1',
     shipment_number: 'SHIP-DRAFT-1',
@@ -209,6 +248,7 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     state.data = { data: [], total: 0 };
     renderView();
 
+    openFilters();
     // Off the placement filter first: with it on, the empty state answers that question.
     fireEvent.change(screen.getByLabelText('Packing list filter'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Supplier'), { target: { value: 'sup-1' } });
@@ -218,13 +258,35 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     ).toBeInTheDocument();
   });
 
+  it('says the search found nothing, rather than that nothing was uploaded', () => {
+    state.data = { data: [], total: 0 };
+    renderView();
+
+    fireEvent.change(searchBox(), { target: { value: 'FSCU' } });
+
+    expect(
+      screen.getByText('No proforma invoice matches this search and filter.'),
+    ).toBeInTheDocument();
+  });
+
   it('renders every row once loaded', () => {
-    state.data = { data: [invoiceRow(), invoiceRow({ id: 'pi-2', pi_number: 'PI-2026-002' })], total: 2 };
+    state.data = {
+      data: [invoiceRow(), invoiceRow({ id: 'pi-2', pi_number: 'PI-2026-002' })],
+      total: 2,
+    };
     renderView();
 
     expect(screen.getByText('PI-2026-001')).toBeInTheDocument();
     expect(screen.getByText('PI-2026-002')).toBeInTheDocument();
     expect(screen.getAllByText('Kailu Hardware Factory').length).toBeGreaterThan(0);
+  });
+
+  it('shows the supplier NAME once, not a second normalised code under it', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    expect(screen.getByText('Kailu Hardware Factory')).toBeInTheDocument();
+    expect(screen.queryByText('KAILU')).not.toBeInTheDocument();
   });
 
   it('a failed read falls back to the empty state rather than crashing', () => {
@@ -238,59 +300,184 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
       screen.getByText('No proforma invoice is waiting for a container.'),
     ).toBeInTheDocument();
   });
+
+  it('renders the pagination footer whether or not there are rows', () => {
+    state.data = { data: [], total: 0 };
+    const { container } = renderView();
+
+    expect(container.querySelector('[data-slot="card-footer"]')).toBeInTheDocument();
+  });
 });
 
-describe('ProformaInvoicesView - the Upload button gate', () => {
-  it('shows Upload when the caller holds scm.proforma_invoice.upload', () => {
-    // A non-empty result so only the toolbar's own Upload button is on screen - the empty
-    // state renders a SECOND one, which is its own test below.
-    hasPermission.mockReturnValue(true);
+describe('ProformaInvoicesView - the standard toolbar', () => {
+  it('sends what was typed to the service as `query`', async () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    expect(screen.getByRole('button', { name: /upload proforma invoice/i })).toBeInTheDocument();
+    fireEvent.change(searchBox(), { target: { value: 'FSCU8103365' } });
+
+    await waitFor(() => expect(lastListOptions().query).toBe('FSCU8103365'));
+  });
+
+  it('clears the search from its own button', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    fireEvent.change(searchBox(), { target: { value: 'FSCU' } });
+    fireEvent.click(screen.getByRole('button', { name: /clear search/i }));
+
+    await waitFor(() => expect(lastListOptions().query).toBe(''));
+    expect(searchBox().value).toBe('');
+  });
+
+  it('holds BOTH filters behind one Filters popover, and counts them', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    // Closed, the selects are not on screen at all - that is the point of the popover.
+    expect(screen.queryByLabelText('Supplier')).not.toBeInTheDocument();
+
+    openFilters();
+
+    expect(screen.getByLabelText('Supplier')).toBeInTheDocument();
+    expect(screen.getByLabelText('Packing list filter')).toBeInTheDocument();
+  });
+
+  it('states the active filter on screen, with a way to clear it', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    // The default IS a filter, so it says so - a sticky default the reader did not set is
+    // otherwise indistinguishable from missing data. ("Not converted" is also the row's own
+    // Packing list cell, so the chip is identified by its clear button, not by the words.)
+    const clear = screen.getByRole('button', { name: /clear filter: not converted/i });
+    expect(clear).toBeInTheDocument();
+    fireEvent.click(clear);
+
+    expect(
+      screen.queryByRole('button', { name: /clear filter/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers the Columns control', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    expect(screen.getByRole('button', { name: /columns/i })).toBeInTheDocument();
+  });
+
+  it('anchors Upload as the one primary action', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    expect(
+      screen.getByRole('button', { name: /upload proforma invoice/i }),
+    ).toBeInTheDocument();
   });
 
   it('hides Upload entirely without the permission, not just disables it', () => {
     hasPermission.mockReturnValue(false);
+    state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    expect(screen.queryByRole('button', { name: /upload proforma invoice/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /upload proforma invoice/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('the empty-state Upload button is gated the same way', () => {
-    hasPermission.mockReturnValue(false);
-    state.data = { data: [], total: 0 };
+  it('opens the upload dialog from the primary action', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    expect(screen.queryByRole('button', { name: /upload proforma invoice/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /upload proforma invoice/i }));
+
+    expect(screen.getByTestId('upload-dialog')).toBeInTheDocument();
   });
 });
 
-describe('ProformaInvoicesView - delete', () => {
+describe('ProformaInvoicesView - the whole row opens the invoice', () => {
+  it('routes to the detail page on a row click, carrying the list query', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    fireEvent.click(screen.getByText('TEMU1234567'));
+
+    expect(push).toHaveBeenCalledTimes(1);
+    const href = push.mock.calls[0][0] as string;
+    expect(href).toContain('/scm/proforma-invoices/pi-1');
+    expect(href).toContain('placement=not_converted');
+  });
+
+  it('keeps the PI number a real anchor, and stops it opening the row twice', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    const link = screen.getByRole('link', { name: /PI-2026-001/ });
+    expect(link.getAttribute('href')).toContain('/scm/proforma-invoices/pi-1');
+
+    fireEvent.click(link);
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProformaInvoicesView - delete is a bulk action, never a per-row button', () => {
+  it('renders no Delete control while nothing is selected', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    expect(screen.queryByRole('button', { name: /^delete/i })).not.toBeInTheDocument();
+  });
+
+  it('offers Convert and Delete once a row is ticked', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /convert 1 to draft shipment/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /delete 1/i })).toBeInTheDocument();
+  });
+
   it('uses the standard confirm copy, never a browser confirm()', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('button', { name: /delete/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+    fireEvent.click(screen.getByRole('button', { name: /delete 1/i }));
 
-    const dialog = screen.getByRole('dialog');
+    const dialog = screen.getByRole('alertdialog');
     expect(within(dialog).getByText('Confirm delete')).toBeInTheDocument();
     expect(within(dialog).getByText(/this action cannot be undone/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/PI-2026-001/)).toBeInTheDocument();
   });
 
   it('deletes only after the dialog is confirmed', async () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('button', { name: /delete/i }));
-    expect(state.deleteInvoice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+    fireEvent.click(screen.getByRole('button', { name: /delete 1/i }));
+    expect(state.bulkDeleteInvoices).not.toHaveBeenCalled();
 
-    const dialog = screen.getByRole('dialog');
+    const dialog = screen.getByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: /^delete$/i }));
 
-    await waitFor(() => expect(state.deleteInvoice).toHaveBeenCalledWith('pi-1'));
+    await waitFor(() => expect(state.bulkDeleteInvoices).toHaveBeenCalledWith(['pi-1']));
+  });
+
+  it('hides the bulk delete from a caller who cannot upload', () => {
+    hasPermission.mockImplementation((slug: string) => slug !== 'scm.proforma_invoice.upload');
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+
+    expect(screen.queryByRole('button', { name: /delete 1/i })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /convert 1 to draft shipment/i }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -336,7 +523,7 @@ describe('F10 - the list says which packing list an invoice went into', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    // Twice: the cell, and the filter's own option in the mocked select.
+    // Twice: the cell, and the active-filter chip above the grid.
     expect((await screen.findAllByText('Not converted')).length).toBeGreaterThanOrEqual(1);
   });
 
@@ -345,10 +532,7 @@ describe('F10 - the list says which packing list an invoice went into', () => {
     renderView();
 
     const link = await screen.findByRole('link', { name: /FSCU8103365/ });
-    expect(link).toHaveAttribute(
-      'href',
-      '/procurement-management/packing-lists/sh-1',
-    );
+    expect(link).toHaveAttribute('href', '/procurement-management/packing-lists/sh-1');
   });
 
   it('reads Split, with what is left to place, on a part-placed invoice (Q9)', async () => {
