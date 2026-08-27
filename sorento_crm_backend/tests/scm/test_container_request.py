@@ -745,7 +745,7 @@ def test_build_reads_the_spo_freshness_off_the_allocation_book(scm_app):
     )
     db.flush()
 
-    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
 
     assert r.status_code == 200, r.text
     assert r.json()["sources"]["spo_as_of"] is not None
