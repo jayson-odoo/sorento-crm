@@ -260,6 +260,47 @@ def test_the_suggestion_note_never_offers_a_borrow_the_proof_has_refused():
         assert "Borrowing is possible" not in buy["reason"], buy["reason"]
 
 
+def test_the_suggestion_note_is_silent_about_a_donor_whose_own_group_nets_nothing():
+    """AC-V4's second half, the case the CAP filter never caught (review blocker B1).
+
+    The donor site holds 500 and the cap is nowhere near binding, so `over_cap` is False on
+    it and a filter that only looked at the cap kept naming it. What actually refused it is
+    ladder v4's own rule: the NTC group as a whole nets -100, so nothing of it may be lent,
+    and question 3 says exactly that one row above. The note is written from what questions
+    3 and 4 offered, and they offered nothing.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        stem = _uid()[:5]
+        own = _warehouse(db, f"ZZTM{stem}-BB"[:20])
+        donor = _warehouse(db, f"ZZTN{stem}-NTC"[:20])
+        elsewhere = _warehouse(db, f"ZZTO{stem}-NTC"[:20])
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, donor, on_hand=500)
+        _stock(db, product, elsewhere, on_hand=0)
+        # The NTC group's own book: 500 on the floor at one site against 600 owed at
+        # another, so the group nets -100 and lends nothing however much sits at `donor`.
+        theirs = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, product, qty="600", required_date=WHEN, warehouse=elsewhere)
+        # Deliberately generous, so the cap is NOT what refuses the borrow.
+        _cap(db, max_qty=1000, max_pct=100.0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="60", required_date=WHEN, warehouse=own)
+
+        contribution = _contribution(db, order, product)
+
+        step = _step(contribution, "cross_group_borrow")
+        assert step["answer"] == "no"
+        assert "NTC nets -100" in step["why"], step["why"]
+        # The donor is still SEEN - it is on the row's own candidate list, and the cap is
+        # nowhere near binding on it - and that is exactly why the note used to name it.
+        assert donor.warehouse_code in [
+            c["warehouse_code"] for c in contribution["borrow_candidates"]
+        ]
+        buy = next(s for s in contribution["sources"] if s["kind"] == "buy")
+        assert "Borrowing is possible" not in buy["reason"], buy["reason"]
+
+
 # --------------------------------------------------------------------------- AC-V3
 
 

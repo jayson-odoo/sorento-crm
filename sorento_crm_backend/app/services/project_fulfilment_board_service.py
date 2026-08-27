@@ -1834,7 +1834,15 @@ class FulfilmentBoardService:
                 else self._donors_for(borrow_cache, row, fact, bought)
             )
 
-            row.sources = [self._source(component, row) for component in components]
+            # THE TRAIL FIRST, and the sources from what it offered. The Buy's own
+            # sentence names where a person could still borrow from, and the only honest
+            # answer to that is what questions 3 and 4 actually put on the table - read
+            # off the trail rather than filtered a second time out of the raw donor list
+            # (AC-V4: the note must never offer what the proof has refused).
+            row.trail, offerable = self._trail(row, fact, components, pool_open)
+            row.sources = [
+                self._source(component, row, offerable) for component in components
+            ]
             # An undecided line's suggestion IS its live proposal, said under the key the
             # decision strip reads for every line (AC-D2), so the strip never has to ask
             # which of two fields a given row keeps its suggestion in.
@@ -1851,7 +1859,6 @@ class FulfilmentBoardService:
                 "discontinued": bool(fact.is_discontinued),
                 "retail_classification_available": not fact.classification_unavailable,
             }
-            row.trail = self._trail(row, fact, components, pool_open)
 
         # A covered line is amendable too, so its donors are read - ranked against what its
         # frozen composition is still buying - and nothing else about it is touched: no
@@ -2024,7 +2031,7 @@ class FulfilmentBoardService:
         fact: Any,
         components: Sequence[Any],
         pool_open: Optional[Decimal],
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
 
         FIVE ROWS, always, in one order: our own location, the pool, another location,
@@ -2041,6 +2048,12 @@ class FulfilmentBoardService:
         A READ, never a second allocator: every quantity here is either one the engine
         already produced (`components`) or one the facts already state, so the trail cannot
         disagree with the proposal it explains.
+
+        Returns the five rows AND the locations questions 3 and 4 actually offered, in the
+        order they were offered. The Buy's own sentence is written from that list and from
+        nothing else (AC-V4): a second filter over the raw donor set was how the note came
+        to say "borrowing is possible from DC1-NTC" one line under a question 3 that had
+        just said the NTC group has nothing left.
         """
         steps: List[Dict[str, Any]] = []
         # The line's still-uncovered quantity as the questions are walked. INTERNAL, and no
@@ -2239,6 +2252,14 @@ class FulfilmentBoardService:
             if outside_window
             else self.supply.cross_group_borrow_candidates_for(fact, residual=residual)
         )
+        # A line whose location carries NO ownership group has no "outside the group" for
+        # this question to walk (`_cross_group_borrow_candidates` refuses it by rule), so
+        # nothing here refuses its donors and nothing here offers them either. They are
+        # still real free stock a person may pick in Amend, so the row names them rather
+        # than reading as "no location anywhere holds this".
+        ungrouped_donors = (
+            [] if outside_window or fact.group_code else list(row.borrow_candidates)
+        )
         cross_taken = took_at("cross_group_borrow")
         add(
             "cross_group_borrow",
@@ -2257,6 +2278,7 @@ class FulfilmentBoardService:
                     row=row,
                     fact=fact,
                     residual=residual,
+                    ungrouped_donors=ungrouped_donors,
                 )
             ),
         )
@@ -2268,17 +2290,22 @@ class FulfilmentBoardService:
         # them, and every take raises an order-back. Stated as a question all the same, and
         # with the donors NAMED (AC-V5), because silence here reads as "there was nothing
         # there" - which is a different and usually false statement.
+        group_borrow_donors = (
+            []
+            if outside_window
+            else [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
+        )
         add(
             "group_borrow",
             "Can we borrow from the same agent's other order in this group?",
             taken=took_at("group_borrow"),
             sources=drawn_at("group_borrow"),
             eligible=False,
-            note=None if outside_window else self._group_borrow_note(row, fact),
+            note=None if outside_window else self._group_borrow_note(group_borrow_donors),
             why=lambda _outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
-                else self._group_borrow_manual_why(row)
+                else self._group_borrow_manual_why(group_borrow_donors)
             ),
         )
 
@@ -2295,7 +2322,22 @@ class FulfilmentBoardService:
             offered=bought,
             why=lambda outcome: self._buy_why(fact, outcome, outside_window),
         )
-        return steps
+        # Where a person could still borrow from, and it is exactly what the two borrow
+        # questions above put on the table - question 3's cap-and-net-filtered candidates,
+        # then question 4's named donors. In offer order, de-duplicated, because one
+        # location can answer both questions.
+        offerable: List[str] = []
+        for code in [
+            *(str(c["location"]) for c in cross_group_candidates if c.get("location")),
+            *(
+                str(c["warehouse_code"])
+                for c in [*group_borrow_donors, *ungrouped_donors]
+                if c.get("warehouse_code")
+            ),
+        ]:
+            if code not in offerable:
+                offerable.append(code)
+        return steps, offerable
 
     def _pool_pile(
         self,
@@ -2658,8 +2700,7 @@ class FulfilmentBoardService:
         )
 
     @staticmethod
-    def _group_borrow_note(row: "_Row", fact: Any) -> Optional[str]:
-        donors = [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
+    def _group_borrow_note(donors: Sequence[Dict[str, Any]]) -> Optional[str]:
         if not donors:
             return None
         shown = " · ".join(
@@ -2670,15 +2711,18 @@ class FulfilmentBoardService:
         return f"{shown} (+{more} more)" if more > 0 else shown
 
     @staticmethod
-    def _group_borrow_manual_why(row: "_Row") -> str:
+    def _group_borrow_manual_why(donors: Sequence[Dict[str, Any]]) -> str:
         """Question 4's sentence: a person's pick in Amend, with the donors NAMED (AC-V5).
 
         The engine never proposes this and never will (ruled 25 August 2026), so the useful
         thing the row can say is WHO holds it. "Never auto-borrowed" alone reads as "there
         was nothing there", which is usually false - the donors are on the contribution's own
         `borrow_candidates`, waiting for somebody to pick one.
+
+        The caller states the donor list rather than filtering it again here: the Buy's own
+        note is written from the same list, and two filters over one set is how the two
+        sentences came to contradict each other (AC-V4).
         """
-        donors = [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
         if not donors:
             return (
                 "No other sales order in this ownership group holds any of this item, so "
@@ -2715,6 +2759,7 @@ class FulfilmentBoardService:
         row: "_Row",
         fact: Any,
         residual: Decimal,
+        ungrouped_donors: Sequence[Dict[str, Any]] = (),
     ) -> str:
         """Question 3's sentence, with the donor GROUP's net in it and, where the cap is
         what refused the borrow, the cap's own number (AC-V4).
@@ -2726,6 +2771,23 @@ class FulfilmentBoardService:
         """
         if outcome == "none_needed":
             return _COVERED_BEFORE
+        if not fact.group_code:
+            # No group, so no cross-group question. Free stock elsewhere is still real and
+            # is still a person's pick, and a row that stayed silent about it would print a
+            # bare Buy beside stock sitting one location away.
+            if not ungrouped_donors:
+                return (
+                    "This location carries no ownership group, and no other location holds "
+                    "any of this item."
+                )
+            named = ", ".join(
+                f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
+                for c in ungrouped_donors[:3]
+            )
+            return (
+                f"This location carries no ownership group, so there is no other group to "
+                f"borrow from; {named} holds this item, which is a person's pick in Amend."
+            )
         if candidates:
             where = ", ".join(
                 f"{c['location']} ({c.get('group_code') or 'no'} group nets "
@@ -2806,7 +2868,12 @@ class FulfilmentBoardService:
             return f"{sentence} Discontinued: the buy needs a reason."
         return sentence
 
-    def _buy_reason(self, row: _Row, component: Any = None) -> str:
+    def _buy_reason(
+        self,
+        row: _Row,
+        component: Any = None,
+        offerable: Sequence[str] = (),
+    ) -> str:
         """Why this quantity is being bought, said in a way a person can check.
 
         Three cases the earlier build got wrong, all visible in one card the captain read:
@@ -2853,25 +2920,22 @@ class FulfilmentBoardService:
                 "number, then line number."
             )
         # AC-V4: the note must never say borrowing is possible where the trail says nothing
-        # is left. ONE source of truth for that, and it is the same rule the two borrow
-        # questions answer by - a donor the cap refused (`over_cap`) is not a donor a person
-        # may pick, so naming it here contradicted question 3 in the row directly above.
-        takeable = [
-            candidate
-            for candidate in row.borrow_candidates
-            if not candidate.get("over_cap")
-        ]
-        if takeable:
-            where_from = ", ".join(
-                candidate["warehouse_code"] for candidate in takeable[:3]
-            )
+        # is left. ONE source of truth for that, and it is the trail itself - `offerable` is
+        # what questions 3 and 4 actually offered (`_trail`). Re-filtering the raw donor
+        # list here was the defect: it dropped only the donors the CAP refused, so a donor
+        # refused because its own GROUP nets nothing was still named one line under a
+        # question 3 that had just said no group has anything left.
+        if offerable:
+            where_from = ", ".join(offerable[:3])
             reason += (
                 f" Borrowing is possible from {where_from}, which is a decision for a person "
                 "and carries a reason."
             )
         return reason
 
-    def _source(self, component, row: _Row) -> Dict[str, Any]:
+    def _source(
+        self, component, row: _Row, offerable: Sequence[str] = ()
+    ) -> Dict[str, Any]:
         """One proposed source, with the sentence its rule wrote.
 
         The engine's reasons are fragments meant to follow "Reserve 10:", so they are stated
@@ -2880,7 +2944,7 @@ class FulfilmentBoardService:
         """
         reason = component.reason
         if component.kind == BUY:
-            reason = self._buy_reason(row, component)
+            reason = self._buy_reason(row, component, offerable)
         else:
             reason = reason[:1].upper() + reason[1:] + "."
         return {

@@ -1593,6 +1593,13 @@ def test_a_buy_the_board_cannot_avoid_still_says_borrowing_is_possible():
             elsewhere.warehouse_code
         ]
         assert "borrow" in contribution["sources"][-1]["reason"].lower()
+        # AC-V4: the note and question 3 are ONE statement, so the row that answers "can we
+        # borrow from another location" names the same donor the Buy's sentence offers.
+        # This line's location carries no ownership group, so there is no cross-group
+        # question to refuse it - which is what the sentence says.
+        step = _step(contribution, "cross_group_borrow")
+        assert elsewhere.warehouse_code in step["why"]
+        assert "person's pick in Amend" in step["why"]
 
 
 def test_a_board_borrow_candidate_carries_what_it_takes_to_confirm_it():
