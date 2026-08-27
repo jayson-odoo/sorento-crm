@@ -1,6 +1,6 @@
 # UAC: SCM fulfilment feedback part 4
 
-**Status:** GRILLED round 2 (2026-08-27), awaiting GO. Plan: `PLAN-scm-fulfilment-feedback-p4.md`.
+**Status:** VERIFIED (2026-08-28): every AC checked on the lane stack or by pytest/vitest (tester report in the PR); E3/E4 success + over-capacity and F1-F3 fresh conversion backed by pytest only (no product-matched, non-duplicate PI on the dev DB). Plan: `PLAN-scm-fulfilment-feedback-p4.md`.
 Every AC is checked in a real browser on the dev server (agent-browser, sidebar navigation from `/`) and, where a backend rule is named, by a pytest on Postgres.
 
 ## A. Loading plan list and record (S1)

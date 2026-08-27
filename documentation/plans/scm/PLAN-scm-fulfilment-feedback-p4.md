@@ -1,6 +1,6 @@
 # PLAN: SCM fulfilment feedback, part 4 (loading plan list, supplier document fidelity, PI Start, packing list fixes, SPO planner redesign)
 
-**Status:** BUILDING. S1, S2, S3 (slot A), S4, S5, S6, S7 (slots B and C) all built and integrated onto `feat/scm-fulfilment-feedback-p4` (2026-08-28). Migration chain 440 -> 441 -> 442, one head.
+**Status:** BUILT + REVIEWED (2026-08-28). S1-S7 integrated on `feat/scm-fulfilment-feedback-p4`; tester pass A-H green; `/code-review high` 20 findings fixed; migration chain 439 -> 440 -> 441 -> 442, one head; PR open to main. Follow-ups #358-#362.
 **Lane:** worktree `.claude/worktrees/scm-fulfilment-p4`, branch `feat/scm-fulfilment-feedback-p4` off `origin/main` `741469185` (#353). No stack slot yet (:3000/:8000 = inline-decisions lane, :3050 = oi-draft, :3060 = reorder revamp).
 **UAC:** `scm-fulfilment-feedback-p4-acceptance-criteria.md`. **Review artifact:** `mockups/fulfilment-feedback-p4-plan.html` (lavish).
 **Predecessor:** `PLAN-scm-fulfilment-feedback.md` (part 3, MERGED #347). R1-R25 there stand unless a ruling below names one.
