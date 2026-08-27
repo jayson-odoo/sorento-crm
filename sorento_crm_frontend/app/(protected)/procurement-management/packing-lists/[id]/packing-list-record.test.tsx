@@ -457,6 +457,32 @@ describe('the Shipment lines tab', () => {
   });
 
   /**
+   * ONE invoice can charge the same container line twice - two of its own lines for the
+   * same item, consolidated into one shipment line. The key was (invoice, line), so the
+   * pair repeated, React kept one child and the second charge vanished from the cell.
+   */
+  it('lists both charges when one invoice bills the same line twice', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    state.sourceInvoices = {
+      ...sourceInvoices(),
+      by_shipment_line: {
+        'l-1': [
+          { proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 300 },
+          { proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 190 },
+        ],
+      },
+    };
+    await renderTab(<LinesPage />);
+
+    const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailu).getAllByRole('link', { name: /PI-2026-001/ })).toHaveLength(2);
+    expect(within(kailu).getByText('300')).toBeInTheDocument();
+    expect(within(kailu).getByText('190')).toBeInTheDocument();
+    expect(errors.mock.calls.map(String).join(' ')).not.toMatch(/same key/);
+    errors.mockRestore();
+  });
+
+  /**
    * R19 / AC-F5 - Edit is pressed on the tab the operator is reading, and it has to leave
    * them there. Editing that navigated back to Details would lose the place in a long line
    * list, and reads as the page throwing the edit away.
