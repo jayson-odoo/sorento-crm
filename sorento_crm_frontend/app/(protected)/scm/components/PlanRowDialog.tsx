@@ -537,7 +537,7 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
             {rows.map((r, i) => (
               <tr key={`${r.spo_number ?? 'unnumbered'}-${r.shipment_id}-${i}`} className="border-b last:border-0">
                 <Td>{textCell(r.spo_number)}</Td>
-                <Td>{r.shipment_number ?? 'Draft'}</Td>
+                <Td>{r.shipment_id ? (r.shipment_number ?? 'Draft') : 'Not shipped'}</Td>
                 <Td>{textCell(r.warehouse_code)}</Td>
                 <Td right>{fmtInt(r.qty)}</Td>
                 <Td right>{fmtInt(r.received)}</Td>

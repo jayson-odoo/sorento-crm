@@ -235,24 +235,33 @@ def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
 def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
     """What is on the water for the site pools (Open), or what has landed (History).
 
-    The Open predicate is `scm.on_order_v`'s own, narrowed to site pools the way
-    `_stock_context` narrows it: an allocation with no warehouse is incoming supply NOWHERE
-    (migration 420), an allocation on a landed shipment is already in On hand, and a project
-    bin's allocation is spoken for. Company scope is on the PRODUCT and the WAREHOUSE - the
-    two columns `_stock_context` scopes on - so the two reads cannot disagree about which
-    rows belong to this caller.
+    The Open predicate is `scm.on_order_v`'s own, clause for clause, narrowed to ACTIVE site
+    pools the way `_stock_context` narrows it: an allocation with no warehouse is incoming
+    supply NOWHERE (migration 420), an allocation on a landed shipment is already in On hand,
+    and a project bin's allocation is spoken for. Company scope is on the PRODUCT and the
+    WAREHOUSE - the two columns `_stock_context` scopes on - so the two reads cannot disagree
+    about which rows belong to this caller.
+
+    The shipment join is a LEFT JOIN, and the view's `s.id IS NULL OR ...` rides with it: an
+    SPO allocation that names a warehouse but no shipment yet is on order (the view counts it,
+    so the cell counts it), and an inner join silently dropped it from the dialog - the total
+    then read lower than the number the buyer clicked. The receipt clauses are the view's
+    COALESCE forms for the same reason: `sa.receipt_status <> 'received'` is NULL, not true,
+    on the rows where nobody has stamped one yet, which excluded them too.
     """
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="dsp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="dsw")
     if open_rows:
         where = (
-            f"s.shipment_status NOT IN {_RECEIVED_SHIPMENT_STATES} "
+            f"(s.id IS NULL OR s.shipment_status NOT IN {_RECEIVED_SHIPMENT_STATES}) "
             # Verbatim from the view, including the fact that `received` is not one of the
-            # four values `spo_allocations_receipt_status_check` allows - so this clause
+            # four values `spo_allocations_receipt_status_check` allows - so that value
             # excludes nothing today and the shipment status is what does the work. Kept
             # spelling for spelling anyway: this reader has to foot to the cell, and a
             # "tidied" predicate is how the two come to differ by a row nobody expected.
-            "AND sa.receipt_status <> 'received' "
+            "AND COALESCE(sa.line_status, 'open') = 'open' "
+            "AND COALESCE(sa.receipt_status, 'pending') "
+            "NOT IN ('fully_received', 'received') "
             "AND sa.allocated_quantity > COALESCE(sa.quantity_received, 0)"
         )
         order = "ORDER BY s.estimated_arrival_date NULLS LAST, sa.spo_number"
@@ -284,10 +293,11 @@ def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
                SUM({qty_expr}::numeric) AS qty,
                SUM(COALESCE(sa.quantity_received, 0)::numeric) AS received
         FROM spo_allocations sa
-        JOIN inbound_shipments s ON s.id = sa.inbound_shipment_id
+        LEFT JOIN inbound_shipments s ON s.id = sa.inbound_shipment_id
         JOIN products p ON p.id = sa.product_id
         JOIN warehouses w ON w.id = sa.warehouse_id
         WHERE sa.product_id = CAST(:pid AS uuid)
+          AND w.is_active
           AND {_POOL}
           AND {where}
           {("AND " + prod_scope) if prod_scope else ""}

@@ -215,6 +215,48 @@ def test_drill_spo_total_is_the_spo_cell_and_counts_site_pools_only(scm_app):
     assert row["received"] == 0
 
 
+def test_drill_spo_counts_an_allocation_that_has_no_shipment_yet(scm_app):
+    # AC-B5. `scm.on_order_v` LEFT JOINs the shipment and keeps `s.id IS NULL`, so an
+    # allocation that names a warehouse before anyone puts it on a packing list is on order
+    # and the cell counts it. The dialog inner-joined the shipment and dropped those rows:
+    # on the live book that was 140 products and 19,843 of the 20,532 units on order reading
+    # as nothing to see. The reader clicked a number and landed on an empty table.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 200)
+    pool = _warehouse(db)
+    _incoming_spo(db, w, "A", pool, 90)
+    db.add(
+        SPOAllocation(
+            id=str(uuid.uuid4()),
+            spo_number=f"{MARKER}-SPO-NOSHIP-{uuid.uuid4().hex[:8]}",
+            inbound_shipment_id=None,
+            product_id=w.product("A").id,
+            warehouse_id=pool.id,
+            allocated_quantity=25,
+            quantity_received=0,
+        )
+    )
+    db.flush()
+
+    cell = _cell(app, db, w, "A")
+    r = _drill(app, str(w.supplier.id), str(w.product("A").id), "spo")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["total"] == cell["incoming_spo"] == 115  # 90 on a shipment + 25 not yet
+    unshipped = [row for row in body["rows"] if row["shipment_id"] is None]
+    assert len(unshipped) == 1
+    assert unshipped[0]["qty"] == 25
+    # Nothing invented for the columns a shipment would have carried.
+    assert unshipped[0]["shipment_number"] is None
+    assert unshipped[0]["status"] is None
+    assert unshipped[0]["eta"] is None
+    assert unshipped[0]["warehouse_code"] == pool.warehouse_code
+
+
 def test_drill_spo_history_holds_the_landed_shipments_not_the_open_ones(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)

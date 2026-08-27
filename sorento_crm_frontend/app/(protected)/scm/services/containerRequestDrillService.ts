@@ -17,7 +17,9 @@ export type ContainerRequestDrillKind = 'spo' | 'incoming_pl' | 'po';
 /** One shipping order on the water for a site pool (Open), or one that landed (History). */
 export interface ContainerRequestDrillSpoRow {
   spo_number: string | null;
-  shipment_id: string;
+  /** Null on an allocation nobody has put on a shipment yet - it is still on order, so the
+   *  cell counts it and the screen says "Not shipped". */
+  shipment_id: string | null;
   /** Null on a draft nobody has numbered - the screen says "Draft", never invents one. */
   shipment_number: string | null;
   /** The site pool this allocation is bound for. */
