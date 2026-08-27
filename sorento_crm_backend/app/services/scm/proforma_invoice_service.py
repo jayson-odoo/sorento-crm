@@ -1945,8 +1945,12 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     delete (`PurchaseOrderService.bulk_delete`): ids not found (already deleted, or another
     company's) are skipped rather than failing the whole batch.
 
-    A PI that has already been converted (any `ProformaInvoiceShipmentLink` row against it)
-    is REFUSED rather than deleted - the safer of the two choices the plan named. Cascading
+    A PI that has already been converted (a `ProformaInvoiceShipmentLink` row that reached a
+    shipment LINE) is REFUSED rather than deleted - the safer of the two choices the plan
+    named. A SKIP row (`inbound_shipment_line_id` NULL: the convert looked at the line and
+    put nothing on the container) does not count, the same reading `_placements` gives the
+    list; before this the list said "Not converted" and the delete said "already converted"
+    about the same invoice (captain, 27 Aug, three all-skipped PIs on the dev copy). Cascading
     the link instead would silently sever a draft shipment's line from the document that
     justified it, and a shipment already visible on `/scm/incoming` losing its "why" with no
     trace is worse than a delete the operator has to go and untangle by hand (delete the
@@ -1965,7 +1969,10 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
         str(row[0])
         for row in (
             db.query(ProformaInvoiceShipmentLink.proforma_invoice_id)
-            .filter(ProformaInvoiceShipmentLink.proforma_invoice_id.in_([str(i.id) for i in invoices]))
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_id.in_([str(i.id) for i in invoices]),
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+            )
             .distinct()
             .all()
         )
@@ -1975,7 +1982,10 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
         rows = (
             db.query(ProformaInvoiceShipmentLink.proforma_invoice_id, InboundShipment.shipment_number)
             .join(InboundShipment, InboundShipment.id == ProformaInvoiceShipmentLink.inbound_shipment_id)
-            .filter(ProformaInvoiceShipmentLink.proforma_invoice_id.in_(converted_invoice_ids))
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_id.in_(converted_invoice_ids),
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+            )
             .all()
         )
         for inv_id, number in rows:

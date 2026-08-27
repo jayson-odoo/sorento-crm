@@ -686,6 +686,27 @@ def test_a_skip_only_invoice_reads_as_on_no_container_at_all():
         assert out["converted_shipments"] == []
 
 
+def test_a_skip_only_invoice_can_be_deleted_and_a_placed_one_cannot():
+    """The list reads a skip-only invoice as Not converted (`_placements` ignores SKIP rows),
+    so the delete must read it the same way: three all-skipped PIs on the dev copy said
+    "already converted to SHIP-DRAFT-..." while their column said Not converted (captain,
+    27 Aug). A SKIP row is not goods on a container. The carrier, whose line DID reach the
+    draft, stays refused."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        skipped = _skip_only_invoice(db, w)
+        carrier = next(i for i in _invoices(db, w) if str(i.id) != str(skipped.id))
+
+        out = svc.bulk_delete(db, [str(skipped.id), str(carrier.id)])
+
+        assert out["deleted"] == 1
+        assert [b["id"] for b in out["blocked"]] == [str(carrier.id)]
+        assert (out["blocked"][0]["shipment_number"] or "").startswith("SHIP-DRAFT")
+        with pytest.raises(AppException):
+            svc.get_or_404(db, str(skipped.id))
+
+
 def test_a_skip_only_invoice_can_still_be_adjusted():
     with pg_session() as db:
         _seed_container_sizes(db)
