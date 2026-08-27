@@ -29,9 +29,10 @@ service) or a vitest (ledger card); the two named rows are the browser proof on 
 
 ## Phase 2
 
-- **AC-R11 level formula.** GIVEN 900 units out over 90 days (ADU 10), lead time 30, safety
-  days 14 THEN suggested level = 10 x 30 + 10 x 14 = 440, and the popover names ADU 10 / day,
-  lead 30 d, safety 140.
+- **AC-R11 level formula.** GIVEN AutoCount SO lines ordering 900 units of the product over
+  the last 90 days across every location (a cancelled order's 100 excluded), lead time 30
+  THEN ADU = 10, safety stock = 10 x 14 = 140, suggested level = 10 x 30 + 140 = 440, and the
+  popover names ADU 10 / day, lead 30 d, safety 140. CRM `orders` rows play no part.
 - **AC-R12 health by movement.** GIVEN sales and purchases in the window THEN "Fast moving";
   sales only THEN "Slow moving"; neither with stock on hand THEN "Dead - consider
   discontinuing"; neither and no stock THEN "No history". No margin figure anywhere.
