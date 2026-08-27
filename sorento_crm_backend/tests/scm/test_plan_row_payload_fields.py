@@ -178,8 +178,9 @@ def test_a_demand_row_names_the_project_it_is_for(scm_app):
     decision_id = str(uuid.uuid4())
     db.execute(text("""
         INSERT INTO projects.so_supply_decisions
-            (id, project_sales_order_id, revision_no, state, company_id)
-        VALUES (CAST(:id AS uuid), CAST(:so AS uuid), 1, :state, CAST(:co AS uuid))
+            (id, project_sales_order_id, revision_no, state, line_snapshots, company_id)
+        VALUES (CAST(:id AS uuid), CAST(:so AS uuid), 1, :state, CAST('{}' AS jsonb),
+                CAST(:co AS uuid))
     """), {"id": decision_id, "so": pso_id, "state": ACTIVE_DECISION_STATE,
            "co": SORENTO})
     inquiry_id = str(uuid.uuid4())

@@ -273,6 +273,10 @@ def test_a_run_covering_every_warehouse_says_so(scm_app):
     """A plan launched with no warehouse scope stores EVERY active warehouse id, so the
     list would read "60 warehouses" for what the buyer asked for as "all" (fix c)."""
     client, db = _client(scm_app)
+    # CI's database starts empty; two seeded warehouses make "one of them" a strict subset.
+    _mk_warehouse(db, f"{MARKER}-ALL-A")
+    _mk_warehouse(db, f"{MARKER}-ALL-B")
+    db.flush()
     every = [str(r[0]) for r in db.execute(text(
         "SELECT id FROM warehouses WHERE is_active = true")).all()]
     import json as _json

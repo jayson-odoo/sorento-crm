@@ -164,14 +164,17 @@ def _stock_as_of(db: Session, product_id: str) -> tuple[Optional[str], str]:
     now" is told the book is live when it may be three days old, and that is the number
     they decide against.
 
-    Newest ``stock.updated_at`` for THIS product first, because it is the closest thing to
-    "when did this item's figure last move". A product whose rows have never been touched
-    since insert falls back to the last completed stock import, which is when the file that
-    would have moved them was taken. Neither answer available is stated as ``none`` - never
+    Newest ``stock.updated_at`` (or ``created_at`` for a row never updated since its
+    insert) for THIS product first, because it is the closest thing to "when did this
+    item's figure last move". A product with no stock row at all falls back to the last
+    completed stock import, which is when the file that would have moved them was taken. Neither answer available is stated as ``none`` - never
     filled in with the clock.
     """
+    # A row inserted by an upload and never updated since carries its write time in
+    # `created_at` (`updated_at` stays NULL until a later upload touches it), so the
+    # newest write is the max over both, per row.
     newest = (
-        db.query(func.max(Stock.updated_at))
+        db.query(func.max(func.coalesce(Stock.updated_at, Stock.created_at)))
         .filter(Stock.product_id == product_id)
         .scalar()
     )
