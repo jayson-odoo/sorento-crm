@@ -24,7 +24,7 @@ export function ContainerRequestStatCards({
       data-testid="container-request-stat-cards"
       // Two per row at phone width rather than five stacked cards: stacked, the grid they
       // summarise starts a screen and a half down the page.
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5"
+      className="grid grid-cols-2 gap-3 sm:grid-cols-4"
     >
       <StatCard
         testId="stat-need"
@@ -57,11 +57,6 @@ export function ContainerRequestStatCards({
             ? `est. ${fmtTrimmedDecimal(summary.askCbm)} cbm, ${summary.askCbmUnmeasured} unmeasured`
             : `est. ${fmtTrimmedDecimal(summary.askCbm)} cbm`
         }
-      />
-      <StatCard
-        testId="stat-packed"
-        label="They can pack now"
-        value={fmtInt(summary.canPackNow)}
       />
     </div>
   );

@@ -33,16 +33,53 @@ export function monthLabel(month: string | null): string {
 
 /** Project is the channel this business plans around; retail is read beside it, never instead. */
 const SERIES_PAINT = {
-  project: { bar: 'bg-sky-500', text: 'text-sky-700' },
-  retail: { bar: 'bg-slate-400', text: 'text-slate-600' },
+  project: { bar: 'bg-sky-500', text: 'text-sky-700', fill: 'text-sky-500' },
+  retail: { bar: 'bg-slate-400', text: 'text-slate-600', fill: 'text-slate-400' },
 } as const;
 
+/** Twelve bars in a 48x14 box: the year's shape at a glance, each series against its own peak. */
+function Sparkline({
+  series,
+  kind,
+}: {
+  series: ContainerRequestHistorySeries;
+  kind: 'project' | 'retail';
+}) {
+  const scale = Math.max(...series.months.map((p) => p.qty), 0);
+  const w = 3;
+  const gap = 1;
+  const h = 14;
+  return (
+    <svg
+      width={series.months.length * (w + gap)}
+      height={h}
+      className={cn('shrink-0', SERIES_PAINT[kind].fill)}
+      aria-hidden
+      data-testid={`history-spark-${kind}`}
+    >
+      {series.months.map((point, i) => {
+        const bar = scale > 0 ? Math.max(Math.round((point.qty / scale) * h), point.qty > 0 ? 1 : 0) : 0;
+        const peak = point.month === series.peak_month && point.qty > 0;
+        return (
+          <rect
+            key={point.month}
+            x={i * (w + gap)}
+            y={h - bar}
+            width={w}
+            height={bar}
+            opacity={peak ? 1 : 0.5}
+            fill="currentColor"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 /**
- * The grid cell: each series' peak month, in one line each (AC-B6).
- *
- * Not an average and not a total, because the question the buyer is asking is "how big does
- * this product get in a month" - a mean over twelve months hides the one month that decides
- * how much to hold.
+ * The grid cell: per series, the twelve-month TOTAL and a sparkline, the peak in the hover
+ * (captain, 27 Aug: the peak-month text was hard to read). The total is the figure a buyer
+ * compares against the ask; the sparkline says whether it arrived in one month or twelve.
  */
 export function ContainerRequestHistoryCell({
   history,
@@ -62,17 +99,24 @@ export function ContainerRequestHistoryCell({
   }
 
   return (
-    <div className="flex flex-col text-2xs">
-      <span className={cn('tabular-nums', SERIES_PAINT.project.text)}>
-        {project.peak_month
-          ? `P peak ${monthLabel(project.peak_month)} ${fmtInt(project.peak_qty)}`
-          : `P ${EM_DASH}`}
-      </span>
-      <span className={cn('tabular-nums', SERIES_PAINT.retail.text)}>
-        {retail.peak_month
-          ? `R peak ${monthLabel(retail.peak_month)} ${fmtInt(retail.peak_qty)}`
-          : `R ${EM_DASH}`}
-      </span>
+    <div className="flex flex-col gap-0.5 text-2xs">
+      {(['project', 'retail'] as const).map((kind) => {
+        const series = history[kind];
+        const peak = series.peak_month
+          ? `peak ${monthLabel(series.peak_month)} ${fmtInt(series.peak_qty)}`
+          : 'no orders';
+        return (
+          <span
+            key={kind}
+            className={cn('flex items-center gap-1.5 tabular-nums', SERIES_PAINT[kind].text)}
+            title={`${kind === 'project' ? 'Project' : 'Retail'} ${fmtInt(series.total)} in 12 months, ${peak}`}
+          >
+            <span className="w-3 font-medium">{kind === 'project' ? 'P' : 'R'}</span>
+            <span className="w-10 text-right">{fmtInt(series.total)}</span>
+            <Sparkline series={series} kind={kind} />
+          </span>
+        );
+      })}
     </div>
   );
 }

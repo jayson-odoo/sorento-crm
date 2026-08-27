@@ -226,11 +226,10 @@ describe('ContainerRequestSection - the grid', () => {
 
     expect(screen.getByText('ITEM-1')).toBeInTheDocument();
     expect(screen.getByText('Widget')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument(); // so_count
   });
 
-  // AC-A2 / AC-A3: "They hold" says WHICH document said it.
-  it('reads packed and unfinished off a stock list', () => {
+  // AC-A2 / AC-A3: "Packed" says WHICH document said it.
+  it('reads the packed quantity off a stock list, and nothing about unfinished (captain, 27 Aug)', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ holding_source: 'stock_list', holding_qty: 3, qty_packed: 3, qty_unfinished: 7 })],
@@ -238,8 +237,8 @@ describe('ContainerRequestSection - the grid', () => {
     };
     renderSection();
 
-    expect(screen.getByText('3 packed')).toBeInTheDocument();
-    expect(screen.getByText('7 unfinished')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
   });
 
   it('reads the stand-in proforma with a PI badge, not as packed stock', () => {
@@ -294,7 +293,7 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.queryByText('Unclassified')).not.toBeInTheDocument();
   });
 
-  it('shows the five cards above the grid, decomposing the need (AC-A2.1)', () => {
+  it('shows the four cards above the grid, decomposing the need (AC-A2.1)', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ open_so_need: 100, on_hand: 30, incoming_spo: 20, suggested_qty: 50 })],
@@ -307,7 +306,7 @@ describe('ContainerRequestSection - the grid', () => {
     expect(within(cards).getByTestId('stat-pool')).toHaveTextContent('30');
     expect(within(cards).getByTestId('stat-spo')).toHaveTextContent('20');
     expect(within(cards).getByTestId('stat-ask')).toHaveTextContent('50');
-    expect(within(cards).getByTestId('stat-packed')).toHaveTextContent('3');
+    expect(within(cards).queryByTestId('stat-packed')).not.toBeInTheDocument();
   });
 
   it('the To ask card follows an edited quantity', async () => {
@@ -602,14 +601,13 @@ describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card surv
   });
 });
 
-describe('holdingSortValue - what "They hold" sorts by', () => {
-  // The captain's ruling this column carries: it replaced the standalone "Waiting on
-  // production" list, which was ordered by UNFINISHED quantity descending. Sorting a
-  // stock-list row by its packed figure silently threw that ordering away, and the supplier
-  // with 500 unfired bodies stopped surfacing.
-  it('sorts a stock-list row by its unfinished quantity', () => {
+describe('holdingSortValue - what "Packed" sorts by', () => {
+  // Captain, 27 Aug: the unfinished half left the grid, so the column sorts on the one
+  // figure it shows. (It used to sort on unfinished, the ordering of the old "Waiting on
+  // production" list.)
+  it('sorts a stock-list row by its packed quantity', () => {
     expect(holdingSortValue(row({ holding_source: 'stock_list', holding_qty: 9, qty_unfinished: 500 })))
-      .toBe(500);
+      .toBe(9);
   });
 
   it('sorts a proforma row by the quantity it states', () => {

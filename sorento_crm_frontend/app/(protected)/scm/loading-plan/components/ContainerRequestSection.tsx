@@ -156,17 +156,12 @@ function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
 }
 
 /**
- * What "They hold" sorts by.
- *
- * A stock-list row sorts on its UNFINISHED quantity: this column replaced the standalone
- * "Waiting on production" list, which was ordered that way, and sorting on the packed figure
- * instead throws that ordering away - the supplier with 500 unfired bodies stops surfacing,
- * which is the one thing the list existed to show. A proforma row has no unfinished half, so
- * it sorts on the single quantity it states. A row neither document names sorts below every
- * row that carries a figure, rather than tying with a real zero.
+ * What "Packed" sorts by: the one quantity the column shows (captain, 27 Aug: the unfinished
+ * half left the grid; it still reads in the row dialog and the unmatched-unfinished list).
+ * A row neither document names sorts below every row that carries a figure, rather than
+ * tying with a real zero.
  */
 export function holdingSortValue(row: ContainerRequestRow): number {
-  if (row.holding_source === 'stock_list') return row.qty_unfinished;
   return row.holding_qty ?? -1;
 }
 
@@ -193,13 +188,42 @@ function HoldingCell({ row }: { row: ContainerRequestRow }) {
   if (row.holding_source === 'none') {
     return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
   }
+  return <span className="tabular-nums">{fmtInt(row.qty_packed)}</span>;
+}
+
+/**
+ * A channel's open quantity with its SO lines one click away.
+ *
+ * The figure alone when there is nothing behind it (zero, or no lines loaded): an info icon
+ * that opens an empty list teaches the eye to stop clicking.
+ */
+function ChannelQtyCell({
+  row,
+  qty,
+  lines,
+  channel,
+}: {
+  row: ContainerRequestRow;
+  qty: number;
+  lines: ContainerRequestSoLine[];
+  channel: 'project' | 'retail';
+}) {
+  if (!qty || lines.length === 0) return <span className="tabular-nums">{fmtInt(qty)}</span>;
   return (
-    <div className="flex flex-col text-2xs">
-      <span className="tabular-nums">{fmtInt(row.qty_packed)} packed</span>
-      <span className="tabular-nums text-muted-foreground">
-        {fmtInt(row.qty_unfinished)} unfinished
-      </span>
-    </div>
+    <SoLinesDrillPopover
+      title={`${row.item_code ?? row.product_name ?? 'This product'} - ${channel} SOs`}
+      lines={lines}
+      trigger={
+        <button
+          type="button"
+          title={`View ${channel} SO lines`}
+          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          {fmtInt(qty)}
+          <Info className="size-3.5 text-muted-foreground" aria-hidden />
+        </button>
+      }
+    />
   );
 }
 
@@ -439,8 +463,17 @@ export function ContainerRequestSection({
       {
         accessorKey: 'project_qty',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        // The SO drill sits on the channel figure it explains (captain, 27 Aug): the "Open
+        // SOs" count column is gone, and each channel opens its own lines.
         cell: ({ row }) => (
-          <span className="tabular-nums">{fmtInt(row.original.project_qty)}</span>
+          <ChannelQtyCell
+            row={row.original}
+            qty={row.original.project_qty}
+            lines={(linesByProduct.get(row.original.product_id) ?? []).filter(
+              (l) => l.demand_class === 'project',
+            )}
+            channel="project"
+          />
         ),
         size: 90,
         enableSorting: false,
@@ -449,7 +482,18 @@ export function ContainerRequestSection({
       {
         accessorKey: 'retail_qty',
         header: ({ column }) => <DataGridColumnHeader title="Retail" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{fmtInt(row.original.retail_qty)}</span>,
+        // Retail carries the unclassified lines too: the column already counts them (no
+        // Unclassified column, AC-A2.2), so the drill lists what the figure counts.
+        cell: ({ row }) => (
+          <ChannelQtyCell
+            row={row.original}
+            qty={row.original.retail_qty}
+            lines={(linesByProduct.get(row.original.product_id) ?? []).filter(
+              (l) => l.demand_class !== 'project',
+            )}
+            channel="retail"
+          />
+        ),
         size: 90,
         enableSorting: false,
         meta: { headerTitle: 'Retail' },
@@ -519,49 +563,15 @@ export function ContainerRequestSection({
         meta: { headerTitle: 'Earliest need-by' },
       },
       {
-        accessorKey: 'so_count',
-        header: ({ column }) => <DataGridColumnHeader title="Open SOs" column={column} />,
-        cell: ({ row }) => {
-          const original = row.original;
-          const productLines = linesByProduct.get(original.product_id) ?? [];
-          if (!original.so_count || productLines.length === 0) {
-            return <span className="tabular-nums">{fmtInt(original.so_count)}</span>;
-          }
-          return (
-            <SoLinesDrillPopover
-              title={`${original.item_code ?? original.product_name ?? 'This product'} - open SOs`}
-              lines={productLines}
-              trigger={
-                <button
-                  type="button"
-                  title="View open SO lines"
-                  className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                >
-                  {fmtInt(original.so_count)}
-                  <Info className="size-3.5 text-muted-foreground" aria-hidden />
-                </button>
-              }
-            />
-          );
-        },
-        size: 90,
-        enableSorting: false,
-        meta: { headerTitle: 'Open SOs' },
-      },
-      {
         id: 'holding',
-        // Sortable on purpose (captain follow-up): this cell replaced the standalone
-        // "Waiting on production" list, which was ordered by unfinished quantity descending -
-        // so a stock-list row still sorts by what is UNFINISHED, which is what that list was
-        // for. A proforma row has no unfinished half, so it sorts by the one quantity it
-        // states. `accessorFn` gives the sort its number; the cell shows the figures.
+        // Sortable: `accessorFn` gives the sort its number; the cell shows the figure.
         accessorFn: holdingSortValue,
-        header: ({ column }) => <DataGridColumnHeader title="They hold" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Packed" column={column} />,
         cell: ({ row }) => <HoldingCell row={row.original} />,
-        size: 110,
+        size: 100,
         enableSorting: true,
         sortDescFirst: true,
-        meta: { headerTitle: 'They hold' },
+        meta: { headerTitle: 'Packed' },
       },
       {
         id: 'ordered_12m',

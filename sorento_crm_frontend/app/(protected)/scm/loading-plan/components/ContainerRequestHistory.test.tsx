@@ -57,11 +57,17 @@ describe('monthLabel', () => {
 });
 
 describe('ContainerRequestHistoryCell', () => {
-  it('names each series peak month and quantity (AC-B6)', () => {
+  it('shows each series twelve-month total with a sparkline, the peak on hover (AC-B6)', () => {
     render(<ContainerRequestHistoryCell history={history()} loading={false} />);
 
-    expect(screen.getByText('P peak Apr 26 1,240')).toBeInTheDocument();
-    expect(screen.getByText('R peak Jun 26 320')).toBeInTheDocument();
+    expect(
+      screen.getByTitle('Project 1,240 in 12 months, peak Apr 26 1,240'),
+    ).toHaveTextContent('P1,240');
+    expect(screen.getByTitle('Retail 320 in 12 months, peak Jun 26 320')).toHaveTextContent(
+      'R320',
+    );
+    expect(screen.getByTestId('history-spark-project')).toBeInTheDocument();
+    expect(screen.getByTestId('history-spark-retail')).toBeInTheDocument();
   });
 
   it('says so when a product has not been ordered in twelve months', () => {
