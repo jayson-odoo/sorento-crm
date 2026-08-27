@@ -30,6 +30,7 @@ from app.dependencies import require_permission
 from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service
 from app.services.scm.upload_intake import read_upload
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -314,7 +315,7 @@ def export_proforma_invoice(
     return Response(
         content=proforma_invoice_service.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

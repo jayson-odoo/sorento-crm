@@ -338,7 +338,7 @@ def test_the_export_downloads_a_workbook_with_the_clients_headings(api):
 
     assert response.status_code == 200, response.text
     assert "attachment;" in response.headers["content-disposition"]
-    assert response.headers["content-disposition"].endswith('.xlsx"')
+    assert response.headers["content-disposition"].endswith(".xlsx")
     sheet = openpyxl.load_workbook(io.BytesIO(response.content)).worksheets[0]
     assert sheet.cell(row=1, column=1).value == "ORDER INQUIRY"
     assert [cell.value for cell in sheet[2][:8]] == [

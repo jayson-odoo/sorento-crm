@@ -42,6 +42,7 @@ from fastapi import status
 from fastapi.responses import StreamingResponse
 
 from app.services.error_handler import AppException
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,7 @@ def assert_allowed(url: str) -> str:
 
 def _filename_of(url: str) -> str:
     path = urlparse(url).path or ""
-    name = unquote(path.rsplit("/", 1)[-1]).strip()
-    # Quotes would break out of the Content-Disposition value; CR/LF would
-    # break out of the header entirely.
-    name = name.replace('"', "").replace("\r", "").replace("\n", "")
-    return name or "attachment"
+    return unquote(path.rsplit("/", 1)[-1]).strip() or "attachment"
 
 
 def _client_factory(**kwargs) -> httpx.AsyncClient:
@@ -180,7 +177,7 @@ async def stream(url: str) -> StreamingResponse:
             "media_proxy_too_large",
         )
 
-    headers = {"Content-Disposition": f'inline; filename="{_filename_of(target)}"'}
+    headers = {"Content-Disposition": content_disposition(_filename_of(target), inline=True)}
     if declared and declared.isdigit():
         headers["Content-Length"] = declared
 
