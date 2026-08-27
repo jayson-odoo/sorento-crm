@@ -307,16 +307,27 @@ def test_a_set_line_on_the_stand_in_proforma_becomes_a_set_row():
 
 
 def test_a_set_line_is_sent_under_the_set_code_with_no_product_behind_it():
+    from app.models.scm import LoadingPlan
     from app.models.supplier_notice import SupplierNoticeLine
 
     with pg_session() as db:
         w = World(db)
         product_set = _wc(db, w)
         _set_stock(db, w, product_set, packed=40)
+        # The send belongs to a PLAN since part 4 (R2); the supplier is read off the row.
+        plan = LoadingPlan(
+            id=str(uuid.uuid4()),
+            supplier_id=str(w.supplier.id),
+            status="planning",
+            document_kind="stock_list",
+            line_edits={},
+        )
+        db.add(plan)
+        db.flush()
 
         out = svc.send(
             db,
-            supplier_id=str(w.supplier.id),
+            plan_id=str(plan.id),
             lines=[{"product_set_id": str(product_set.id), "qty": 40}],
             actor="Ms Tee",
         )

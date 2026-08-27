@@ -425,6 +425,37 @@ def test_the_list_carries_what_the_last_build_asked_for(scm_app):
     assert row["to_request_cbm"] is not None
 
 
+def test_a_newer_stock_list_moves_an_older_plans_numbers_but_not_its_document(scm_app):
+    # AC-A17 / R2, stated in the open: the supplier snapshot is per supplier and replaced
+    # whole, so an older open plan reads what the supplier holds NOW - which is the correct
+    # reading of "what should we ask them for". What must NOT move is which file that plan
+    # says it started from, which is why the snapshot date is pinned at create time.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id), document_kind="stock_list").json()
+    label_before = plan["document_label"]
+    packed_before = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()["rows"][0][
+        "qty_packed"
+    ]
+
+    # A newer list for the same supplier, exactly as a second plan's upload would leave it.
+    db.execute(
+        text(
+            "UPDATE scm.supplier_inventory SET qty_packed = qty_packed + 100, "
+            "as_of = as_of + INTERVAL '30 days' WHERE supplier_id = CAST(:s AS uuid)"
+        ),
+        {"s": str(w.supplier.id)},
+    )
+    db.flush()
+
+    after = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
+
+    assert after["rows"][0]["qty_packed"] == packed_before + 100
+    assert after["plan"]["document_label"] == label_before
+
+
 # --------------------------------------------------------------------------- #
 # the send belongs to the plan
 # --------------------------------------------------------------------------- #
