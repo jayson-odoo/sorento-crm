@@ -128,3 +128,7 @@ Kept for the record. Do NOT follow these - each is superseded by an entry above.
 - Superseded by **"agent-browser"** verification - Playwright MCP is retired for verification, so
   its disconnect behaviour no longer applies (`CLAUDE.md` "Browser verification").
 
+
+## 89. A bootstrap assertion that names a rule dies the day the rule is retired (27 Aug 2026)
+
+`scripts/bootstrap_env.py._fix_committed_v` asserted `"demand_origin" in <view definition>` as proof the newest `scm.committed_v` body had landed. Migration 424 (CS-planning stack) retired that leg on purpose, so every CI run of every branch carrying 424 (#337, #346) aborted in bootstrap before a single test ran, and the red jobs looked like test failures. Assert the CURRENT rule's marker and say in the message which migration retired the old one; better, assert on something the source-of-truth module exports rather than a hard-coded substring.

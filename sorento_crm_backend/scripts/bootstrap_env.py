@@ -162,8 +162,11 @@ def _fix_committed_v() -> None:
     ``app.services.scm.demand.COMMITTED_V_SQL`` - the single source of truth the demand
     service itself relies on - and lays it down with ``CREATE OR REPLACE``. That module
     is edited whenever the view changes, so this call always reflects the latest rule
-    with no migration bookkeeping required. Verified by asserting ``demand_origin``
-    (the newest rule) actually appears in the resulting view definition.
+    with no migration bookkeeping required. Verified by asserting that the newest rule's
+    own table name actually appears in the resulting view definition - since 422 the
+    view nets a project row by its ``projects.order_inquiry_links`` (the ``demand_origin``
+    leg this used to assert was retired by 424, and asserting a retired rule aborted every
+    CI run of the branch that retired it).
     """
     from sqlalchemy import text
 
@@ -177,12 +180,12 @@ def _fix_committed_v() -> None:
             "SELECT definition FROM pg_views WHERE schemaname = 'scm' "
             "AND viewname = 'committed_v'"
         )).scalar()
-    if not definition or "demand_origin" not in definition:
+    if not definition or "order_inquiry_links" not in definition:
         raise SystemExit(
-            "bootstrap: scm.committed_v fix did not take effect (no demand_origin rule "
-            "in the view definition)."
+            "bootstrap: scm.committed_v fix did not take effect (no order_inquiry_links "
+            "netting in the view definition)."
         )
-    log.info("scm.committed_v is current (demand_origin rule present)")
+    log.info("scm.committed_v is current (order_inquiry_links netting present)")
 
 
 def apply_migration_only_ddl() -> None:
