@@ -117,7 +117,7 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
         id: 'code',
         accessorKey: 'item_code',
         header: 'Code',
-        size: 200,
+        size: 170,
         cell: ({ row }) => (
           <span
             className="block truncate text-sm font-medium"
@@ -131,7 +131,7 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
         id: 'says',
         accessorKey: 'product_name',
         header: 'Supplier says',
-        size: 240,
+        size: 220,
         cell: ({ row }) => {
           // What the person matching it actually recognises: the code means nothing on its
           // own, and "连体马桶, SORENTO" means everything.
@@ -160,7 +160,7 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
         id: 'product',
         accessorKey: 'item_code',
         header: 'Product',
-        size: 320,
+        size: 280,
         cell: ({ row }) => {
           const code = row.original.item_code;
           return (
@@ -184,7 +184,7 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
         id: 'dismiss',
         accessorKey: 'as_of',
         header: 'Dismiss',
-        size: 110,
+        size: 100,
         cell: ({ row }) => (
           <Button
             type="button"
