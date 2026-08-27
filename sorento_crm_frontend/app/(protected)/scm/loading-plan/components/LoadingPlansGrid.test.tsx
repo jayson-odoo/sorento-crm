@@ -1,0 +1,228 @@
+/**
+ * The loading plans list (part 4, R3 / AC-A1, A2, A3, A8, A9).
+ *
+ * What this suite pins is the LIST's own contract, not the grid component's: the columns the
+ * captain named, the default Active filter, the single Upload primary, the whole-row click,
+ * and the two row actions - Cancel behind a confirmation, Delete refused once a notice has
+ * gone out. The record page behind the row is `LoadingPlanView.test.tsx`.
+ */
+import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+if (!window.matchMedia) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  });
+}
+if (!window.ResizeObserver) {
+  (window as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+const push = vi.fn();
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/loading-plan',
+  useRouter: () => ({ push, replace: vi.fn() }),
+  useSearchParams: () => ({ get: () => null }),
+}));
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    custom: vi.fn(),
+  },
+}));
+
+// DataGrid persists column prefs through this hook (which fires network); without the stub
+// the grid renders skeletons forever and no row can be asserted.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
+// The dialog owns the whole upload journey and has its own suite; here it only has to prove
+// the one primary action reaches it.
+vi.mock('./PlanContainerDialog', () => ({
+  PlanContainerDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="plan-container-dialog">Plan a container</div> : null,
+}));
+
+const getLoadingPlanList = vi.fn();
+const cancelLoadingPlan = vi.fn();
+const deleteLoadingPlan = vi.fn();
+vi.mock('../../services/fulfilmentService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
+  return {
+    ...actual,
+    getLoadingPlanList: (...a: unknown[]) => getLoadingPlanList(...a),
+    cancelLoadingPlan: (...a: unknown[]) => cancelLoadingPlan(...a),
+    deleteLoadingPlan: (...a: unknown[]) => deleteLoadingPlan(...a),
+  };
+});
+
+import { LoadingPlansGrid } from './LoadingPlansGrid';
+
+const PLANNING = {
+  id: 'plan-1',
+  supplier_id: 'sup-1',
+  supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD',
+  started_at: '2026-08-27T14:02:00',
+  plan_horizon_date: '2026-09-30',
+  document_kind: 'stock_list' as const,
+  document_label: 'Stock list 27/07/2026',
+  source_attachment_id: null,
+  status: 'planning' as const,
+  sent_channel: null,
+  sent_at: null,
+  opened_at: null,
+  cancelled_at: null,
+  cancelled_by: null,
+  line_edits: {},
+  to_request_qty: 83229,
+  to_request_cbm: 2588,
+};
+
+const SENT = {
+  ...PLANNING,
+  id: 'plan-2',
+  supplier_name: 'KAILU SANITARY',
+  document_kind: 'none' as const,
+  document_label: 'No file',
+  status: 'sent' as const,
+  sent_channel: 'email' as const,
+  sent_at: '2026-08-27T14:40:00',
+  to_request_qty: 4120,
+  to_request_cbm: 61,
+};
+
+function renderGrid() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <LoadingPlansGrid />
+    </QueryClientProvider>,
+  );
+}
+
+describe('LoadingPlansGrid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getLoadingPlanList.mockResolvedValue({ data: [PLANNING, SENT], total: 2 });
+    cancelLoadingPlan.mockResolvedValue({ ...PLANNING, status: 'cancelled' });
+    deleteLoadingPlan.mockResolvedValue(undefined);
+  });
+
+  it('shows the columns the plan names, newest first, and asks for the Active chip', async () => {
+    renderGrid();
+
+    for (const header of [
+      'Started',
+      'Supplier',
+      'SO cut-off',
+      'Document',
+      'To request',
+      'Sent',
+      'Opened',
+      'Status',
+    ]) {
+      expect(await screen.findByRole('button', { name: header })).toBeTruthy();
+    }
+    await waitFor(() => expect(getLoadingPlanList).toHaveBeenCalled());
+    const params = getLoadingPlanList.mock.calls[0][0] as Record<string, unknown>;
+    expect(params.status).toBe('active');
+    expect(params.sorting).toEqual([{ id: 'started_at', desc: true }]);
+  });
+
+  it('prints the ask with its estimated volume underneath', async () => {
+    renderGrid();
+
+    expect(await screen.findByText('83,229')).toBeTruthy();
+    expect(screen.getByText('est. 2,588 cbm')).toBeTruthy();
+  });
+
+  it('carries ONE primary action, Upload, and it opens Plan a container', async () => {
+    renderGrid();
+
+    const upload = await screen.findByTestId('open-plan-container');
+    expect(screen.queryAllByRole('button', { name: /^Upload/ })).toHaveLength(1);
+
+    fireEvent.click(upload);
+
+    expect(await screen.findByTestId('plan-container-dialog')).toBeTruthy();
+  });
+
+  it('opens the record on a whole-row click', async () => {
+    renderGrid();
+
+    fireEvent.click(await screen.findByText('Stock list 27/07/2026'));
+
+    expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-1');
+  });
+
+  it('asks before cancelling, and the confirm names what the supplier loses', async () => {
+    renderGrid();
+
+    const buttons = await screen.findAllByRole('button', { name: 'Cancel plan' });
+    fireEvent.click(buttons[0]);
+
+    expect(await screen.findByText('Cancel this plan?')).toBeTruthy();
+    expect(screen.getByText(/supplier link stops working/i)).toBeTruthy();
+    // The row action must not ALSO open the record behind the dialog.
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('cancels through the service once the dialog is confirmed', async () => {
+    renderGrid();
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Cancel plan' }))[0]);
+    await screen.findByText('Cancel this plan?');
+
+    const confirms = screen.getAllByRole('button', { name: 'Cancel plan' });
+    fireEvent.click(confirms[confirms.length - 1]);
+
+    await waitFor(() => expect(cancelLoadingPlan).toHaveBeenCalledWith('plan-1'));
+  });
+
+  it('refuses to delete a sent plan and says why (Q5)', async () => {
+    renderGrid();
+
+    const deletes = await screen.findAllByRole('button', { name: 'Delete plan' });
+    // Row order is the response order: the sent plan is the second row.
+    expect((deletes[1] as HTMLButtonElement).disabled).toBe(true);
+    expect(deletes[1].getAttribute('title')).toBe('Sent plans are cancelled, not deleted');
+    expect((deletes[0] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('hard deletes an unsent plan behind a confirmation', async () => {
+    renderGrid();
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Delete plan' }))[0]);
+
+    expect(await screen.findByText('Delete this plan?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteLoadingPlan).toHaveBeenCalledWith('plan-1'));
+  });
+
+  it('says what an empty list means rather than showing an empty table', async () => {
+    getLoadingPlanList.mockResolvedValue({ data: [], total: 0 });
+
+    renderGrid();
+
+    expect(
+      await screen.findByText(
+        /No container plans yet\. Upload a supplier stock list or proforma invoice to start one\./,
+      ),
+    ).toBeTruthy();
+  });
+});

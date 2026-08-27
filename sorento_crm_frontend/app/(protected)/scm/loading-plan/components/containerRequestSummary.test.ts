@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { summariseContainerRequest } from './containerRequestSummary';
+import { requestLinesFrom, summariseContainerRequest } from './containerRequestSummary';
 import type { ContainerRequestRow } from '../../services/fulfilmentService';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
@@ -20,6 +20,7 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     product_name: 'Widget',
     open_so_need: 0,
     suggested_qty: 0,
+    engine_qty: 0,
     on_hand: 0,
     on_hand_group: 0,
     incoming_spo: 0,
@@ -152,5 +153,46 @@ describe('summariseContainerRequest - what the supplier can pack today', () => {
     );
 
     expect(out.canPackNow).toBe(0);
+  });
+});
+
+/**
+ * What actually goes out (R5). Send and the two downloads moved to the record's toolbar, so
+ * the turn from "what the grid shows" into "what the supplier is asked for" is one function
+ * both act through, and these are the three rules it has to keep.
+ */
+describe('requestLinesFrom', () => {
+  it('sends the quantity on screen, not the one the engine suggested', () => {
+    const rows = [row({ product_id: 'p1', suggested_qty: 10, engine_qty: 10 })];
+
+    expect(requestLinesFrom(rows, () => 25)).toEqual([{ product_id: 'p1', qty: 25 }]);
+  });
+
+  it('names the SET, never one of its members (AC-F12.6)', () => {
+    const rows = [
+      row({
+        row_key: 'set:s-1',
+        row_kind: 'set',
+        product_id: 'p-driver',
+        product_set_id: 's-1',
+        item_code: 'CWC605-RL',
+        suggested_qty: 40,
+      }),
+    ];
+
+    expect(requestLinesFrom(rows, (r) => r.suggested_qty)).toEqual([
+      { product_set_id: 's-1', qty: 40 },
+    ]);
+  });
+
+  it('drops a row typed down to 0 from the request', () => {
+    const rows = [
+      row({ product_id: 'p1', suggested_qty: 0 }),
+      row({ product_id: 'p2', suggested_qty: 5 }),
+    ];
+
+    expect(requestLinesFrom(rows, (r) => r.suggested_qty)).toEqual([
+      { product_id: 'p2', qty: 5 },
+    ]);
   });
 });

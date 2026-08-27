@@ -1,9 +1,13 @@
 /**
  * Stage 1 of Ms Tee's journey (PLAN-scm-loading-plan-demand-first.md): what to ask a supplier
- * for before any container is chosen. The states that matter: a supplier with no stock list
- * gets a CTA to upload one (not a bare empty table), a supplier whose products carry no open
- * demand says so plainly, editing a quantity to 0 removes it from what gets sent without
- * removing the row, and the Send button cannot fire when nothing would go out.
+ * for before any container is chosen. The states that matter: a supplier whose products carry
+ * no open demand says so plainly, a typed quantity reaches the record that owns it, and a
+ * cancelled plan renders the same grid without letting anybody type into it.
+ *
+ * Send, the gear and the two downloads left this component in part 4 (R5) - they live on the
+ * record's toolbar now, and `LoadingPlanView.test.tsx` owns them. What turns the grid's
+ * quantities into lines that go out is `requestLinesFrom`, covered in
+ * `containerRequestSummary.test.ts`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -138,6 +142,7 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     product_name: 'Widget',
     open_so_need: 10,
     suggested_qty: 10,
+    engine_qty: 10,
     on_hand: 0,
     on_hand_group: 0,
     incoming_spo: 0,
@@ -167,24 +172,47 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     ...over,
   };
   // Keyed off whatever `product_id` ended up being, so two rows in one test never collide
-  // on the grid's row id just because only one of them named a key.
-  return { ...merged, row_key: over.row_key ?? merged.product_id };
+  // on the grid's row id just because only one of them named a key. `engine_qty` follows
+  // `suggested_qty` unless a test states its own: an unedited row is the engine's answer.
+  return {
+    ...merged,
+    row_key: over.row_key ?? merged.product_id,
+    engine_qty: over.engine_qty ?? merged.suggested_qty,
+  };
 }
 
-function renderSection(onUploadStockList = vi.fn()) {
+/**
+ * The section is CONTROLLED since part 4 (R5): the record page owns the typed quantities,
+ * because Save and Send act on them from its own toolbar. This harness plays that record -
+ * it holds the map and reports every change, so a test can assert both what reached the
+ * parent and what the grid shows afterwards.
+ */
+const onQtyChange = vi.fn();
+
+function Harness({ readOnly }: { readOnly?: boolean }) {
+  const [edits, setEdits] = React.useState<Record<string, number>>({});
+  return (
+    <ContainerRequestSection
+      planId="plan-1"
+      supplierId="sup-1"
+      supplierName="Foshan Ceramics"
+      readOnly={readOnly}
+      qtyFor={(r) => edits[r.row_key] ?? r.suggested_qty}
+      onQtyChange={(rowKey, qty) => {
+        onQtyChange(rowKey, qty);
+        setEdits((prev) => ({ ...prev, [rowKey]: qty }));
+      }}
+    />
+  );
+}
+
+function renderSection(readOnly = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return {
-    onUploadStockList,
-    ...render(
-      <QueryClientProvider client={qc}>
-        <ContainerRequestSection
-          supplierId="sup-1"
-          supplierName="Foshan Ceramics"
-          onUploadStockList={onUploadStockList}
-        />
-      </QueryClientProvider>,
-    ),
-  };
+  return render(
+    <QueryClientProvider client={qc}>
+      <Harness readOnly={readOnly} />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -199,6 +227,7 @@ beforeEach(() => {
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
   state.notices = [];
   state.download = vi.fn();
+  onQtyChange.mockReset();
   getNoticeDocumentUrlMock.mockReset();
   getNoticeDocumentUrlMock.mockResolvedValue({ url: 'https://cdn.test/doc.pdf', filename: 'doc.pdf' });
 });
@@ -211,17 +240,15 @@ describe('ContainerRequestSection - loading / empty / error states', () => {
     expect(screen.queryByText('What to ask Foshan Ceramics for')).not.toBeInTheDocument();
   });
 
-  it('says there is nothing to ask for, and still offers the stock-list upload', () => {
-    // AC-A1: a missing stock list is no longer an empty state. The plan builds from what we
-    // buy from them and what customers are owed, so the ONLY empty state left is "there is
-    // genuinely nothing to ask for" - and the upload is a next step, not a prerequisite.
+  it('says there is nothing to ask for, and points at the list rather than an Upload of its own', () => {
+    // AC-A1: a missing stock list is no longer an empty state. AC-A3: the ONE Upload lives on
+    // the plans list, so this state says where to go rather than growing a second button.
     state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
-    const { onUploadStockList } = renderSection();
+    renderSection();
 
     expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no stock list for foshan ceramics yet/i)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /upload stock list/i }));
-    expect(onUploadStockList).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Start a new plan from the loading plans list/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /upload/i })).not.toBeInTheDocument();
   });
 
   it('renders the table with no stock list at all, on demand alone', () => {
@@ -376,18 +403,30 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.getByTestId('row-quantity-needed')).toBeInTheDocument();
   });
 
-  it('the suggested qty is editable, and edits are what Send sends', async () => {
+  it('the suggested qty is editable, and the typed figure reaches the record', async () => {
     renderSection();
 
-    const qtyInput = screen.getByDisplayValue('10');
-    fireEvent.change(qtyInput, { target: { value: '25' } });
+    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '25' } });
 
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
+    expect(onQtyChange).toHaveBeenCalledWith('p1', 25);
+    await waitFor(() => expect(screen.getByDisplayValue('25')).toBeInTheDocument());
+  });
 
-    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
-    const [payload] = state.send.mutate.mock.calls[0];
-    expect(payload.lines).toEqual([{ product_id: 'p1', qty: 25 }]);
+  it('a cancelled plan shows the same grid, with nothing typeable (AC-A8)', () => {
+    renderSection(true);
+
+    expect(screen.getByDisplayValue('10')).toBeDisabled();
+  });
+
+  it('the formula tooltip explains the ENGINE figure, not the typed one', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ suggested_qty: 25, engine_qty: 10 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByDisplayValue('25').getAttribute('title')).toContain('= 10');
   });
 
   it('a set row wears a Set badge and names the member its figures come from (AC-F12.3)', () => {
@@ -417,34 +456,6 @@ describe('ContainerRequestSection - the grid', () => {
     // The driver's code, not the set's name: whose numbers these are is the question the
     // second line answers.
     expect(screen.getByText('CWCX605-RL')).toBeInTheDocument();
-  });
-
-  it('a set row is sent as the set, never as one of its members (AC-F12.6)', async () => {
-    state.build.data = {
-      stock_list_as_of: '2026-08-18T00:00:00',
-      rows: [
-        row({
-          row_key: 'set:s-1',
-          row_kind: 'set',
-          product_id: 'p-driver',
-          product_set_id: 's-1',
-          set_code: 'CWC605-RL',
-          item_code: 'CWC605-RL',
-          driver_product_id: 'p-driver',
-          driver_item_code: 'CWCX605-RL',
-          suggested_qty: 40,
-        }),
-      ],
-      sources: EMPTY_SOURCES,
-    };
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
-
-    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
-    const [payload] = state.send.mutate.mock.calls[0];
-    expect(payload.lines).toEqual([{ product_set_id: 's-1', qty: 40 }]);
   });
 
   it('two set rows sharing a driver each keep their own editable quantity', () => {
@@ -478,7 +489,7 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.getByDisplayValue('22')).toBeInTheDocument();
   });
 
-  it('a quantity edited to 0 is dropped from what gets sent, without leaving the grid', async () => {
+  it('a quantity edited to 0 keeps its row on the grid', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ product_id: 'p1', item_code: 'ITEM-1' }), row({ product_id: 'p2', item_code: 'ITEM-2', suggested_qty: 5 })],
@@ -487,35 +498,18 @@ describe('ContainerRequestSection - the grid', () => {
     renderSection();
 
     fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
-    // The row stays visible even at 0.
+
+    // She can still see it and change her mind; it just leaves the request.
     expect(screen.getByText('ITEM-1')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
-
-    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
-    const [payload] = state.send.mutate.mock.calls[0];
-    expect(payload.lines).toEqual([{ product_id: 'p2', qty: 5 }]);
+    expect(onQtyChange).toHaveBeenCalledWith('p1', 0);
   });
 
-  it('Send is disabled once every row has been edited to 0', () => {
+  it('Send, the gear and the downloads are NOT here any more (R5)', () => {
     renderSection();
 
-    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
-
-    expect(screen.getByRole('button', { name: /send to supplier/i })).toBeDisabled();
-  });
-
-  it('the confirm dialog states the supplier, line count and channel before anything is sent', async () => {
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-
-    expect(
-      await screen.findByText(/send this request to foshan ceramics\?/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/1 product, 10 units in total/i)).toBeInTheDocument();
-    expect(state.send.mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /send to supplier/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Plan actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
   });
 });
 
@@ -667,94 +661,6 @@ describe('ContainerRequestSection - requests already sent', () => {
     expect(
       within(screen.getByTestId('requests-sent')).getAllByRole('button', { name: /copy link/i }),
     ).toHaveLength(2);
-  });
-});
-
-describe('ContainerRequestSection - the gear on the header (R23)', () => {
-  it('keeps Send as the only button, everything else behind the gear', () => {
-    renderSection();
-
-    expect(screen.getByRole('button', { name: /send to supplier/i })).toBeInTheDocument();
-    expect(screen.getByLabelText('Plan actions')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /refresh suggestion/i })).toBeInTheDocument();
-  });
-
-  it('Refresh suggestion re-runs the build', () => {
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /refresh suggestion/i }));
-
-    expect(state.build.refetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('Copy link is disabled, and says why, until something has been sent', () => {
-    renderSection();
-
-    const item = screen.getByRole('button', { name: /copy link/i });
-    expect(item).toBeDisabled();
-    expect(item).toHaveAttribute('title', 'No link sent yet');
-  });
-
-  it('Copy link copies the supplier s current live link', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-    state.notices = [
-      {
-        id: 'n-5', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-        loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-        recipient: null, status: 'sent', status_reason: null,
-        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-        document_filename: 'container-request.pdf', has_document: true,
-        xlsx_filename: null, has_xlsx: false,
-        public_url: 'https://crm.test/c/SRT/supplier-request/tok-live',
-        link_retired: false,
-        container_type: null, container_count: null, planned_cbm: null,
-        line_count: 1, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-        created_by: 'Ms Tee',
-      },
-    ];
-    renderSection();
-
-    fireEvent.click(
-      within(screen.getByTestId('menu-content')).getByRole('button', { name: /copy link/i }),
-    );
-
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-live'),
-    );
-  });
-
-  it('downloads the sheet for the quantities on screen, without sending anything', () => {
-    renderSection();
-
-    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '25' } });
-    fireEvent.click(screen.getByRole('button', { name: /download xlsx/i }));
-
-    expect(state.download).toHaveBeenCalledWith({
-      lines: [{ product_id: 'p1', qty: 25 }],
-      format: 'xlsx',
-    });
-    expect(state.send.mutate).not.toHaveBeenCalled();
-  });
-
-  it('downloads the PDF off the same lines', () => {
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /download pdf/i }));
-
-    expect(state.download).toHaveBeenCalledWith({
-      lines: [{ product_id: 'p1', qty: 10 }],
-      format: 'pdf',
-    });
-  });
-
-  it('has nothing to download once every quantity is 0', () => {
-    renderSection();
-
-    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
-
-    expect(screen.getByRole('button', { name: /download xlsx/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /download pdf/i })).toBeDisabled();
   });
 });
 

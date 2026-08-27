@@ -298,14 +298,6 @@ export async function deleteContainerSize(id: string): Promise<void> {
  *  DELETE /api/v1/scm/loading-plans/{id}   -> 204, or 409 `plan_sent` once a notice exists.
  * ────────────────────────────────────────────────────────────────────────── */
 
-/**
- * PHASE 1 ONLY. The five plan-row calls below answer out of
- * `loading-plan/mocks/loadingPlanMock` while the endpoints are being built, so the screens
- * can be tuned and browser-verified first. Phase 2 deletes this constant, the five branches
- * that read it, and the mock file - nothing else in this block changes.
- */
-const PLAN_ROW_MOCK = true;
-
 export type LoadingPlanStatus = 'planning' | 'sent' | 'cancelled';
 
 /** Which document the plan was started from. `none` is a real answer, not a missing one. */
@@ -352,10 +344,6 @@ export interface LoadingPlanListParams {
 export async function getLoadingPlanList(
   params: LoadingPlanListParams,
 ): Promise<{ data: LoadingPlanRecord[]; total: number }> {
-  if (PLAN_ROW_MOCK) {
-    const { mockListPlans } = await import('../loading-plan/mocks/loadingPlanMock');
-    return mockListPlans(params);
-  }
   const qs = buildDataGridParams(params, { status: params.status });
   const res = await apiFetch(`/api/v1/scm/loading-plans?${qs.toString()}`);
   return readJson(res, 'Failed to load the loading plans');
@@ -366,17 +354,11 @@ export interface LoadingPlanCreate {
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
   source_attachment_id: string | null;
-  /** PHASE 1 ONLY - the backend resolves the supplier's name itself. */
-  supplier_name?: string | null;
 }
 
 export async function createLoadingPlanRecord(
   body: LoadingPlanCreate,
 ): Promise<LoadingPlanRecord> {
-  if (PLAN_ROW_MOCK) {
-    const { mockCreatePlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    return mockCreatePlan({ ...body, supplier_name: body.supplier_name ?? null });
-  }
   const res = await apiFetch('/api/v1/scm/loading-plans', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -395,10 +377,6 @@ export async function updateLoadingPlanCutOff(
   id: string,
   planHorizonDate: string | null,
 ): Promise<LoadingPlanRecord> {
-  if (PLAN_ROW_MOCK) {
-    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    return mockPatchPlan(id, { plan_horizon_date: planHorizonDate });
-  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -408,14 +386,6 @@ export async function updateLoadingPlanCutOff(
 }
 
 export async function cancelLoadingPlan(id: string): Promise<LoadingPlanRecord> {
-  if (PLAN_ROW_MOCK) {
-    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    return mockPatchPlan(id, {
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString().slice(0, 19),
-      cancelled_by: 'You',
-    });
-  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/cancel`, { method: 'POST' });
   return readJson<LoadingPlanRecord>(res, 'Failed to cancel the plan');
 }
@@ -428,10 +398,6 @@ export async function saveLoadingPlanEdits(
   id: string,
   edits: Record<string, number>,
 ): Promise<LoadingPlanRecord> {
-  if (PLAN_ROW_MOCK) {
-    const { mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    return mockPatchPlan(id, { line_edits: edits });
-  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/edits`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -441,11 +407,6 @@ export async function saveLoadingPlanEdits(
 }
 
 export async function deleteLoadingPlan(id: string): Promise<void> {
-  if (PLAN_ROW_MOCK) {
-    const { mockDeletePlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    mockDeletePlan(id);
-    return;
-  }
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the loading plan'));
 }
@@ -737,33 +698,6 @@ export interface ContainerRequestBuild {
 }
 
 export async function buildContainerRequest(planId: string): Promise<ContainerRequestBuild> {
-  if (PLAN_ROW_MOCK) {
-    // PHASE 1: the plan row is local, the FIGURES are real - the supplier-scoped build has
-    // shipped since S13, so the record page is tuned against real demand rather than fixtures.
-    const { mockGetPlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    const plan = mockGetPlan(planId);
-    const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        supplier_id: plan.supplier_id,
-        ...(plan.plan_horizon_date ? { plan_horizon_date: plan.plan_horizon_date } : {}),
-      }),
-    });
-    const built = await readJson<ContainerRequestBuild>(
-      res,
-      'Failed to work out what to ask this supplier for',
-    );
-    return {
-      ...built,
-      plan,
-      rows: built.rows.map((r) => ({
-        ...r,
-        engine_qty: r.suggested_qty,
-        suggested_qty: plan.line_edits[r.row_key] ?? r.suggested_qty,
-      })),
-    };
-  }
   const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -843,25 +777,6 @@ export async function sendContainerRequest(
   planId: string,
   lines: ContainerRequestLine[],
 ): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
-  if (PLAN_ROW_MOCK) {
-    const { mockGetPlan, mockPatchPlan } = await import('../loading-plan/mocks/loadingPlanMock');
-    const plan = mockGetPlan(planId);
-    const res = await apiFetch('/api/v1/scm/container-requests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplier_id: plan.supplier_id, lines }),
-    });
-    const out = await readJson<{ notices: SupplierNotice[]; document_filename: string }>(
-      res,
-      'Failed to send the request to the supplier',
-    );
-    mockPatchPlan(planId, {
-      status: 'sent',
-      sent_at: new Date().toISOString().slice(0, 19),
-      sent_channel: out.notices.find((n) => n.status === 'sent')?.channel ?? 'email',
-    });
-    return out;
-  }
   const res = await apiFetch('/api/v1/scm/container-requests', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -880,14 +795,14 @@ export async function sendContainerRequest(
  * and which day this is.
  */
 export async function downloadContainerRequestDocument(
-  supplierId: string,
+  planId: string,
   lines: ContainerRequestLine[],
   format: 'xlsx' | 'pdf',
 ): Promise<void> {
   const res = await apiFetch(`/api/v1/scm/container-requests/document?format=${format}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ supplier_id: supplierId, lines }),
+    body: JSON.stringify({ plan_id: planId, lines }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to build the document'));
   const filename =

@@ -123,7 +123,6 @@ export function PlanContainerDialog({
       }
       const plan = await create.mutateAsync({
         supplier_id: supplierId,
-        supplier_name: supplierOption?.label ?? null,
         plan_horizon_date: planHorizonDate || null,
         document_kind: docKind,
         source_attachment_id: sourceAttachmentId,

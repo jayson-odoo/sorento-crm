@@ -130,7 +130,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const changeCutOff = useUpdateLoadingPlanCutOff(planId);
   const send = useSendContainerRequest();
   const cancel = useCancelLoadingPlan();
-  const download = useDownloadContainerRequestDocument(supplierId);
+  const download = useDownloadContainerRequestDocument(planId);
   const notices = useSupplierNotices(supplierId || null);
   const stockListFile = useSupplierStockListFile(
     plan?.document_kind === 'stock_list' ? supplierId : null,

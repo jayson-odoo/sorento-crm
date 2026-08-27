@@ -22,6 +22,7 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     product_name: 'Wall hung basin 600mm',
     open_so_need: 3999,
     suggested_qty: 2426,
+    engine_qty: 2426,
     on_hand: 1573,
     on_hand_group: 640,
     incoming_spo: 0,

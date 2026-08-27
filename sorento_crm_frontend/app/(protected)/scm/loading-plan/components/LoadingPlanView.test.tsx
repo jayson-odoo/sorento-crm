@@ -1,22 +1,21 @@
 /**
- * S7b - the loading plan screen.
+ * The loading plan RECORD (part 4, R5 / R6 - AC-A12, A13, A14, A15, A16, and the read-only
+ * half of A8).
  *
- * The CBM-fit half of this page (container size, packed-stock tiles, the loading plan table)
- * was cut on the captain's 20 Aug live-test ruling ("don't need stage 2") - see
- * LoadingPlanView.tsx's own docstring. What is left to assert here is the toolbar the
- * captain's 27 Aug ruling reshaped: ONE Upload CTA opens the popup that owns supplier, plan
- * until and document; what was chosen reads back as text; and the occasional actions (view
- * the uploaded sheet, re-run matching, change the picks) sit behind the gear, which has
- * nothing to act on until a supplier exists.
+ * What this suite pins is the toolbar, because that is what the captain's 27 Aug ruling
+ * reshaped: the supplier is the title, the subtitle states started / cut-off / document, the
+ * status is a badge, and the right cluster reads [gear] [Save (N)] [Send to supplier] [Back]
+ * with the gear FIRST. Save counts the rows that differ from the engine's own answer, Send
+ * saves before it sends, leaving with unsaved edits asks, and a cancelled plan can do neither.
  *
- * The popup's own two steps are covered in PlanContainerDialog.test.tsx, and everything the
- * request section does (the deferred-line reasoning, the ranked table, sending to the
- * supplier) in ContainerRequestSection.test.tsx.
+ * The ranked grid inside it is `ContainerRequestSection.test.tsx`; the popup that starts a
+ * plan is `PlanContainerDialog.test.tsx`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { LoadingPlanRecord } from '../../services/fulfilmentService';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -36,13 +35,25 @@ if (!window.ResizeObserver) {
   };
 }
 
+const push = vi.fn();
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/loading-plan/plan-1',
+  useRouter: () => ({ push, replace: vi.fn() }),
+  useSearchParams: () => ({ get: () => null }),
+}));
+
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    custom: vi.fn(),
+  },
 }));
 
 // The gear menu, flattened: Radix opens on pointerdown through a portal, and what this suite
-// asks of it is which items it offers, not how it animates. Same stub as
-// PurchaseOrdersList.test.tsx uses for the same reason.
+// asks of it is which items it offers, not how it animates.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: any) => <div>{children}</div>,
@@ -60,96 +71,113 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-// The supplier picker is server-searched (S8-followup, same fix as the proforma upload
-// dialog): `SearchableSelect` calls `fetchOptions('', 0)` on open, so the real component is
-// kept (not stubbed) and only `getFulfilmentSuppliers` is overridden here - `importOriginal`
-// keeps every other export real, since the upload dialogs import other functions off this
-// same module.
-const getFulfilmentSuppliers = vi.fn(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async (_query?: string) => [{ value: 'sup-1', label: 'Foshan Ceramics' }],
-);
-vi.mock('../../services/fulfilmentService', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
-  return {
-    ...actual,
-    getFulfilmentSuppliers: (query?: string) => getFulfilmentSuppliers(query),
-  };
-});
-
-const state = {
-  stockListFile: undefined as { attachment_id: string; filename: string } | undefined,
-};
-
-vi.mock('../../hooks/useFulfilment', () => ({
-  useSupplierStockListFile: () => ({ data: state.stockListFile, isLoading: false }),
-  useStockListApplied: () => vi.fn(),
-}));
-
-const rematch = vi.fn();
-vi.mock('../../hooks/useSupplierCodeAliases', () => ({
-  useRematchSupplierCodes: () => ({ mutate: rematch, isPending: false }),
-}));
-
-// The queue panel and the request section both render inside this view for a chosen
-// supplier. Each has its own suite; here they only have to prove they mounted, and the
-// section's empty-state CTAs have to prove they reach the right upload.
+// The queue panel has its own suite; here it only has to prove it mounted.
 vi.mock('./UnmatchedSupplierCodesPanel', () => ({
   UnmatchedSupplierCodesPanel: () => <div data-testid="unmatched-panel" />,
 }));
 
+// The grid is a controlled child now (R5): the record owns the typed quantities, so the stub
+// exposes exactly the two props that carry them.
 vi.mock('./ContainerRequestSection', () => ({
   ContainerRequestSection: ({
     supplierName,
-    onUploadStockList,
-    onUploadProforma,
+    readOnly,
+    onQtyChange,
   }: {
     supplierName: string;
-    onUploadStockList: () => void;
-    onUploadProforma?: () => void;
+    readOnly?: boolean;
+    onQtyChange: (rowKey: string, qty: number) => void;
   }) => (
-    <div data-testid="container-request-section">
+    <div data-testid="container-request-section" data-readonly={String(!!readOnly)}>
       Request section for {supplierName}
-      <button type="button" onClick={onUploadStockList} data-testid="section-upload-stock">
-        Upload stock list
-      </button>
-      <button type="button" onClick={onUploadProforma} data-testid="section-upload-proforma">
-        Upload proforma invoice
+      <button type="button" data-testid="type-qty" onClick={() => onQtyChange('row-a', 4000)}>
+        type
       </button>
     </div>
   ),
 }));
 
-// Step 2 of the popup. Both are covered by their own suites; here each only has to prove it
-// was reached for the supplier chosen on step 1.
-vi.mock('../../proforma-invoices/components/ProformaUploadDialog', () => ({
-  ProformaUploadDialog: ({
-    open,
-    supplierId,
-    supplierOption,
-  }: {
-    open: boolean;
-    supplierId?: string | null;
-    supplierOption?: { value: string; label: string } | null;
-  }) =>
-    open ? (
-      <div data-testid="proforma-upload-dialog">
-        Proforma upload for {supplierOption?.label ?? supplierId}
-      </div>
-    ) : null,
+const ENGINE_ROW = {
+  row_key: 'row-a',
+  product_id: 'prod-a',
+  row_kind: 'product' as const,
+  product_set_id: null,
+  suggested_qty: 4242,
+  engine_qty: 4242,
+  cbm_per_unit: 0.5,
+};
+
+const PLAN: LoadingPlanRecord = {
+  id: 'plan-1',
+  supplier_id: 'sup-1',
+  supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD',
+  started_at: '2026-08-27T14:02:00',
+  plan_horizon_date: '2026-09-30',
+  document_kind: 'stock_list',
+  document_label: 'Stock list 27/07/2026',
+  source_attachment_id: 'att-1',
+  status: 'planning',
+  sent_channel: null,
+  sent_at: null,
+  opened_at: null,
+  cancelled_at: null,
+  cancelled_by: null,
+  line_edits: {},
+  to_request_qty: null,
+  to_request_cbm: null,
+};
+
+const state = {
+  plan: PLAN,
+  rows: [ENGINE_ROW],
+};
+
+const saveEdits = vi.fn();
+const sendRequest = vi.fn();
+const cancelPlan = vi.fn();
+const changeCutOff = vi.fn();
+const refetchBuild = vi.fn();
+
+vi.mock('../../hooks/useFulfilment', () => ({
+  useContainerRequestBuild: () => ({
+    data: { plan: state.plan, rows: state.rows, supplier_id: 'sup-1' },
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    error: null,
+    refetch: refetchBuild,
+  }),
+  useSaveLoadingPlanEdits: () => ({
+    mutate: (v: unknown, o?: { onSuccess?: () => void }) => {
+      saveEdits(v);
+      o?.onSuccess?.();
+    },
+    mutateAsync: async (v: unknown) => {
+      saveEdits(v);
+      return state.plan;
+    },
+    isPending: false,
+  }),
+  useUpdateLoadingPlanCutOff: () => ({ mutate: changeCutOff, isPending: false }),
+  useSendContainerRequest: () => ({
+    mutate: (v: unknown, o?: { onSuccess?: () => void }) => {
+      sendRequest(v);
+      o?.onSuccess?.();
+    },
+    isPending: false,
+  }),
+  useCancelLoadingPlan: () => ({ mutate: cancelPlan, isPending: false }),
+  useDownloadContainerRequestDocument: () => ({ mutate: vi.fn(), isPending: false }),
+  useLoadingPlanList: () => ({ data: { data: [{ id: 'plan-1' }], total: 1 } }),
+  useSupplierNotices: () => ({ data: [] }),
+  useSupplierStockListFile: () => ({
+    data: { attachment_id: 'att-1', filename: 'stock.xlsx' },
+    isLoading: false,
+  }),
 }));
 
-vi.mock('./StockListUploadDialog', () => ({
-  StockListUploadDialog: ({
-    open,
-    supplierName,
-  }: {
-    open: boolean;
-    supplierName: string;
-  }) =>
-    open ? (
-      <div data-testid="stock-upload-dialog">Stock list upload for {supplierName}</div>
-    ) : null,
+vi.mock('../../hooks/useSupplierCodeAliases', () => ({
+  useRematchSupplierCodes: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import { LoadingPlanView } from './LoadingPlanView';
@@ -158,154 +186,170 @@ function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <LoadingPlanView />
+      <LoadingPlanView planId="plan-1" />
     </QueryClientProvider>,
   );
 }
 
-/** The supplier select is a combobox inside the popup; pick the only option in it. */
-async function chooseSupplierInDialog() {
-  const trigger = screen.getByRole('combobox', { name: /Supplier/i });
-  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-  fireEvent.click(trigger);
-  fireEvent.click(await screen.findByText('Foshan Ceramics'));
-}
-
-/** The whole journey onto the page: Upload, pick the supplier, plan without a file. */
-async function planForFoshan(horizon?: string) {
-  fireEvent.click(screen.getByTestId('open-plan-container'));
-  await chooseSupplierInDialog();
-  if (horizon) {
-    fireEvent.change(screen.getByLabelText('Plan until'), { target: { value: horizon } });
-  }
-  fireEvent.click(screen.getByTestId('plan-without-file'));
-}
-
-beforeEach(() => {
-  getFulfilmentSuppliers.mockClear();
-  rematch.mockClear();
-  state.stockListFile = undefined;
-});
-
-describe('LoadingPlanView - before a supplier is chosen', () => {
-  it('says what to do rather than showing an empty request', async () => {
-    renderView();
-
-    expect(await screen.findByText('Choose a supplier to plan a container.')).toBeInTheDocument();
-    expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
+describe('LoadingPlanView (the record)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.plan = { ...PLAN };
+    state.rows = [ENGINE_ROW];
   });
 
-  it('reads back that nothing is being planned yet', () => {
+  it('titles the record with the supplier and states started, cut-off and document', () => {
     renderView();
 
-    expect(screen.getByTestId('plan-supplier-text')).toHaveTextContent('No supplier chosen');
-    expect(screen.getByTestId('plan-horizon-text')).toHaveTextContent('Plan until: -');
-  });
-
-  it('offers the same Upload CTA from the empty state', () => {
-    renderView();
-
-    expect(screen.getByTestId('open-plan-container-empty')).toBeEnabled();
-  });
-
-  it('has nothing behind the gear until there is a supplier to act on', () => {
-    renderView();
-
-    expect(screen.getByTestId('loading-plan-more')).toBeDisabled();
-  });
-});
-
-describe('LoadingPlanView - the Upload popup', () => {
-  it('opens on the supplier + plan until step', async () => {
-    renderView();
-    expect(screen.queryByRole('combobox', { name: /Supplier/i })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('open-plan-container'));
-
-    expect(await screen.findByText('Plan a container')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeInTheDocument();
-  });
-
-  it('plans without a file once the supplier and the date are picked', async () => {
-    renderView();
-    await planForFoshan('2026-09-30');
-
-    // The picks are the page's now, and they read back as text rather than as inputs.
-    expect(screen.getByTestId('plan-supplier-text')).toHaveTextContent(
-      'Supplier: Foshan Ceramics',
-    );
-    expect(screen.getByTestId('plan-horizon-text')).toHaveTextContent('30/09/2026');
-    expect(await screen.findByTestId('container-request-section')).toBeInTheDocument();
-    expect(screen.getByText('Request section for Foshan Ceramics')).toBeInTheDocument();
-  });
-
-  it('opens the stock-list upload straight from the request section, for that supplier', async () => {
-    renderView();
-    await planForFoshan();
-
-    fireEvent.click(await screen.findByTestId('section-upload-stock'));
-
-    expect(await screen.findByTestId('stock-upload-dialog')).toHaveTextContent(
-      'Stock list upload for Foshan Ceramics',
-    );
-  });
-
-  it('opens the proforma upload straight from the request section, for that supplier', async () => {
-    renderView();
-    await planForFoshan();
-
-    fireEvent.click(await screen.findByTestId('section-upload-proforma'));
-
-    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
-      'Proforma upload for Foshan Ceramics',
-    );
-  });
-});
-
-describe('LoadingPlanView - the gear menu', () => {
-  it('holds the occasional actions once a supplier is chosen', async () => {
-    renderView();
-    await planForFoshan();
-
-    expect(screen.getByTestId('loading-plan-more')).toBeEnabled();
-    expect(screen.getByRole('button', { name: /refresh matching/i })).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /change supplier \/ plan until/i }),
-    ).toBeInTheDocument();
+      screen.getByRole('heading', { name: /CHAOZHOU JINBAICHUAN SANITARY WARE CO\., LTD/ }),
+    ).toBeTruthy();
+    const subtitle = screen.getByTestId('plan-subtitle').textContent ?? '';
+    expect(subtitle).toContain('Started');
+    expect(subtitle).toContain('SO cut-off 30/09/2026');
+    expect(subtitle).toContain('Stock list 27/07/2026');
+    expect(screen.getByText('Planning')).toBeTruthy();
   });
 
-  it('hides View uploaded list until a stock-list file exists', async () => {
+  it('carries no header card and no Upload button of its own (AC-A3, AC-A12)', () => {
     renderView();
-    await planForFoshan();
 
-    expect(screen.queryByRole('button', { name: /view uploaded list/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Plan until:')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Upload$/i })).toBeNull();
   });
 
-  it('offers to view the uploaded list once a stock-list file exists', async () => {
-    state.stockListFile = { attachment_id: 'att-1', filename: 'foshan-stock.xlsx' };
+  it('offers the gear items the plan lists, and only one gear', () => {
     renderView();
-    await planForFoshan();
 
-    expect(screen.getByRole('button', { name: /view uploaded list/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Plan actions' })).toHaveLength(1);
+    for (const item of [
+      'View uploaded list',
+      'Refresh matching',
+      'Refresh suggestion',
+      'Copy link',
+      'Download XLSX',
+      'Download PDF',
+      'Change cut-off',
+      'Cancel plan',
+      'Delete plan',
+    ]) {
+      expect(screen.getByRole('button', { name: item })).toBeTruthy();
+    }
   });
 
-  it('re-runs the code matching for the chosen supplier', async () => {
+  it('says why Copy link cannot act when nothing has been sent', () => {
     renderView();
-    await planForFoshan();
 
-    // The queue panel hides itself when every code binds, so the gear is the only place
-    // this is reachable in exactly the state somebody is trying to reach (R18).
-    fireEvent.click(screen.getByRole('button', { name: /refresh matching/i }));
-
-    expect(rematch).toHaveBeenCalledWith({ supplier_id: 'sup-1' });
+    const copy = screen.getByRole('button', { name: 'Copy link' }) as HTMLButtonElement;
+    expect(copy.disabled).toBe(true);
+    expect(copy.getAttribute('title')).toBe('No link sent yet');
   });
 
-  it('re-opens the popup on its first step to change the picks', async () => {
+  it('counts the rows that differ from the engine and saves the whole map', async () => {
     renderView();
-    await planForFoshan();
+    expect((screen.getByTestId('save-plan-edits') as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId('save-plan-edits').textContent).toContain('Save (0)');
 
-    fireEvent.click(screen.getByRole('button', { name: /change supplier \/ plan until/i }));
+    fireEvent.click(screen.getByTestId('type-qty'));
 
-    expect(await screen.findByText('Plan a container')).toBeInTheDocument();
+    expect(screen.getByTestId('save-plan-edits').textContent).toContain('Save (1)');
+    fireEvent.click(screen.getByTestId('save-plan-edits'));
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
+  });
+
+  it('saves before it sends, so the document cannot disagree with the screen', async () => {
+    renderView();
+    fireEvent.click(screen.getByTestId('type-qty'));
+
+    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
+    await waitFor(() =>
+      expect(sendRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: 'plan-1',
+          lines: [{ product_id: 'prod-a', qty: 4000 }],
+        }),
+      ),
+    );
+  });
+
+  it('asks before leaving with unsaved quantities, and leaves once confirmed', async () => {
+    renderView();
+    fireEvent.click(screen.getByTestId('type-qty'));
+
+    fireEvent.click(screen.getByTestId('back-to-plans'));
+
+    expect(await screen.findByText('Leave without saving?')).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan'));
+  });
+
+  it('goes straight back when nothing is unsaved', async () => {
+    renderView();
+
+    fireEvent.click(screen.getByTestId('back-to-plans'));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan'));
+    expect(screen.queryByText('Leave without saving?')).toBeNull();
+  });
+
+  it('asks before a refresh drops the typed quantities (AC-A16)', async () => {
+    renderView();
+    fireEvent.click(screen.getByTestId('type-qty'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh suggestion' }));
+
+    expect(await screen.findByText('Drop your 1 typed quantity?')).toBeTruthy();
+    expect(refetchBuild).not.toHaveBeenCalled();
+  });
+
+  it('refreshes without asking when nothing was typed', () => {
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh suggestion' }));
+
+    expect(refetchBuild).toHaveBeenCalled();
+  });
+
+  it('a cancelled plan is read-only, and Save and Send say why (AC-A8)', () => {
+    state.plan = { ...PLAN, status: 'cancelled', cancelled_at: '2026-08-27T15:00:00' };
+
+    renderView();
+
+    expect(screen.getByText('Cancelled')).toBeTruthy();
+    const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
+    const send = screen.getByTestId('send-to-supplier') as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(send.disabled).toBe(true);
+    expect(send.getAttribute('title')).toBe('This plan is cancelled.');
+    expect(
+      screen.getByTestId('container-request-section').getAttribute('data-readonly'),
+    ).toBe('true');
+  });
+
+  it('a sent plan cannot be deleted from the gear either (Q5)', () => {
+    state.plan = { ...PLAN, status: 'sent', sent_at: '2026-08-27T14:40:00' };
+
+    renderView();
+
+    const del = screen.getByRole('button', { name: 'Delete plan' }) as HTMLButtonElement;
+    expect(del.disabled).toBe(true);
+    expect(del.getAttribute('title')).toBe('Sent plans are cancelled, not deleted');
+  });
+
+  it('changes the cut-off on the plan rather than starting a second one', async () => {
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
+    const input = await screen.findByLabelText('Sales order cut-off');
+    fireEvent.change(input, { target: { value: '2026-10-31' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
+
+    await waitFor(() =>
+      expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
+    );
   });
 });

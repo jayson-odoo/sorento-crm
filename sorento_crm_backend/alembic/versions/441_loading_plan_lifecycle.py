@@ -1,7 +1,7 @@
 """the loading plan becomes a record: status, cut-off, document, typed quantities
 
 Revision ID: 441_loading_plan_lifecycle
-Revises: 438_merge_price_supplier_sets
+Revises: 440_pl_draft_numbering
 Create Date: 2026-08-28
 
 `PLAN-scm-fulfilment-feedback-p4.md` R1. A container plan was React state on one page: leave
@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "441_loading_plan_lifecycle"
-down_revision = "438_merge_price_supplier_sets"
+down_revision = "440_pl_draft_numbering"
 branch_labels = None
 depends_on = None
 

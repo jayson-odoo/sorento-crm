@@ -260,7 +260,7 @@ export function useSendContainerRequest() {
  * state disables the menu item - there is nothing to cache, the answer is a file that has
  * already left for the disk.
  */
-export function useDownloadContainerRequestDocument(supplierId: string | null) {
+export function useDownloadContainerRequestDocument(planId: string | null) {
   return useMutation({
     mutationFn: ({
       lines,
@@ -268,7 +268,7 @@ export function useDownloadContainerRequestDocument(supplierId: string | null) {
     }: {
       lines: ContainerRequestLine[];
       format: 'xlsx' | 'pdf';
-    }) => downloadContainerRequestDocument(supplierId as string, lines, format),
+    }) => downloadContainerRequestDocument(planId as string, lines, format),
     onError: (e: Error) => toast.error(e.message),
   });
 }
