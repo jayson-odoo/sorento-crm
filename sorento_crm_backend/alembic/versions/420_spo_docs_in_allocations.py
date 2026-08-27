@@ -74,6 +74,11 @@ the rows before re-running, not to widen the migration:
     order and belongs on the SPO through section I's Link SPO, so clear the column and
     re-place it there.
 
+The referrers the delete has to check are indexed first (`index_line_referrers`): three of
+them had no index on the foreign-key column, and Postgres checks a deletion one row at a
+time, so 80k deleted lines meant 80k sequential scans of a 36k-row table. That is why the
+third prod attempt never came back within the deploy's health window.
+
 `scm.plan_exception.purchase_order_id` is NOT a blocker: the migration clears it itself.
 A plan exception is a finding a batch derives from the open purchase-order lines it can
 see, and while the SPO documents sat in `purchase_orders` a batch could raise one ABOUT a
@@ -296,6 +301,45 @@ def add_claim_spo_side(bind) -> None:
             "ix_scm_order_link_claim_spo_allocation", "order_link_claim",
             ["spo_allocation_id"], schema=scm,
         )
+
+
+_LINE_REFERRER_INDEXES = (
+    # (schema, table, column, index name): every foreign key that points at a purchase
+    # order line or document from a table `move_spo_documents` does not itself rewrite.
+    ("scm", "order_link_claim", "po_line_id", "ix_scm_order_link_claim_po_line"),
+    ("scm", "loading_plan_line", "po_line_id", "ix_scm_loading_plan_line_po_line"),
+    ("scm", "shipment_line_spo_link", "purchase_order_line_id",
+     "ix_scm_shipment_spo_link_po_line"),
+    ("scm", "plan_exception", "purchase_order_id", "ix_scm_plan_exception_purchase_order"),
+)
+
+
+def index_line_referrers(bind) -> int:
+    """Index every foreign key the delete below has to check, BEFORE it runs.
+
+    Postgres verifies `ON DELETE SET NULL` / `CASCADE` one deleted row at a time, with a
+    lookup on the referring column - and without an index that lookup is a sequential scan
+    of the referrer. Measured on the prod copy (27 Aug 2026): `scm.order_link_claim` holds
+    36,312 rows and one such scan costs ~9 ms warm, so deleting the 79,968 SPO lines spent
+    ~12 minutes on that one check alone (plus ~4 more on the two other unindexed
+    referrers) - against a 240 s deploy health window. Prod refused the migration twice on
+    the guard, then the third run simply never finished (run 33069456556).
+
+    Idempotent, and the indexes are the right shape permanently (the models declare them
+    too), so the downgrade does not drop them. Returns how many were created.
+    """
+    created = 0
+    for module, table, column, name in _LINE_REFERRER_INDEXES:
+        schema = _schema(bind, module)
+        if not _table_exists(bind, schema, table):
+            continue
+        if not _has_column(bind, table, column, schema=schema):
+            continue
+        if _has_index(bind, name, schema=schema):
+            continue
+        op.create_index(name, table, [column], schema=schema)
+        created += 1
+    return created
 
 
 def repoint_spo_claims(bind) -> dict:
@@ -782,6 +826,8 @@ def upgrade() -> None:
     widen_allocations(bind)
     # Before the move, so the claim half exists the moment the rows it points at do.
     add_claim_spo_side(bind)
+    # Before the move too: its DELETE checks every referrer once per deleted line.
+    index_line_referrers(bind)
     move_spo_documents(bind)
     # After it, because a claim can only be pointed at an allocation that has been written.
     repoint_spo_claims(bind)
