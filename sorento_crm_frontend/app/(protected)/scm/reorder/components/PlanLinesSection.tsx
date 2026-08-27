@@ -178,6 +178,7 @@ export function PlanLinesSection({
         trendSeriesMonths={planLines.trendSeriesMonths}
         purchaseTrendFor={planLines.purchaseTrendFor}
         purchaseTrendWindowMonths={planLines.purchaseTrendWindowMonths}
+        purchaseTrendReady={planLines.purchaseTrendReady}
         onOpenPurchaseTrend={planLines.requestPurchaseTrend}
         hasPhotoFor={planLines.hasPhotoFor}
         photoStatus={planLines.photoStatus}

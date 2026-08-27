@@ -160,7 +160,19 @@ def _scope_for(db: Session, rec,
     """
     wid = rec["warehouse_id"]
     if not wid:
-        # A network-scope row names no location, so there is nothing to narrow to.
+        # A row that names no location was still sized over a set of them, and that set is
+        # frozen on the row: `plan_basis.locations` (AC-F08). Reading it is what lets a
+        # per-product buy (`PLAN-scm-reorder-per-product.md`) list the orders behind it -
+        # without it the drill has nothing to narrow to and answers "no open demand" for a
+        # row that was sized against demand at ten locations.
+        basis = (rec["inputs"] or {}).get("plan_basis") or {}
+        members = sorted({str(loc["warehouse_id"])
+                          for loc in (basis.get("locations") or [])
+                          if isinstance(loc, dict) and loc.get("warehouse_id")})
+        if members:
+            # Neither one location nor one pool: the product's own set, which is the word
+            # the FE already understands for a union across locations.
+            return members, "product", None
         return [], "warehouse", None
 
     pool_ids, pool_code = _pool_of(db, wid)
@@ -456,7 +468,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
-                   GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty
+                   GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty,
+                   -- How much of the instruction is already on a purchase or shipping
+                   -- order. `qty` above is what is LEFT, so without this the reader
+                   -- cannot tell a 20 that was always 20 from a 50 that is 30 placed
+                   -- (AC-R8: the project rows carry the linked quantity).
+                   COALESCE(lk.linked, 0) AS linked_qty
             FROM projects.order_inquiry_rows oir
             JOIN projects.so_supply_decisions d
               ON d.id = oir.supply_decision_id AND d.state = :active_state
@@ -516,6 +533,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "linked_qty": float(r["linked_qty"] or 0),
             "source": "order_inquiry_confirmed",
             # This leg is BUILT from `projects.order_inquiry_rows` - there is always a row,
             # by construction, unlike the book query's stamp-only `order_inquiry` source.

@@ -224,6 +224,55 @@ export function forecastAddOn(
   };
 }
 
+/** One order behind a line, in the shape the ledger's demand blocks render.
+ *
+ *  `linked` is the part of an Order Inquiry instruction already placed on a purchase or
+ *  shipping order; `qty` is what is still owed. Null on a retail line, which has no
+ *  instruction to place (AC-R8). */
+export interface LedgerDemandRow {
+  key: string;
+  soId: string | null;
+  soNumber: string;
+  customer: string;
+  deliveryDate: string | null;
+  qty: number;
+  linked: number | null;
+}
+
+/** The demand drill's lines, as the ledger's Project / Retail blocks read them.
+ *
+ *  Soonest needed first - the order a buyer reads them in - and undated last, because a
+ *  line with no date is not urgent, it is unscheduled. */
+export function ledgerDemandRows(
+  lines:
+    | {
+        so_id?: string | null;
+        so_number: string;
+        customer_label: string;
+        required_date: string | null;
+        qty: number;
+        linked_qty?: number | null;
+      }[]
+    | undefined,
+): LedgerDemandRow[] {
+  return [...(lines ?? [])]
+    .sort((a, b) => {
+      if (a.required_date === b.required_date) return a.so_number.localeCompare(b.so_number);
+      if (!a.required_date) return 1;
+      if (!b.required_date) return -1;
+      return a.required_date.localeCompare(b.required_date);
+    })
+    .map((l, i) => ({
+      key: `${l.so_number}-${l.required_date ?? 'undated'}-${i}`,
+      soId: l.so_id ?? null,
+      soNumber: l.so_number,
+      customer: l.customer_label,
+      deliveryDate: l.required_date,
+      qty: l.qty,
+      linked: l.linked_qty ?? null,
+    }));
+}
+
 export interface LevelLine {
   level: number | null;
   sourceLabel: string;
@@ -235,6 +284,10 @@ export interface LevelLine {
 const LEVEL_SOURCE_LABEL: Record<string, string> = {
   manual: 'buyer set',
   accepted_suggestion: 'buyer accepted the suggestion',
+  // The plan fell back to the item master because nobody has set a level of their own
+  // (`reorder_run_service.MASTER_LEVEL_SOURCE`). Named rather than shown as somebody's
+  // decision, so a buyer can tell AutoCount's number from their own (AC-R3).
+  autocount_master: 'AutoCount master (no buyer level set)',
 };
 
 /** THE LINE, manual mode: the level a buyer owns, its source, and (when the backend ever

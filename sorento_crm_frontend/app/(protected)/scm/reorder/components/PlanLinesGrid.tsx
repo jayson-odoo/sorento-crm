@@ -449,6 +449,7 @@ export function PlanLinesGrid({
   channelTrendFor,
   trendSeriesMonths = 24,
   purchaseTrendFor,
+  purchaseTrendReady,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
   hasPhotoFor,
@@ -504,6 +505,10 @@ export function PlanLinesGrid({
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
   purchaseTrendWindowMonths?: number;
+  /** Whether the lazy purchase-trend fetch has answered - "no purchases" and "not asked
+   *  yet" are the same `undefined` otherwise, and the ledger's History block must not
+   *  print the first for the second. */
+  purchaseTrendReady?: boolean;
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
@@ -702,9 +707,13 @@ export function PlanLinesGrid({
    */
   const suggestedQtyCellInputsRef = useRef({
     decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+    runId, purchaseTrendFor, purchaseTrendWindowMonths, purchaseTrendReady,
+    onOpenPurchaseTrend,
   });
   suggestedQtyCellInputsRef.current = {
     decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
+    runId, purchaseTrendFor, purchaseTrendWindowMonths, purchaseTrendReady,
+    onOpenPurchaseTrend,
   };
   const renderSuggestedQtyCell = useCallback((ctx: CellContext<PlanLine, unknown>) => {
     const original = ctx.row.original;
@@ -714,7 +723,11 @@ export function PlanLinesGrid({
     const {
       decisions: liveDecisions, coverFor: liveCoverFor, poFor: livePoFor,
       economicsFor: liveEconomicsFor, healthThresholds: liveHealthThresholds,
-      trendFor: liveTrendFor, onDecide: liveOnDecide,
+      trendFor: liveTrendFor, onDecide: liveOnDecide, runId: liveRunId,
+      purchaseTrendFor: livePurchaseTrendFor,
+      purchaseTrendWindowMonths: liveWindowMonths,
+      purchaseTrendReady: liveTrendReady,
+      onOpenPurchaseTrend: liveOnNeedPurchaseTrend,
     } = suggestedQtyCellInputsRef.current;
     return (
       <span className="inline-flex items-center gap-1">
@@ -742,6 +755,11 @@ export function PlanLinesGrid({
                   healthThresholds={liveHealthThresholds}
                   trend={liveTrendFor?.(original)}
                   onDecide={(next) => liveOnDecide(original, next)}
+                  runId={liveRunId ?? null}
+                  purchaseTrend={livePurchaseTrendFor?.(original)}
+                  purchaseWindowMonths={liveWindowMonths}
+                  purchaseTrendReady={liveTrendReady}
+                  onNeedPurchaseTrend={liveOnNeedPurchaseTrend}
                 />
               </PopoverContent>
             </PopoverPortal>

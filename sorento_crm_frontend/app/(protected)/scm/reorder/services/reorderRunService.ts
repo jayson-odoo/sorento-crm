@@ -695,6 +695,11 @@ export interface PlanDemandLine {
    * response that predates the field; treated as false by the caller in that case.
    */
   has_inquiry_row?: boolean;
+  /** How much of an Order Inquiry instruction is already placed on a purchase or shipping
+   *  order. `qty` above is what is LEFT of it, so this is what tells a 20 that was always
+   *  20 from a 50 that is 30 placed (AC-R8). Only the confirmed project leg carries it -
+   *  a retail book line has no instruction to place. */
+  linked_qty?: number | null;
 }
 
 export interface PlanDemand {
