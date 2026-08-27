@@ -78,6 +78,46 @@ function countOf(counts: OutstandingCounts, kind: OutstandingChangeKind): number
   return counts[kind] ?? 0;
 }
 
+/** `n thing`, pluralised, or nothing at all when there is none of it. */
+function part(n: number, one: string, many = `${one}s`): string | null {
+  return n > 0 ? `${n} ${n === 1 ? one : many}` : null;
+}
+
+/**
+ * What the shipping-order half of a purchase book would do, in one line. `null` when the
+ * book carries none, which is most sales books and plenty of purchase ones.
+ *
+ * The bare row count was already printed as a warning and it was not enough: the verdict
+ * said "721 rows are shipping orders (SPO)" and, immediately under it, "Nothing would
+ * change - every line already matches what we hold", because that sentence reads the
+ * purchase-order diff and this half had no figure of its own to contradict it with.
+ *
+ * Zero parts are dropped, except `unchanged` - "0 unchanged" is the answer to "did it
+ * really look at what we hold", and a line that silently omits it reads as a shorter list
+ * rather than as a zero.
+ */
+export function shippingOrderNote(preview: OutstandingPreview): string | null {
+  const lines = preview.spo_lines ?? 0;
+  const closed = preview.spo_closed ?? 0;
+  if (lines <= 0 && closed <= 0) return null;
+  const parts = [
+    part(preview.spo_documents ?? 0, 'document'),
+    part(preview.spo_new ?? 0, 'new', 'new'),
+    part(preview.spo_changed ?? 0, 'changed', 'changed'),
+    `${preview.spo_unchanged ?? 0} unchanged`,
+    closed > 0 ? `${closed} would close` : null,
+    (preview.spo_unknown_locations ?? 0) > 0
+      ? `${preview.spo_unknown_locations} with no warehouse`
+      : null,
+  ].filter(Boolean);
+  return `Shipping orders: ${parts.join(', ')}`;
+}
+
+/** Shipping-order lines this upload would file, restate or settle. */
+function spoChanges(preview: OutstandingPreview): number {
+  return (preview.spo_new ?? 0) + (preview.spo_changed ?? 0) + (preview.spo_closed ?? 0);
+}
+
 /**
  * The preview, read as the standard `{valid, errors, warnings, summary}` verdict.
  *
@@ -134,10 +174,12 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
   // book. Not a row problem (nothing is wrong with them) and not a warning count, but they
   // do not import, so "would import" has to know about them.
   const otherFamilyRows = preview.shipping_order_rows ?? 0;
+  const note = shippingOrderNote(preview);
   return {
     valid: preview.ok && errors.length === 0,
     errors,
     warnings,
+    notes: note ? [note] : [],
     summary: {
       total_rows: preview.total_rows,
       would_apply: preview.ok
@@ -192,7 +234,12 @@ export function OutstandingUploadDialog({
   });
   const { file, preview, previewing, applying, error } = upload;
 
-  const hasChanges = !!preview && ACTIONABLE_KINDS.some((k) => countOf(preview.counts, k) > 0);
+  // BOTH halves of the book, which is the whole fix: a purchase export can be entirely
+  // shipping orders, and reading only the purchase-order diff had the dialog announce that
+  // nothing would change while it filed 721 SPO lines.
+  const hasChanges =
+    !!preview &&
+    (ACTIONABLE_KINDS.some((k) => countOf(preview.counts, k) > 0) || spoChanges(preview) > 0);
   /**
    * Confirmable once a file is picked, and that is the whole rule. Test is a tool, not a
    * gate, exactly as in every other import dialog.

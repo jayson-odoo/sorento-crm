@@ -153,6 +153,23 @@ export interface OutstandingPreview {
    */
   shipping_order_rows?: number;
   /**
+   * What the shipping-order half of a purchase book would DO, since it files those rows
+   * rather than dropping them: the documents it names, the lines it would state
+   * (`spo_new + spo_changed + spo_unchanged`), the open lines it would CLOSE because the
+   * book no longer states them, and the lines whose stock location we do not hold.
+   *
+   * The split matters and the bare line count did not: the verdict printed "721 rows are
+   * shipping orders" beside "nothing would change", because the sentence about change read
+   * the purchase-order diff alone and this half had no figure to contradict it with.
+   */
+  spo_documents?: number;
+  spo_lines?: number;
+  spo_new?: number;
+  spo_changed?: number;
+  spo_unchanged?: number;
+  spo_closed?: number;
+  spo_unknown_locations?: number;
+  /**
    * Sales orders in this file that no order type, customer market segment or agent class
    * can classify (QP1). Non-empty REFUSES the whole file: a half-imported book disagrees
    * with AutoCount, and a defaulted class is worse still because it is stable and no later
