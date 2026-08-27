@@ -1538,6 +1538,12 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     cbm_per_unit = Column(Numeric, nullable=True)
     cbm_total = Column(Numeric, nullable=True)
 
+    #: What the line weighs, as the supplier stated it (净重 / 毛重, N.W. / G.W.). NULL on a
+    #: document that states neither, for the same reason the volumes are: a shipping weight
+    #: of 0 kg and an unstated one are different answers, and only one of them is honest.
+    net_weight = Column(Numeric(15, 4), nullable=True)
+    gross_weight = Column(Numeric(15, 4), nullable=True)
+
     #: What the supplier said, frozen at import and never written again. `qty` and
     #: `unit_price` above are OURS to adjust to fit the container; these two are theirs, and
     #: the whole fulfilment journey rests on the two never being confused (AC-E2).

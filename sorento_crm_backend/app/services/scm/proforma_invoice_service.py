@@ -891,6 +891,8 @@ def apply(
                     cartons=ln.cartons,
                     cbm_per_unit=ln.cbm_per_unit,
                     cbm_total=ln.cbm_total,
+                    net_weight=ln.net_weight,
+                    gross_weight=ln.gross_weight,
                     # The supplier's own figures, frozen here and never written again: `qty`
                     # and `unit_price` above are ours to trim to fit the container, and the
                     # whole journey rests on the two never being confused (AC-E2).
@@ -2285,6 +2287,19 @@ def set_container_size(
 ) -> dict:
     """Which box this invoice is being fitted into. `None` means the tenant's default."""
     invoice = get_or_404(db, invoice_id)
+    _set_container_size(db, invoice, container_size_id)
+    db.flush()
+    return serialize(db, invoice)
+
+
+#: "The caller did not mention this field", which is a different instruction from "set it to
+#: null" - `container_size_id: null` means the tenant default, and an absent one means leave
+#: the invoice's own choice alone.
+UNSET: Any = object()
+
+
+def _set_container_size(db: Session, invoice: ProformaInvoice, container_size_id: Optional[str]) -> None:
+    """Resolve and set the box. Shared by the PATCH and the whole-document PUT."""
     if container_size_id:
         if not _is_uuid(container_size_id):
             raise AppException(422, "That container size does not exist.", detail="container_size_id")
@@ -2298,7 +2313,157 @@ def set_container_size(
         invoice.container_size_id = str(size.id)
     else:
         invoice.container_size_id = None
+
+
+def _rename(db: Session, invoice: ProformaInvoice, pi_number: Optional[str]) -> None:
+    """The document's own number, corrected by hand.
+
+    A derived number (`PI-<file stem>-<block>`) is a guess the file forced on us, and the
+    operator reading the paper is the one who knows what the supplier actually called it.
+    Identity is `(company, supplier, pi_number)`, so the rename is refused by NAME rather
+    than left to the unique index, which would surface as a 500 with a constraint in it.
+    """
+    number = (pi_number or "").strip()
+    if not number:
+        raise AppException(422, "The invoice needs a number.", detail="pi_number")
+    if len(number) > 100:
+        raise AppException(422, "That invoice number is too long.", detail="pi_number")
+    if number == invoice.pi_number:
+        return
+    clash = (
+        db.query(ProformaInvoice.id)
+        .filter(
+            ProformaInvoice.supplier_id == invoice.supplier_id,
+            ProformaInvoice.pi_number == number,
+            ProformaInvoice.id != invoice.id,
+        )
+        .first()
+    )
+    if clash:
+        raise AppException(
+            409,
+            f"This supplier already has a proforma invoice numbered '{number}'.",
+            code="duplicate_pi_number",
+            detail="pi_number",
+        )
+    invoice.pi_number = number
+
+
+def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> None:
+    """The whole line set in one write: rows with an id update, rows without create, and a
+    line the payload no longer names is deleted.
+
+    The same upsert shape `PurchaseOrderService` uses for a purchase order's lines, and for
+    the same reason: the screen edits a DRAFT of the document and presses Save once, so the
+    server is told what the invoice IS rather than replayed the keystrokes that got there.
+
+    `line_no` is NOT re-flowed. It is where the line sat on the paper the supplier sent, so a
+    removed line leaves a gap and a new one is appended after the highest number in use.
+    """
+    existing = {
+        str(ln.id): ln
+        for ln in db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id == invoice.id)
+        .all()
+    }
+    next_line_no = max((int(ln.line_no or 0) for ln in existing.values()), default=0) + 1
+    kept: set[str] = set()
+
+    for row in rows:
+        code = (row.get("item_code") or "").strip()
+        if not code:
+            raise AppException(422, "Every line needs an item code.", detail="item_code")
+        try:
+            qty = Decimal(str(row.get("qty")))
+        except Exception:  # noqa: BLE001 - the message is for whoever typed it
+            raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
+        if qty < 0:
+            raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
+
+        product_id = row.get("product_id") or None
+        if product_id:
+            if not _is_uuid(str(product_id)):
+                raise AppException(422, "That product does not exist.", detail="product_id")
+            found = db.query(Product.id).filter(Product.id == str(product_id)).first()
+            if found is None:
+                raise AppException(404, "That product does not exist.", detail="product_id")
+
+        line_id = row.get("id")
+        if line_id:
+            line = existing.get(str(line_id))
+            if line is None:
+                raise AppException(
+                    404, "That line is not on this proforma invoice.", detail="line_id"
+                )
+            kept.add(str(line_id))
+        else:
+            line = ProformaInvoiceLine(
+                id=_uuid(), invoice_id=invoice.id, line_no=next_line_no, item_code=code, qty=qty
+            )
+            next_line_no += 1
+            db.add(line)
+
+        unit_price = row.get("unit_price")
+        cbm_per_unit = row.get("cbm_per_unit")
+        uom = (row.get("uom") or "").strip()
+        line.item_code = code[:100]
+        line.description = row.get("description")
+        line.qty = qty
+        line.uom = uom[:20] or None
+        line.cartons = None if row.get("cartons") is None else Decimal(str(row["cartons"]))
+        line.cbm_per_unit = None if cbm_per_unit is None else Decimal(str(cbm_per_unit))
+        # Derived, never asked for: the total volume is the per-unit figure times what is
+        # being shipped, and a stored total that disagreed with the two beside it is the
+        # number that gets a container booked twice.
+        line.cbm_total = None if cbm_per_unit is None else Decimal(str(cbm_per_unit)) * qty
+        line.unit_price = None if unit_price is None else Decimal(str(unit_price))
+        line.amount = None if unit_price is None else Decimal(str(unit_price)) * qty
+        line.net_weight = (
+            None if row.get("net_weight") is None else Decimal(str(row["net_weight"]))
+        )
+        line.gross_weight = (
+            None if row.get("gross_weight") is None else Decimal(str(row["gross_weight"]))
+        )
+        line.product_id = str(product_id) if product_id else None
+
+    for line_id, line in existing.items():
+        if line_id not in kept:
+            db.delete(line)
     db.flush()
+
+
+def update_invoice(
+    db: Session,
+    invoice_id: str,
+    *,
+    pi_number: Any = UNSET,
+    container_size_id: Any = UNSET,
+    lines: Any = UNSET,
+    actor: Optional[str] = None,
+) -> dict:
+    """The whole document as the edit screen holds it, written in ONE call. Does not commit.
+
+    The detail page edits a local draft and nothing is written until Save, so this is the
+    only write that save makes: rename, container size and the whole line set travel
+    together and either all land or none do. A superseded revision and an invoice whose
+    goods are already on a container are refused here, by the same rules that refuse a
+    single-line adjustment.
+    """
+    invoice = get_or_404(db, invoice_id)
+    _editable_or_409(db, invoice)
+
+    if pi_number is not UNSET:
+        _rename(db, invoice, pi_number)
+    if container_size_id is not UNSET:
+        _set_container_size(db, invoice, container_size_id)
+    if lines is not UNSET:
+        _write_lines(db, invoice, list(lines or []))
+        # Stamped only when the LINES moved: renaming a document or choosing a different box
+        # is not trimming it to fit, and "adjusted by" is what tells the screen the
+        # supplier's figures are no longer what we are shipping.
+        _restate(db, invoice, actor=actor)
+    else:
+        db.flush()
     return serialize(db, invoice)
 
 
@@ -2323,10 +2488,15 @@ def list_for_supplier(
     *,
     supplier_id: Optional[str] = None,
     placement: Optional[str] = None,
+    query: Optional[str] = None,
     limit: int = 25,
     offset: int = 0,
 ) -> dict:
     """Invoices we have read, newest first. `supplier_id` narrows it to one supplier.
+
+    `query` is the list screen's search box: PI number, supplier (name or code), container
+    number or bill of lading, case-insensitively. One box over the four identifiers a person
+    actually arrives with, rather than four filters they have to choose between.
 
     `total` is counted separately from the page, so it is how many invoices are held rather
     than how many came back: `len(rows)` after a `LIMIT` can never exceed the page size, and a
@@ -2350,6 +2520,29 @@ def list_for_supplier(
     q = db.query(ProformaInvoice)
     if supplier_id:
         q = q.filter(ProformaInvoice.supplier_id == str(supplier_id))
+
+    needle = (query or "").strip()
+    if needle:
+        # The four things somebody has in their hand when they come looking for an invoice:
+        # its number, whose it is, which box it went in and which bill of lading covers it.
+        # The supplier is matched through a scoped subquery rather than a join, so the
+        # company filter the ORM puts on `Supplier` still applies and the page count below
+        # stays one query.
+        like = f"%{needle}%"
+        supplier_ids = (
+            db.query(Supplier.id)
+            .filter(
+                func.lower(Supplier.supplier_name).like(func.lower(like))
+                | func.lower(Supplier.supplier_code).like(func.lower(like))
+            )
+            .subquery()
+        )
+        q = q.filter(
+            func.lower(ProformaInvoice.pi_number).like(func.lower(like))
+            | func.lower(ProformaInvoice.container_ref).like(func.lower(like))
+            | func.lower(ProformaInvoice.bl_ref).like(func.lower(like))
+            | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
+        )
 
     if placement:
         # Filtered in Python rather than in SQL, deliberately: "split" is the comparison of
@@ -2591,6 +2784,10 @@ def serialize(
             "cartons": _f(ln.cartons),
             "cbm_per_unit": _f(ln.cbm_per_unit),
             "cbm_total": _f(ln.cbm_total),
+            # What the supplier printed the line weighs. Null on a document that states
+            # neither, never 0 - see the column's own note on the model.
+            "net_weight": _f(ln.net_weight),
+            "gross_weight": _f(ln.gross_weight),
             # What the SUPPLIER stated, frozen at import - the "was" beside our "now".
             "supplier_qty": _f(ln.supplier_qty),
             "supplier_unit_price": _f(ln.supplier_unit_price),

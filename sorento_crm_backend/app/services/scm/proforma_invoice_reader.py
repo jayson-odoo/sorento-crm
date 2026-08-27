@@ -93,6 +93,11 @@ class ProformaLine:
     #: fit", and only one of them is honest (AC-D1).
     cbm_per_unit: Optional[float] = None
     cbm_total: Optional[float] = None
+    #: What the line weighs, when the supplier prints it (净重 / 毛重, N.W. / G.W.). Neither
+    #: is derived from the other and neither is invented: a document that states no weight
+    #: leaves both None, which reads as unstated rather than as weightless.
+    net_weight: Optional[float] = None
+    gross_weight: Optional[float] = None
 
 
 @dataclass
@@ -255,6 +260,8 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
         spec=_text(vals.get("spec")),
         cbm_per_unit=cbm_per_unit,
         cbm_total=cbm_total,
+        net_weight=_number(vals.get("net_weight")),
+        gross_weight=_number(vals.get("gross_weight")),
     )
 
 
