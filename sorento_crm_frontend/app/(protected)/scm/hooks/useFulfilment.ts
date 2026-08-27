@@ -242,8 +242,11 @@ export function useSupplierNotices(supplierId: string | null, loadingPlanId?: st
 /**
  * Who a chat send could be addressed to, searched on the server (AC-C3).
  *
- * `enabled` rather than a null supplier: the list is only fetched once the Chat option is
- * chosen, so opening the dialog to send an email never queries Respond.io at all.
+ * The answer also carries the WORKSPACE's own fact - whether a WeChat channel is connected at
+ * all - which is what labels and disables the Chat option, so the send dialog asks on OPEN
+ * rather than once Chat is chosen: a choice cannot be disabled with its reason after it has
+ * been made. It is a read of our own mirror (`respond_channels` / `respond_contacts`), never
+ * a live Respond.io call, and `enabled` still keeps it off any screen that is not asking.
  */
 export function useSupplierChatContacts(
   supplierId: string | null,

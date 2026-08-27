@@ -44,6 +44,10 @@ import type { CodedError } from '../../services/fulfilmentService';
  *  work. */
 const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/;
 
+/** What the Chat option says when the workspace has no WeChat channel at all, if the
+ *  server did not put it in its own words (AC-C3). */
+const WECHAT_MISSING = 'No WeChat channel is connected in the Respond.io workspace.';
+
 /** The backend's `code` turned into the sentence that says what to do about it (AC-C5). The
  *  server's own message is used for anything not listed - a code this map has not heard of is
  *  still a real refusal and must not be swallowed. */
@@ -119,7 +123,12 @@ export function SendRequestDialog({
     setChatQuery('');
   }, [open, supplierEmail]);
 
-  const contacts = useSupplierChatContacts(supplierId, chatQuery, open && channel === 'chat');
+  // Asked for as soon as the dialog opens, not once Chat is chosen: AC-C3 disables the Chat
+  // OPTION when the workspace has no WeChat channel, and that answer has to be in hand before
+  // the choice is offered. One unfiltered read of our own mirror of the workspace's channels
+  // and contacts (`respond_channels` / `respond_contacts`), never a live Respond.io call; the
+  // searching still only starts when somebody types in the picker.
+  const contacts = useSupplierChatContacts(supplierId, chatQuery, open);
   const chatConnected = contacts.data?.wechat_connected ?? true;
   const chatUnavailable = contacts.data?.unavailable_reason ?? null;
 
@@ -230,11 +239,28 @@ export function SendRequestDialog({
                 Email
               </Label>
             </div>
-            <div className="flex items-center gap-2">
-              <RadioGroupItem value="chat" id="send-channel-chat" disabled={isBusy} />
-              <Label htmlFor="send-channel-chat" className="text-sm font-normal">
-                Chat (WeChat)
-              </Label>
+            <div className="flex items-start gap-2">
+              <RadioGroupItem
+                value="chat"
+                id="send-channel-chat"
+                disabled={isBusy || !chatConnected}
+                title={!chatConnected ? (chatUnavailable ?? WECHAT_MISSING) : undefined}
+              />
+              <div className="min-w-0">
+                <Label htmlFor="send-channel-chat" className="text-sm font-normal">
+                  Chat (WeChat)
+                </Label>
+                {/* The reason under the option it disables, so the sender reads why here
+                    rather than by choosing a channel and finding out behind it (AC-C3). */}
+                {!chatConnected ? (
+                  <p
+                    className="text-2xs text-muted-foreground"
+                    data-testid="send-channel-chat-reason"
+                  >
+                    {chatUnavailable ?? WECHAT_MISSING}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </RadioGroup>
 
@@ -321,8 +347,7 @@ export function SendRequestDialog({
               />
               {!chatConnected ? (
                 <p className="mt-1 text-2xs text-destructive" role="alert">
-                  {chatUnavailable ??
-                    'No WeChat channel is connected in the Respond.io workspace.'}
+                  {chatUnavailable ?? WECHAT_MISSING}
                 </p>
               ) : null}
             </div>

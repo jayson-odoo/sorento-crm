@@ -181,17 +181,27 @@ describe('SendRequestDialog', () => {
     expect(sendButton().disabled).toBe(true);
   });
 
-  it('disables Chat with the workspace reason when no WeChat channel is connected (AC-C3)', () => {
+  it('disables the Chat OPTION itself when no WeChat channel is connected (AC-C3)', () => {
+    // "the Chat option is disabled with that reason", verbatim. The radio used to be
+    // selectable and only the picker behind it said no, so the sender chose a channel, read
+    // the panel and went back - a choice offered that was never available.
     chatState.connected = false;
     chatState.reason = 'No WeChat channel is connected in the Respond.io workspace.';
     renderDialog();
 
-    fireEvent.click(screen.getByLabelText('Chat (WeChat)'));
+    const chat = screen.getByLabelText('Chat (WeChat)') as HTMLInputElement;
+    expect(chat).toBeDisabled();
+    expect(screen.getByTestId('send-channel-chat-reason').textContent).toContain(
+      'No WeChat channel is connected in the Respond.io workspace.',
+    );
+    expect(screen.getByTestId('send-email-panel')).toBeTruthy();
+  });
 
-    expect(screen.getByTestId('send-chat-panel')).toBeTruthy();
-    expect(
-      screen.getByText('No WeChat channel is connected in the Respond.io workspace.'),
-    ).toBeTruthy();
+  it('keeps the picker and Send guarded behind the same fact (AC-C3)', () => {
+    chatState.connected = false;
+    chatState.reason = 'No WeChat channel is connected in the Respond.io workspace.';
+    renderDialog({ supplierEmail: null });
+
     expect(sendButton().disabled).toBe(true);
   });
 
@@ -213,10 +223,17 @@ describe('SendRequestDialog', () => {
     );
   });
 
-  it('never queries Respond.io while the send is an email one (AC-C3)', () => {
+  it('asks once, unfiltered, for the workspace fact the Chat option is labelled with', () => {
+    // AC-C3 needs the answer BEFORE the channel is chosen, or the Chat option cannot be
+    // disabled with its reason. It is one unfiltered read of our own mirror of the
+    // workspace's channels and contacts, not a search and not a live Respond.io call; the
+    // searching still only starts when somebody types in the picker.
     renderDialog();
 
-    expect(chatQueries).toEqual([]);
+    // The mock records every render, not every request - React Query asks once per key, and
+    // the key is the query string. So what this pins is that only the UNFILTERED question is
+    // ever asked before somebody types.
+    expect([...new Set(chatQueries)]).toEqual(['']);
   });
 
   it('says which of the eight refusals happened, in the dialog (AC-C5)', () => {
