@@ -31,6 +31,12 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -86,7 +92,7 @@ import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 const SOURCE_FILTER_OPTIONS = [
   { value: '', label: 'All sources' },
   { value: 'inquiry', label: 'Order inquiry' },
-  { value: 'upload', label: 'Sales order upload' },
+  { value: 'upload', label: 'Upload' },
   { value: 'history', label: 'Absorbed history' },
   { value: 'manual', label: 'Manual' },
 ];
@@ -112,10 +118,10 @@ const RESET_PERMISSION = 'scm.reorder.run';
 
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
-  // Named after the channel as the toolbar now names it: that upload carries the whole book,
-  // outstanding orders and completed ones alike, so calling the source "Outstanding upload"
-  // described a scope the file never had.
-  upload: 'Sales order upload',
+  // Just "Upload" (the captain, 27 Aug). The column is called Source and every row of this
+  // list is a sales order, so "Sales order upload" spent two of its three words repeating
+  // the screen it is on - and the pill is a fixed-width cell that truncated the third.
+  upload: 'Upload',
   // 11,006 of the orders in the book were absorbed from a six-year AutoCount export. Calling
   // one "Manual" claims somebody keyed a 2020 order by hand, and it is the same word the
   // detail page uses so the two screens cannot disagree about the same row.
@@ -378,7 +384,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
             >
               {row.original.so_number}
             </Link>
-            <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
+            {/* The document date is a COLUMN of its own now (the captain, 27 Aug): as a grey
+                sub-line here it could not be sorted on, could not be compared down the page
+                against the Delivery date column beside it, and read as an attribute of the
+                number rather than as a date the order carries. */}
             {/* The book moved a planned line on this order and nobody has applied the change
                 yet (AC-P3-1). The badge IS the way in: it opens the board on this order and
                 that batch, which is where the change is decided. */}
@@ -400,17 +409,29 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         meta: { headerTitle: 'SO number', skeleton: <Skeleton className="h-8 w-28" /> },
       },
       {
+        // Immediately after the number, because that is where it was read from until now.
+        // A saved layout that predates this column places it beside its definition-order
+        // neighbour (`mergeColumnOrder`), so it lands here rather than at the far right.
+        accessorKey: 'order_date',
+        header: ({ column }) => <DataGridColumnHeader title="Document date" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate tabular-nums" title={fmtDate(row.original.order_date)}>
+            {fmtDate(row.original.order_date)}
+          </span>
+        ),
+        size: 130,
+        meta: { headerTitle: 'Document date' },
+      },
+      {
         accessorKey: 'customer_name',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        // The name and nothing else. The market segment used to ride underneath it, and it
+        // is the same answer the Type column already carries as a pill (the captain, 27 Aug):
+        // one fact stated twice in one row is a row that reads as two.
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="truncate" title={row.original.customer_name}>
-              {row.original.customer_name}
-            </span>
-            {row.original.market_segment ? (
-              <span className="text-xs text-muted-foreground">{row.original.market_segment}</span>
-            ) : null}
-          </div>
+          <span className="block truncate" title={row.original.customer_name}>
+            {row.original.customer_name}
+          </span>
         ),
         size: 200,
         meta: { headerTitle: 'Customer' },
@@ -946,19 +967,30 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 ),
               }}
               // No `bulkActions`: the strip keeps its count, its Export and Clear, and
-              // nothing else. Plan lives in the "Actions" dropdown below instead - the
-              // strip only exists once rows are ticked, so an action that lived there
-              // could not be found by anyone who had not already guessed it was there,
-              // and its refusal over the board's bound read as a dead click.
+              // nothing else. Plan selected lives in the "Start" menu instead - the strip
+              // only exists once rows are ticked, so an action that lived there could not
+              // be found by anyone who had not already guessed it was there, and its
+              // refusal over the board's bound read as a dead click.
               exportConfig={{ filename: 'sales_orders_export.xlsx' }}
               // Two secondary actions is what makes the shared toolbar collapse them into
               // an "Actions" dropdown (data-grid-list-toolbar.tsx) instead of a single loose
               // button, matching Delivery Orders (OrdersList.tsx).
+              // Actions is the housekeeping menu (the captain, 27 Aug): add one order by
+              // hand, put a walk back to never-planned, re-read the page. Everything that
+              // STARTS a piece of work moved to the Start button on the right.
               secondaryActions={[
-                // First, because it is the action this list's row selection exists for.
-                // Present (and disabled, with its reason) even with nothing ticked, so the
-                // menu teaches that the orders are picked here.
-                ...planActions,
+                // A new order created from inside one agent's record would carry no agent,
+                // so the record it was added from would not list it.
+                ...(pinnedToAgent
+                  ? []
+                  : [
+                      {
+                        key: 'add-sales-order',
+                        label: 'Add sales order',
+                        icon: Plus,
+                        onClick: () => setFormOpen(true),
+                      },
+                    ]),
                 ...resetActions,
                 {
                   key: 'refresh',
@@ -966,32 +998,51 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                   icon: RefreshCw,
                   onClick: () => void refetch(),
                 },
-                // The upload carries the WHOLE book, so it belongs to the book's own screen.
-                // Offering it inside one agent's record reads as "upload this agent's orders",
-                // which is not what the file is.
-                ...(pinnedToAgent
-                  ? []
-                  : [
-                      {
-                        key: 'upload-sales-orders',
-                        // The file carries the whole book - orders still owed and orders already
-                        // completed - so naming the action "outstanding" claimed a scope it
-                        // never had.
-                        label: 'Upload sales orders',
-                        icon: Upload,
-                        onClick: () => setUploadOpen(true),
-                      },
-                    ]),
               ]}
               primaryAction={
-                // Same reason: a new order created from here would carry no agent, so the
-                // record it was added from would not list it.
-                pinnedToAgent ? undefined : (
-                  <Button onClick={() => setFormOpen(true)}>
-                    <Plus />
-                    Add sales order
-                  </Button>
-                )
+                // START: the two ways a day's work begins on this list - put the book in,
+                // or take a set of orders to the planning board. One button rather than two,
+                // because they are the same question asked a week apart, and the dropdown
+                // carries no heading row of its own (the menu's trigger already says Start).
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button>
+                      Start
+                      <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {/* The upload carries the WHOLE book, so it belongs to the book's own
+                        screen. Offering it inside one agent's record would read as "upload
+                        this agent's orders", which is not what the file is. */}
+                    {pinnedToAgent ? null : (
+                      <DropdownMenuItem onSelect={() => setUploadOpen(true)}>
+                        <Upload className="size-4" aria-hidden />
+                        Upload sales orders
+                      </DropdownMenuItem>
+                    )}
+                    {planActions.map((action) => {
+                      const Icon = action.icon;
+                      return (
+                        <DropdownMenuItem
+                          key={action.key}
+                          disabled={action.disabled}
+                          // Not wired at all while disabled, the same rule the shared
+                          // toolbar's own overflow follows: Radix suppresses `onSelect`
+                          // for a disabled item, and a plain `onClick` would still fire.
+                          onSelect={action.disabled ? undefined : action.onClick}
+                          // The refusal (nothing ticked, or more than the board's bound)
+                          // travels as the browser's own tooltip - there is no room for a
+                          // Tooltip wrapper inside a menu item.
+                          title={action.disabled ? action.disabledReason : undefined}
+                        >
+                          {Icon ? <Icon className="size-4" aria-hidden /> : null}
+                          {action.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               }
             />
           </CardHeader>

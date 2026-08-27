@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Info, Pencil, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Info, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,13 +16,11 @@ import { Badge } from '@/components/ui/badge';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { StatCard } from '@/components/scm/StatCard';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
-import { rankingNote } from '../../_shared/lib/fulfilmentBoard';
 import {
   SHORT_LABELS,
   contributionSuggestion,
@@ -36,11 +34,11 @@ import {
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
-import { amendSummary } from '../../_shared/lib/boardAmend';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
-import { BoardAmendDialog } from './BoardAmendDialog';
-import { BoardRankPopover } from './BoardRankPopover';
+import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover } from './BoardTrailPopover';
+import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { CellStockTable } from './CellStockTable';
 import type {
   BoardCell,
@@ -92,11 +90,10 @@ export function BoardCellBreakdownDialog({
   onDecide: (key: string, decision: BoardDecision | null) => void;
   onClose: () => void;
 }) {
-  /**
-   * What this cell can say about its own ranking, from ONE place (`rankingNote`), so the number
-   * in the Rank column and the sentence at the top of the dialog can never drift apart.
-   */
-  const ranking = rankingNote(cell);
+  // NO RANK, ANYWHERE ON THIS TABLE (R8, the captain 27 Aug: "rank goes"). Under ladder v4
+  // availability belongs to the ownership GROUP and rank only decides the order lines are
+  // served in, so a score in a column beside a quantity read as a property of that quantity.
+  // The sentence that explained a flat score went with the column it explained.
   // Decided in the draft OR decided in the database: a line an active decision covers is as
   // decided as a line the planner has just approved, and counting only the draft made a cell of
   // confirmed lines read "0 decided".
@@ -135,6 +132,18 @@ export function BoardCellBreakdownDialog({
    */
   const taken = React.useMemo(() => takenByLocation(cell, draft), [cell, draft]);
   /**
+   * The lines this drawer is planning, for the documents panel under a location row: their
+   * rows are tagged there, so a planner reading twenty other people's documents can see which
+   * claim is their own (R5). CORE line ids, which is what the drill-down is addressed by.
+   */
+  const askingLineIds = React.useMemo(
+    () =>
+      cell.contributions
+        .map((contribution) => contribution.line_id)
+        .filter((value): value is string => Boolean(value)),
+    [cell.contributions],
+  );
+  /**
    * Did ANY contributing line record what the engine suggested?
    *
    * A revision frozen before `proposed_components` existed (AC-D1) recorded none, and an
@@ -171,9 +180,30 @@ export function BoardCellBreakdownDialog({
     () => cell.contributions.some((entry) => contributionSuggestion(entry) !== null),
     [cell.contributions],
   );
-  /** The row being amended, if any. One at a time: two open forms is two half-decisions. */
-  const [amending, setAmending] = React.useState<BoardContribution | null>(null);
+  /**
+   * Which row is open, ONE at a time (C3/C5): two open editors is two half-decisions, and a
+   * screen of them is a scroll rather than a comparison. The SAME state the List view
+   * keeps, so both readings of the board ask the same question before discarding an edit.
+   */
+  const expansion = useDecisionRowExpansion();
+  const { expanded, setExpanded, openKey, setDirty, requestRow, requestClose } = expansion;
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+
+  /**
+   * The line whose STOCK POSITION the table above is showing (R1/B1).
+   *
+   * Every figure in that table is netted of ONE line's own quantity, because the ladder's
+   * offer is `max(group net + that line's open quantity, 0)`; a cell holding two lines has
+   * two answers, and a table averaging them would contradict both suggestions. So it follows
+   * the row the planner opened, and falls back to the first contribution - which is the
+   * server's own `cell.locations` and, on the overwhelming majority of cells, the only line
+   * there is.
+   */
+  const shownContribution = React.useMemo(
+    () => cell.contributions.find((entry) => entry.key === openKey) ?? cell.contributions[0],
+    [cell.contributions, openKey],
+  );
+  const shownLocations = shownContribution?.locations ?? cell.locations;
 
   const selectedKeys = React.useMemo(
     () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
@@ -216,21 +246,45 @@ export function BoardCellBreakdownDialog({
         accessorFn: (row) => row.so_number,
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium" title={row.original.so_number}>
-              {row.original.so_number}
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {`Line ${row.original.line_no}`}
+          <div className="flex min-w-0 items-start gap-1.5">
+            {/* A state indicator, not a control: the WHOLE row toggles the decision panel,
+                the same gesture reorder planning's group rows use. */}
+            {row.getIsExpanded() ? (
+              <ChevronDown className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            ) : (
+              <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium" title={row.original.so_number}>
+                {row.original.so_number}
+              </div>
+              <div className="truncate text-xs text-muted-foreground">
+                {`Line ${row.original.line_no}`}
+              </div>
             </div>
           </div>
         ),
         // Labels the totals row under the first column, the way a spreadsheet labels its sum,
-        // so the numbers below Ordered and Outstanding need no caption of their own.
+        // so the number below Outstanding needs no caption of its own.
         footer: () => <span className="text-muted-foreground">Total</span>,
-        size: 150,
-        minSize: 120,
-        meta: { headerTitle: 'Sales order' },
+        size: 130,
+        minSize: 110,
+        meta: {
+          headerTitle: 'Sales order',
+          // The decision, in the row (C3/C4). `DataGridTable` renders this full-width under
+          // any row whose `getIsExpanded()` is true - the same mechanism reorder planning's
+          // per-warehouse drill uses - so there is one expansion surface in this product
+          // rather than a second one invented here.
+          expandedContent: (contribution: BoardContribution) => (
+            <BoardLineDecisionPanel
+              contribution={contribution}
+              decision={draft[contribution.key] ?? null}
+              locations={contribution.locations ?? cell.locations}
+              onDecide={(next) => onDecide(contribution.key, next)}
+              onDirtyChange={setDirty}
+            />
+          ),
+        },
       },
       // The product per line, ONLY when the cell holds more than one. On the product axis the
       // dialog's own title names it and every row repeats it, which is a column of one
@@ -248,8 +302,8 @@ export function BoardCellBreakdownDialog({
                   {row.original.item_code}
                 </span>
               ),
-              size: 150,
-              minSize: 120,
+              size: 130,
+              minSize: 110,
               meta: { headerTitle: 'Product' },
             } as ColumnDef<BoardContribution>,
           ]
@@ -263,8 +317,8 @@ export function BoardCellBreakdownDialog({
             {row.original.customer_name || 'Not recorded'}
           </span>
         ),
-        size: 190,
-        minSize: 140,
+        size: 125,
+        minSize: 105,
         meta: { headerTitle: 'Customer' },
       },
       {
@@ -284,8 +338,8 @@ export function BoardCellBreakdownDialog({
           ) : (
             <span className="text-sm text-muted-foreground">Not stated</span>
           ),
-        size: 110,
-        minSize: 90,
+        size: 75,
+        minSize: 65,
         meta: { headerTitle: 'Agent' },
       },
       {
@@ -297,50 +351,14 @@ export function BoardCellBreakdownDialog({
             {row.original.project_label || 'Not named on the order'}
           </span>
         ),
-        size: 190,
-        minSize: 140,
+        size: 115,
+        minSize: 95,
         meta: { headerTitle: 'Project' },
       },
-      {
-        id: 'qty_ordered',
-        accessorFn: (row) => row.qty_ordered ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
-        cell: ({ row }) =>
-          row.original.qty_ordered ? (
-            <span className="block truncate text-sm tabular-nums">
-              {row.original.qty_ordered}
-            </span>
-          ) : (
-            // Never derived from outstanding plus delivered on this side. A number the client
-            // invented is a number nobody can be held to.
-            <span className="text-sm text-muted-foreground">Not stated</span>
-          ),
-        footer: () => <span className="tabular-nums">{sumOf(cell.contributions, orderedOf)}</span>,
-        size: 110,
-        minSize: 90,
-        meta: { headerTitle: 'Ordered' },
-      },
-      {
-        id: 'qty_delivered',
-        accessorFn: (row) => row.qty_delivered ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Delivered" column={column} />,
-        cell: ({ row }) =>
-          row.original.qty_delivered ? (
-            <span className="block truncate text-sm tabular-nums">
-              {row.original.qty_delivered}
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground">Not stated</span>
-          ),
-        footer: () => (
-          <span className="tabular-nums">
-            {sumOf(cell.contributions, (row) => row.qty_delivered ?? '0')}
-          </span>
-        ),
-        size: 110,
-        minSize: 90,
-        meta: { headerTitle: 'Delivered' },
-      },
+      // NO Ordered / Delivered COLUMNS (R8). Both are facts about the LINE rather than about
+      // the decision, they read "Not stated" on most of this book, and between them they cost
+      // 220px of a table that had to scroll sideways to reach the Decision. They are read in
+      // the expanded row instead, beside the outstanding quantity they explain.
       {
         id: 'qty',
         accessorFn: (row) => outstandingOf(row),
@@ -353,8 +371,8 @@ export function BoardCellBreakdownDialog({
         footer: () => (
           <span className="tabular-nums">{sumOf(cell.contributions, outstandingOf)}</span>
         ),
-        size: 120,
-        minSize: 100,
+        size: 85,
+        minSize: 70,
         meta: { headerTitle: 'Outstanding' },
       },
       {
@@ -368,8 +386,8 @@ export function BoardCellBreakdownDialog({
               : 'No date'}
           </span>
         ),
-        size: 120,
-        minSize: 100,
+        size: 100,
+        minSize: 90,
         meta: { headerTitle: 'Delivery date' },
       },
       {
@@ -384,8 +402,8 @@ export function BoardCellBreakdownDialog({
           ) : (
             <span className="text-sm text-destructive">No location</span>
           ),
-        size: 120,
-        minSize: 100,
+        size: 90,
+        minSize: 80,
         meta: { headerTitle: 'Location' },
       },
       {
@@ -461,39 +479,9 @@ export function BoardCellBreakdownDialog({
             </div>
           );
         },
-        size: 230,
-        minSize: 160,
+        size: 150,
+        minSize: 130,
         meta: { headerTitle: 'Sourced from' },
-      },
-      {
-        id: 'rank',
-        accessorFn: (row) => row.rank_score,
-        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
-        // The cell is the RANK and nothing else. It used to carry the factor sentence too,
-        // which was identical on every row - because the factors are identical there, which is
-        // a fact about the POLICY, not about any row - and truncated mid-word. The captain:
-        // "the word here is too long already, don't explain too much". The facts are per row
-        // and wanted only when comparing two of them, so they are behind the icon; the policy's
-        // own flatness is stated once at the top.
-        //
-        // The icon replaces the hover TITLE the facts used to live in ("how is the rank
-        // calculated? can have an information tooltip to show the calculation"): hover prose
-        // cannot be read on a touch screen, cannot be compared against a second row, and was
-        // the very shape the captain rejected on the justification beside it.
-        cell: ({ row }) => (
-          <div className="flex min-w-0 items-center justify-end gap-1">
-            <span
-              data-testid={`rank-factors-${row.original.key}`}
-              className="min-w-0 truncate text-sm font-medium tabular-nums text-end"
-            >
-              {ranking ? ranking.cell : row.original.rank_score.toFixed(2)}
-            </span>
-            <BoardRankPopover contribution={row.original} note={ranking?.note} />
-          </div>
-        ),
-        size: 110,
-        minSize: 90,
-        meta: { headerTitle: 'Rank', cellClassName: 'text-end' },
       },
       {
         id: 'order_inquiry',
@@ -519,44 +507,47 @@ export function BoardCellBreakdownDialog({
             </div>
           );
         },
-        size: 200,
-        minSize: 150,
+        size: 110,
+        minSize: 90,
         meta: { headerTitle: 'Order inquiry' },
       },
       {
         id: 'decision',
         header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
+        // A PILL, AND NOTHING ELSE (C2). The three verbs used to live here, which is why the
+        // column was 210px wide and still truncated its own composition: a decision is taken
+        // in the expanded row now, where the numbers it is made against are.
         cell: ({ row }) => (
-          <DecisionCell
+          <BoardDecisionPill
             contribution={row.original}
             decision={draft[row.original.key] ?? null}
-            onApprove={() => onDecide(row.original.key, { verdict: 'approved' })}
-            onReject={() =>
-              onDecide(row.original.key, {
-                verdict: 'rejected',
-                reason: 'Rejected on the planning board.',
-              })
-            }
-            onUndo={() => onDecide(row.original.key, null)}
-            onAmend={() => setAmending(row.original)}
           />
         ),
-        size: 210,
-        minSize: 170,
+        size: 110,
+        minSize: 100,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
     ],
-    [cell.contributions, draft, multiProduct, onDecide, ranking],
+    [cell.contributions, cell.locations, draft, multiProduct, onDecide, setDirty],
   );
 
   return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
+    /* THE X, ESCAPE AND THE BACKDROP ARE ALSO A DISCARD (C5). An expanded panel holding a
+       half-composed decision is thrown away by any of them, and the row-switch prompt guarded
+       only the fourth gesture, so the three easiest ways out of the dialog lost the draft in
+       silence. `requestClose` asks first and closes only once the question is answered. */
+    <Dialog open onOpenChange={(next) => !next && requestClose(onClose)}>
       <DialogContent
         data-testid="cell-dialog-content"
-        className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-6xl"
+        className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-[95vw]"
       >
-        <DialogHeader className="shrink-0 space-y-2 border-b p-4 sm:p-6">
+        {/* CAPPED, and it scrolls on its own. The header holds three cards and a stock table
+            of up to eleven location rows, which at a 900px window is the whole dialog: the
+            body underneath got about 100px, and the decision panel that now lives there was
+            unreachable without scrolling a region a reader could not see. Half the dialog to
+            each is the guarantee - the same class of layout fault the footer once caused. */}
+        <DialogHeader className="max-h-[45vh] shrink-0 space-y-2 overflow-y-auto border-b p-4 sm:p-6">
           <DialogTitle className="min-w-0 break-words">
             {`${cell.item_code} · ${bucketLabel}`}
           </DialogTitle>
@@ -611,12 +602,8 @@ export function BoardCellBreakdownDialog({
             ) : null}
           </div>
 
-          {/* Said ONCE, because it is a fact about the policy rather than about any row. It was
-              repeated under every rank, eleven identical grey sentences saying nothing
-              row-specific. */}
-          {ranking?.note ? (
-            <p className="text-sm text-muted-foreground break-words">{ranking.note}</p>
-          ) : null}
+          {/* NO RANKING SENTENCE. It explained the Rank column, and the Rank column is gone
+              (R8), so it was a paragraph about a number nobody can see. */}
 
           {/* What is actually AT each location, not only what is outstanding from it - the captain's
               "where will I need to source to fulfil", answered with facts, and the dialog has to
@@ -628,10 +615,16 @@ export function BoardCellBreakdownDialog({
               previous cell's documents under the new cell's row. */}
           <CellStockTable
             key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
-            locations={cell.locations}
+            locations={shownLocations}
             itemCode={cell.item_code}
             groupNote={cell.location_group_note}
             taken={taken}
+            lineIds={askingLineIds}
+            forLine={
+              cell.contributions.length > 1 && shownContribution
+                ? `${shownContribution.so_number} line ${shownContribution.line_no}`
+                : undefined
+            }
           />
         </DialogHeader>
 
@@ -648,6 +641,11 @@ export function BoardCellBreakdownDialog({
             getRowId={(row) => row.key}
             listingKey="projects.projects.view::project-board-cell-breakdown"
             sortable
+            expanded={expanded}
+            onExpandedChange={setExpanded}
+            // The whole row opens its decision panel; the chevron in the first cell is only
+            // the indicator that says which way it will go.
+            onRowClick={(row) => requestRow(row.key)}
             rowSelection={rowSelection}
             onRowSelectionChange={setRowSelection}
             // A covered row is not selectable either: the bulk verbs are Approve and Reject,
@@ -703,43 +701,12 @@ export function BoardCellBreakdownDialog({
 
         </DialogBody>
 
-        {/* The editor is a DIALOG OVER THIS ONE, not a panel under the table. It used to be
-            appended below a 25-row grid inside this same scroll region, with no focus moved
-            to it: pressing Amend moved nothing the planner could see, so the form was never
-            found and the verb read as broken (the captain: "the amend is not working"). */}
-        {amending && (
-          <BoardAmendDialog
-            contribution={amending}
-            onCancel={() => setAmending(null)}
-            onSave={(decision) => {
-              onDecide(amending.key, decision);
-              setAmending(null);
-            }}
-          />
-        )}
+        <UnsavedDecisionPrompt state={expansion} />
       </DialogContent>
     </Dialog>
   );
 }
 
-/** The verbs, as pills, so a decided row reads at a glance in a long list. */
-const VERDICT_PALETTE: Record<string, string> = {
-  approved: 'active',
-  amended: 'submitted',
-  rejected: 'rejected',
-};
-
-/**
- * One row's verdict: the pill once it has one, the three verbs while it does not.
- *
- * A line whose sales order states no location gets no verb at all (AC-FP16) - it cannot be
- * planned here, and offering a button that would refuse is worse than offering none.
- *
- * A line an active decision COVERS gets one verb, Amend. Approve would approve a decision
- * already taken, Reject would silently un-decide it (the confirmation supersedes the revision
- * and writes only what it is sent), and Undo undoes a draft entry that does not exist. The row
- * states which revision decided it and what that revision froze.
- */
 /**
  * ONE composition, as the dialog's header states it: a badge per kind and the quantity per
  * location beside it (AC-D3).
@@ -813,104 +780,6 @@ function CompositionCard({
   );
 }
 
-function DecisionCell({
-  contribution,
-  decision,
-  onApprove,
-  onReject,
-  onUndo,
-  onAmend,
-}: {
-  contribution: BoardContribution;
-  decision: BoardDecision | null;
-  onApprove: () => void;
-  onReject: () => void;
-  onUndo: () => void;
-  onAmend: () => void;
-}) {
-  if (contribution.unplannable) {
-    return (
-      <span
-        className="block truncate text-sm text-destructive"
-        title="This line cannot be decided here: its sales order states no fulfilment location."
-      >
-        Needs a location
-      </span>
-    );
-  }
-
-  if (!decision && contribution.covered && contribution.decision) {
-    return (
-      <div className="flex min-w-0 flex-wrap items-center gap-1">
-        {/* MUTED, not one of the verdict colours: this is not a verdict the planner gave on
-            this board, it is a decision that is already in the database. */}
-        {/* WRAPS: a composition is as long as it is ("Reserve 20 BRW-BB · Borrow 10 · Buy
-            13"), and a pill that overflows a fixed column silently loses its last term -
-            which on this one is the quantity being bought. */}
-        <span
-          className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(
-            'closed',
-          )}`}
-          title={contribution.decision.amend_reason ?? ''}
-        >
-          {confirmedSummary(contribution.decision, contribution.fulfilment_location)}
-        </span>
-        <Button type="button" size="sm" variant="outline" onClick={onAmend}>
-          <Pencil className="size-4" aria-hidden />
-          Amend
-        </Button>
-      </div>
-    );
-  }
-
-  if (decision) {
-    return (
-      <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <span
-          className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(
-            VERDICT_PALETTE[decision.verdict],
-          )}`}
-          title={decision.reason ?? ''}
-        >
-          {/* An amendment can now reserve, borrow and buy at once, so the pill states the
-              COMPOSITION: naming one of the three describes a decision nobody took. */}
-          {decision.verdict === 'approved'
-            ? 'Approved'
-            : decision.verdict === 'amended'
-              ? amendSummary(decision, contribution.fulfilment_location)
-              : 'Rejected'}
-        </span>
-        {/* Amend stays offered on a decided row. Undo-then-Amend is two presses that throw
-            away the composition the planner already made. */}
-        <Button type="button" size="sm" variant="outline" onClick={onAmend}>
-          <Pencil className="size-4" aria-hidden />
-          Amend
-        </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onUndo}>
-          Undo
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      <Button type="button" size="sm" onClick={onApprove}>
-        <Check className="size-4" aria-hidden />
-        Approve
-      </Button>
-      <Button type="button" size="sm" variant="outline" onClick={onAmend}>
-        <Pencil className="size-4" aria-hidden />
-        Amend
-      </Button>
-      <Button type="button" size="sm" variant="outline" onClick={onReject}>
-        <X className="size-4" aria-hidden />
-        Reject
-      </Button>
-    </div>
-  );
-}
-
 /**
  * A figure the server actually stated, as opposed to one it left out.
  *
@@ -952,45 +821,6 @@ function shareNote(contribution: BoardContribution): string | null {
   return `${lines} line${lines === 1 ? '' : 's'} ahead wanting ${wanted} · ${left} left for this line${
     at ? ` at ${at}` : ''
   }`;
-}
-
-/**
- * What a covered row reads: which revision decided it, and what that revision froze.
- *
- * The composition comes from `amendSummary`, the same function an amended row uses, because a
- * frozen composition and an amended one are the same four kinds in the same order - and two
- * renderings of one composition is how they come to disagree.
- */
-/**
- * PRIVATE since AC-D4. It was exported for the board's list view, whose single Proposal
- * column became Suggested and Decided - and the Decided column states the composition alone
- * (`describe`), because the revision is already on the Verdict column and on the row's tick.
- * The one remaining caller is the row strip below.
- */
-function confirmedSummary(
-  decision: NonNullable<BoardContribution['decision']>,
-  ownLocation?: string | null,
-): string {
-  return `Confirmed rev ${decision.revision_no} · ${amendSummary(
-    {
-      verdict: 'amended',
-      timely_spo_qty: decision.timely_spo_qty,
-      reserve: decision.reserve,
-      borrow: decision.borrow.map((row) => ({
-        source: row.source,
-        warehouse_id: row.warehouse_id ?? '',
-        warehouse_code: row.location ?? null,
-        donor_project_id: row.donor_project_id ?? null,
-        qty: row.qty,
-        reason: row.reason,
-        // Carried, not dropped: it is what tells "Borrow (order)" from "Borrow (other)"
-        // on a frozen composition, which arrives with no rung at all.
-        donor_so_number: row.donor_so_number ?? null,
-      })),
-      buy_qty: decision.buy_qty,
-    },
-    ownLocation,
-  )}`;
 }
 
 /**
@@ -1041,10 +871,6 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
 /** The outstanding quantity: the server's own name for it when it sends one. */
 function outstandingOf(contribution: BoardContribution): string {
   return contribution.qty_outstanding ?? contribution.qty;
-}
-
-function orderedOf(contribution: BoardContribution): string {
-  return contribution.qty_ordered ?? '0';
 }
 
 function sumOf(

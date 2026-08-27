@@ -13,12 +13,13 @@ import {
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
 /**
- * The Acknowledged column (AC-H2/AC-H5/AC-H8): one badge and the fact behind it.
+ * The Confirmed column (AC-D15): one badge and the fact behind it.
  *
  * Four readings, and each says a different thing to a buyer scanning the column:
- * nobody has taken this on; Joey took it on at that time; CS moved it after she did, and
- * here is what it was; purchasing refused it, and here is why. The refusal prints its
- * reason inline because a refusal nobody can read is the thing this exists to stop.
+ * nobody has said yes to this yet; Joey confirmed it at that time; CS moved it after she
+ * did, and here is what it was; purchasing refused it, and here is why. The refusal
+ * prints its reason inline because a refusal nobody can read is the thing this exists to
+ * stop. The words come from `ACK_LABELS`, which is where Acknowledge became Confirm (R7).
  *
  * A CHANGED row draws the same Was / Now table the board draws for a planning change
  * (part 3), so the two screens say a change the same way. Its Decision row is omitted

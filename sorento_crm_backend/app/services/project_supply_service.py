@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -308,6 +309,31 @@ class SupplyLinesRefused(AppException):
     ):
         super().__init__(status_code=status_code, message=message, code=code)
         self.detail["failing_lines"] = list(failing_lines)
+
+
+class ReserveOverHand(SupplyLinesRefused):
+    """A Reserve for more than is physically there once other lines are counted (R14).
+
+    A `SupplyLinesRefused` so the board pins the row exactly as it pins every other refusal,
+    with the position stated beside the sentence: the message says "BRW-AM: 10 on hand, 1
+    already reserved by SO383850, you asked 15", and `reserve_conflict` carries the same
+    facts in fields for anything that wants to render them rather than read them.
+    """
+
+    def __init__(
+        self,
+        *,
+        message: str,
+        failing_lines: Sequence[Dict[str, Any]],
+        conflict: Dict[str, Any],
+    ):
+        super().__init__(
+            status_code=409,
+            message=message,
+            failing_lines=failing_lines,
+            code="supply_reserve_over_hand",
+        )
+        self.detail["reserve_conflict"] = conflict
 
 
 def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
@@ -2043,6 +2069,10 @@ class ProjectSupplyService:
                 # field existed simply has none, which is the same answer as "nobody amended
                 # this line" and reads identically on screen.
                 "amend_reason": snapshot.get("amend_reason"),
+                # The doubt the planner recorded beside that reason (R10). Same rule: a
+                # snapshot written before the checkbox existed carries none, which reads as
+                # "nobody flagged it".
+                "suspected_system_issue": bool(snapshot.get("suspected_system_issue")),
                 "buy_reason": snapshot.get("buy_reason"),
                 "order_back": bool(snapshot.get("order_back")),
                 "cited_document": snapshot.get("cited_document"),
@@ -2358,15 +2388,36 @@ class ProjectSupplyService:
         # undecided, deliberately, and its demand goes on flowing to reorder planning
         # untouched. What is still refused is a confirmation of nothing at all, below.
 
-        if invalid or stale:
+        # STRUCTURAL refusals first - a negative quantity, a line that is not on this order,
+        # a composition that does not add up. They are about the PAYLOAD, and the on-hand
+        # guard's sentence about a location would be answering a question that cannot be
+        # asked yet of a body this malformed.
+        if invalid:
             failing = invalid + stale
             raise SupplyLinesRefused(
-                status_code=422 if invalid else 409,
+                status_code=422,
                 message=(
                     f"{len(failing)} line{'' if len(failing) == 1 else 's'} cannot be "
                     "confirmed. Nothing was written."
                 ),
                 failing_lines=failing,
+            )
+
+        # THE ON-HAND GUARD (R14), ahead of the staleness refusals below so its sentence is
+        # the one the planner reads: it names the location AND the earlier order, where the
+        # capacity message can only say how much is left for this line. Order is all that is
+        # at stake - both refuse by raising, before `_write_decision`, so nothing is written
+        # either way; which sentence comes back is the whole difference.
+        self._check_reserve_against_on_hand(checked, named=seen)
+
+        if stale:
+            raise SupplyLinesRefused(
+                status_code=409,
+                message=(
+                    f"{len(stale)} line{'' if len(stale) == 1 else 's'} cannot be "
+                    "confirmed. Nothing was written."
+                ),
+                failing_lines=stale,
             )
 
         carried = self._carried_lines(
@@ -2695,6 +2746,165 @@ class ProjectSupplyService:
                 f"whole {qty_text(fact.open_qty)} from stock, or buy the whole "
                 f"{qty_text(fact.open_qty)}.",
             )
+
+    def _check_reserve_against_on_hand(
+        self,
+        checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
+        *,
+        named: set,
+    ) -> None:
+        """No Reserve may exceed what is ON HAND at that location, less what OTHER lines
+        have already confirmed there (R14, captain 27 August 2026).
+
+        The ladder already caps what it PROPOSES, but the board lets a planner compose an
+        amendment by hand, and a hand-typed 15 against 10 on hand came back as "BRW-AM now
+        has 9 free for this line, and 15 was asked for" - true, and it does not say who has
+        the other one. This refusal names them: "BRW-AM: 10 on hand, 1 already reserved by
+        SO383850, you asked 15", with the holders on the body so the row can be pinned.
+
+        OTHER lines, exactly: the lines this confirmation names are excluded (a line
+        re-confirming its own hold is not competing with itself), and the lines EARLIER in
+        this same payload count as holders the moment they take, so two lines of one press
+        cannot each be sold the same pile.
+
+        Reserve only. A Borrow names a donor line and is checked against that line's own
+        commitment (`_check_borrow`); incoming supply is not on a floor for anybody to pick.
+
+        Silent when NOBODY else holds at that location: the free-stock recheck already
+        refuses more than a location has, and it says what to do instead. This rule is here
+        to NAME the line holding the rest, so it speaks only when there is one to name.
+        """
+        pairs = {
+            (fact.product_id, str(item.warehouse_id))
+            for _line, entry, fact in checked
+            for item in (entry.reserve or [])
+            if fact.product_id and getattr(item, "warehouse_id", None)
+        }
+        if not pairs:
+            return
+        product_ids = sorted({product_id for product_id, _ in pairs})
+        levels = self.stock_levels_by_location(product_ids)
+        holds = self._holds_by_holder(product_ids, exclude_line_ids=sorted(named))
+        mine: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for line, entry, fact in checked:
+            for item in entry.reserve or []:
+                qty = _dec(item.qty)
+                warehouse_id = str(getattr(item, "warehouse_id", "") or "")
+                if qty <= _ZERO or not warehouse_id or not fact.product_id:
+                    continue
+                key = (fact.product_id, warehouse_id)
+                on_hand = levels.get(key, (_ZERO, _ZERO))[0]
+                holders = list(holds.get(key, ())) + list(mine.get(key, ()))
+                held = sum((_dec(holder["qty"]) for holder in holders), _ZERO)
+                # NOBODY ELSE HOLDING HERE is not this rule's case: the free-stock recheck
+                # below already refuses more than a location has, and it says what to do
+                # about it ("Buy that quantity instead, or borrow it on the order's own
+                # sheet"). This rule exists to name the line that has the rest, so it only
+                # speaks when there IS one.
+                if holders and qty > on_hand - held:
+                    warehouse = self._warehouse_row(warehouse_id)
+                    code = warehouse.warehouse_code if warehouse else "That location"
+                    asking = self._so_number_of(fact)
+                    names = ", ".join(
+                        dict.fromkeys(
+                            self._holder_name(holder, asking) for holder in holders
+                        )
+                    )
+                    message = (
+                        f"{code}: {qty_text(on_hand)} on hand, {qty_text(held)} already "
+                        f"reserved by {names}, you asked {qty_text(qty)}"
+                    )
+                    raise ReserveOverHand(
+                        message=message,
+                        failing_lines=[
+                            {
+                                "line_no": line.line_no,
+                                "item_code": fact.item_code,
+                                "reason": message,
+                            }
+                        ],
+                        conflict={
+                            "line": line.line_no,
+                            "warehouse_code": warehouse.warehouse_code
+                            if warehouse
+                            else None,
+                            "on_hand": qty_text(on_hand),
+                            "held_by": holders,
+                            "asked": qty_text(qty),
+                        },
+                    )
+                mine[key].append(
+                    {
+                        "so_number": self._so_number_of(fact),
+                        "line_no": line.line_no,
+                        "qty": qty_text(qty),
+                    }
+                )
+
+    @staticmethod
+    def _holder_name(holder: Dict[str, Any], asking: Optional[str]) -> str:
+        """How the refusal names the line holding the stock this one asked for.
+
+        Another order is named by its document number. A line of the SAME order is named as
+        a line, because handing a planner their own SO number back reads as "some other copy
+        of this order is holding it" and sends them looking for a document they are already
+        on - when the competitor is a row on the screen in front of them.
+        """
+        number = holder.get("so_number")
+        if asking and number == asking:
+            line_no = holder.get("line_no")
+            return f"line {line_no} of this order" if line_no is not None else "this order"
+        return number or "another order"
+
+    @staticmethod
+    def _so_number_of(fact: _LineFacts) -> Optional[str]:
+        """The document number a person knows this line by, off its CORE line's order.
+
+        `None` on a line with no reconciled core line, which the message renders as "another
+        order" rather than inventing a number - the confirm refuses such a line anyway
+        (`_check_line`), so this is the belt and not the braces.
+        """
+        core = getattr(fact, "core", None)
+        order = getattr(core, "sales_order", None) if core is not None else None
+        return getattr(order, "so_number", None)
+
+    def _holds_by_holder(
+        self, product_ids: Sequence[str], *, exclude_line_ids: Sequence[str]
+    ) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
+        """Confirmed holds per `(product, warehouse)`, WITH the line holding each one.
+
+        The same predicate `_hold_rows` nets stock by, asked for different columns, so the
+        refusal cannot name a hold the arithmetic does not count (or miss one it does).
+        Summed per (order, line), because one line can hold at a location on several
+        allocation rows and the message says "1 already reserved by SO383850", not "1 and 0".
+        """
+        ids = [pid for pid in product_ids if pid]
+        if not ids:
+            return {}
+        rows = self._hold_query(
+            ids,
+            exclude_line_ids=list(exclude_line_ids) or None,
+            entities=(
+                _hold_product,
+                SOLineAllocation.warehouse_id,
+                SalesOrder.so_number,
+                ProjectSalesOrderLine.line_no,
+                SOLineAllocation.qty,
+            ),
+        ).all()
+        totals: Dict[Tuple[str, str], Dict[Tuple[Any, Any], Decimal]] = defaultdict(dict)
+        for product_id, warehouse_id, so_number, line_no, qty in rows:
+            key = (str(product_id), str(warehouse_id))
+            holder = (so_number, int(line_no) if line_no is not None else None)
+            totals[key][holder] = totals[key].get(holder, _ZERO) + _dec(qty)
+        return {
+            key: [
+                {"so_number": so_number, "line_no": line_no, "qty": qty_text(qty)}
+                for (so_number, line_no), qty in holders.items()
+                if qty > _ZERO
+            ]
+            for key, holders in totals.items()
+        }
 
     def _warehouse_of(self, fact: _LineFacts, warehouse_id: str) -> Optional[str]:
         if fact.warehouse and str(fact.warehouse.id) == warehouse_id:
@@ -3089,11 +3299,17 @@ class ProjectSupplyService:
             for line, entry, fact in checked
         ] + [entry.snapshot for entry in carried]
 
+        # Flagged lines, this revision's own (R10). Counted off the SNAPSHOTS rather than off
+        # the payload, so a carried line's flag travels with it exactly as its reason does.
+        suspected_issues = sum(
+            1 for snapshot in snapshots if snapshot.get("suspected_system_issue")
+        )
         decision = SOSupplyDecision(
             company_id=order.company_id,
             project_sales_order_id=order.id,
             revision_no=revision_no,
             state=DECISION_ACTIVE,
+            suspected_system_issue=suspected_issues > 0,
             source_revision=(
                 f"{order.status} @ "
                 f"{order.updated_at.isoformat() if order.updated_at else ''}"
@@ -3165,7 +3381,7 @@ class ProjectSupplyService:
                     "carried": True,
                 }
             )
-        transfers_written, transfers_failed = self._write_transfers(
+        transfers_written, transfers_failed, transfers_kept = self._write_transfers(
             order, decision, snapshots
         )
         self.db.flush()
@@ -3192,15 +3408,19 @@ class ProjectSupplyService:
                 if entry["line"].product_id
             }
         )
-        # NO CASCADE HERE any more (`PLAN-scm-oi-handshake.md` section 3, captain 27 Aug
-        # 2026). Links are purchasing's: a row raised on the board is an instruction CS is
-        # still free to change, and a document tied to it before anybody has read it is a
-        # commitment nobody made. The cascade now runs at ACKNOWLEDGE, at Link now and at a
-        # purchase-order confirm, and each of those is restricted to acknowledged rows
-        # (`ProjectOrderInquiryService.auto_place_for_products`). `defer_auto_place` and
-        # `auto_place_products` survive because the planning-change apply still asks for the
-        # products it owes a pass over, and that pass is now a no-op for an awaiting row
-        # rather than a link nobody asked for.
+        # THE CASCADE RUNS AGAIN HERE (`PLAN-scm-oi-draft-links.md` R6, captain 27 Aug
+        # 2026), reversing one half of the handshake's ruling on purpose. The handshake was
+        # right that a document tied to a row is purchasing's word; it was wrong that the
+        # page should therefore be blank until somebody presses Confirm. What this writes
+        # is a DRAFT - the rows are `awaiting`, and a link on an unconfirmed row IS a draft
+        # (R1) - so purchasing opens the page with the answer already found and still says
+        # the word. Scoped to THIS decision's own rows, never to their products: the
+        # products these rows name are named by half the company's open orders too.
+        #
+        # `defer_auto_place` still holds it back for the planning-change apply, which shifts
+        # a closed line's documents to the survivor first and then runs its own pass.
+        if not defer_auto_place:
+            self._draft_links_for_decision(decision, actor_user_id=actor_user_id)
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -3217,6 +3437,12 @@ class ProjectSupplyService:
             # only sign a planner gets that a movement is missing, so it reaches the screen.
             "transfers_written": transfers_written,
             "transfers_failed": transfers_failed,
+            # And what was already on somebody's list and stayed there (R16). Counted apart
+            # from `transfers_written` so "nothing new had to move" reads as the outcome it
+            # is, rather than as a confirmation that raised nothing.
+            "transfers_kept": transfers_kept,
+            # What somebody asked us to LOOK AT, beside what they decided (R10).
+            "suspected_issues": suspected_issues,
             # The lines whose order inquiry row this confirmation UPDATED rather than
             # superseded (AC-P3-5). In-process only - `ConfirmResult` does not declare it,
             # so the HTTP boundary drops it, and the only reader is the planning change
@@ -3288,6 +3514,41 @@ class ProjectSupplyService:
             self.supersede_for_material_change(order, reason)
         return True
 
+    def _draft_links_for_decision(
+        self, decision, *, actor_user_id: str
+    ) -> None:
+        """Find the documents for the rows this confirmation just raised (R6).
+
+        Best-effort in a SAVEPOINT, exactly like `auto_place_for_confirmed_products` and
+        for the same reason: the decision and the inquiry rows are already written by the
+        time this runs, and a defect in the walk must not turn that success into a 500 the
+        planner cannot get past. The page's own Auto link all makes the same pass again.
+
+        Under the PLAN's link horizon, with nothing asked of the planner: the board has no
+        place to put a date and CS is not the person who owns one (R6).
+        """
+        try:
+            with self.db.begin_nested():
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                service = ProjectOrderInquiryService(self.db)
+                row_ids = service.row_ids_of_decision(str(decision.id))
+                if not row_ids:
+                    return
+                service.auto_place_for_products(
+                    None,
+                    actor_user_id=actor_user_id,
+                    trigger="raise",
+                    row_ids=row_ids,
+                    include_awaiting=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "supply confirmed, but the draft-link pass failed (%s)", exc
+            )
+
     def auto_place_for_confirmed_products(
         self, product_ids: Sequence[str], *, actor_user_id: str
     ) -> None:
@@ -3319,6 +3580,9 @@ class ProjectSupplyService:
                     wanted,
                     actor_user_id=actor_user_id,
                     trigger="decision_confirm",
+                    # Awaiting rows too (R6): the planning change raised them a moment ago
+                    # and its own pass is the raise-time cascade for them.
+                    include_awaiting=True,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -3698,6 +3962,13 @@ class ProjectSupplyService:
             # sentence of the RULE that produced it, and on an amended line those sentences
             # explain a decision nobody took.
             "amend_reason": (getattr(entry, "amend_reason", None) or "").strip() or None,
+            # "This might be a system problem" (R10). Frozen for the same reason the reason
+            # is: the board reads the decision back to draw its pill, and a flag that lived
+            # only in the session's draft would say the doubt had been answered the moment
+            # the page was refreshed.
+            "suspected_system_issue": bool(
+                getattr(entry, "suspected_system_issue", False)
+            ),
         }
 
     def _proposed_component(
@@ -3782,7 +4053,7 @@ class ProjectSupplyService:
         order: ProjectSalesOrder,
         decision: SOSupplyDecision,
         snapshots: Sequence[Dict[str, Any]],
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, int]:
         """The physical movements this revision implies (PLAN section E, Q2 ruled).
 
         A reserve or a borrow drawn from a warehouse that is not the line's own location
@@ -3803,7 +4074,7 @@ class ProjectSupplyService:
         500 - and without the savepoint the failed statement would poison the transaction
         the promise itself is in, so catching the exception alone would not save it.
 
-        **The failure is reported, not swallowed.** Returns `(written, failed)`, which the
+        **The failure is reported, not swallowed.** Returns `(written, failed, kept)`, which the
         confirm result carries to the planner (`transfers_written` / `transfers_failed`):
         a movement nobody was told about is a movement nobody makes, and a silent log line
         on a server is not telling anybody. `failed` is the number of components that
@@ -3814,23 +4085,19 @@ class ProjectSupplyService:
 
         try:
             with self.db.begin_nested():
-                # Keyed on the ORDER, never on the revision this one supersedes: a
-                # confirmation whose transfer write failed leaves its predecessor's rows
-                # open, and sweeping only `previous.id` would strand them forever.
-                transfers.cancel_open_for_order(
-                    self.db,
-                    str(order.id),
-                    keep_decision_id=str(decision.id),
-                    reason=f"Superseded by revision {decision.revision_no}",
-                )
-                written = transfers.write_for_decision(
+                # RECONCILED against what is already open, never swept (R16): a movement the
+                # new revision still asks for keeps its row, its number and the approval
+                # somebody already gave it. Keyed on the ORDER, never on the revision this
+                # one supersedes: a confirmation whose transfer write failed leaves its
+                # predecessor's rows open, and matching only `previous.id` would strand them.
+                written, kept = transfers.reconcile_for_decision(
                     self.db,
                     order,
                     decision,
                     snapshots,
                     warehouse_id_for_code=self.warehouse_id_for_code,
                 )
-            return len(written), 0
+            return len(written), 0, len(kept)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "supply confirmed, but the stock transfers for revision %s were not "
@@ -3840,7 +4107,7 @@ class ProjectSupplyService:
             )
             return 0, transfers.movements_implied(
                 snapshots, warehouse_id_for_code=self.warehouse_id_for_code
-            )
+            ), 0
 
     def _write_allocations(
         self,
@@ -4573,7 +4840,11 @@ class ProjectSupplyService:
         ]
 
     def _hold_query(
-        self, product_ids: Sequence[str], *, exclude_line_ids: Optional[Sequence[str]]
+        self,
+        product_ids: Sequence[str],
+        *,
+        exclude_line_ids: Optional[Sequence[str]],
+        entities: Optional[Sequence[Any]] = None,
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
@@ -4590,14 +4861,24 @@ class ProjectSupplyService:
         the mirror's own product only when it does not (`_hold_product`): free stock is
         read against the core product (`_facts_for` prefers it on a remap), and a hold
         keyed by the mirror's product would net out of the wrong pile.
+
+        `entities` swaps WHAT is selected and nothing else, so the confirm-time guard can
+        ask the same question and get the holder's name back with it (R14) without a second
+        opinion about which rows are holding.
         """
         query = (
             self.db.query(
-                _hold_product,
-                SOLineAllocation.warehouse_id,
-                ProjectSalesOrder.project_id,
-                SOLineAllocation.qty,
+                *(
+                    entities
+                    or (
+                        _hold_product,
+                        SOLineAllocation.warehouse_id,
+                        ProjectSalesOrder.project_id,
+                        SOLineAllocation.qty,
+                    )
+                )
             )
+            .select_from(SOLineAllocation)
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == SOLineAllocation.so_line_id,
@@ -4610,6 +4891,7 @@ class ProjectSupplyService:
                 SalesOrderLine,
                 SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
             )
+            .outerjoin(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(
                 SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
             )
@@ -5829,6 +6111,7 @@ class ProjectSupplyService:
         *,
         actor_user_id: str,
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
+        write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
 
@@ -5843,7 +6126,16 @@ class ProjectSupplyService:
 
         `entries` duck-types `ConfirmSupplyBody` per order (`.pso_id`, `.lines`), which is why
         `confirm` itself needed no change: it never learns this call has siblings.
+
+        `write` swaps WHAT one order's press does and nothing else - the per-order
+        transaction, the refusal handling and the shape of the reply are this method's
+        either way. The board's single Confirm on a `?batch=` board passes the planning
+        change's own apply (`_confirm_a_planning_change`), so a press that answers a batch
+        applies it rather than writing an ordinary revision beside it (AC-P3-4).
         """
+        write = write or (
+            lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
+        )
         results: List[Dict[str, Any]] = []
         for entry in entries:
             pso_id = str(entry.pso_id)
@@ -5867,16 +6159,25 @@ class ProjectSupplyService:
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
-                body = self.confirm(order, entry, actor_user_id=actor_user_id)
+                body = write(order, entry)
                 self.db.commit()
                 results.append(
                     {
                         "pso_id": pso_id,
                         "ok": True,
-                        "decision_revision": body["revision_no"],
-                        "inquiry_rows_created": body["inquiry_rows_created"],
-                        "lines_decided": body["lines_decided"],
-                        "lines_undecided": body["lines_undecided"],
+                        "decision_revision": body.get("revision_no"),
+                        "inquiry_rows_created": body.get("inquiry_rows_created"),
+                        "lines_decided": body.get("lines_decided"),
+                        "lines_undecided": body.get("lines_undecided"),
+                        # The board confirms every order in one press and reports one toast,
+                        # so the movements and the flags have to come back PER ORDER or the
+                        # toast has nothing to add up. `.get`, because the planning-change
+                        # apply hands back the revision it wrote through its own outcome
+                        # dict and a key it never carried must not fail the whole press.
+                        "transfers_written": body.get("transfers_written"),
+                        "transfers_failed": body.get("transfers_failed"),
+                        "transfers_kept": body.get("transfers_kept"),
+                        "suspected_issues": body.get("suspected_issues"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - every order must get an answer

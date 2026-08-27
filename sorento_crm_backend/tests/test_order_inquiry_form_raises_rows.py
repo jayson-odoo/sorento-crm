@@ -292,7 +292,10 @@ def documents(world):
     world.purchase_order(
         "202606-S0082", date(2026, 6, 22), [(ITEM_Y, "BRW-IB", 46, date(2026, 9, 4))]
     )
-    world.spo_allocation("SPO-2026/08-0061", ITEM_Y, "BRW-IB", 2)
+    # At the POOL, which is where a linkable shipping order sits (R11,
+    # `PLAN-scm-oi-draft-links.md`): an allocation already at a site's own group is spoken
+    # for by that site and the walk never takes it.
+    world.spo_allocation("SPO-2026/08-0061", ITEM_Y, "BRW", 2)
     world.purchase_order(
         f"{MARKER}-FRESH", date(2026, 7, 1), [(ITEM_DATED, "BRW-IB", 100, date(2026, 8, 5))]
     )

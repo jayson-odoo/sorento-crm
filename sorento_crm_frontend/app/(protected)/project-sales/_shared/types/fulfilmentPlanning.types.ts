@@ -510,6 +510,11 @@ export interface ConfirmLine {
    * explain a decision nobody took once a person has overridden them.
    */
   amend_reason?: string | null;
+  /**
+   * "This might be a system problem, flag it for investigation" (R10). Travels with whichever
+   * verdict was given and is frozen beside the reason, so the pill still warns after a reload.
+   */
+  suspected_system_issue?: boolean;
 }
 
 export interface ConfirmSupplyBody {
@@ -552,6 +557,13 @@ export interface ConfirmResult {
    */
   transfers_written?: number | null;
   transfers_failed?: number | null;
+  /**
+   * And how many open movements it KEPT rather than re-raising (R16): the same instruction
+   * at the same quantity survives a reconfirm with its state and its approval intact.
+   */
+  transfers_kept?: number | null;
+  /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
+  suspected_issues?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -861,6 +873,14 @@ export interface BoardLineDecision {
   /** The frozen Buy was an ORDER BACK, and the document CS cited for it (part 2 4b). */
   order_back?: boolean;
   cited_document?: string | null;
+  /**
+   * The planner flagged this decision as one the numbers behind it look wrong for (R10).
+   *
+   * Echoed back on the frozen decision so the warning stays on the pill after a reload: a
+   * flag that only existed in the session's draft would say the doubt had been answered the
+   * moment the page was refreshed.
+   */
+  suspected_system_issue?: boolean;
 }
 
 /**
@@ -869,6 +889,16 @@ export interface BoardLineDecision {
  * be supplied from").
  */
 export interface BoardContribution {
+  /**
+   * THIS LINE's own stock position, location by location (R1).
+   *
+   * The same rows the cell carries, netted of this line's own quantity and no other's, so
+   * the group subtotal IS the offer the ladder made it (`max(group net + this line's open
+   * qty, 0)`) and the "N available" beside each Reserve input is this line's figure. A cell
+   * holding two lines carries two tables. Absent on a line whose bucket is outside the day
+   * window, which builds no cell.
+   */
+  locations?: BoardCellLocation[];
   /** Stable key for the draft. Addressing only, never rendered. */
   key: string;
   sales_order_id: string;
@@ -1565,6 +1595,16 @@ export interface BoardDecision {
    * the form says, and a document we do not hold is recorded rather than refused.
    */
   cited_document?: string | null;
+  /**
+   * "This might be a system problem, flag it for investigation" (R10).
+   *
+   * A SECOND answer, beside the verdict rather than instead of it: a planner who amends a
+   * line because the availability beside it reads wrong is telling us two different things,
+   * and a decision that only recorded the amendment lost the one worth chasing. It travels
+   * with whichever verdict was given - approved, amended or rejected - and the confirmation
+   * stores it beside `amend_reason` and counts it in the result.
+   */
+  suspected_system_issue?: boolean;
 }
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
@@ -1594,19 +1634,16 @@ export interface StockDetailSalesOrder {
   doc_date?: string | null;
   delivery_date?: string | null;
   so_qty: string;
-  /** Already covered by a confirmed decision, so it is not competing for this stock. */
-  is_covered?: boolean;
   /** The core sales-order line this row is. Addressing only. */
   line_id?: string | null;
-  line_no?: number | null;
   /**
-   * Where the line stands in the pile's queue (1-based, the order the stock is served in) and
-   * the score that put it there, with the same factors the queue screen shows. Null on a
-   * covered line, which is not in the queue at all.
+   * One of the lines the drawer was opened for (R5). The list is otherwise a wall of other
+   * people's documents, and a planner has to be able to find their own row in it.
+   *
+   * No rank and no queue state here any more: the queue screen exists to explain a ranking,
+   * and half of that question in this list made the one it answers harder to read.
    */
-  rank_position?: number | null;
-  rank_score?: number | null;
-  rank_factors?: BoardRankFactor[];
+  is_this_line?: boolean;
 }
 
 /** One purchase order standing behind the SPO quantity. */
@@ -1652,8 +1689,6 @@ export interface StockDetail {
   qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
-  /** The priority policy the ranks in `sales_orders` came from. */
-  policy_name?: string | null;
 }
 
 /**
@@ -1822,6 +1857,13 @@ export interface ConfirmManyOrderBody {
 
 export interface ConfirmManyBody {
   orders: ConfirmManyOrderBody[];
+  /**
+   * The planning-change batch this press is answering (AC-P3-4). One per board: it is opened
+   * at `?orders=...&batch=<id>` and every order on it belongs to that batch. Absent on an
+   * ordinary Confirm; set, each order APPLIES its half of the batch rather than writing a
+   * plain revision beside it.
+   */
+  batch_id?: string | null;
 }
 
 /** One order's outcome. `ok` decides which half is populated. */
@@ -1832,6 +1874,17 @@ export interface ConfirmManyOrderResult {
   inquiry_rows_created?: number | null;
   lines_decided?: number | null;
   lines_undecided?: number | null;
+  /**
+   * The movements this order's confirmation raised, the same figure the single-order
+   * `ConfirmResult` already carries. Optional because a server that predates the field
+   * sends neither, and the board's toast then reports 0 rather than inventing a count.
+   */
+  transfers_written?: number | null;
+  transfers_failed?: number | null;
+  /** The open movements this order's confirmation kept as they were (R16). */
+  transfers_kept?: number | null;
+  /** The lines this order's planner flagged as a suspected system problem (R10). */
+  suspected_issues?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

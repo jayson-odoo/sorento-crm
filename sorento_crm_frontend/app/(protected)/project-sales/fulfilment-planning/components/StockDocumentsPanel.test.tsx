@@ -56,7 +56,8 @@ function captainsPosition(overrides: Partial<StockDetail> = {}): StockDetail {
         doc_date: '2026-01-05',
         delivery_date: '2026-09-04',
         so_qty: '47000',
-        is_covered: false,
+        line_id: 'line-a',
+        is_this_line: true,
       },
       {
         sales_order_id: 'so-b',
@@ -65,7 +66,8 @@ function captainsPosition(overrides: Partial<StockDetail> = {}): StockDetail {
         doc_date: '2025-11-02',
         delivery_date: '2026-10-01',
         so_qty: '9',
-        is_covered: true,
+        line_id: 'line-b',
+        is_this_line: false,
       },
     ],
     incoming: [],
@@ -84,6 +86,7 @@ function renderPanel() {
         warehouseId="wh-1"
         itemCode="B2155-NL-BLUE"
         locationCode="BRW-BB"
+        lineIds={['line-a']}
       />
     </QueryClientProvider>,
   );
@@ -99,7 +102,9 @@ describe('StockDocumentsPanel', () => {
 
     renderPanel();
 
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a']),
+    );
   });
 
   it('does not head the panel with the arithmetic: the row it expands from already says it', async () => {
@@ -214,68 +219,22 @@ describe('StockDocumentsPanel', () => {
     );
   });
 
-  it('marks an order already covered by a decision, because it is not competing any more', async () => {
+  /**
+   * R5, 27 August 2026: no `#` rank and no queue state in this list. The rank is the queue
+   * screen's question; here it competed with the one this list answers, which is what else is
+   * claiming the stock and when. What stays is the tag on the line the drawer was opened for.
+   */
+  it('tags the line the drawer was opened for, and carries no rank or state column', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
     renderPanel();
 
-    await screen.findByRole('table');
-    expect(screen.getByText('Covered')).toBeInTheDocument();
-  });
-
-  /**
-   * The captain, reading the list sorted by delivery date: "is this sorted by the rank also? or
-   * just delivery date, we should have a rank column and be able to sort by that (default sort
-   * by that), along with the reason tooltip like How this rank was calculated". The rank is the
-   * pile queue's own; a covered line is not in the queue and says so instead of going blank.
-   */
-  it('shows each document\'s rank in the queue with the calculation behind it, and names an unqueued line', async () => {
-    getStockDetail.mockResolvedValue(
-      captainsPosition({
-        policy_name: 'Board preview',
-        sales_orders: [
-          {
-            sales_order_id: 'so-a',
-            so_number: 'SO391698',
-            customer_name: 'OIB CONSTRUCTION SDN BHD',
-            doc_date: '2026-01-05',
-            delivery_date: '2026-09-04',
-            so_qty: '47000',
-            is_covered: false,
-            line_id: 'line-a',
-            rank_position: 1,
-            rank_score: 1,
-            rank_factors: [
-              { key: 'need_by_date', weight: 3, value: 1, present: true, raw: '2026-09-04' },
-            ],
-          },
-          {
-            sales_order_id: 'so-b',
-            so_number: 'SO324265',
-            customer_name: 'MASUKA BINA SDN BHD',
-            doc_date: '2025-11-02',
-            delivery_date: '2026-10-01',
-            so_qty: '9',
-            is_covered: true,
-            line_id: 'line-b',
-            rank_position: null,
-            rank_score: null,
-            rank_factors: [],
-          },
-        ],
-      }),
-    );
-
-    renderPanel();
-
     const table = await screen.findByRole('table');
-    expect(within(table).getByText('Rank')).toBeInTheDocument();
-    expect(within(table).getByText('#1')).toBeInTheDocument();
-    expect(within(table).getByText('1.00')).toBeInTheDocument();
-    expect(
-      within(table).getByRole('button', { name: 'How this rank was calculated' }),
-    ).toBeInTheDocument();
-    expect(within(table).getByText('Not queued')).toBeInTheDocument();
+    expect(within(table).queryByText('Rank')).not.toBeInTheDocument();
+    expect(within(table).queryByText('State')).not.toBeInTheDocument();
+    expect(within(table).queryByText('Covered')).not.toBeInTheDocument();
+    expect(screen.getByTestId('stock-document-this-line')).toBeInTheDocument();
+    expect(screen.getAllByTestId('stock-document-this-line')).toHaveLength(1);
   });
 
   /**

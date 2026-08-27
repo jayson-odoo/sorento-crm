@@ -492,6 +492,15 @@ def test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_
     db.add(po_line)
     db.commit()
     ProjectOrderInquiryService(db).place_on_po(placed_row.id, po_line.id, actor_user_id=world.eling)
+    # ... and purchasing CONFIRMS it, which is what turns the link from a draft into
+    # supply (`PLAN-scm-oi-draft-links.md` R1, review round 28 Aug). Without the press the
+    # row is an instruction nobody has answered: a lower reconfirm then re-raises it at the
+    # new quantity rather than raising an exception about a purchase nobody agreed to, and
+    # the rule this test is about - that `placed` counts as supply, not only `actioned` -
+    # is the rule for a CONFIRMED row.
+    ProjectOrderInquiryService(db).acknowledge_rows(
+        [str(placed_row.id)], actor_user_id=world.eling
+    )
     db.commit()
     db.expire_all()
     placed_row = db.get(OrderInquiryRow, placed_row.id)

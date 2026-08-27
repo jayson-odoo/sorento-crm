@@ -10,8 +10,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
-import type { BoardRankFactor } from '../../_shared/types/fulfilmentPlanning.types';
-import { BoardRankPopover } from './BoardRankPopover';
 
 /**
  * What the numbers on one location row are made of - AutoCount's "Stock Status with Detail".
@@ -29,19 +27,31 @@ import { BoardRankPopover } from './BoardRankPopover';
  *
  * Addressed by IDS. Two products on the live book share the item code `B2155-NL-BLUE`, so a
  * lookup by code would answer confidently about the wrong one.
+ *
+ * NO RANK COLUMN AND NO STATE COLUMN (R5, 27 August 2026). The rank was the captain's own
+ * earlier ask and it is answered by the queue screen, which exists to explain a ranking; here
+ * it competed with the question this list is for, which is what else is claiming this stock and
+ * when it is wanted. The rows arrive in DELIVERY DATE order from the server, and the line the
+ * drawer was opened for carries a tag so the planner can find it.
  */
 export function StockDocumentsPanel({
   productId,
   warehouseId,
   itemCode,
   locationCode,
+  lineIds = [],
 }: {
   productId: string;
   warehouseId: string;
   itemCode: string;
   locationCode: string;
+  /**
+   * The cell's own contributing lines. Their rows are tagged "this line", so the planner can
+   * see where their own claim sits among the documents ahead of and behind it.
+   */
+  lineIds?: string[];
 }) {
-  const detail = useStockDetail(productId, warehouseId);
+  const detail = useStockDetail(productId, warehouseId, lineIds);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
     const data = detail.data;
@@ -63,11 +73,8 @@ export function StockDocumentsPanel({
         due_date: order.delivery_date ?? null,
         overdue_days: null,
         qty: order.so_qty,
-        is_covered: Boolean(order.is_covered),
         line_id: order.line_id ?? null,
-        rank_position: order.rank_position ?? null,
-        rank_score: order.rank_score ?? null,
-        rank_factors: order.rank_factors ?? [],
+        is_this_line: Boolean(order.is_this_line),
       })),
       ...data.incoming.map((leg, index) => ({
         key: `spo-${index}-${leg.spo_number}`,
@@ -81,62 +88,14 @@ export function StockDocumentsPanel({
         due_date: leg.expected_date ?? null,
         overdue_days: leg.overdue_days ?? null,
         qty: leg.spo_qty,
-        is_covered: false,
         line_id: null,
-        rank_position: null,
-        rank_score: null,
-        rank_factors: [],
+        is_this_line: false,
       })),
     ];
   }, [detail.data]);
 
-  const policyName = detail.data?.policy_name ?? null;
-
   const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(
     () => [
-      {
-        // Where the document stands in this pile's queue, and the score that put it there:
-        // the SAME rank the trail's rung and the queue screen print, so the drill-down cannot
-        // argue with the plan. The captain, reading the list sorted by delivery date: "is
-        // this sorted by the rank also? ... we should have a rank column and be able to sort
-        // by that (default sort by that), along with the reason tooltip". The server already
-        // hands the rows over in queue order, which is the default; the accessor sends an
-        // unranked row (a covered line, an SPO) to the end under either sort direction.
-        id: 'rank',
-        accessorFn: (row) => row.rank_position ?? Number.MAX_SAFE_INTEGER,
-        sortingFn: (a, b) => {
-          const left = a.original.rank_position ?? Number.MAX_SAFE_INTEGER;
-          const right = b.original.rank_position ?? Number.MAX_SAFE_INTEGER;
-          return left - right;
-        },
-        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
-        cell: ({ row }) =>
-          row.original.rank_position !== null && row.original.rank_score !== null ? (
-            <span className="flex items-center gap-1 text-sm tabular-nums">
-              <span className="font-medium">#{row.original.rank_position}</span>
-              <span className="text-muted-foreground">
-                {row.original.rank_score.toFixed(2)}
-              </span>
-              <BoardRankPopover
-                contribution={{
-                  key: row.original.line_id ?? row.original.key,
-                  rank_factors: row.original.rank_factors,
-                }}
-                policyName={policyName}
-              />
-            </span>
-          ) : (
-            // Not in the queue: a covered line's claim is already a hold, and an SPO is
-            // supply. Said outright rather than left blank, so an empty cell is never read
-            // as "rank not loaded".
-            <span className="text-xs text-muted-foreground">
-              {row.original.doc_type === 'SPO' ? 'Supply' : 'Not queued'}
-            </span>
-          ),
-        size: 130,
-        minSize: 110,
-        meta: { headerTitle: 'Rank' },
-      },
       {
         id: 'doc_type',
         accessorFn: (row) => row.doc_type,
@@ -152,22 +111,35 @@ export function StockDocumentsPanel({
         id: 'doc_no',
         accessorFn: (row) => row.doc_no,
         header: ({ column }) => <DataGridColumnHeader title="Document" column={column} />,
-        cell: ({ row }) =>
-          row.original.sales_order_id ? (
-            <Link
-              href={`/scm/sales-orders/${row.original.sales_order_id}`}
-              className="block truncate text-sm font-medium text-primary hover:underline"
-              title={row.original.doc_no}
-            >
-              {row.original.doc_no}
-            </Link>
-          ) : (
-            <span className="block truncate text-sm font-medium" title={row.original.doc_no}>
-              {row.original.doc_no}
-            </span>
-          ),
-        size: 150,
-        minSize: 120,
+        cell: ({ row }) => (
+          <span className="flex min-w-0 items-center gap-1.5">
+            {row.original.sales_order_id ? (
+              <Link
+                href={`/scm/sales-orders/${row.original.sales_order_id}`}
+                className="truncate text-sm font-medium text-primary hover:underline"
+                title={row.original.doc_no}
+              >
+                {row.original.doc_no}
+              </Link>
+            ) : (
+              <span className="truncate text-sm font-medium" title={row.original.doc_no}>
+                {row.original.doc_no}
+              </span>
+            )}
+            {/* The line the drawer was opened for. Without it a planner reading twenty
+                documents cannot see which claim is theirs. */}
+            {row.original.is_this_line ? (
+              <span
+                data-testid="stock-document-this-line"
+                className="shrink-0 rounded bg-primary/10 px-1 text-[10px] font-medium text-primary"
+              >
+                This line
+              </span>
+            ) : null}
+          </span>
+        ),
+        size: 200,
+        minSize: 150,
         meta: { headerTitle: 'Document' },
       },
       {
@@ -256,23 +228,8 @@ export function StockDocumentsPanel({
         minSize: 90,
         meta: { headerTitle: 'Quantity' },
       },
-      {
-        id: 'state',
-        header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-        cell: ({ row }) =>
-          row.original.is_covered ? (
-            // Already met by a confirmed decision, so it is not competing for this stock.
-            <span className="rounded bg-emerald-100 px-1 text-[10px] font-medium text-emerald-800">
-              Covered
-            </span>
-          ) : null,
-        size: 100,
-        minSize: 80,
-        enableSorting: false,
-        meta: { headerTitle: 'State' },
-      },
     ],
-    [rows, policyName],
+    [rows],
   );
 
   return (
@@ -339,9 +296,7 @@ interface StockDetailRow {
   /** Days late, on a purchase document whose promised arrival has passed. */
   overdue_days: number | null;
   qty: string;
-  is_covered: boolean;
   line_id: string | null;
-  rank_position: number | null;
-  rank_score: number | null;
-  rank_factors: BoardRankFactor[];
+  /** One of the lines this drawer is planning (R5). */
+  is_this_line: boolean;
 }

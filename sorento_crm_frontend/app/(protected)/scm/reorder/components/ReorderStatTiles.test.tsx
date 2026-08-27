@@ -91,3 +91,26 @@ describe('ReorderStatTiles - cash splits into committed vs if-all-accepted', () 
     expect(screen.queryByTitle('Show Cash if all accepted recommendations')).not.toBeInTheDocument();
   });
 });
+
+describe('ReorderStatTiles - the To confirm tile (AC-D4)', () => {
+  /** Order inquiry rows purchasing has not confirmed yet. The plan credits confirmed rows
+   *  only, so this tile is the plan's one sight of the work it cannot count itself. */
+  it('states the count and leads to that list, already narrowed', () => {
+    renderTiles({ awaitingRows: 7 });
+    expect(screen.getByText('To confirm')).toBeInTheDocument();
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /To confirm/ })).toHaveAttribute(
+      'href', '/project-sales/order-inquiries?ack=to_confirm',
+    );
+  });
+
+  it('stays away on a day with nothing waiting', () => {
+    renderTiles({ awaitingRows: 0 });
+    expect(screen.queryByText('To confirm')).not.toBeInTheDocument();
+  });
+
+  it('stays away when the summary says nothing about it', () => {
+    renderTiles();
+    expect(screen.queryByText('To confirm')).not.toBeInTheDocument();
+  });
+});
