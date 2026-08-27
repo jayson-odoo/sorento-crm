@@ -78,6 +78,7 @@ const PLANNING = {
   id: 'plan-1',
   supplier_id: 'sup-1',
   supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD',
+  supplier_email: 'sales@jinbaichuan.cn',
   started_at: '2026-08-27T14:02:00',
   plan_horizon_date: '2026-09-30',
   document_kind: 'stock_list' as const,
@@ -87,6 +88,8 @@ const PLANNING = {
   sent_channel: null,
   sent_at: null,
   opened_at: null,
+  last_opened_at: null,
+  open_count: 0,
   cancelled_at: null,
   cancelled_by: null,
   line_edits: {},
@@ -103,6 +106,9 @@ const SENT = {
   status: 'sent' as const,
   sent_channel: 'email' as const,
   sent_at: '2026-08-27T14:40:00',
+  opened_at: '2026-08-27T06:55:00',
+  last_opened_at: '2026-08-27T07:10:00',
+  open_count: 3,
   to_request_qty: 4120,
   to_request_cbm: 61,
 };
@@ -150,6 +156,16 @@ describe('LoadingPlansGrid', () => {
 
     expect(await screen.findByText('83,229')).toBeTruthy();
     expect(screen.getByText('est. 2,588 cbm')).toBeTruthy();
+  });
+
+  it('the Opened column reads the real opens, times and all (AC-C8)', async () => {
+    renderGrid();
+
+    // The sent plan: when they last looked, and how many times they have.
+    expect(await screen.findByText('3 times')).toBeTruthy();
+    // The plan nobody has been sent yet says so in words - a dash would read as "we do not
+    // know", and since the notice counts opens we do.
+    expect(screen.getByText('Not opened yet')).toBeTruthy();
   });
 
   it('carries ONE primary action, Upload, and it opens Plan a container', async () => {

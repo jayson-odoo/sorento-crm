@@ -1690,7 +1690,7 @@ def latest_notice_for_plans(db: Session, plan_ids: list[str]) -> dict[str, dict]
     One row per plan, and it has to be the LATEST: a plan that was resent would otherwise
     report the opens of a link nobody can open any more. Serialising the whole notice here
     would put the lines, the files and the token behind every row of a 50-row grid, so this
-    answers with the four fields those two columns read.
+    answers with the five fields those two columns read.
     """
     ids = [str(i) for i in plan_ids or [] if is_uuid(str(i))]
     if not ids:
@@ -1710,6 +1710,9 @@ def latest_notice_for_plans(db: Session, plan_ids: list[str]) -> dict[str, dict]
         str(n.loading_plan_id): {
             "channel": n.channel,
             "sent_at": n.sent_at.isoformat() if n.sent_at else None,
+            # The FIRST open, which never moves, alongside the latest one: the record page
+            # says when they first looked, the column says when they last did.
+            "opened_at": n.opened_at.isoformat() if n.opened_at else None,
             "last_opened_at": (
                 n.last_opened_at.isoformat() if n.last_opened_at else None
             ),

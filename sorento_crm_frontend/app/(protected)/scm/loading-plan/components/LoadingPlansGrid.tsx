@@ -26,7 +26,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
-import { EM_DASH, fmtDate, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
 import { useCancelLoadingPlan, useLoadingPlanList } from '../../hooks/useFulfilment';
 import {
   deleteLoadingPlan,
@@ -196,15 +196,26 @@ export function LoadingPlansGrid() {
       },
       {
         id: 'opened_at',
-        accessorFn: (row) => row.opened_at ?? '',
+        accessorFn: (row) => row.last_opened_at ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Opened" visibility column={column} />,
+        // Two facts, one cell (AC-C8): how many times the supplier opened the link, and when
+        // they last did. A plan they have never opened says so in words - a dash there reads
+        // as "we do not know", and since S3 we do.
         cell: ({ row }) =>
-          row.original.opened_at ? (
-            <span className="tabular-nums">
-              {formatDateTimeInMalaysia(row.original.opened_at)}
-            </span>
+          row.original.open_count > 0 ? (
+            <div className="flex flex-col">
+              <span className="truncate tabular-nums" title={fmtOpens(row.original.open_count, row.original.last_opened_at)}>
+                {row.original.last_opened_at
+                  ? formatDateTimeInMalaysia(row.original.last_opened_at)
+                  : EM_DASH}
+              </span>
+              <span className="text-2xs text-muted-foreground">
+                {fmtInt(row.original.open_count)}{' '}
+                {row.original.open_count === 1 ? 'time' : 'times'}
+              </span>
+            </div>
           ) : (
-            <span className="text-muted-foreground">{EM_DASH}</span>
+            <span className="text-2xs text-muted-foreground">Not opened yet</span>
           ),
         size: 150,
         enableSorting: false,

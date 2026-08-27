@@ -894,7 +894,10 @@ describe('ContainerRequestSection - requests already sent', () => {
   const sentRequest = () => ({
     id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
     loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-    recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
+    recipient: 'sales@foshan.test',
+    recipients: ['sales@foshan.test', 'ms.tee@sorento.com.my'],
+    opened_at: null, last_opened_at: null, open_count: 0,
+    status: 'sent', status_reason: null,
     sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
     document_filename: 'container-request.pdf', has_document: true,
     xlsx_filename: 'container-request.xlsx', has_xlsx: true,
@@ -980,6 +983,53 @@ describe('ContainerRequestSection - requests already sent', () => {
     const card = within(screen.getByTestId('requests-sent'));
     expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
     expect(card.queryByText('Link retired')).not.toBeInTheDocument();
+  });
+
+  it('lists every address the send named, not just the first (AC-C2)', () => {
+    state.notices = [sentRequest()];
+    renderSection();
+
+    expect(
+      within(screen.getByTestId('requests-sent')).getByText(
+        'sales@foshan.test, ms.tee@sorento.com.my',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('names the WeChat contact a chat send went to, never its id (AC-C2)', () => {
+    state.notices = [
+      {
+        ...sentRequest(),
+        id: 'n-9',
+        channel: 'chat',
+        recipient: null,
+        recipients: [
+          { respond_contact_id: '6b2f...uuid', name: 'Mr Chen (JBC)', channel: 'wechat' },
+        ],
+      },
+    ];
+    renderSection();
+
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.getByText('WeChat')).toBeInTheDocument();
+    expect(card.getByText('Mr Chen (JBC)')).toBeInTheDocument();
+    expect(card.queryByText(/6b2f/)).not.toBeInTheDocument();
+  });
+
+  it('says whether the supplier has opened the link, and how often (AC-C8)', () => {
+    state.notices = [
+      { ...sentRequest(), open_count: 3, last_opened_at: '2026-08-27T07:10:00' },
+    ];
+    renderSection();
+
+    expect(screen.getByTestId('notice-opens').textContent).toContain('Opened 3 times, last');
+  });
+
+  it('a link nobody has opened says so, rather than falling silent (AC-C8)', () => {
+    state.notices = [sentRequest()];
+    renderSection();
+
+    expect(screen.getByTestId('notice-opens').textContent).toBe('Not opened yet');
   });
 
   it('offers Copy link on BOTH rows of one send (AC-C8)', () => {

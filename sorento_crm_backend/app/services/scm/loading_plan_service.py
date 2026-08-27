@@ -425,6 +425,19 @@ def _supplier_name(db: Session, supplier_id: str) -> Optional[str]:
     return row[0] if row else None
 
 
+def _supplier_email(db: Session, supplier_id: str) -> Optional[str]:
+    """The address the send dialog opens with in its To field (AC-C2).
+
+    On the plan rather than fetched by the dialog: the record page already holds the plan, and
+    a second round trip to learn one column of a supplier it has just been handed is a round
+    trip for data that was already on the wire.
+    """
+    row = db.execute(
+        text("SELECT email FROM suppliers WHERE id = :i"), {"i": supplier_id}
+    ).first()
+    return row[0] if row else None
+
+
 def serialize(db: Session, plan: LoadingPlan, *, with_lines: bool = True) -> dict[str, Any]:
     """The stage-2 CBM fit, with the record fields alongside it.
 
@@ -546,33 +559,16 @@ _SORTABLE = {
 
 
 def _latest_notice_channels(db: Session, plan_ids: list[str]) -> dict[str, dict]:
-    """The newest notice per plan: which channel it went on, and when.
+    """The newest notice per plan: which channel it went on, when, and the opens (AC-C8).
 
-    One query for the whole page rather than one per row - the list prints this in a column,
-    and a per-row lookup is what turns a 25-row page into 25 round trips.
+    One query for the whole page rather than one per row - the list prints this in two
+    columns, and a per-row lookup is what turns a 25-row page into 25 round trips. The reader
+    itself is `supplier_notice_service.latest_notice_for_plans` (S3), so the Sent and Opened
+    columns and the Requests sent card cannot come to disagree about which send is current.
     """
-    if not plan_ids:
-        return {}
-    rows = db.execute(
-        text(
-            """
-            SELECT DISTINCT ON (n.loading_plan_id)
-                   n.loading_plan_id::text AS plan_id, n.channel, n.sent_at, n.created_at
-              FROM supplier_notices n
-             WHERE n.loading_plan_id = ANY(CAST(:ids AS uuid[]))
-             ORDER BY n.loading_plan_id,
-                      n.sent_at DESC NULLS LAST, n.created_at DESC, n.id DESC
-            """
-        ),
-        {"ids": plan_ids},
-    ).mappings().all()
-    return {
-        r["plan_id"]: {
-            "channel": r["channel"],
-            "sent_at": r["sent_at"].isoformat() if r["sent_at"] else None,
-        }
-        for r in rows
-    }
+    from app.services.scm import supplier_notice_service
+
+    return supplier_notice_service.latest_notice_for_plans(db, plan_ids)
 
 
 def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
@@ -617,17 +613,21 @@ def record_dict(
     plan: LoadingPlan,
     *,
     supplier_name: Optional[str] = None,
+    supplier_email: Optional[str] = None,
     notice: Optional[dict] = None,
     pi_number: Optional[str] = None,
 ) -> dict[str, Any]:
     """One plan, in the shape the list and the record page both read.
 
     ONE builder for both, so a column cannot reach the grid and be missing from the record
-    behind it. `supplier_name` / `notice` / `pi_number` are passed in when a caller has
-    already fetched them for a whole page; a single-row caller lets them be looked up here.
+    behind it. `supplier_name` / `supplier_email` / `notice` / `pi_number` are passed in when a
+    caller has already fetched them for a whole page; a single-row caller lets them be looked
+    up here. The name and the address travel together (one row, one join), so a caller that
+    named the supplier has already answered both.
     """
     if supplier_name is None:
         supplier_name = _supplier_name(db, str(plan.supplier_id))
+        supplier_email = _supplier_email(db, str(plan.supplier_id))
     if notice is None:
         notice = _latest_notice_channels(db, [str(plan.id)]).get(str(plan.id))
     if pi_number is None and plan.document_kind == "proforma":
@@ -648,11 +648,15 @@ def record_dict(
             str(plan.source_attachment_id) if plan.source_attachment_id else None
         ),
         "status": plan.status,
+        "supplier_email": supplier_email,
         "sent_channel": (notice or {}).get("channel"),
         "sent_at": plan.sent_at.isoformat() if plan.sent_at else None,
-        # S3 lands open tracking on the notice. Until then the column is honestly empty
-        # rather than carrying an invented figure.
-        "opened_at": None,
+        # The opens, off the plan's LATEST notice (AC-C8): a resent plan must never report the
+        # opens of a link nobody can open any more. `opened_at` is the first one and never
+        # moves; the column prints the last one and how many there have been.
+        "opened_at": (notice or {}).get("opened_at"),
+        "last_opened_at": (notice or {}).get("last_opened_at"),
+        "open_count": (notice or {}).get("open_count") or 0,
         "cancelled_at": plan.cancelled_at.isoformat() if plan.cancelled_at else None,
         "cancelled_by": plan.cancelled_by,
         "line_edits": plan.line_edits or {},
@@ -674,7 +678,7 @@ def list_records(
     """The plans list (R3): server-paged, server-sorted, searched by supplier name."""
     from app.models.procurement import Supplier
 
-    q = db.query(LoadingPlan, Supplier.supplier_name).join(
+    q = db.query(LoadingPlan, Supplier.supplier_name, Supplier.email).join(
         Supplier, Supplier.id == LoadingPlan.supplier_id
     )
     if status in (None, "", "active"):
@@ -701,7 +705,7 @@ def list_records(
         .all()
     )
 
-    plans = [p for p, _name in rows]
+    plans = [p for p, _name, _email in rows]
     notices = _latest_notice_channels(db, [str(p.id) for p in plans])
     numbers = _proforma_numbers(
         db, sorted({str(p.supplier_id) for p in plans if p.document_kind == "proforma"})
@@ -712,10 +716,11 @@ def list_records(
                 db,
                 p,
                 supplier_name=name,
+                supplier_email=email,
                 notice=notices.get(str(p.id)) or {},
                 pi_number=numbers.get(str(p.supplier_id)),
             )
-            for p, name in rows
+            for p, name, email in rows
         ],
         "total": total,
     }

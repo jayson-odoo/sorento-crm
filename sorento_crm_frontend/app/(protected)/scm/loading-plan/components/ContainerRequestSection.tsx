@@ -18,6 +18,8 @@ import {
   LayoutGrid,
   Link2,
   LoaderCircle,
+  Mail,
+  MessageCircle,
   PackageSearch,
   RefreshCw,
   Table2,
@@ -38,7 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtOpens } from '../../lib/format';
 import {
   useContainerRequestBuild,
   useContainerRequestHistory,
@@ -49,6 +51,7 @@ import {
   type ContainerRequestHistoryProduct,
   type ContainerRequestRow,
   type ContainerRequestSoLine,
+  type NoticeChatRecipient,
   type SupplierNotice,
 } from '../../services/fulfilmentService';
 import {
@@ -116,8 +119,37 @@ const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
 
 const NOTICE_CHANNEL_LABEL: Record<SupplierNotice['channel'], string> = {
   email: 'Email',
-  chat: 'Chat',
+  // A chat send is a WeChat send (R10) - the factories are in China. The column says the
+  // channel it actually went out on, not the internal name of the column it is stored in.
+  chat: 'WeChat',
 };
+
+const NOTICE_CHANNEL_ICON: Record<SupplierNotice['channel'], typeof Mail> = {
+  email: Mail,
+  chat: MessageCircle,
+};
+
+/**
+ * Everybody this send named, in one line (AC-C2).
+ *
+ * An email notice holds addresses; a chat notice holds the one WeChat contact, by name -
+ * "who read it" is a person on a phone, not a `respond_contacts` id (no UUIDs in the UI).
+ * `recipient` is the pre-442 single-address column, kept as the fallback so a notice sent
+ * before the send dialog existed still says where it went.
+ */
+function noticeRecipients(notice: SupplierNotice): string {
+  const named = notice.recipients;
+  if (Array.isArray(named) && named.length > 0) {
+    return named
+      .map((r) =>
+        typeof r === 'string'
+          ? r
+          : (r as NoticeChatRecipient).name || 'Unnamed contact',
+      )
+      .join(', ');
+  }
+  return notice.recipient ?? '';
+}
 
 const MATRIX_AXIS_OPTIONS = [
   { value: 'product', label: 'Product' },
@@ -760,16 +792,20 @@ export function ContainerRequestSection({
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
+                  {(() => {
+                    const ChannelIcon = NOTICE_CHANNEL_ICON[n.channel];
+                    return <ChannelIcon className="size-3.5 text-muted-foreground" />;
+                  })()}
                   <span className="text-xs font-medium">{NOTICE_CHANNEL_LABEL[n.channel]}</span>
                   <span className={cn(STATUS_PILL_BASE, statusPillClass(n.status))}>
                     {NOTICE_STATUS_LABEL[n.status]}
                   </span>
-                  {n.recipient ? (
+                  {noticeRecipients(n) ? (
                     <span
                       className="truncate text-2xs text-muted-foreground"
-                      title={n.recipient}
+                      title={noticeRecipients(n)}
                     >
-                      {n.recipient}
+                      {noticeRecipients(n)}
                     </span>
                   ) : null}
                 </div>
@@ -777,6 +813,12 @@ export function ContainerRequestSection({
                   {n.last_error ||
                     n.status_reason ||
                     (n.sent_at ? `Sent ${formatDateInMalaysia(n.sent_at)}` : EM_DASH)}
+                </p>
+                {/* Whether the supplier has actually looked at it (AC-C8). Its own line,
+                    beside the send, because "sent" and "read" are two different facts and
+                    the second one is the one that decides whether to chase. */}
+                <p className="mt-0.5 text-2xs text-muted-foreground" data-testid="notice-opens">
+                  {fmtOpens(n.open_count, n.last_opened_at)}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
