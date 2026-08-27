@@ -73,16 +73,43 @@ export function storeLinkHorizon(value: string | null): void {
 }
 
 /**
+ * What the URL says about the horizon: a date off `?link_up_to=`, `NO_LINK_HORIZON` off
+ * `?link_horizon=none`, or `null` when it says nothing.
+ *
+ * A CLEARED horizon could not travel in a link at all until item 6 of the 27 August
+ * re-review: emptying the box removed `?link_up_to` and put nothing in its place, so the
+ * URL said "nobody has chosen" and the other browser opened on the plan's own date.
+ * AC-LH5's "the URL is what the buttons send" has to hold for the cleared state too, or a
+ * shared worklist links further than the buyer who shared it could.
+ *
+ * A link carrying both is read as the DATE, which is the more exact of the two words.
+ */
+export function readUrlLinkHorizon(
+  params: { get(name: string): string | null } | null | undefined,
+): string | null {
+  if (!params) return null;
+  const date = params.get('link_up_to');
+  if (isHorizonDate(date)) return date;
+  return params.get('link_horizon') === NO_LINK_HORIZON ? NO_LINK_HORIZON : null;
+}
+
+/**
  * Where the page's date starts, in the order the answers are trusted (AC-LH5): the URL
  * first, because a shared link is the buyer telling somebody else which horizon to look
  * at; then this browser's own memory; then the reorder plan's own horizon off the
  * summary. Blank when none of the three has one, which means no horizon is in force.
+ *
+ * `fromUrl` is `readUrlLinkHorizon`'s answer, so it may itself be `NO_LINK_HORIZON` - a
+ * shared link that says "no horizon" stops the ladder there, exactly as a date does.
  */
 export function initialLinkHorizon(
   fromUrl: string | null | undefined,
   stored: string | null | undefined,
   planDefault: string | null | undefined,
 ): string {
+  // The cleared marker is read FIRST: `isHorizonDate` is a type guard, so anything after
+  // it has already been narrowed to null.
+  if (fromUrl === NO_LINK_HORIZON) return '';
   if (isHorizonDate(fromUrl)) return fromUrl;
   if (stored === NO_LINK_HORIZON) return '';
   if (isHorizonDate(stored)) return stored;
@@ -92,15 +119,18 @@ export function initialLinkHorizon(
 
 /**
  * Has the buyer taken the horizon OFF, as opposed to never having set one? Read at mount
- * off the same two sources `initialLinkHorizon` reads: a URL that names a date is somebody
- * asking for that date, and a browser that remembers `NO_LINK_HORIZON` is this buyer's own
- * earlier "no horizon" - which the plan default must not seed over.
+ * off the same two sources `initialLinkHorizon` reads, in the same order: a URL that names
+ * a date is somebody asking for that date, a URL that says `link_horizon=none` is somebody
+ * sharing their cleared box, and a browser that remembers `NO_LINK_HORIZON` is this
+ * buyer's own earlier "no horizon" - which the plan default must not seed over.
  */
 export function startsCleared(
   fromUrl: string | null | undefined,
   stored: string | null | undefined,
 ): boolean {
-  return !isHorizonDate(fromUrl) && stored === NO_LINK_HORIZON;
+  if (fromUrl === NO_LINK_HORIZON) return true;
+  if (isHorizonDate(fromUrl)) return false;
+  return stored === NO_LINK_HORIZON;
 }
 
 /**
@@ -123,6 +153,19 @@ export function horizonLabel(value: string, cleared: boolean): string {
   const when = formatHorizon(value);
   if (when) return when;
   return cleared ? 'No horizon' : '';
+}
+
+/**
+ * The whole phrase a confirmation prints, so no caller composes one of its own (item 5,
+ * 27 August re-review). Pasting the label after "Link up to" read "Link up to No horizon"
+ * on a cleared box, which is not a sentence anybody wrote: the cleared case is its own
+ * phrase, not a date-shaped hole with words around it. Blank when nobody has chosen, and
+ * a press with nothing to say says nothing.
+ */
+export function horizonSentence(value: string, cleared: boolean): string {
+  const when = formatHorizon(value);
+  if (when) return `Link up to ${when}`;
+  return cleared ? 'No link horizon' : '';
 }
 
 /**

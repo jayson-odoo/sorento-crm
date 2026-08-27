@@ -293,8 +293,9 @@ rejected lines ("2 rejected") so CS sees the bounce without visiting Order Inqui
 
 ### What was built, and where it differs from the paragraphs above
 
-Rewritten 27 Aug after the review round (B1, B2, S1 to S5). Where a bullet says "the first
-round", that is what shipped on `feat/scm-link-horizon` and what the fix changed.
+Rewritten 27 Aug after the review round (B1, B2, S1 to S5), and again after the re-review
+the same day (items 1 to 7). Where a bullet says "the first round", that is what shipped on
+`feat/scm-link-horizon` and what the fix changed.
 
 - **The default is the reorder RUN's own horizon, not the policy's coverage date (S2).**
   The paragraph above says "default = today + the reorder plan's horizon days"; there is no
@@ -318,6 +319,24 @@ round", that is what shipped on `feat/scm-link-horizon` and what the fix changed
   id, a product-grain line names a member rec id or `"{order_summary_row id}:{warehouse
   id}"`, and both tables carry `run_id`), and falls back to the latest completed run for a
   purchase order nobody drafted from a plan.
+- **A run that named NO horizon is an answer, not a silence (item 1, re-review).** The
+  confirm passed the resolved DATE and nothing else, so a run whose `plan_horizon_date` is
+  NULL handed on a bare `None` - which `resolve_link_horizon` cannot tell from "this caller
+  named nothing" and answers by reaching for the LATEST completed run. The daily scheduled
+  run (`task_scheduler.py`) never names a horizon, so every purchase order drafted off it
+  was linked under whatever date somebody's last manual run happened to plan to, and a 2030
+  row could eat a buy sized for 2026. `bulk_confirm` now says which of the three answers it
+  means, through `_link_horizon_for`: its run's date (`"date"`), its run's silence
+  (`"none"`), or - only when the order names no single run - the plan in force (`"plan"`).
+- **The run is resolved PER PURCHASE ORDER, not per batch (item 2, re-review).** One
+  `bulk_confirm` call resolved one run off every confirmed line's `source_ref` at once, and
+  the lookup ended in `.limit(1)` with no ORDER BY - so a press over two orders drafted off
+  two plans linked both under whichever run Postgres handed back first. Each order carries
+  its own products, plan cells and source refs through the confirm loop and cascades under
+  its own horizon; one service instance still serves the whole batch, because its caches are
+  per product and per link and both are dropped on every write. An order whose own lines
+  name MORE than one run is treated as naming none - the plan in force, logged with the run
+  ids - because picking either would be picking at random.
 - **A caller that names no date still gets the plan's - and a caller may now say "no
   horizon" out loud (S1).** The first round had two answers where there are three, so the
   buyer's empty date box travelled as silence and came back as the plan's own date: once a
@@ -339,13 +358,24 @@ round", that is what shipped on `feat/scm-link-horizon` and what the fix changed
   visit read "never chosen" and the plan default seeded straight back over the choice.
   Storage now holds an explicit `none` marker, the page holds a `horizonCleared` flag beside
   the date, and the seeding effect refuses to run against it.
+- **A cleared horizon travels in the URL too (item 6, re-review).** The clear stuck in this
+  browser and nowhere else: the URL effect deleted `?link_up_to` and put nothing in its
+  place, so a shared worklist said "nobody has chosen" and opened on the plan's own date in
+  the other browser - AC-LH5's "the URL is what the buttons send" held for a date and not
+  for the cleared state. The page writes `?link_horizon=none` in that case and reads it back
+  through `readUrlLinkHorizon`, at the front of the same precedence the date has (URL, then
+  this browser, then the plan). A link carrying both is read as the date, the more exact of
+  the two words.
 - **Auto-link presses under the same date, and shows it (B2).** The worklist's Auto-link
   dialog sent `{}` - the one press that reaches every open row in the company was the one
   press that ignored the date sat on its own toolbar, and nothing on the confirmation said
-  so. It takes the page's horizon now, prints `Link up to <date>` (or `No horizon`) in the
-  dialog body the way the manual Link dialog does, and sends it. One helper,
-  `linkHorizonRequest`, builds the fragment for all four presses - Acknowledge, Link
-  selected, Link now, Auto-link - so no two can mean different things by the same box.
+  so. It takes the page's horizon now, prints `Link up to <date>` in the dialog body the
+  way the manual Link dialog does, and sends it. One helper, `linkHorizonRequest`, builds
+  the fragment for all four presses - Acknowledge, Link selected, Link now, Auto-link - so
+  no two can mean different things by the same box. The cleared box is its own phrase, `No
+  link horizon`, built by `horizonSentence` rather than pasted into the date one: the first
+  round read `Link up to No horizon`, which is not a sentence anybody wrote (item 5,
+  re-review).
 - **The manual Link dialog was left as override.** It shows the date and flags a row due
   past it, and takes the hand-made link anyway (AC-LH3) - the same carve-out `manual`
   already makes for a purchase order that is not yet active.

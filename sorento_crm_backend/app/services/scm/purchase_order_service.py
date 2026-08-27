@@ -915,15 +915,12 @@ class PurchaseOrderService:
         unaffected either way."""
         confirmed = 0
         numbering = NumberingService(self.db)
-        product_ids: set[str] = set()
-        # The plan cells this confirm bought for: the (product, warehouse) of every line it
-        # lifted. A line with no warehouse contributes a None, which matches an inquiry row
-        # that resolves to no location either - the same NULL `scm.committed_v` emits.
-        cells: set[tuple[str, str | None]] = set()
-        # What the confirmed lines were drafted OFF - the thread back to the plan run that
-        # sized the buy, and therefore to the horizon it may link under (S2, code review
-        # 27 Aug 2026).
-        source_refs: set[str] = set()
+        # What each confirmed purchase order bought, kept APART from its neighbours (item
+        # 2, re-review 27 Aug 2026): its products, the plan cells it lifted, and the source
+        # refs that thread it back to the run which sized it. One batch may hold orders
+        # drafted off different runs, and a run resolved once for the whole batch linked
+        # every one of them under whichever plan came back first.
+        bought: list[dict] = []
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -939,6 +936,13 @@ class PurchaseOrderService:
             if po.expected_date is None:
                 dates = [ln.expected_date for ln in po.lines if ln.expected_date]
                 po.expected_date = max(dates) if dates else None
+            product_ids: set[str] = set()
+            # The plan cells this order bought for: the (product, warehouse) of every line
+            # it lifted. A line with no warehouse contributes a None, which matches an
+            # inquiry row that resolves to no location either - the same NULL
+            # `scm.committed_v` emits.
+            cells: set[tuple[str, str | None]] = set()
+            source_refs: set[str] = set()
             for ln in po.lines:
                 ln.line_status = "open"
                 if ln.source_ref:
@@ -947,10 +951,15 @@ class PurchaseOrderService:
                     product_ids.add(str(ln.product_id))
                     cells.add((str(ln.product_id),
                                str(ln.warehouse_id) if ln.warehouse_id else None))
+            if product_ids:
+                bought.append(
+                    {"product_ids": product_ids, "cells": cells,
+                     "source_refs": source_refs}
+                )
             confirmed += 1
         self.db.commit()
 
-        if not product_ids:
+        if not bought:
             return {"confirmed_count": confirmed}
 
         if not actor:
@@ -966,37 +975,34 @@ class PurchaseOrderService:
             )
 
             service = ProjectOrderInquiryService(self.db)
-            # The LINK HORIZON this confirm runs under (`PLAN-scm-oi-handshake.md` section
-            # 11, S2). A confirm has nobody to ask for a date, so it takes the one the buy
-            # was sized under: the plan run its own draft lines were drafted off, and the
-            # latest completed run when it cannot name one (a purchase order somebody
-            # keyed by hand). Not the newest run in either case - a draft may sit for days
-            # while a later run plans further out, and linking under THAT horizon would
-            # hand the buy to rows the run that ordered it never counted.
-            link_up_to = priority.plan_link_horizon(
-                self.db, run_id=self._plan_run_for_source_refs(source_refs)
-            )
-            # Pass one: the rows that sized these plan cells, first claim on the lines
-            # this confirm just opened.
-            # Sorted only so the pass is deterministic, and sorted with a KEY because a
-            # bare `sorted` compares the tuples element by element: one line of a product
-            # with a warehouse and another without gives `str < None`, a TypeError, inside
-            # the best-effort try - which would swallow the WHOLE cascade and leave one log
-            # line behind.
-            sized_by = service.rows_needed_at(
-                sorted(cells, key=lambda cell: (cell[0], cell[1] or ""))
-            )
-            if sized_by:
-                service.auto_place_for_products(
-                    None, actor_user_id=actor, trigger="po_confirm", row_ids=sized_by,
-                    link_up_to=link_up_to,
+            # PER PURCHASE ORDER, because the horizon is (item 2, re-review 27 Aug 2026).
+            # One service instance across the batch all the same: its caches are per
+            # product and per link, and both are invalidated on every write.
+            for order in bought:
+                link_up_to, link_horizon = self._link_horizon_for(order["source_refs"])
+                # Pass one: the rows that sized these plan cells, first claim on the lines
+                # this confirm just opened.
+                # Sorted only so the pass is deterministic, and sorted with a KEY because a
+                # bare `sorted` compares the tuples element by element: one line of a
+                # product with a warehouse and another without gives `str < None`, a
+                # TypeError, inside the best-effort try - which would swallow the WHOLE
+                # cascade and leave one log line behind.
+                sized_by = service.rows_needed_at(
+                    sorted(order["cells"], key=lambda cell: (cell[0], cell[1] or ""))
                 )
-            # Pass two: everybody else waiting on these products. Idempotent - a row pass
-            # one fully linked is no longer raised, so it drops out of this query.
-            service.auto_place_for_products(
-                list(product_ids), actor_user_id=actor, trigger="po_confirm",
-                link_up_to=link_up_to,
-            )
+                if sized_by:
+                    service.auto_place_for_products(
+                        None, actor_user_id=actor, trigger="po_confirm",
+                        row_ids=sized_by,
+                        link_up_to=link_up_to, link_horizon=link_horizon,
+                    )
+                # Pass two: everybody else waiting on these products. Idempotent - a row
+                # pass one fully linked is no longer raised, so it drops out of this query.
+                service.auto_place_for_products(
+                    list(order["product_ids"]), actor_user_id=actor,
+                    trigger="po_confirm",
+                    link_up_to=link_up_to, link_horizon=link_horizon,
+                )
             self.db.commit()
         except Exception as exc:  # noqa: BLE001
             self.db.rollback()
@@ -1006,6 +1012,48 @@ class PurchaseOrderService:
             )
 
         return {"confirmed_count": confirmed}
+
+    def _link_horizon_for(
+        self, source_refs: set[str]
+    ) -> tuple[Optional[date], Optional[str]]:
+        """The LINK HORIZON one confirmed purchase order runs under, said in full.
+
+        `PLAN-scm-oi-handshake.md` section 11. A confirm has nobody to ask for a date, so
+        it takes the one the buy was sized under - and it has to say WHICH of the three
+        answers that is, not just hand on a date (item 1, re-review 27 Aug 2026):
+
+          drafted off a run that named a horizon -> that date (`"date"`)
+          drafted off a run that named NONE      -> no horizon at all (`"none"`)
+          drafted off no single run              -> the plan in force (`"plan"`)
+
+        The middle arm is the one this got wrong. `plan_link_horizon` answers `None` for a
+        run that planned every open line, a bare `None` on the wire is indistinguishable
+        from "this caller named nothing", and the cascade resolves THAT by reaching for the
+        latest completed run. The daily scheduled run names no horizon
+        (`task_scheduler.py`), so every purchase order drafted off it was linked under
+        whatever date somebody's last manual run happened to plan to. A run's silence is an
+        answer: it planned everything, so nothing is held back.
+
+        The last arm is the plan in force, which is right for a purchase order somebody
+        keyed by hand, and is also what a purchase order drafted off TWO runs gets - see
+        `_plan_run_for_source_refs`. Never the newest run for one drafted off a single
+        older one: a draft may sit for days while a later run plans further out, and
+        linking under THAT horizon would hand the buy to rows the run that ordered it
+        never counted.
+        """
+        from app.services.project_order_inquiry_service import (
+            LINK_HORIZON_DATE,
+            LINK_HORIZON_NONE,
+            LINK_HORIZON_PLAN,
+        )
+
+        run_id = self._plan_run_for_source_refs(source_refs)
+        if run_id is None:
+            return None, LINK_HORIZON_PLAN
+        horizon = priority.plan_link_horizon(self.db, run_id=run_id)
+        if horizon is None:
+            return None, LINK_HORIZON_NONE
+        return horizon, LINK_HORIZON_DATE
 
     def _plan_run_for_source_refs(self, source_refs: set[str]) -> Optional[str]:
         """The reorder run a set of draft-PO lines was drafted off, or `None`.
@@ -1020,6 +1068,12 @@ class PurchaseOrderService:
         there is no run whose horizon it was sized under. A ref that is not a uuid is
         dropped before the query rather than sent to Postgres, which would reject the
         whole `IN` list rather than that one value.
+
+        `None` too when the lines name MORE THAN ONE run (item 2, re-review 27 Aug 2026),
+        and it is logged. This ended in a `.limit(1)` with no ORDER BY, so an order drafted
+        off two plans took whichever run Postgres handed back first - a date picked at
+        random. Two runs is no run: the caller falls back to the plan in force, the same
+        answer a hand-keyed purchase order gets.
         """
         from app.models.scm import OrderSummaryRow, ReorderRecommendation
 
@@ -1033,20 +1087,31 @@ class PurchaseOrderService:
             keys.add(stem)
         if not keys:
             return None
-        run_id = (
-            self.db.query(ReorderRecommendation.run_id)
+        run_ids = {
+            str(row[0])
+            for row in self.db.query(ReorderRecommendation.run_id)
             .filter(ReorderRecommendation.id.in_(list(keys)))
-            .limit(1)
-            .scalar()
-        )
-        if run_id is None:
-            run_id = (
-                self.db.query(OrderSummaryRow.run_id)
+            .distinct()
+            .all()
+            if row[0]
+        }
+        if not run_ids:
+            run_ids = {
+                str(row[0])
+                for row in self.db.query(OrderSummaryRow.run_id)
                 .filter(OrderSummaryRow.id.in_(list(keys)))
-                .limit(1)
-                .scalar()
+                .distinct()
+                .all()
+                if row[0]
+            }
+        if len(run_ids) > 1:
+            log.warning(
+                "purchase order lines name %s reorder runs (%s); linking under the plan "
+                "in force rather than one of them",
+                len(run_ids), ", ".join(sorted(run_ids)),
             )
-        return str(run_id) if run_id else None
+            return None
+        return next(iter(run_ids), None)
 
     def create_gr(self, po_id: str, actor: Optional[str] = None) -> dict:
         """Create a goods receipt from an active/partial PO (M4-D6): a full receipt

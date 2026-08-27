@@ -62,6 +62,7 @@ import {
   initialLinkHorizon,
   linkHorizonRequest,
   readStoredLinkHorizon,
+  readUrlLinkHorizon,
   startsCleared,
   storeLinkHorizon,
 } from '../../_shared/lib/linkHorizon';
@@ -223,22 +224,24 @@ export function OrderInquiriesClient() {
   // page's "N awaiting acknowledgement" chip links straight into this list narrowed to
   // them, and a chip that landed on an unfiltered list would leave the buyer to find them.
   const [ackFilter, setAckFilter] = React.useState(() => searchParams.get('ack') ?? '');
-  // How far out the three presses link (AC-LH1/AC-LH5). Sourced from `?link_up_to=` on
-  // mount, then from this browser's own memory, and seeded from the reorder plan's
-  // coverage date once the summary answers - the URL first, because a shared link is the
-  // buyer telling somebody else which horizon to look at. `seededHorizon` is what stops
-  // that seeding from overwriting a date the buyer has since cleared on purpose.
+  // How far out the three presses link (AC-LH1/AC-LH5). Sourced from the URL on mount -
+  // `?link_up_to=` for a date and `?link_horizon=none` for a cleared box - then from this
+  // browser's own memory, and seeded from the reorder plan's coverage date once the
+  // summary answers. The URL first, because a shared link is the buyer telling somebody
+  // else which horizon to look at. `seededHorizon` is what stops that seeding from
+  // overwriting a date the buyer has since cleared on purpose.
   const storedHorizon = React.useRef(readStoredLinkHorizon());
+  const urlHorizon = React.useRef(readUrlLinkHorizon(searchParams));
   const [linkUpTo, setLinkUpTo] = React.useState(() =>
-    initialLinkHorizon(searchParams.get('link_up_to'), storedHorizon.current, null),
+    initialLinkHorizon(urlHorizon.current, storedHorizon.current, null),
   );
   // The buyer took the horizon OFF, as opposed to never having set one (S1). The two used
   // to be the same empty box: an empty date sent nothing, the server read that as "the
   // caller named none" and used the plan's own, so once a plan run named a horizon this
   // page could not link a far-future row at all. Held apart here, remembered per browser,
-  // and stated on the wire as `link_horizon: 'none'`.
+  // carried in the URL as `link_horizon=none`, and stated on the wire the same way.
   const [horizonCleared, setHorizonCleared] = React.useState(() =>
-    startsCleared(searchParams.get('link_up_to'), storedHorizon.current),
+    startsCleared(urlHorizon.current, storedHorizon.current),
   );
   const seededHorizon = React.useRef(false);
   // What every press says about the horizon - one fragment, four callers, so Acknowledge,
@@ -314,6 +317,11 @@ export function OrderInquiriesClient() {
     else next.delete('ack');
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
+    // A CLEARED horizon travels too (item 6). Dropping `link_up_to` and putting nothing in
+    // its place says "nobody has chosen", which is the one thing the buyer did not say, and
+    // the browser the link is shared with would open on the plan's own date instead.
+    if (!linkUpTo && horizonCleared) next.set('link_horizon', NO_LINK_HORIZON);
+    else next.delete('link_horizon');
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
@@ -324,6 +332,7 @@ export function OrderInquiriesClient() {
     debounced,
     ackFilter,
     linkUpTo,
+    horizonCleared,
     pathname,
     router,
     searchParams,

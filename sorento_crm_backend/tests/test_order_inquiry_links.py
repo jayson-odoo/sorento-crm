@@ -1276,6 +1276,32 @@ def test_the_listing_flag_follows_the_acknowledged_row_exemption(world):
     assert world.product in world.svc.link_candidate_products([world.product])["po"]
 
 
+def test_the_listing_flag_stops_offering_once_the_exempt_row_is_linked(world):
+    """The memo is cleared when a link is written (item 4, re-review 27 Aug 2026).
+
+    `_rows_awaiting_a_link` is remembered per product on the SERVICE INSTANCE, and the
+    route that writes a link serialises the answer through that same instance - so the
+    listing read the awaiting rows as they were BEFORE the write and went on offering a
+    Link for a row it had just fully covered. The exemption is the only thing offering this
+    group's line (it is 8,990 short), so once the row that earned it is linked, the flag
+    must stop.
+    """
+    world.stock("BRW-IB", 10)
+    world.demand("BRW-IB", 9000)
+    (line_id,) = world.purchase_order(
+        "202607-S0067", date(2026, 7, 1), [("BRW-IB", 500, SOON, "3")]
+    )
+    row = world.row("ORDER", 60, location="BRW-IB")
+
+    assert world.product in world.svc.link_candidate_products([world.product])["po"]
+
+    world.svc.place_on_po(str(row.id), line_id, actor_user_id=None)
+
+    assert world.product not in world.svc.link_candidate_products([world.product])["po"], (
+        "the listing offered a Link for a row this very instance had just fully linked"
+    )
+
+
 def test_a_person_may_still_link_a_deficit_group_line_by_hand(world):
     """The deficit rule governs what is OFFERED, not what a person may insist on.
 

@@ -166,12 +166,20 @@ def _pin_the_plan_horizon(db, company_id) -> str:
     local database - a copy of production, carrying real planning runs. Left alone, every
     acknowledge in this file and in `test_order_inquiry_handshake_edges.py` would link
     under whatever horizon somebody's last real run happened to name, and the same test
-    would pass or fail depending on the copy. One seeded run, finishing now and naming no
-    horizon, makes the default a fact of the fixture: NO horizon unless a test says
-    otherwise, which the two AC-LH5 tests do by writing a date onto this run.
+    would pass or fail depending on the copy. One seeded run, finishing at an instant
+    nothing real can outrank and naming no horizon, makes the default a fact of the
+    fixture: NO horizon unless a test says otherwise, which the two AC-LH5 tests do by
+    writing a date onto this run.
+
+    2099, not `utcnow()` (item 3, re-review 27 Aug 2026). The ordering is
+    `coalesce(finished_at, created_at) desc`, and `scm.reorder_run.created_at` defaults to
+    Malaysia wall-clock `now()` - eight hours AHEAD of a naive UTC stamp - so a real
+    completed run with a NULL `finished_at`, started any time in the last eight hours of
+    the copy, sorted above a fixture pinned to "now" and its horizon governed the suite.
     """
     run_id = _uid()
-    finished = datetime.utcnow()
+    #: Not a date any real run can carry, so the pin cannot lose the tie-break.
+    finished = datetime(2099, 1, 1)
     db.execute(
         text(
             "INSERT INTO scm.reorder_run (id, company_id, status, plan_horizon_date, "

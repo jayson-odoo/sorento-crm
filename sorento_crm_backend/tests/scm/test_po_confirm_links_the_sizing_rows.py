@@ -251,6 +251,120 @@ def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app
     )
 
 
+def test_a_confirm_off_a_run_that_named_no_horizon_links_under_none(scm_app):
+    """The own run's horizon is NULL, and NULL is an answer (item 1, re-review 27 Aug).
+
+    `plan_link_horizon` reads a named run's `plan_horizon_date` as it stands, so a run that
+    planned every open line answers `None` - and `None` handed on as a bare date was
+    indistinguishable from "this caller named nothing", which the cascade resolves by
+    reaching for the LATEST completed run. The daily scheduled run names no horizon at all,
+    so every purchase order drafted off it was linked under whatever date somebody's last
+    manual run happened to plan to. A purchase order drafted off a run links under THAT
+    run's horizon or under none.
+    """
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _mk_warehouse(db, f"{MARKER}NOHZN")
+    pid = _mk_product(db, f"{MARKER}-NOHZNSKU")
+    own = _plan_run(db, None, finished_at=datetime(2026, 8, 20, 9, 0, 0))
+    _plan_run(db, date(2026, 12, 31), finished_at=datetime(2099, 1, 1))
+
+    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
+    near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    db.flush()
+
+    poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
+                     source_ref=_rec_of(db, own, pid))
+
+    PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
+
+    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
+    assert _linked_qty(db, far["inquiry_row"].id) == 3.0, (
+        "the run that sized this buy named no horizon, and a LATER run's date was used"
+    )
+
+
+def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(scm_app):
+    """One press, two plans (item 2, re-review 27 Aug).
+
+    The run was resolved ONCE for the whole batch, off every confirmed line's `source_ref`
+    at once, and the lookup ended in `.limit(1)` with no ORDER BY - so which plan the batch
+    linked under was whichever row Postgres handed back first, and the other purchase order
+    was linked under a horizon its own run never planned to. Each purchase order is its own
+    buy, sized by its own run.
+    """
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    near_run = _plan_run(db, date(2026, 12, 31), finished_at=datetime(2026, 8, 20, 9, 0, 0))
+    far_run = _plan_run(db, date(2031, 12, 31), finished_at=datetime(2026, 8, 21, 9, 0, 0))
+
+    made = {}
+    for name, run in (("NEAR", near_run), ("FAR", far_run)):
+        warehouse = _mk_warehouse(db, f"{MARKER}BATCH{name}")
+        pid = _mk_product(db, f"{MARKER}-BATCH{name}SKU")
+        soon = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=5)
+        late = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=3)
+        soon["inquiry_row"].delivery_date = date(2026, 10, 1)
+        late["inquiry_row"].delivery_date = date(2030, 1, 1)
+        db.flush()
+        made[name] = {
+            "soon": soon["inquiry_row"].id,
+            "late": late["inquiry_row"].id,
+            "po": _draft_po(db, product_id=pid, warehouse_id=warehouse, qty=8,
+                            source_ref=_rec_of(db, run, pid)),
+        }
+
+    PurchaseOrderService(db).bulk_confirm(
+        [made["NEAR"]["po"], made["FAR"]["po"]], actor=actor
+    )
+
+    assert _linked_qty(db, made["NEAR"]["soon"]) == 5.0
+    assert _linked_qty(db, made["NEAR"]["late"]) == 0.0, (
+        "the 2030 row was linked under the OTHER purchase order's run, which plans to 2031"
+    )
+    assert _linked_qty(db, made["FAR"]["soon"]) == 5.0
+    assert _linked_qty(db, made["FAR"]["late"]) == 3.0, (
+        "the 2030 row was refused under the OTHER purchase order's run, which stops at 2026"
+    )
+
+
+def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm_app):
+    """A purchase order whose lines were drafted off two different plans names no ONE run,
+    so it takes the plan in force - the same answer a hand-keyed purchase order gets - and
+    says so in the log. Picking either of the two would be picking at random."""
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _mk_warehouse(db, f"{MARKER}TWORUNS")
+    pid = _mk_product(db, f"{MARKER}-TWORUNSSKU")
+    older = _plan_run(db, date(2026, 12, 31), finished_at=datetime(2026, 8, 20, 9, 0, 0))
+    newer = _plan_run(db, date(2031, 12, 31), finished_at=datetime(2099, 1, 1))
+
+    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
+    near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    db.flush()
+
+    poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=5,
+                     source_ref=_rec_of(db, older, pid))
+    db.execute(text(
+        "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status, "
+        "source_system, source_ref) "
+        "VALUES (:i, :po, :p, :w, 3, 0, 10, 'MYR', 'open', 'scm_recommendation', :sr)"),
+        {"i": _u(), "po": poid, "p": pid, "w": here,
+         "sr": _rec_of(db, newer, pid)})
+    db.flush()
+
+    PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
+
+    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
+    assert _linked_qty(db, far["inquiry_row"].id) == 3.0, (
+        "two runs is no run: the plan in force reaches 2031 and the row is inside it"
+    )
+
 # ---------------------------------------------------------------------------
 # `_groups_in_deficit`: the boundary (captain, 27 Aug)
 # ---------------------------------------------------------------------------

@@ -1106,6 +1106,45 @@ describe('The link horizon', () => {
     );
   });
 
+  it('AC-LH5: clearing the date puts the cleared horizon IN the URL', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+
+    fireEvent.change(input, { target: { value: '' } });
+
+    // Removing `link_up_to` and putting nothing in its place says "nobody has chosen",
+    // which is the one thing the buyer did NOT say - and the browser the link is shared
+    // with would open on the plan's own date (item 6).
+    await waitFor(() => {
+      const last = routerReplace.mock.calls.at(-1)?.[0] as string;
+      expect(last).toContain('link_horizon=none');
+      expect(last).not.toContain('link_up_to=');
+    });
+  });
+
+  it('AC-LH5: a cleared horizon in the URL beats this browser and the plan', async () => {
+    withPlanHorizon(HORIZON);
+    window.localStorage.setItem('sorento.order-inquiries.link-up-to', '2027-06-30');
+    currentSearchParams = new URLSearchParams('link_horizon=none');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(input.value).toBe('');
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    // AC-LH5: the URL is what the buttons send, cleared state included.
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_horizon: 'none',
+      }),
+    );
+  });
+
   it('AC-LH1: Acknowledge sends the date the page is showing', async () => {
     withPlanHorizon(HORIZON);
     acknowledgeOrderInquiryRows.mockResolvedValue({
@@ -1206,8 +1245,9 @@ describe('The link horizon', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
     const dialog = await screen.findByRole('alertdialog');
 
+    // ONE phrase, not the date phrase with the label pasted into its hole (item 5).
     expect(within(dialog).getByTestId('auto-link-horizon')).toHaveTextContent(
-      'Link up to No horizon',
+      'No link horizon',
     );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
 

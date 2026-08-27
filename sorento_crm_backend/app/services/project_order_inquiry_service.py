@@ -2450,8 +2450,19 @@ class ProjectOrderInquiryService:
         return by_po, by_spo
 
     def _invalidate_link_cache(self) -> None:
-        """Every writer of a link calls this. A stale total is a double-claim."""
+        """Every writer of a link calls this. A stale total is a double-claim.
+
+        BOTH memos go (item 4, re-review 27 Aug 2026). `_awaiting_link_cache` answers
+        "which groups hold an acknowledged, still-unlinked row of this product", which a
+        link written since is exactly what changes - and the route that writes one
+        serialises its answer through this same instance, so the listing read the rows as
+        they were before the write and offered a Link for a row it had just fully covered.
+        The memo still earns its place inside one cascade pass: a placement is decided
+        before its own links are written, so the walk asks between writes rather than
+        across them.
+        """
         self._linked_by_target_cache = None
+        self._awaiting_link_cache = {}
 
     def _pool_codes(self) -> set:
         """Every warehouse that is SOME location's pool, by code.
@@ -2797,7 +2808,10 @@ class ProjectOrderInquiryService:
         three queries and the cascade asks it once per row, which on a full pass over one
         product is the same three queries answered over and over. A row this pass has since
         linked cannot change the answer for the row being placed now - it is placed before
-        its own links are written, and it is walked once.
+        its own links are written, and it is walked once. The memo is dropped by
+        `_invalidate_link_cache` on every link written or removed all the same (item 4),
+        because a caller that writes and then READS through one instance - which is every
+        link route - would otherwise be answered about a state it has already left.
         """
         cached = self._awaiting_link_cache.get(str(product_id))
         if cached is not None:

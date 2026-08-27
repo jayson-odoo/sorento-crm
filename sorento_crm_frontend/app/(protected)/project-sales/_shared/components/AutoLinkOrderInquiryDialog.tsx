@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useAutoPlaceOrderInquiryRows } from '../hooks/useOrderInquiry';
-import { horizonLabel, linkHorizonRequest } from '../lib/linkHorizon';
+import { horizonSentence, linkHorizonRequest } from '../lib/linkHorizon';
 
 /**
  * "Auto-link" (AC-I1; the captain, 20 Aug: "we need to link already at first already
@@ -41,7 +41,7 @@ export function AutoLinkOrderInquiryDialog({
   horizonCleared?: boolean;
 }) {
   const autoPlace = useAutoPlaceOrderInquiryRows();
-  const horizon = horizonLabel(linkUpTo, horizonCleared);
+  const horizon = horizonSentence(linkUpTo, horizonCleared);
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -54,13 +54,15 @@ export function AutoLinkOrderInquiryDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         {/* The horizon this press runs to, worded exactly as the manual Link dialog words
-            it. A fact and a date, never an explanation of what a horizon is. */}
+            it. A fact and a date, never an explanation of what a horizon is. The whole
+            phrase comes from `horizonSentence`, because composing it here read "Link up to
+            No horizon" on a cleared box (item 5, 27 August re-review). */}
         {horizon ? (
           <div
             data-testid="auto-link-horizon"
             className="text-xs text-muted-foreground"
           >
-            {`Link up to ${horizon}`}
+            {horizon}
           </div>
         ) : null}
         <AlertDialogFooter>
