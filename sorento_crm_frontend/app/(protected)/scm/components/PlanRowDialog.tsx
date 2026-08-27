@@ -843,14 +843,20 @@ export function SoCoveragePicker({
   tickedKeys,
   onChange,
   unassigned,
+  takes,
 }: {
   coverage: SoCoverageRow[];
   tickedKeys: string[];
   onChange: (keys: string[]) => void;
   unassigned: number;
+  /** What each ticked row actually GETS out of this SPO, by `key` (AC-G2's Take column).
+   *  Omitted by a caller that holds no walk - the column then does not render at all,
+   *  rather than reading 0 for every row and being mistaken for one. */
+  takes?: Record<string, number>;
 }) {
   const toggle = (key: string, on: boolean) =>
     onChange(on ? [...tickedKeys, key] : tickedKeys.filter((x) => x !== key));
+  const cols = takes ? 8 : 7;
 
   return (
     <div className="space-y-2">
@@ -863,12 +869,13 @@ export function SoCoveragePicker({
             <Th>Class</Th>
             <Th right>Required</Th>
             <Th right>Open</Th>
+            {takes ? <Th right>Take</Th> : null}
             <Th>Location</Th>
           </tr>
         </thead>
         <tbody>
           {coverage.length === 0 ? (
-            <EmptyRow colSpan={7}>No open demand this SPO could cover.</EmptyRow>
+            <EmptyRow colSpan={cols}>No open demand this SPO could cover.</EmptyRow>
           ) : (
             coverage.map((c) => (
               <tr key={c.key} className="border-b last:border-0">
@@ -886,6 +893,7 @@ export function SoCoveragePicker({
                 <Td>{c.kind === 'project' ? 'Project' : 'Retail'}</Td>
                 <Td right>{fmtDate(c.required_date)}</Td>
                 <Td right>{fmtInt(c.qty)}</Td>
+                {takes ? <Td right>{fmtInt(takes[c.key] ?? 0)}</Td> : null}
                 <Td>{textCell(c.warehouse_code)}</Td>
               </tr>
             ))

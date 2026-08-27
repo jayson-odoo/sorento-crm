@@ -60,10 +60,6 @@ class ConvertToDraftShipmentRequest(BaseModel):
         description="Per PI line id, how much to place. A line left out places what it has "
                     "left, which is the normal case (AC-F10).",
     )
-    target_shipment_id: Optional[str] = Field(
-        None,
-        description="An existing DRAFT packing list to add to, instead of creating one.",
-    )
 
 
 class ProformaInvoiceUpdate(BaseModel):
@@ -238,12 +234,15 @@ def convert_proforma_invoices_to_draft_shipment(
     current_user: dict = Depends(_SHIPMENT_WRITE),
     db: Session = Depends(get_db),
 ):
-    """One or more proforma invoices become one DRAFT inbound shipment (`/scm/incoming`).
+    """One or more proforma invoices become one NEW draft packing list.
 
     A container is routinely several factories' PIs landing in the same box, so more than
     one invoice - from different suppliers - is not a mistake; every shipment line still
     carries its own supplier. The real packing list, when it arrives, is uploaded through
     the existing `/scm/packing-lists/apply` path, unchanged by this action.
+
+    Always a NEW packing list: "add to an existing draft" was dropped everywhere (part 4,
+    Q6), so this route no longer takes a target.
     """
     out = proforma_invoice_service.convert_to_draft_shipment(
         db,
@@ -252,7 +251,6 @@ def convert_proforma_invoices_to_draft_shipment(
         override_capacity=payload.override_capacity,
         override_reason=payload.override_reason,
         line_quantities=payload.line_quantities,
-        target_shipment_id=payload.target_shipment_id,
     )
     db.commit()
     return out
@@ -296,20 +294,6 @@ def list_proforma_invoices(
         limit=limit,
         offset=offset,
     )
-
-
-# Declared BEFORE `/proforma-invoices/{invoice_id}`: a literal path that comes after a
-# path parameter is swallowed by it, and the id lookup would answer 404 for this route.
-@router.get("/proforma-invoices/draft-shipments")
-def list_draft_shipments(
-    supplier_id: Optional[str] = Query(
-        None, description="Only the drafts already carrying this factory's goods"
-    ),
-    _user: dict = Depends(_READ),
-    db: Session = Depends(get_db),
-):
-    """The draft packing lists a convert can be ADDED to (AC-F10)."""
-    return {"data": proforma_invoice_service.draft_shipments(db, supplier_id=supplier_id)}
 
 
 @router.get("/inbound-shipments/{shipment_id}/source-proforma-invoices")

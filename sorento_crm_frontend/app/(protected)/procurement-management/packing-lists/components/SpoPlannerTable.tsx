@@ -3,11 +3,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
+  ExpandedState,
+  Row,
   getCoreRowModel,
+  getExpandedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Download,
   FileText,
   Info,
@@ -32,16 +39,23 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  OnHandTable,
+  PlanRowDialog,
+  PoTakesPicker,
+  SoCoveragePicker,
+  SpoTabs,
+  type PlanRowDialogKind,
+} from '@/app/(protected)/scm/components/PlanRowDialog';
+import { PlanNumberButton } from '@/app/(protected)/scm/components/PlanNumberButton';
 import {
   useCreateSpo,
   useDeleteSpo,
@@ -76,12 +90,15 @@ import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
  * they never feed the qty. See `fulfilmentService.ts`'s own contract doc for the full story.
  *
  * Four asks from the same doctrine-correction message, all on this table:
- *   1. The PO-takes drill now also names the PO's own date and supplier (`PoTakesDrillPopover`).
- *   2. A new "SO covered" drill answers "what SO am I covering" at the chosen location(s).
+ *   1. The PO-takes drill names the PO's own date and supplier, and opens as the shared
+ *      lightbox (`PlanRowDialog kind="po_takes"`, R21).
+ *   2. A "SO covered" drill answers "what SO am I covering", in the same lightbox.
  *   3. Table/Schedule toggle, two schedule views (PO coverage, SO coverage) - product rows x
  *      weekly buckets, the loading plan's own visual precedent.
- *   4. The location control is a per-line SPLIT editor (`LocationSplitPopover`) - a line's SPO
- *      can land at more than one warehouse, each split writing its own allocation.
+ *   4. The location control is a per-line SPLIT editor (`LocationSplitPanel`) - a line's SPO
+ *      can land at more than one warehouse, each split writing its own allocation. It lives in
+ *      the row's EXPANDED area (R22, part 4): a list of editable rows does not fit a cell, and
+ *      a popover put it behind a click, clipped at the viewport edge, away from its own row.
  */
 
 const EM_DASH = '-';
@@ -227,6 +244,15 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const [scheduleView, setScheduleView] = useState<ScheduleView>('po');
 
   const [state, setState] = useState<Record<string, LineState>>({});
+  /** Which lines have their destinations open (R22). Closed to start with: the table is a
+   *  ranked reading first, and every row open turns it into a form. */
+  const [expanded, setExpanded] = useState<ExpandedState>({});
+  /** The ONE lightbox this grid opens (R21): which figure was clicked, and on which line.
+   *  Four dialogs mounted per row would be four Radix roots per row; the grid holds one and
+   *  the cells only say what to put in it. */
+  const [dialog, setDialog] = useState<
+    { kind: PlanRowDialogKind; line: SpoSuggestionLine } | null
+  >(null);
 
   useEffect(() => {
     // A fresh suggestion replaces whatever she had edited - "refresh" looks again, it does
@@ -301,11 +327,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * A quantity the operator TYPED is theirs and survives, clamped to what is ticked. One
    * they never touched is a derived default and follows the takes.
    */
-  const toggleTake = (ln: SpoSuggestionLine, poLineId: string, on: boolean) => {
+  const setTakeIds = (ln: SpoSuggestionLine, poTakeIds: string[]) => {
     const current = stateFor(ln);
-    const poTakeIds = on
-      ? [...current.poTakeIds, poLineId]
-      : current.poTakeIds.filter((id) => id !== poLineId);
     const covered = poCoveredFor(ln, poTakeIds);
     // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
     // view of what can be sent right now, and storing it destroyed the decision behind it.
@@ -319,11 +342,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   };
 
   /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
-  const toggleCoverage = (ln: SpoSuggestionLine, key: string, on: boolean) => {
+  const setSoKeys = (ln: SpoSuggestionLine, soKeys: string[]) => {
     const current = stateFor(ln);
-    const soKeys = on
-      ? [...current.soKeys, key]
-      : current.soKeys.filter((k) => k !== key);
     patch(ln, { soKeys, splits: splitsFromTicks(ln, soKeys, current.qty) });
   };
 
@@ -447,23 +467,76 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const unassignedFor = (ln: SpoSuggestionLine) =>
     Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), qtyFor(ln)), 0);
 
-  /** Per warehouse, what the ticked demand accounts for - the same walk the cell reads. */
-  const claimedFor = (ln: SpoSuggestionLine) => {
-    const out = new Map<string, number>();
-    for (const { entry, take } of coverageTakes(ln, soKeysFor(ln), qtyFor(ln))) {
-      if (take <= 0) continue;
-      const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
-      if (!warehouse) continue;
-      out.set(warehouse, (out.get(warehouse) ?? 0) + take);
+  /**
+   * What goes INSIDE the one lightbox, by which figure was clicked (R21).
+   *
+   * The two pickers are controlled and fetch-free: this table already holds `po_takes` and
+   * `so_coverage`, and owns the walk that re-reads them when a tick changes, so the dialog
+   * cannot hold a second opinion about the same rows. On hand and Incoming SPO are the
+   * SHARED reorder / loading-plan bodies, which fetch their own rows on open.
+   */
+  const dialogBody = (kind: PlanRowDialogKind, ln: SpoSuggestionLine) => {
+    switch (kind) {
+      case 'po_takes':
+        return (
+          <PoTakesPicker
+            takes={ln.po_takes}
+            tickedIds={takeIdsFor(ln)}
+            onChange={(ids) => setTakeIds(ln, ids)}
+            coveredQty={poCoveredFor(ln, takeIdsFor(ln))}
+            packedQty={ln.packed_qty}
+          />
+        );
+      case 'so_coverage':
+        return (
+          <SoCoveragePicker
+            coverage={ln.so_coverage ?? []}
+            tickedKeys={soKeysFor(ln)}
+            onChange={(keys) => setSoKeys(ln, keys)}
+            unassigned={unassignedFor(ln)}
+            // Take per row off the SAME walk the cell, the split and the banner read, so
+            // the dialog cannot say one thing while the row says another.
+            takes={Object.fromEntries(
+              coverageTakes(ln, soKeysFor(ln), qtyFor(ln)).map((t) => [t.entry.key, t.take]),
+            )}
+          />
+        );
+      case 'on_hand':
+        return <OnHandTable productId={ln.product_id} itemCode={ln.item_code ?? ''} />;
+      case 'spo':
+        return <SpoTabs supplierId={ln.supplier_id ?? ''} productId={ln.product_id} />;
+      default:
+        return null;
     }
-    return out;
   };
 
-  const renderLocationCell = (ln: SpoSuggestionLine) => {
+  /** The figure the rows have to add up to, beside the title. */
+  const dialogContext = (kind: PlanRowDialogKind, ln: SpoSuggestionLine): string | null => {
+    if (kind === 'so_coverage') {
+      return `${fmtInt(tickedQty(ln, soKeysFor(ln), qtyFor(ln)))} of packed ${fmtInt(ln.packed_qty)}`;
+    }
+    if (kind === 'on_hand') return `${fmtInt(ln.on_hand)} at site pools`;
+    if (kind === 'spo') return `${fmtInt(ln.incoming_spo)} arriving at site pools`;
+    return null;
+  };
+
+  /** A line nothing can be sent for has nowhere to send it, so it does not open (R22). */
+  const cannotSplit = (ln: SpoSuggestionLine) =>
+    ln.cannot_convert || qtyFor(ln) <= 0 || ln.location_options.length === 0;
+
+  /**
+   * The Location cell is now a chevron, not an editor (R22, AC-G4).
+   *
+   * The destinations are an editable LIST of rows, and a DataGrid cell has no room for one -
+   * it lived in a popover, which put an editing surface behind a click, clipped it at the
+   * viewport edge and could not be read beside the row it belongs to. The row expands
+   * instead: same rows, full width, and the cell keeps the reading it always had (where it
+   * lands, and how much of it nobody has claimed).
+   */
+  const renderLocationCell = (ln: SpoSuggestionLine, row: Row<SpoSuggestionLine>) => {
     const splits = splitsFor(ln);
-    const qty = qtyFor(ln);
     const unassigned = unassignedFor(ln);
-    const disabled = ln.cannot_convert || qty <= 0 || ln.location_options.length === 0;
+    const disabled = cannotSplit(ln);
     const label =
       splits.length === 0
         ? 'No location'
@@ -472,23 +545,31 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             'Choose'
           : `${splits.length} locations`;
     const mismatch = splitMismatch.has(ln.shipment_line_id);
+    const expanded = row.getIsExpanded();
     return (
       <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="flex items-center gap-1">
-          <LocationSplitPopover
-            line={ln}
-            splits={splits}
-            qty={qty}
-            claimed={claimedFor(ln)}
-            disabled={disabled}
-            triggerLabel={label}
-            mismatch={mismatch}
-            onChange={(next) => setSplits(ln, next)}
-          />
-          {ln.location_options.length > 0 && !ln.cannot_convert ? (
-            <SoCoveredDrillPopover line={ln} splits={splits} />
-          ) : null}
-        </div>
+        {disabled ? (
+          <span className="truncate text-muted-foreground">{label}</span>
+        ) : (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            title="Where this SPO lands"
+            onClick={() => row.toggleExpanded()}
+            className={
+              mismatch
+                ? 'inline-flex min-w-0 items-center gap-1 rounded-sm font-medium text-destructive underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
+                : 'inline-flex min-w-0 items-center gap-1 rounded-sm underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40'
+            }
+          >
+            {expanded ? (
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <span className="truncate">{label}</span>
+          </button>
+        )}
         {unassigned > 0 && !ln.cannot_convert ? (
           <span className="text-2xs text-muted-foreground">
             {fmtInt(unassigned)} unassigned
@@ -546,13 +627,16 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           }
           const ticked = takeIdsFor(ln);
           return (
-            <PoTakesDrillPopover
-              title={ln.item_code ?? ln.product_name ?? 'This product'}
-              takes={ln.po_takes}
-              total={poCoveredFor(ln, ticked)}
-              tickedIds={ticked}
-              onToggle={(poLineId, on) => toggleTake(ln, poLineId, on)}
-            />
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <PlanNumberButton
+                value={fmtInt(poCoveredFor(ln, ticked))}
+                label="Which PO covers this, oldest purchase order first"
+                onClick={() => setDialog({ kind: 'po_takes', line: ln })}
+              />
+              <span className="text-2xs text-muted-foreground">
+                {ticked.length} of {ln.po_takes.length} POs
+              </span>
+            </div>
           );
         },
         size: 130,
@@ -562,7 +646,17 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       {
         id: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
-        cell: ({ row }) => <span className="tabular-nums text-muted-foreground">{fmtInt(row.original.on_hand)}</span>,
+        cell: ({ row }) => {
+          const ln = row.original;
+          return (
+            <PlanNumberButton
+              value={fmtInt(ln.on_hand)}
+              label="Where this product is on hand right now"
+              onClick={() => setDialog({ kind: 'on_hand', line: ln })}
+              disabled={!ln.product_id}
+            />
+          );
+        },
         size: 85,
         enableSorting: false,
         meta: { headerTitle: 'On hand (context)' },
@@ -570,9 +664,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       {
         id: 'incoming_spo',
         header: ({ column }) => <DataGridColumnHeader title="Incoming SPO" column={column} />,
-        cell: ({ row }) => (
-          <span className="tabular-nums text-muted-foreground">{fmtInt(row.original.incoming_spo)}</span>
-        ),
+        cell: ({ row }) => {
+          const ln = row.original;
+          return (
+            <PlanNumberButton
+              value={fmtInt(ln.incoming_spo)}
+              label="What is already on the water for the site pools"
+              onClick={() => setDialog({ kind: 'spo', line: ln })}
+              // The drill reads by supplier AND product; without both there is nothing to
+              // ask for, so the figure stays plain text rather than opening an empty table.
+              disabled={!ln.product_id || !ln.supplier_id}
+            />
+          );
+        },
         size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Incoming SPO (context)' },
@@ -595,13 +699,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           }
           const keys = soKeysFor(ln);
           return (
-            <SoCoverageDrillPopover
-              title={ln.item_code ?? ln.product_name ?? 'This product'}
-              coverage={ln.so_coverage}
-              tickedKeys={keys}
-              total={tickedQty(ln, keys, qtyFor(ln))}
-              unassigned={Math.max(qtyFor(ln) - tickedQty(ln, keys, qtyFor(ln)), 0)}
-              onToggle={(key, on) => toggleCoverage(ln, key, on)}
+            <PlanNumberButton
+              value={fmtInt(tickedQty(ln, keys, qtyFor(ln)))}
+              label="Which demand this SPO is for - project by need-by date, then retail"
+              onClick={() => setDialog({ kind: 'so_coverage', line: ln })}
             />
           );
         },
@@ -612,10 +713,26 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       {
         id: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        cell: ({ row }) => renderLocationCell(row.original),
+        cell: ({ row }) => renderLocationCell(row.original, row),
         size: 220,
         enableSorting: false,
-        meta: { headerTitle: 'Location' },
+        meta: {
+          headerTitle: 'Location',
+          // `DataGridTable` renders this full width under any row whose `getIsExpanded()`
+          // is true, the same mechanism `PlanLinesGrid` uses for its per-warehouse panel.
+          // Only ONE column may carry it (the table takes the first it finds), and this is
+          // the one the chevron sits in.
+          expandedContent: (ln: SpoSuggestionLine) => (
+            <LocationSplitPanel
+              line={ln}
+              splits={splitsFor(ln)}
+              qty={qtyFor(ln)}
+              disabled={cannotSplit(ln)}
+              mismatch={splitMismatch.has(ln.shipment_line_id)}
+              onChange={(next) => setSplits(ln, next)}
+            />
+          ),
+        },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -626,7 +743,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     columns,
     data: lines,
     getRowId: (row) => row.shipment_line_id,
+    state: { expanded },
+    onExpandedChange: setExpanded,
+    getRowCanExpand: (row) => !cannotSplit(row.original),
     getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
@@ -858,6 +979,28 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             Schedule
           </Button>
         </div>
+        {view === 'table' ? (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => table.toggleAllRowsExpanded(true)}
+            >
+              <ChevronsUpDown className="size-4" aria-hidden />
+              Expand all
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => table.toggleAllRowsExpanded(false)}
+            >
+              <ChevronsDownUp className="size-4" aria-hidden />
+              Collapse all
+            </Button>
+          </div>
+        ) : null}
         {view === 'schedule' ? (
           <div className="flex items-center gap-2">
             <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
@@ -976,257 +1119,50 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       <CardFooter className="justify-end text-2xs text-muted-foreground">
         {includedCount} of {lines.length} line{lines.length === 1 ? '' : 's'} will create an SPO
       </CardFooter>
+
+      {dialog ? (
+        <PlanRowDialog
+          kind={dialog.kind}
+          productCode={dialog.line.item_code ?? dialog.line.product_name ?? EM_DASH}
+          productName={dialog.line.product_name}
+          context={dialogContext(dialog.kind, dialog.line)}
+          onOpenChange={(open) => {
+            if (!open) setDialog(null);
+          }}
+        >
+          {dialogBody(dialog.kind, dialog.line)}
+        </PlanRowDialog>
+      ) : null}
     </Card>
   );
 }
 
-/** Earliest-first: which of this line's demand (at its CURRENT split locations) the SPO qty
- *  actually serves - the "what SO am I covering" ask, cascaded client-side against the live,
- *  edited qty (never a server round-trip per keystroke). */
-function soTakesForLine(ln: SpoSuggestionLine, splits: SplitState[]) {
-  const out: (SpoDemandLine & { takenQty: number; warehouse_code: string | null })[] = [];
-  for (const split of splits) {
-    if (!split.warehouseId || split.qty <= 0) continue;
-    const location = ln.location_options.find((o) => o.warehouse_id === split.warehouseId);
-    if (!location) continue;
-    for (const t of cascadeTake(location.demand_lines, split.qty)) {
-      out.push({ ...t, warehouse_code: location.warehouse_code });
-    }
-  }
-  return out;
-}
-
 /**
- * Which POs this SPO draws from, oldest DOCUMENT first (Q8), each one tickable (AC-G1).
- *
- * The cell shows what the ticked ones cover and how many of them are on - untick the one
- * that is not really covering this container and the SPO falls to what the rest of them do.
- */
-function PoTakesDrillPopover({
-  title,
-  takes,
-  total,
-  tickedIds,
-  onToggle,
-}: {
-  title: string;
-  takes: SpoPoTake[];
-  total: number;
-  tickedIds: string[];
-  onToggle: (poLineId: string, on: boolean) => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          title="Which PO covers this, oldest purchase order first"
-        >
-          {fmtInt(total)}
-          <span className="text-2xs text-muted-foreground">
-            {tickedIds.length} of {takes.length} POs
-          </span>
-          <Info className="size-3.5 text-muted-foreground" aria-hidden />
-        </button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent align="start" className="w-80 space-y-2 p-3">
-          <p className="text-xs font-medium">{title} - covered by PO</p>
-          <div className="space-y-1.5">
-            {takes.map((t) => (
-              <label
-                key={t.po_line_id}
-                className="flex items-center justify-between gap-2 text-xs"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Checkbox
-                    checked={tickedIds.includes(t.po_line_id)}
-                    onCheckedChange={(checked) => onToggle(t.po_line_id, !!checked)}
-                    aria-label={`Draw from ${t.po_number}`}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium" title={t.po_number}>
-                      {t.po_number}
-                    </span>
-                    <span className="block truncate text-2xs text-muted-foreground">
-                      {t.supplier_name ?? EM_DASH}
-                      {t.po_date ? ` · doc ${t.po_date}` : ''}
-                      {t.expected_date ? ` · due ${t.expected_date}` : ''}
-                    </span>
-                  </span>
-                </span>
-                <span className="shrink-0 tabular-nums">{fmtInt(t.qty)}</span>
-              </label>
-            ))}
-          </div>
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-}
-
-/**
- * Which demand this SPO is being pointed at, tickable (Q4, AC-G3).
- *
- * Project rows first, then retail, in the order the server walked them - and the ticks it
- * pre-set are the answer for most containers. What no tick claims is stated as Unassigned
- * rather than quietly attached to the first order in the list.
- */
-function SoCoverageDrillPopover({
-  title,
-  coverage,
-  tickedKeys,
-  total,
-  unassigned,
-  onToggle,
-}: {
-  title: string;
-  coverage: SpoCoverageLine[];
-  tickedKeys: string[];
-  total: number;
-  unassigned: number;
-  onToggle: (key: string, on: boolean) => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          title="Which demand this SPO is for - project by need-by date, then retail"
-        >
-          {fmtInt(total)}
-          <Info className="size-3.5 text-muted-foreground" aria-hidden />
-        </button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent align="start" className="w-96 space-y-2 p-3">
-          <p className="text-xs font-medium">{title} - what is this SPO for</p>
-          <div className="space-y-1.5">
-            {coverage.map((c) => (
-              <label key={c.key} className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex min-w-0 items-center gap-2">
-                  <Checkbox
-                    checked={tickedKeys.includes(c.key)}
-                    onCheckedChange={(checked) => onToggle(c.key, !!checked)}
-                    aria-label={`Cover ${c.document ?? c.key}`}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">
-                      {c.document ?? EM_DASH}
-                      <span className="ms-1 font-normal text-muted-foreground">
-                        {c.kind === 'project' ? 'Project' : 'Retail'}
-                      </span>
-                    </span>
-                    <span className="block truncate text-2xs text-muted-foreground">
-                      {c.customer_name ?? EM_DASH}
-                      {c.warehouse_code ? ` · ${c.warehouse_code}` : ''}
-                      {c.required_date ? ` · needed ${c.required_date}` : ''}
-                    </span>
-                  </span>
-                </span>
-                <span className="shrink-0 tabular-nums">{fmtInt(c.qty)}</span>
-              </label>
-            ))}
-          </div>
-          {unassigned > 0 ? (
-            <p className="border-t pt-2 text-2xs text-muted-foreground">
-              {fmtInt(unassigned)} unassigned - free stock at the suggested warehouse.
-            </p>
-          ) : null}
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-}
-
-function SoCoveredDrillTrigger({
-  title,
-  takes,
-  total,
-}: {
-  title: string;
-  takes: (SpoDemandLine & { takenQty: number; warehouse_code: string | null })[];
-  total: number;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          title="Which open SO demand this SPO will serve, earliest first"
-        >
-          {fmtInt(total)}
-          <Info className="size-3.5 text-muted-foreground" aria-hidden />
-        </button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent align="start" className="w-96 space-y-2 p-3">
-          <p className="text-xs font-medium">{title} - what SO am I covering</p>
-          <div className="space-y-1.5">
-            {takes.map((t, i) => (
-              <div key={`${t.so_number}-${i}`} className="flex items-center justify-between gap-2 text-xs">
-                <div className="min-w-0">
-                  <div className="truncate font-medium" title={t.customer_name ?? ''}>
-                    {t.so_number ?? EM_DASH}
-                    {t.warehouse_code ? ` · ${t.warehouse_code}` : ''}
-                  </div>
-                  <div className="truncate text-2xs text-muted-foreground">
-                    {t.customer_name ?? EM_DASH}
-                    {t.agent_name ? ` · ${t.agent_name}` : ''}
-                    {t.required_date ? ` · needed ${t.required_date}` : ''}
-                  </div>
-                </div>
-                <span className="shrink-0 tabular-nums">{fmtInt(t.takenQty)}</span>
-              </div>
-            ))}
-          </div>
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-}
-
-/** Small icon-only trigger for the location cell (beside the split editor) - the same drill
- *  content as `SoCoveredDrillTrigger`, sized for a narrow row rather than a whole column. */
-function SoCoveredDrillPopover({ line, splits }: { line: SpoSuggestionLine; splits: SplitState[] }) {
-  const takes = soTakesForLine(line, splits);
-  if (!takes.length) return null;
-  const total = takes.reduce((sum, t) => sum + t.takenQty, 0);
-  return (
-    <SoCoveredDrillTrigger title={line.item_code ?? line.product_name ?? 'This product'} takes={takes} total={total} />
-  );
-}
-
-/**
- * The location control (fourth doctrine-correction ask, "I can create SPO to multiple
+ * Where a line's SPO lands (fourth doctrine-correction ask, "I can create SPO to multiple
  * locations"): zero, one or several destination rows, each an independent warehouse + qty,
- * validated to sum to the line's SPO qty. A popover rather than inline cells - a DataGrid row
- * has no room for an editable list of rows, and this mirrors the drill popovers already on
- * this table rather than inventing a new interaction.
+ * validated to sum to the line's SPO qty.
+ *
+ * In the EXPANDED ROW, full width, not a popover (R22, AC-G4). An editable list of rows in a
+ * popover is an editing surface behind a click: it clips at the viewport edge, it cannot be
+ * read beside the row it belongs to, and it hid the one figure that decides whether Create
+ * SPO is allowed. The row itself has the width for it.
+ *
+ * What it does NOT carry is the coverage list. Which orders this SPO is for is a decision of
+ * its own and belongs in the SO covered lightbox (captain, 27 Aug); repeating it here made
+ * two places to read the same walk, and they disagreed the moment one of them was stale.
  */
-function LocationSplitPopover({
+function LocationSplitPanel({
   line,
   splits,
   qty,
-  claimed,
   disabled,
-  triggerLabel,
   mismatch,
   onChange,
 }: {
   line: SpoSuggestionLine;
   splits: SplitState[];
   qty: number;
-  /** What the ticked demand accounts for, per warehouse - the rest of the split is free
-   *  stock. Both parts land in the SAME warehouse whenever the unassigned share rides at a
-   *  warehouse an order also needs, and then no quantity on this popover can tell them
-   *  apart. */
-  claimed: Map<string, number>;
   disabled: boolean;
-  triggerLabel: string;
   mismatch: boolean;
   onChange: (splits: SplitState[]) => void;
 }) {
@@ -1235,11 +1171,12 @@ function LocationSplitPopover({
     label: o.warehouse_code ?? o.warehouse_id,
   }));
   const total = splitsTotal(splits);
+  /** The remainder, which is what the SPO has not been given a destination for. Negative
+   *  means the rows ask for more than the SPO holds - the one state that has to shout. */
+  const unassigned = qty - total;
 
-  const updateRow = (index: number, patch: Partial<SplitState>) => {
-    const next = splits.map((s, i) => (i === index ? { ...s, ...patch } : s));
-    onChange(next);
-  };
+  const updateRow = (index: number, patch: Partial<SplitState>) =>
+    onChange(splits.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   const removeRow = (index: number) => onChange(splits.filter((_, i) => i !== index));
   const addRow = () => {
     const remaining = Math.max(qty - total, 0);
@@ -1248,65 +1185,38 @@ function LocationSplitPopover({
     onChange([...splits, { warehouseId: next?.warehouse_id ?? '', qty: remaining || 0 }]);
   };
 
+  if (disabled) {
+    return (
+      <div className="px-4 py-3 text-2xs text-muted-foreground">
+        No destination can be chosen for this line.
+      </div>
+    );
+  }
+
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          className={mismatch ? 'h-8 w-full justify-start border-destructive text-destructive' : 'h-8 w-full justify-start'}
-        >
-          <span className="truncate">{triggerLabel}</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverPortal>
-        <PopoverContent align="start" className="w-96 space-y-3 p-3">
-          <div className="flex items-center justify-between">
+    <div className="bg-muted/30 px-4 py-3">
+      {/* Its own scroll container, so the select + qty + remove row stays usable at 375px
+          without widening the grid it sits inside. */}
+      <ScrollArea>
+        <div className="min-w-[30rem] space-y-2">
+          <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium">
               {line.item_code ?? line.product_name ?? 'This product'} - destinations
             </p>
-            <span className={mismatch ? 'text-2xs font-medium text-destructive' : 'text-2xs text-muted-foreground'}>
+            <span
+              className={
+                mismatch ? 'text-2xs font-medium text-destructive' : 'text-2xs text-muted-foreground'
+              }
+            >
               {fmtInt(total)} / {fmtInt(qty)} split
             </span>
           </div>
-
-          {(() => {
-            const unassigned = Math.max(
-              qty - [...claimed.values()].reduce((sum, n) => sum + n, 0),
-              0,
-            );
-            if (unassigned <= 0 && claimed.size === 0) return null;
-            return (
-              <div className="space-y-1 rounded-md bg-muted/50 p-2 text-2xs">
-                <p className="font-medium">What this covers</p>
-                {[...claimed.entries()].map(([warehouseId, claimedQty]) => {
-                  const location = line.location_options.find(
-                    (o) => o.warehouse_id === warehouseId,
-                  );
-                  return (
-                    <p key={warehouseId} className="flex justify-between gap-2">
-                      <span>{location?.warehouse_code ?? 'Chosen location'}</span>
-                      <span className="tabular-nums">{fmtInt(claimedQty)}</span>
-                    </p>
-                  );
-                })}
-                {unassigned > 0 ? (
-                  <p className="flex justify-between gap-2 text-muted-foreground">
-                    <span>Unassigned</span>
-                    <span className="tabular-nums">{fmtInt(unassigned)}</span>
-                  </p>
-                ) : null}
-              </div>
-            );
-          })()}
 
           <div className="space-y-2">
             {splits.map((split, i) => {
               const location = line.location_options.find((o) => o.warehouse_id === split.warehouseId);
               return (
-                <div key={i} className="space-y-1 rounded-md border p-2">
+                <div key={i} className="space-y-1 rounded-md border bg-background p-2">
                   <div className="flex items-center gap-1.5">
                     <div className="min-w-0 flex-1">
                       <SearchableSelect
@@ -1315,6 +1225,7 @@ function LocationSplitPopover({
                         options={options}
                         onChange={(v) => updateRow(i, { warehouseId: v || '' })}
                         placeholder="Choose location"
+                        clearable
                       />
                     </div>
                     <Input
@@ -1322,6 +1233,7 @@ function LocationSplitPopover({
                       min={0}
                       step={1}
                       className="h-8 w-20 tabular-nums"
+                      aria-label={`Quantity for destination ${i + 1}`}
                       value={split.qty}
                       onChange={(e) => updateRow(i, { qty: Math.max(0, Number(e.target.value) || 0) })}
                     />
@@ -1349,6 +1261,17 @@ function LocationSplitPopover({
                 </div>
               );
             })}
+
+            <div
+              className={
+                unassigned < 0
+                  ? 'flex items-center justify-between gap-2 rounded-md border border-destructive px-2 py-1.5 text-xs font-medium text-destructive'
+                  : 'flex items-center justify-between gap-2 rounded-md border border-dashed px-2 py-1.5 text-xs text-muted-foreground'
+              }
+            >
+              <span>Unassigned</span>
+              <span className="tabular-nums">{fmtInt(unassigned)}</span>
+            </div>
           </div>
 
           <Button
@@ -1362,9 +1285,10 @@ function LocationSplitPopover({
             <Plus className="size-4" aria-hidden />
             Add location
           </Button>
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
+        </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+    </div>
   );
 }
 

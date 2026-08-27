@@ -15,12 +15,25 @@ Seeded PER COMPANY, the shape migration 327 established when `document_numbering
 document two companies share is not a series. Idempotent - a company that already has the rule
 is skipped, so a re-run never resets a counter that has already issued numbers.
 
+A company created AFTER this migration ran gets no row from it, which refused that company's
+first convert with `numbering_rule_missing`. The seed therefore lives in
+`app.services.numbering_defaults` and is shared with the service, which calls it for the
+writing company when the series is missing; this migration is one of its callers.
+
 Revision ID: 440_pl_draft_numbering
 Revises: 438_merge_price_supplier_sets
 Create Date: 2026-08-28
 """
 from alembic import op
 from sqlalchemy import text
+
+from app.services.numbering_defaults import (
+    INBOUND_SHIPMENT_DRAFT_DOC_TYPE,
+    INBOUND_SHIPMENT_DRAFT_NUMBER_DIGITS,
+    INBOUND_SHIPMENT_DRAFT_PREFIX_TEMPLATE,
+    INBOUND_SHIPMENT_DRAFT_RESET_POLICY,
+    seed_inbound_shipment_draft_rule,
+)
 
 
 revision = "440_pl_draft_numbering"
@@ -29,35 +42,24 @@ branch_labels = None
 depends_on = None
 
 
-DOC_TYPE = "inbound_shipment_draft"
-PREFIX_TEMPLATE = "PL-{yy}{month:02d}-"
-NUMBER_DIGITS = 3
-RESET_POLICY = "monthly"
+#: Re-exported so the callers that load this file by path (`scripts/bootstrap_env`, the
+#: numbering tests) keep reading the rule's shape off the migration that introduced it.
+DOC_TYPE = INBOUND_SHIPMENT_DRAFT_DOC_TYPE
+PREFIX_TEMPLATE = INBOUND_SHIPMENT_DRAFT_PREFIX_TEMPLATE
+NUMBER_DIGITS = INBOUND_SHIPMENT_DRAFT_NUMBER_DIGITS
+RESET_POLICY = INBOUND_SHIPMENT_DRAFT_RESET_POLICY
+
+__all__ = [
+    "DOC_TYPE",
+    "PREFIX_TEMPLATE",
+    "NUMBER_DIGITS",
+    "RESET_POLICY",
+    "seed_inbound_shipment_draft_rule",
+]
 
 
 def upgrade() -> None:
-    op.get_bind().execute(
-        text(
-            """
-            insert into document_numbering_rules
-                (id, company_id, doc_type, enabled, prefix_template, number_digits,
-                 next_value, start_value, reset_policy, created_at, updated_at)
-            select gen_random_uuid(), c.id, :doc_type, true, :prefix, :digits, 1, 1, :reset,
-                   now(), now()
-            from companies c
-            where not exists (
-                select 1 from document_numbering_rules r
-                where r.doc_type = :doc_type and r.company_id = c.id
-            )
-            """
-        ),
-        {
-            "doc_type": DOC_TYPE,
-            "prefix": PREFIX_TEMPLATE,
-            "digits": NUMBER_DIGITS,
-            "reset": RESET_POLICY,
-        },
-    )
+    seed_inbound_shipment_draft_rule(op.get_bind())
 
 
 def downgrade() -> None:

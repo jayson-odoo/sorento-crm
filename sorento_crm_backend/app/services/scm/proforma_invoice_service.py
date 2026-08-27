@@ -38,8 +38,14 @@ from app.models.scm import (
     ProformaInvoiceShipmentLink,
     SupplierProductCodeAlias,
 )
+from app.services.audit_service import log_audit
+from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.numbering_defaults import (
+    INBOUND_SHIPMENT_DRAFT_DOC_TYPE,
+    seed_inbound_shipment_draft_rule,
+)
 from app.services.numbering_service import NumberingService
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
@@ -78,12 +84,17 @@ _NO_CURRENCY = (
 #: uploaded through the existing `packing_list_service.apply` path same as any other.
 _DRAFT_SHIPMENT_STATUS = "draft"
 
-#: `NumberingService` doc_type for a draft shipment's own series - kept distinct from a real
-#: container's number (usually the container number itself, or `PRELOAD-...`) so the two can
-#: never collide. Falls back to a random suffix when no numbering rule is configured, same
-#: shape as `decision_service._draft_po_for_supplier`'s `PO-DRAFT-<hex8>`.
-_DRAFT_NUMBER_DOC_TYPE = "inbound_shipment_draft"
-_DRAFT_NUMBER_PREFIX = "SHIP-DRAFT"
+#: `NumberingService` doc_type for a draft packing list's own series - kept distinct from a
+#: real container's number (usually the container number itself, or `PRELOAD-...`) so the two
+#: can never collide. The rule behind it is `PL-{YYMM}-{NNN}`, defined once in
+#: `app.services.numbering_defaults` and seeded from there by migration 440, by
+#: `bootstrap_env`, and by `_draft_shipment_number` for a company that has no series yet.
+#:
+#: There is NO random fallback. It used to invent `SHIP-DRAFT-<hex8>` when the rule was
+#: missing, and because the rule had never been seeded that random suffix was what every
+#: converted packing list was actually called: two of them sort in no order, neither can be
+#: read down a phone, and nobody can tell which came first.
+_DRAFT_NUMBER_DOC_TYPE = INBOUND_SHIPMENT_DRAFT_DOC_TYPE
 
 #: Where an invoice's goods have got to. `split` is a real state, not a rounding of
 #: `converted`: one invoice legitimately sits in two containers (Q9), and until every line
@@ -970,10 +981,39 @@ def apply(
 
 
 def _draft_shipment_number(db: Session) -> str:
-    number = NumberingService(db).get_next_number(
-        _DRAFT_NUMBER_DOC_TYPE, _date.today(), commit_rule=False
-    )
-    return number or f"{_DRAFT_NUMBER_PREFIX}-{uuid.uuid4().hex[:8]}"
+    """The next `PL-YYMM-NNN` from the numbering rule, or a refusal naming what is missing.
+
+    Scoped to the writing company, the same one the row itself will be stamped with: a running
+    number printed on a document two companies share is not a series (migration 327). An
+    ambiguous scope resolves to `None`, which draws from whatever rule exists rather than
+    refusing a conversion over a scope question.
+
+    A company with no series of its own gets one HERE, in the caller's transaction, from the
+    same definition migration 440 seeds: 440 ran once, over the companies that existed at that
+    instant, so a company created afterwards had no rule and its first convert was refused with
+    `numbering_rule_missing` - a 500 on a screen where the operator had done nothing wrong. The
+    refusal is kept for the case it actually describes: a rule that EXISTS and still cannot
+    number (disabled in Setup), which is a decision somebody made and not an absence to fill in.
+    """
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
+
+    def _next() -> Optional[str]:
+        return NumberingService(db).get_next_number(
+            _DRAFT_NUMBER_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
+        )
+
+    number = _next()
+    if not number:
+        seed_inbound_shipment_draft_rule(db, company_id=company_id)
+        number = _next()
+    if not number:
+        raise AppException(
+            500,
+            "No numbering rule is configured for a packing list, so one cannot be numbered. "
+            "Add the 'inbound_shipment_draft' rule under System > Numbering.",
+            code="numbering_rule_missing",
+        )
+    return number
 
 
 def _product_base_uoms(db: Session, product_ids: set[str]) -> dict[str, Optional[str]]:
@@ -987,12 +1027,6 @@ def _product_base_uoms(db: Session, product_ids: set[str]) -> dict[str, Optional
         .all()
     )
     return {str(pid): (str(uom_id) if uom_id else None) for pid, uom_id in rows}
-
-
-#: A shipment a convert may still be ADDED to. Anything further along has left the yard as
-#: far as this screen is concerned, and adding goods to it would rewrite a document somebody
-#: is already working from.
-_ADDABLE_SHIPMENT_STATUSES = (_DRAFT_SHIPMENT_STATUS,)
 
 
 def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
@@ -1158,60 +1192,6 @@ def _quantities(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def draft_shipments(db: Session, *, supplier_id: Optional[str] = None) -> list[dict]:
-    """The packing lists a convert can be ADDED to (AC-F10).
-
-    A container is loaded over several days, and the second factory's invoice belongs in the
-    box the first one is already in - so the dialog offers the drafts that are still open
-    rather than only ever making a new one. `supplier_id` narrows it to the drafts that
-    already carry that factory's goods, which is the normal question; without it every open
-    draft is offered, for the mixed-container case.
-    """
-    q = (
-        db.query(InboundShipment)
-        .filter(InboundShipment.shipment_status.in_(_ADDABLE_SHIPMENT_STATUSES))
-        .order_by(InboundShipment.created_at.desc(), InboundShipment.id.desc())
-        .limit(50)
-    )
-    shipments = q.all()
-    if not shipments:
-        return []
-    ids = [str(s.id) for s in shipments]
-    rows = (
-        db.query(InboundShipmentLine.shipment_id, InboundShipmentLine.supplier_id, Supplier.supplier_name)
-        .outerjoin(Supplier, Supplier.id == InboundShipmentLine.supplier_id)
-        .filter(InboundShipmentLine.shipment_id.in_(ids))
-        .all()
-    )
-    names: dict[str, list[str]] = {}
-    supplier_ids: dict[str, set[str]] = {}
-    counts: dict[str, int] = {}
-    for shipment_id, line_supplier, name in rows:
-        counts[str(shipment_id)] = counts.get(str(shipment_id), 0) + 1
-        if line_supplier:
-            supplier_ids.setdefault(str(shipment_id), set()).add(str(line_supplier))
-        if name and name not in names.setdefault(str(shipment_id), []):
-            names[str(shipment_id)].append(name)
-
-    out: list[dict] = []
-    for shipment in shipments:
-        sid = str(shipment.id)
-        if supplier_id and str(supplier_id) not in supplier_ids.get(sid, set()):
-            continue
-        out.append(
-            {
-                "shipment_id": sid,
-                "shipment_number": shipment.shipment_number,
-                "shipment_date": (
-                    shipment.shipment_date.isoformat() if shipment.shipment_date else None
-                ),
-                "supplier_names": names.get(sid, []),
-                "lines": counts.get(sid, 0),
-            }
-        )
-    return out
-
-
 def _shipment_actor_name(db: Session, shipment_id: str) -> str:
     """Who created this container, by NAME.
 
@@ -1349,7 +1329,6 @@ def _over_capacity(
     db: Session,
     invoices: list[ProformaInvoice],
     placing: dict[str, float],
-    already_in_box: float = 0.0,
 ) -> list[str]:
     """One sentence per invoice that will not fit, naming both figures (AC-E5).
 
@@ -1358,10 +1337,8 @@ def _over_capacity(
     and goes in the box - which is the split Q9 exists for, and was unreachable while the
     gate read the whole invoice however little of it was moving.
 
-    `already_in_box` is what the target draft is holding before this convert adds to it. A
-    container is loaded over several days; the second factory's invoice fits on its own and
-    does not fit on top of the first one's, and that is exactly the question "add to this
-    packing list" asks.
+    Judged against an EMPTY box, because every convert opens a new one (Q6): there is
+    never anything already in it to load on top of.
 
     An invoice whose lines state NO volume is not over capacity - it is unmeasured, and
     refusing it would break the Kailu shape that has converted since G3b (AC-H3). Silence
@@ -1373,19 +1350,12 @@ def _over_capacity(
         placed_cbm = placing.get(str(invoice.id))
         if placed_cbm is None:
             continue
-        total = placed_cbm + already_in_box
-        fit = _fit(invoice, total, sizes_by_id, default_size)
+        fit = _fit(invoice, placed_cbm, sizes_by_id, default_size)
         if fit["over_by_cbm"]:
-            loaded = (
-                f" (this loads {_num(placed_cbm)} onto {_num(already_in_box)} already in it)"
-                if already_in_box
-                else ""
-            )
             out.append(
-                f"{invoice.pi_number} is {_num(total)} cbm and the "
+                f"{invoice.pi_number} is {_num(placed_cbm)} cbm and the "
                 f"{fit['container_size_code'] or 'container'} holds "
-                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm"
-                f"{loaded}."
+                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
             )
     return out
 
@@ -1414,71 +1384,31 @@ def _placing_volume(line: ProformaInvoiceLine, qty: float) -> Optional[float]:
     return None
 
 
-def _shipment_volume(db: Session, shipment_id: Optional[str]) -> float:
-    """What a draft is already holding, in cbm. 0 for a box that does not exist yet."""
-    if not shipment_id:
-        return 0.0
-    total = (
-        db.query(func.coalesce(func.sum(InboundShipmentLine.cbm), 0))
-        .filter(InboundShipmentLine.shipment_id == str(shipment_id))
-        .scalar()
-    )
-    return float(total or 0)
+def _record_over_capacity(
+    db: Session,
+    shipment_id: str,
+    over: list[str],
+    override_reason: Optional[str],
+    created_by: Optional[str],
+) -> None:
+    """Why a container was loaded past its planned volume, on the container's Timeline.
 
-
-def _target_shipment(db: Session, shipment_id: Optional[str]) -> Optional[InboundShipment]:
-    """The open draft this convert is being added to, or None for a new one (AC-F10).
-
-    Only a DRAFT can be added to. Anything further along has left the yard as far as this
-    screen is concerned, and adding goods to it would rewrite a document somebody is already
-    working from.
+    It used to be appended to `notes`, which is the operator's OWN field: the next person to
+    edit the container found a sentence there that nobody had typed, and a note they wrote
+    themselves sat beside it with nothing to tell the two apart. The decision belongs to the
+    record of what happened to this container, which is its audit trail (R17).
     """
-    if not shipment_id:
-        return None
-    if not _is_uuid(shipment_id):
-        raise AppException(422, "That packing list does not exist.", detail="target_shipment_id")
-    shipment = (
-        db.query(InboundShipment).filter(InboundShipment.id == str(shipment_id)).first()
+    reason = (override_reason or "").strip()
+    if not over or not reason:
+        return
+    log_audit(
+        db,
+        "inbound_shipments",
+        str(shipment_id),
+        "UPDATE",
+        user_id=created_by if _is_uuid(created_by) else None,
+        description=f"Converted over capacity: {' '.join(over)} Reason: {reason}",
     )
-    if shipment is None:
-        raise AppException(404, "That packing list does not exist.", detail="target_shipment_id")
-    if (shipment.shipment_status or "") not in _ADDABLE_SHIPMENT_STATUSES:
-        raise AppException(
-            422,
-            f"'{shipment.shipment_number or 'That packing list'}' is no longer a draft, so "
-            "nothing can be added to it.",
-            detail="target_shipment_id",
-        )
-    return shipment
-
-
-def _append_notes(existing: Optional[str], addition: str) -> str:
-    """Add to a container's story rather than replacing it."""
-    existing = (existing or "").strip()
-    if not existing:
-        return addition
-    if addition in existing:
-        return existing
-    return f"{existing} | {addition}"
-
-
-def _draft_notes(
-    pi_numbers: list[str], over: list[str], override_reason: Optional[str]
-) -> str:
-    """What this draft shipment is, and - when it was loaded past its planned volume - why.
-
-    The reason lands on the SHIPMENT rather than on the proforma invoice: the decision was
-    about this container, and the next person to open the packing list is the one who needs
-    to read it.
-    """
-    notes = "Draft from proforma invoice(s): " + ", ".join(pi_numbers)
-    if over and override_reason:
-        notes += (
-            " | Converted over planned capacity: "
-            + " ".join(over)
-            + f" Reason: {override_reason.strip()}"
-        )
-    return notes
 
 
 def convert_to_draft_shipment(
@@ -1489,9 +1419,8 @@ def convert_to_draft_shipment(
     override_capacity: bool = False,
     override_reason: Optional[str] = None,
     line_quantities: Optional[dict] = None,
-    target_shipment_id: Optional[str] = None,
 ) -> dict:
-    """One or more proforma invoices become ONE draft inbound shipment (the packing-list
+    """One or more proforma invoices become ONE NEW draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
     DRAFT inbound shipment pre-filled with their lines". Several PIs are allowed to come from
     DIFFERENT suppliers on purpose - a container is routinely one factory's PI joining three
@@ -1537,12 +1466,6 @@ def convert_to_draft_shipment(
     # invoice and both placed it, doubling what the office is asked to key in. The second
     # one now waits here and then sees the first one's work.
     db.query(ProformaInvoice.id).filter(ProformaInvoice.id.in_(ids)).with_for_update().all()
-    if target_shipment_id and _is_uuid(target_shipment_id):
-        # And the box everyone is loading INTO: the capacity gate reads what it already
-        # holds, and two converts adding to the same draft would both read it empty.
-        db.query(InboundShipment.id).filter(
-            InboundShipment.id == str(target_shipment_id)
-        ).with_for_update().all()
 
     # What is left to place. Since Q9 an invoice may go into two containers, so "already
     # converted" is no longer "has a link row" - it is "has nothing left", which is
@@ -1774,7 +1697,7 @@ def convert_to_draft_shipment(
 
     # Checked HERE, after the placed quantities are known and before the first write: the
     # question is whether what is being loaded fits in the box it is going into (AC-E5).
-    over = _over_capacity(db, invoices, placing, _shipment_volume(db, target_shipment_id))
+    over = _over_capacity(db, invoices, placing)
     if over and not override_capacity:
         raise AppException(
             409,
@@ -1791,75 +1714,49 @@ def convert_to_draft_shipment(
     uoms = _product_base_uoms(db, product_ids)
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
-    pi_numbers = sorted({inv.pi_number for inv in invoices})
 
-    shipment = _target_shipment(db, target_shipment_id)
-    if shipment is None:
-        shipment = InboundShipment(
-            id=_uuid(),
-            shipment_number=_draft_shipment_number(db),
-            shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
-            shipment_status=_DRAFT_SHIPMENT_STATUS,
-            created_by=created_by,
-            notes=_draft_notes(pi_numbers, over, override_reason if over else None),
-        )
-        db.add(shipment)
-        db.flush()
-    else:
-        # Adding to a draft somebody is already loading: its note gains this invoice rather
-        # than being replaced, so the container keeps the whole story of what went into it.
-        shipment.notes = _append_notes(
-            shipment.notes, _draft_notes(pi_numbers, over, override_reason if over else None)
-        )
+    # A NEW packing list, every time (Q6). "Add to an existing draft" is gone: a convert
+    # that could land in somebody else's box needed the box picking, and the pick was the
+    # dialog this screen no longer has.
+    shipment = InboundShipment(
+        id=_uuid(),
+        shipment_number=_draft_shipment_number(db),
+        shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
+        shipment_status=_DRAFT_SHIPMENT_STATUS,
+        created_by=created_by,
+    )
+    db.add(shipment)
+    db.flush()
+    # `notes` is left alone either way (R17): which invoices a container was drafted from is
+    # the Proforma invoices tab's answer, and it is a table's worth rather than a sentence.
+    _record_over_capacity(db, shipment.id, over, override_reason, created_by)
 
-    # What is already on the container, so a second invoice naming the same model ADDS to
-    # its line instead of colliding with the unique index on (shipment, product, supplier).
-    existing_lines: dict[tuple[str, Optional[str]], InboundShipmentLine] = {
-        (str(line.product_id), str(line.supplier_id) if line.supplier_id else None): line
-        for line in db.query(InboundShipmentLine)
-        .filter(InboundShipmentLine.shipment_id == shipment.id)
-        .all()
-    }
-
+    # The box is new, so nothing is on it yet: two invoices naming the same model were
+    # already merged into ONE group above, which is what the unique index on
+    # (shipment, product, supplier) needs.
     shipment_lines_by_key: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
     for key, group in groups.items():
-        line = existing_lines.get(key)
-        if line is not None:
-            line.quantity_shipped = (line.quantity_shipped or 0) + _whole(
-                group["quantity_shipped"]
-            )
-            if group["cbm"] is not None:
-                line.cbm = (Decimal(str(line.cbm)) if line.cbm is not None else Decimal("0")) + group["cbm"]
-            if group["cartons"] is not None:
-                line.cartons_count = (line.cartons_count or 0) + group["cartons"]
-            # A measurement already on the container's line stands: it may have been
-            # corrected by hand since, and a second invoice for the same model must not
-            # quietly put the supplier's original figure back.
-            for field, value in group["measurements"].items():
-                if getattr(line, field, None) is None:
-                    setattr(line, field, value)
-        else:
-            line = InboundShipmentLine(
-                id=_uuid(),
-                shipment_id=shipment.id,
-                product_id=group["product_id"],
-                supplier_id=group["supplier_id"],
-                # `inbound_shipment_lines.quantity_shipped` is an INTEGER column: a
-                # container ships whole pieces. The fraction is not lost - it is on the
-                # link, which is what the placement arithmetic reads.
-                quantity_shipped=_whole(group["quantity_shipped"]),
-                uom_id=uoms.get(group["product_id"]),
-                unit_cost=group["unit_cost"],
-                currency=group["currency"],
-                cbm=group["cbm"],
-                # `cartons_count` is NOT NULL with a default of 1, so an unstated carton
-                # count keeps that default rather than being written as 0 - which would read
-                # as a line that shipped in no box at all.
-                **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
-                **group["measurements"],
-                remarks="; ".join(group["remarks"]) if group["remarks"] else None,
-            )
-            db.add(line)
+        line = InboundShipmentLine(
+            id=_uuid(),
+            shipment_id=shipment.id,
+            product_id=group["product_id"],
+            supplier_id=group["supplier_id"],
+            # `inbound_shipment_lines.quantity_shipped` is an INTEGER column: a
+            # container ships whole pieces. The fraction is not lost - it is on the
+            # link, which is what the placement arithmetic reads.
+            quantity_shipped=_whole(group["quantity_shipped"]),
+            uom_id=uoms.get(group["product_id"]),
+            unit_cost=group["unit_cost"],
+            currency=group["currency"],
+            cbm=group["cbm"],
+            # `cartons_count` is NOT NULL with a default of 1, so an unstated carton
+            # count keeps that default rather than being written as 0 - which would read
+            # as a line that shipped in no box at all.
+            **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
+            **group["measurements"],
+            remarks="; ".join(group["remarks"]) if group["remarks"] else None,
+        )
+        db.add(line)
         shipment_lines_by_key[key] = line
     db.flush()
 

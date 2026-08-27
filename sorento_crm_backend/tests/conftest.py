@@ -258,6 +258,36 @@ def _seed_default_company_after_create(target, connection, **kw):  # noqa: ANN00
     )
 
 
+# Same gap, same fix, for the packing list's running number. `document_numbering_rules`
+# holds ROWS, not schema, so `create_all` produces the empty table and migration 440's seed
+# never runs on a test schema. Without the `inbound_shipment_draft` rule every container
+# created by a convert - or by `/new` without a number - is refused for having no series to
+# draw from, which reads as an unrelated regression in whatever suite hits it first.
+import uuid as _uuid_for_seed  # noqa: E402
+
+from app.models.numbering import DocumentNumberingRule as _NumberingRule  # noqa: E402
+from app.services import numbering_defaults as _numbering_defaults  # noqa: E402
+
+
+@_sa_scope_event.listens_for(_NumberingRule.__table__, "after_create")
+def _seed_packing_list_numbering_after_create(target, connection, **kw):  # noqa: ANN001
+    # The rule's shape comes from the one definition the migration and the service share,
+    # so a change to the series cannot leave the test schema numbering the old way.
+    connection.execute(
+        target.insert().values(
+            id=str(_uuid_for_seed.uuid4()),
+            company_id=_SORENTO_COMPANY_ID,
+            doc_type=_numbering_defaults.INBOUND_SHIPMENT_DRAFT_DOC_TYPE,
+            enabled=True,
+            prefix_template=_numbering_defaults.INBOUND_SHIPMENT_DRAFT_PREFIX_TEMPLATE,
+            number_digits=_numbering_defaults.INBOUND_SHIPMENT_DRAFT_NUMBER_DIGITS,
+            next_value=1,
+            start_value=1,
+            reset_policy=_numbering_defaults.INBOUND_SHIPMENT_DRAFT_RESET_POLICY,
+        )
+    )
+
+
 @_sa_scope_event.listens_for(_SAScopeSession, "after_begin")
 def _default_company_scope_for_tests(session, transaction, connection):  # noqa: ANN001
     if getattr(_company_scope, "_ENFORCE", True):

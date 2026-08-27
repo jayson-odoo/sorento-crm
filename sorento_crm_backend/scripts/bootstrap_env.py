@@ -422,6 +422,15 @@ def seed_scm_module_data() -> None:
     )
     module_436 = importlib.util.module_from_spec(spec_436)
     spec_436.loader.exec_module(module_436)
+    # 440 seeds the `inbound_shipment_draft` numbering rule (`PL-{YYMM}-{NNN}`). Nothing in
+    # the ORM produces a `document_numbering_rules` ROW, and without it every packing list
+    # created by a convert - or by `/new` without a number - is refused for having no series
+    # to draw from.
+    spec_440 = importlib.util.spec_from_file_location(
+        "_scm_seed_440", versions / "440_seed_inbound_shipment_draft_numbering.py"
+    )
+    module_440 = importlib.util.module_from_spec(spec_440)
+    spec_440.loader.exec_module(module_440)
 
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
@@ -435,6 +444,7 @@ def seed_scm_module_data() -> None:
         aliases += module_428.seed(conn)
         aliases += module_435.seed(conn)
         aliases += module_436.seed(conn)
+        module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "

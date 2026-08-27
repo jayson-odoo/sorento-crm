@@ -205,7 +205,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   // the operator to re-type the split they already chose.
   const [convertArgs, setConvertArgs] = useState<{
     lineQuantities: Record<string, number>;
-    targetShipmentId: string | null;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
@@ -401,7 +400,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   };
 
   const runConvert = async (
-    args: { lineQuantities: Record<string, number>; targetShipmentId: string | null } | null,
+    args: { lineQuantities: Record<string, number> } | null,
     reason?: string,
   ) => {
     setConvertArgs(args);
@@ -410,7 +409,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         invoiceIds: [id],
         overrideReason: reason,
         lineQuantities: args?.lineQuantities,
-        targetShipmentId: args?.targetShipmentId,
       });
       setOverCapacity(null);
       setOverrideReason('');
@@ -429,14 +427,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         );
       }
       toast.success(
-        `Draft shipment ${result.shipment_number ?? ''} created with ${result.lines_created} line${
+        `Packing list ${result.shipment_number ?? ''} created with ${result.lines_created} line${
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
       router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
       const code = (e as { code?: string | null })?.code ?? null;
-      const message = e instanceof Error ? e.message : 'Failed to draft a shipment';
+      const message = e instanceof Error ? e.message : 'Failed to create the packing list';
       if (code === 'over_capacity') {
         setOverCapacity(message);
         return;
@@ -1451,12 +1449,12 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         pending={convertToDraftShipment.isPending}
       />
 
-      {/* How much of this invoice goes into which packing list (AC-F10). */}
+      {/* How much of this invoice goes onto a container (AC-F10, Q9). Always a NEW draft
+          packing list: "add to an existing draft" is gone everywhere (Q6). */}
       <ConvertToPackingListDialog
         open={convertOpen}
         onOpenChange={setConvertOpen}
         invoiceIds={[id]}
-        supplierId={invoice.supplier_id}
         pending={convertToDraftShipment.isPending}
         onConvert={(args) => void runConvert(args)}
       />

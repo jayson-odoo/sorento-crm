@@ -1,6 +1,6 @@
 # PLAN: SCM fulfilment feedback, part 4 (loading plan list, supplier document fidelity, PI Start, packing list fixes, SPO planner redesign)
 
-**Status:** GRILLED round 2 (2026-08-27 late), Q1-Q7 ruled (section 11), awaiting GO. Nothing built.
+**Status:** BUILDING. S6, S5 and S7 part 1 (the expanded row) built on slot B (branch `feat/scm-fulfilment-feedback-p4-b`, 2026-08-28).
 **Lane:** worktree `.claude/worktrees/scm-fulfilment-p4`, branch `feat/scm-fulfilment-feedback-p4` off `origin/main` `741469185` (#353). No stack slot yet (:3000/:8000 = inline-decisions lane, :3050 = oi-draft, :3060 = reorder revamp).
 **UAC:** `scm-fulfilment-feedback-p4-acceptance-criteria.md`. **Review artifact:** `mockups/fulfilment-feedback-p4-plan.html` (lavish).
 **Predecessor:** `PLAN-scm-fulfilment-feedback.md` (part 3, MERGED #347). R1-R25 there stand unless a ruling below names one.
@@ -120,17 +120,35 @@ Taken instead: `_stock_context` is UNTOUCHED, and the drill's `spo` kind reads `
 
 **R14. One CTA "Start" with two items, Delete under a gear on its left.** Toolbar right cluster: **[gear] [Start ▾]**. Start menu: "Upload proforma invoice" (opens the two-step upload, R24) and "Convert N to packing list" (disabled with reason "Select invoices first" until rows are ticked; N = ticked count). Gear (`aria-label="More actions"`): "Export" (selection-gated, today's client export) and "Delete N" (destructive, `AlertDialog`, disabled without selection). The selection strip keeps "N selected · Clear" only; the bulk buttons "Convert N to draft shipment" and "Delete N" leave it. The words "draft shipment" disappear from this screen (toasts read "Packing list PL-2608-003 created with 12 lines").
 
+**BUILT 28 Aug (slot B).** The right cluster is `primaryAction` on `DataGridListToolbar`, which
+gained one prop shape it did not have: `primaryAction` may now be a render function receiving
+`{ openExport }` (the same escape hatch `bulkActionsSlot` already had), so the page's gear opens
+the toolbar's OWN selected-rows export dialog rather than a second copy of it. The list passes
+`exportConfig={false}` and `bulkActions={[]}`. `proformaBulkActions.ts` is deleted.
+
 **R15. Convert from the list proceeds directly.** No dialog: every ticked current, un-converted invoice places what it has left into ONE NEW draft packing list; result = toast + navigate to the packing list (skipped invoices named in the toast, as today). The only interruption is capacity: a 409 `over_capacity` opens the existing `OverCapacityDialog` ("This will not fit", reason required, "Convert anyway"). `ConvertToPackingListDialog` is removed from the list; the PI DETAIL keeps its Convert with the per-line quantity editor, because a partial placement (Q9 split) is a deliberate act made on one invoice. **"Add to existing draft" is dropped everywhere** (captain, Q6): `target_shipment_id` leaves the convert request, `useDraftShipments` and the target select go; a PI always opens a new draft.
+
+**BUILT 28 Aug (slot B).** `target_shipment_id`, `_target_shipment`, `_ADDABLE_SHIPMENT_STATUSES`,
+`_shipment_volume`, `draft_shipments` and `GET /proforma-invoices/draft-shipments` are gone
+(nothing else called them), the capacity gate judges an empty box, and the line writer no longer
+merges into a container's existing lines. `ConvertToPackingListDialog` stays as the PI DETAIL's
+line-quantity editor, minus the target select.
+
+**Found while building, FIXED 28 Aug under R16:** migration 440 seeds the
+`inbound_shipment_draft` numbering rule for the companies that existed when it ran, so a company
+created afterwards had no series and its first convert was refused with `numbering_rule_missing`.
+`_draft_shipment_number` now creates that company's series on the spot from the shared definition;
+the route suite's own seeding workaround is deleted.
 
 ## 6. Packing list fixes
 
-**R16. The draft number comes from a numbering rule, never a random hex.** `SHIP-DRAFT-46949e1c` is the fallback at `proforma_invoice_service.py:972-976` firing because no `document_numbering_rule` row exists for `inbound_shipment_draft`. Migration `442_seed_inbound_shipment_draft_numbering` seeds `PL-{YYMM}-{NNN}` (monthly sequence, company-scoped like 279's SCM decision rule); the random fallback is deleted, the service raises `AppException(code="numbering_rule_missing")` instead. `create_shipment` without a number uses the same rule (AC-F3.3 stands). The user renames the shipment number to the container number when the container is known (Details tab, editable, unchanged).
+**R16. The draft number comes from a numbering rule, never a random hex.** `SHIP-DRAFT-46949e1c` is the fallback at `proforma_invoice_service.py:972-976` firing because no `document_numbering_rule` row exists for `inbound_shipment_draft`. Migration `440_seed_inbound_shipment_draft_numbering` (revision id `440_pl_draft_numbering`, on `438_merge_price_supplier_sets`) seeds `PL-{YYMM}-{NNN}` (monthly, one rule per company like 327's quotation rule, which is what 279's rules became); the random fallback is deleted, the service raises `AppException(code="numbering_rule_missing")` instead. BUILT 28 Aug: this is the FIRST migration on the lane (S6 ran first), so S1 and S3 chain 441 / 442 onto it. The rule's definition lives in `app/services/numbering_defaults.py`, and the migration, `scripts/bootstrap_env`, the `after_create` hook in `tests/conftest.py` and the service all seed from that one copy (`create_all` builds the table and never the row); a company created AFTER 440 ran has its series created on the spot by `_draft_shipment_number`, in the caller's transaction, so `numbering_rule_missing` is kept only for a rule that exists and still cannot number (disabled in Setup). `create_shipment` without a number uses the same rule (AC-F3.3 stands). The user renames the shipment number to the container number when the container is known (Details tab, editable, unchanged).
 
 **R17. Conversion writes no notes.** `_draft_notes` ("Draft from proforma invoice(s): ...") is deleted; provenance lives on the Proforma invoices tab (AC-F3.2) and the Timeline. An over-capacity override keeps its reason: it becomes the Timeline entry "Converted over capacity: <figures>. Reason: <text>" (audit log row on the shipment, `__audit_track__` exists), not a notes string. `notes` stays the user's own field.
 
 **R18. Supplier selects show the name only.** `SupplierCombobox` label = `supplier_name`; `searchText` keeps the code so typing a code still finds it. Applies to the packing list Details tab, `/new`, the Shipment lines per-line factory select and the PI detail supplier select (same component).
 
-**R19. Edit stays on the tab it was pressed on.** On `/lines`, Edit puts the Shipment lines tab in edit mode in place and Save/Cancel leave the route unchanged; same for Details. Phase 1 reproduces the jump in the browser first (no redirect is visible in `layout.tsx`; the tab bar re-mounting or the pager is the suspect) and the fix lands with the AC.
+**R19. Edit stays on the tab it was pressed on.** On `/lines`, Edit puts the Shipment lines tab in edit mode in place and Save/Cancel leave the route unchanged; same for Details. **NOT REPRODUCIBLE at `8c5f087d6` (28 Aug, S6):** driven on the sibling :3070 stack from the list, into a draft packing list, onto Shipment lines, gear > Edit - the URL stayed on `/lines`, the tab stayed selected, and Save and Cancel both left it there (screenshots in the S6 report). The routed-tab record R25 of part 3 shipped is what fixed it; the jump the captain saw predates that. The slice lands the regression guard only (`packing-list-record.test.tsx`: Edit / Cancel / Save from `/lines` call neither `router.push` nor `router.replace`).
 
 **R20. The packing-list workbook prints the shipment and nothing else.** The `not_packed` rows ("Not packed - loading plan asked N", `consolidated_packing_list.py:642-653`) and the derived remarks (`NOT_ON_PLAN`, "Loading plan asked X, packed Y", `:188-206`) are deleted; REMARKS = the supplier's own remarks. A fidelity test opens `FSCU8103365.xlsx` (committed fixture) and asserts, cell by cell against a shipment built from that file: the 12-row header block, the two-row column header (labels, merges `I15:K15`, `A15:A16`...), widths (A 18.9, C 27.9, D 45.9, S 29.3...), row heights (data 35.1, subtotal 15.95), fonts (Calibri 12, bold header, bold red subtotals), number formats (`0.00;[Red]0.00` on L/M, `#,##0.00` on U, dd/mm/yyyy on B1:B3), formulas, the V-column block amount merged down the block, the `-` rule row, the SORENTO/MOCHA footer rows and the 订单号/柜号/封号 lines. Every difference the test finds is fixed in the builder.
 
@@ -146,6 +164,8 @@ Taken instead: `_stock_context` is UNTOUCHED, and the drill's `spo` kind reads `
 
 **R22. Locations live in the expanded row, full width; coverage lives in the SO covered lightbox.** Each line expands (chevron in the Location cell; cell text = "No location" / `BRW` / "3 locations", second line "N unassigned" as today). The expanded area is a small table: destination rows (warehouse `SearchableSelect`, qty input, remove), an "Unassigned" row (remainder, read-only, turns destructive when the split exceeds the SPO qty), "Add location". The "What this covers" list is NOT in the row: captain (27 Aug) wants SO coverage in the lightbox like PO covers, so the SO covered dialog carries per-line Location and the Unassigned footer. Toolbar gains Expand all / Collapse all (the revamp lane's `leftActions` prop on `DataGridListToolbar`, copied; deduped at merge). `LocationSplitPopover` is deleted. The split model and validation (`splitMismatch`, `overTicked`) are unchanged.
 
+**BUILT 28 Aug (slot B, part 1 of S7).** The Location cell is a chevron button (`aria-expanded`, text unchanged: "No location" / `BRW` / "3 locations" with "N unassigned" beneath) and the row's `meta.expandedContent` renders `LocationSplitPanel` full width: destination rows (clearable `SearchableSelect`, qty, remove), the Unassigned remainder (destructive when the rows ask for more than the SPO holds) and Add location, in their own horizontal scroll container for 375px. `SoCoveredDrillTrigger`, `SoCoveredDrillPopover` and `soTakesForLine` are deleted with the coverage list. The toolbar gained Expand all / Collapse all (`table.toggleAllRowsExpanded`). `PoTakesDrillPopover` and `SoCoverageDrillPopover` are UNTOUCHED, waiting for R21's shared dialog (part 2).
+
 ## 8. Slices, order, slots
 
 Phase 1 (FE against mocks, browser-verified) then Phase 2 (BE test-first) per slice. Two coder slots.
@@ -160,7 +180,7 @@ Phase 1 (FE against mocks, browser-verified) then Phase 2 (BE test-first) per sl
 | S6 | R16-R20: numbering seed 442, no notes + timeline reason, name-only supplier, edit-on-tab, workbook extras + fidelity test | 3 | B |
 | S7 | R21-R22: SPO planner lightboxes + expanded-row locations | 3 | B |
 
-~22 dev-days. Order A: S1 -> S2 -> S3. Order B: S6 -> S4 -> S5 -> S7 (S6 first: two of its items are verified defects). Migration chain as built: 438 (main's head at branch time) -> `440_pl_draft_numbering` (S6) -> `441_loading_plan_lifecycle` (S1). S3 and S4 take the next ids; re-check `alembic heads` before each migration commit. Dev DB: apply DDL via `Operations.context`, never stamp (shared-DB rule).
+~22 dev-days. Order A: S1 -> S2 -> S3. Order B: S6 -> S4 -> S5 -> S7 (S6 first: two of its items are verified defects). Migration chain as built: 438 (main's head at branch time) -> `440_pl_draft_numbering` (S6, committed first so the other lane can chain) -> `441_loading_plan_lifecycle` (S1) -> `442_notice_recipients_opens` (S3, re-chained onto 441 at the integration merge). One head after 442; 439 lands with #354. Dev DB: apply DDL via `Operations.context`, never stamp (shared-DB rule).
 
 ## 9. Cross-lane facts
 

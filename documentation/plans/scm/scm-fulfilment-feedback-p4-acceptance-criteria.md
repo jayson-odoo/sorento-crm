@@ -65,11 +65,11 @@ Every AC is checked in a real browser on the dev server (agent-browser, sidebar 
 
 ## F. Packing list (S6)
 
-- **AC-F1** A packing list created by convert or by `/new` without a number reads `PL-YYMM-NNN` (`PL-2608-001`, next `PL-2608-002`); the number stays editable on Details. Migration 442 seeds the rule; pytest asserts two conversions in one month increment and the random-hex path no longer exists (service raises `numbering_rule_missing` when the rule is absent).
+- **AC-F1** A packing list created by convert or by `/new` without a number reads `PL-YYMM-NNN` (`PL-2608-001`, next `PL-2608-002`); the number stays editable on Details. Migration 440 seeds the rule from the shared definition in `app/services/numbering_defaults.py` (`bootstrap_env` + the test `after_create` hook replay it), and a company created after that migration ran has its series created on the spot by the convert rather than a 500; pytest asserts two conversions in one month increment, a company with no rule numbering `PL-YYMM-001` then `-002`, and that the random-hex path no longer exists (the service raises `numbering_rule_missing` only for a rule that exists and is disabled).
 - **AC-F2** A converted packing list's Notes field is empty; the Proforma invoices tab and the Timeline carry the provenance.
 - **AC-F3** An over-capacity conversion writes a Timeline entry "Converted over capacity: <figures>. Reason: <text>"; Notes stays empty.
 - **AC-F4** Every supplier select on packing-list screens (Details, `/new`, per-line factory) and the PI detail shows the supplier NAME only; typing a supplier code still finds it.
-- **AC-F5** On `/procurement-management/packing-lists/{id}/lines`, gear > Edit keeps the URL on `/lines`, the lines become editable in place, and Save / Cancel keep the URL; same on Details. The pre-fix jump is recorded (screenshot in the evidence run).
+- **AC-F5** On `/procurement-management/packing-lists/{id}/lines`, gear > Edit keeps the URL on `/lines`, the lines become editable in place, and Save / Cancel keep the URL; same on Details. The jump did not reproduce at the branch point (part 3's routed-tab record had already fixed it); the run is recorded and a regression guard covers Edit / Cancel / Save.
 - **AC-F6** The downloaded packing list contains only the shipment's lines: no "Not packed - loading plan asked N" rows, no "Not on the loading plan" or "Loading plan asked X, packed Y" remarks; REMARKS = the line's own remarks.
 - **AC-F7** Fidelity test on `FSCU8103365.xlsx` (committed fixture): a shipment built from that file exports a workbook whose header block (A1:B12 labels, date formats `dd/mm/yyyy`), column header rows 15-16 (labels, merges), column widths, row heights (data 35.1, subtotal 15.95), fonts (Calibri 12; bold header; bold red subtotal), number formats (`0.00;[Red]0.00` L/M, `#,##0.00` U), formulas per line, V-column block amount merged down each block, the `-` rule row, the SORENTO/MOCHA footer and the 订单号/柜号/封号 rows match the reference cell by cell (allowing for the shipment's own values).
 
@@ -88,4 +88,4 @@ Every AC is checked in a real browser on the dev server (agent-browser, sidebar 
 - **AC-H1** Rank, Suggested qty formula, Outstanding / BRW On Hand / From SPO / To request cards, the schedule view and the unmatched-codes queue behave as in part 3 on a plan opened from the list.
 - **AC-H2** Existing supplier-request public pages for tokens issued before 441 still render (columns default to the no-file model).
 - **AC-H3** `tests/scm` failures on the branch equal the base's pre-existing set (bisect note in the PR).
-- **AC-H4** Single alembic head after 442; dev DB DDL applied via `Operations.context`, `alembic_version` untouched.
+- **AC-H4** Single alembic head after the last migration on the lane; dev DB DDL applied via `Operations.context`, `alembic_version` untouched.

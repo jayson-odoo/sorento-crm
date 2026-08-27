@@ -403,166 +403,45 @@ def test_both_split_rows_are_present_even_when_one_company_shipped_nothing(db):
 
 
 # --------------------------------------------------------------------------- #
-# what the supplier was asked for, against what arrived
+# R20 - the document prints the shipment, and no comparison against the plan
 # --------------------------------------------------------------------------- #
 
 
-def test_the_remarks_say_where_the_shipment_differs_from_the_loading_plan(db):
+def test_the_payload_compares_the_container_against_no_loading_plan(db):
+    """It used to. The remarks column carried "Loading plan asked 500, packed 490", the
+    factory carried the notice it was measured against, and a model the plan asked for and
+    nobody loaded was listed under the block.
+
+    All of it is gone (R20). This is the document the forwarder, the factories and the
+    clearance agent read, and a line on it for goods that never went into the container is
+    read as goods that shipped. The supplier notice itself is untouched - what was removed is
+    printing OUR reading of it on THEIR packing list.
+    """
     w = World(db)
-    notice = w.notice_for_kailu()
+    w.notice_for_kailu()
+
+    out = svc.build(db, str(w.shipment.id))
+
+    for factory in out["factories"]:
+        assert "not_packed" not in factory
+        assert "notice_id" not in factory
+        assert "loading_plan_id" not in factory
+        assert "has_pack_plan" not in factory
+        assert "notice_created_at" not in factory
+        assert "notice_sent_at" not in factory
+        for line in factory["lines"]:
+            assert "discrepancies" not in line
+
+
+def test_the_remarks_are_the_suppliers_own_words_and_only_those(db):
+    w = World(db)
+    w.notice_for_kailu()
 
     out = svc.build(db, str(w.shipment.id))
     kailu = _factory(out, "A-KAILU")
 
-    assert kailu["notice_id"] == str(notice.id)
-    assert kailu["loading_plan_id"] == str(notice.loading_plan_id)
-    # The LATEST notice (500), not the one from July that asked for 1000.
-    assert _line(kailu, "1TAP")["discrepancies"] == [
-        "Loading plan asked 500, packed 490 (short 10)"
-    ]
-    assert _line(kailu, "3MAT")["discrepancies"] == [
-        "Loading plan asked 100, packed 120 (over 20)"
-    ]
-    assert _line(kailu, "2BASIN")["discrepancies"] == ["Not on the loading plan"]
-    # The supplier's own note is kept apart from the words the system derived.
     assert _line(kailu, "1TAP")["remarks"] == "fragile"
-
-
-def test_what_was_asked_for_and_never_came_is_listed_rather_than_dropped(db):
-    w = World(db)
-    w.notice_for_kailu()
-
-    out = svc.build(db, str(w.shipment.id))
-    kailu = _factory(out, "A-KAILU")
-
-    assert kailu["not_packed"] == [
-        {
-            "product_id": str(w.never_packed.id),
-            "product_code": w.never_packed.product_code,
-            "product_name": w.never_packed.product_name,
-            "planned_qty": 100,
-        }
-    ]
-
-
-def test_a_factory_that_was_never_sent_a_plan_is_compared_against_nothing(db):
-    # Silence, not "Not on the loading plan" against every line, which would read as a
-    # container full of mistakes.
-    w = World(db)
-    w.notice_for_kailu()
-
-    out = svc.build(db, str(w.shipment.id))
-
-    for name in ("B-CAIZHOU", "Unassigned"):
-        factory = _factory(out, name)
-        assert factory["notice_id"] is None
-        assert factory["loading_plan_id"] is None
-        assert factory["not_packed"] == []
-        assert all(l["discrepancies"] == [] for l in factory["lines"])
-
-
-def test_a_quantity_that_matches_the_plan_says_nothing(db):
-    w = World(db)
-    w.notice(w.kailu, [(w.tap, 490)], created_at=datetime(2026, 8, 2, 9, 0, 0))
-
-    out = svc.build(db, str(w.shipment.id))
-
-    assert _line(_factory(out, "A-KAILU"), "1TAP")["discrepancies"] == []
-
-
-def test_a_notice_that_only_asked_for_production_is_not_a_pack_plan(db):
-    """`produce` lines are stock the factory still has to make.
-
-    A notice made entirely of them asked for nothing to be loaded, so there is nothing for
-    this container to be short of - comparing against it would mark every line "Not on the
-    loading plan" and read as a container full of mistakes. The notice is still named, so
-    the screen can say which document was looked at.
-    """
-    w = World(db)
-    notice = w.notice(
-        w.kailu,
-        [(w.tap, 500), (w.never_packed, 100)],
-        created_at=datetime(2026, 8, 1, 9, 0, 0),
-        kind="produce",
-    )
-
-    out = svc.build(db, str(w.shipment.id))
-    kailu = _factory(out, "A-KAILU")
-
-    assert kailu["notice_id"] == str(notice.id)
-    # Named, but not compared against: without this flag a silent line is indistinguishable
-    # from a line that matched its plan exactly.
-    assert kailu["has_pack_plan"] is False
-    assert all(l["discrepancies"] == [] for l in kailu["lines"])
-    assert kailu["not_packed"] == []
-
-
-def test_a_factory_says_whether_the_notice_it_names_is_a_pack_plan(db):
-    """`has_pack_plan` is true only when the notice actually asked for goods to be loaded.
-
-    Kailu was sent one; Caizhou was sent nothing at all. Both report a `notice_id` the screen
-    can name (Caizhou's being null), and only Kailu's is something a container can be short of.
-    """
-    w = World(db)
-    w.notice_for_kailu()
-
-    out = svc.build(db, str(w.shipment.id))
-
-    assert _factory(out, "A-KAILU")["has_pack_plan"] is True
-    assert _factory(out, "B-CAIZHOU")["has_pack_plan"] is False
-    assert _factory(out, "Unassigned")["has_pack_plan"] is False
-
-
-def test_the_notice_compared_against_is_the_one_the_container_could_have_been_packed_to(db):
-    """A notice is sent to a supplier, not to a container, so the date is the only link.
-
-    The container sailed on 1 Aug. A plan approved in September is a plan for the NEXT
-    container, and comparing this one against it would invent a shortfall in every line.
-    """
-    w = World(db)
-    in_time = w.notice(w.kailu, [(w.tap, 500)], created_at=datetime(2026, 8, 1, 9, 0, 0))
-    w.notice(w.kailu, [(w.tap, 900)], created_at=datetime(2026, 9, 15, 9, 0, 0))
-
-    out = svc.build(db, str(w.shipment.id))
-    kailu = _factory(out, "A-KAILU")
-
-    assert kailu["notice_id"] == str(in_time.id)
-    assert _line(kailu, "1TAP")["discrepancies"] == [
-        "Loading plan asked 500, packed 490 (short 10)"
-    ]
-
-
-def test_a_container_older_than_every_notice_falls_back_to_the_latest(db):
-    """Better a comparison against a later plan, said out loud, than no comparison at all."""
-    w = World(db)
-    w.notice(w.kailu, [(w.tap, 900)], created_at=datetime(2026, 9, 1, 9, 0, 0))
-    latest = w.notice(w.kailu, [(w.tap, 800)], created_at=datetime(2026, 9, 15, 9, 0, 0))
-
-    out = svc.build(db, str(w.shipment.id))
-    kailu = _factory(out, "A-KAILU")
-
-    assert kailu["notice_id"] == str(latest.id)
-
-
-def test_the_factory_says_when_the_notice_it_was_compared_against_was_written_and_sent(db):
-    """A comparison that looks wrong has to be traceable to the document it was made against."""
-    w = World(db)
-    notice = w.notice(
-        w.kailu,
-        [(w.tap, 500)],
-        created_at=datetime(2026, 8, 1, 9, 0, 0),
-        sent_at=datetime(2026, 8, 1, 9, 30, 0),
-    )
-
-    out = svc.build(db, str(w.shipment.id))
-
-    kailu = _factory(out, "A-KAILU")
-    assert kailu["notice_created_at"] == notice.created_at.isoformat()
-    assert kailu["notice_sent_at"] == "2026-08-01T09:30:00"
-    # A factory with no notice states both as nothing rather than omitting the keys.
-    caizhou = _factory(out, "B-CAIZHOU")
-    assert caizhou["notice_created_at"] is None
-    assert caizhou["notice_sent_at"] is None
+    assert _line(kailu, "3MAT")["remarks"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -649,9 +528,11 @@ def test_the_header_block_prints_the_container_and_its_paperwork(db):
     assert labels["CHINA AGENT : "] == "ONE TOUCH"
     assert labels["FREE DAYS : "] == "14 FREEDAYS"
     assert labels["DELIVERY WAREHOUSE : "] == "BRW"
-    assert labels["ETD :"] == "2026-07-23"
+    # Dates are written AS dates in the reference's own dd/mm/yyyy format (R20 fidelity),
+    # not as the ISO strings the payload carries - openpyxl reads one back as a datetime.
+    assert labels["ETD :"].date() == date(2026, 7, 23)
     # The REVISED eta, not the first-published one: `eta_delay_date` is the accurate figure.
-    assert labels["ETA : "] == "2026-07-27"
+    assert labels["ETA : "].date() == date(2026, 7, 27)
     # Every factory on board, in the order the blocks below run.
     assert labels["FACTORY :"] == f"{w.kailu.supplier_name}, {w.caizhou.supplier_name}"
 
@@ -680,7 +561,8 @@ def test_the_two_row_column_header_is_the_fscu_one(db):
     assert [ws["I16"].value, ws["J16"].value, ws["K16"].value] == ["L", "W", "H"]
     assert [ws[f"{c}15"].value for c in "LMNOPQRSTU"] == [
         "CBM\n/ CTN", "TOTAL CBM", "NW", "GW", "TOTAL NW", "TOTAL GW",
-        "LOGO", "REMARKS", "RMB", "TOTAL RMB",
+        # `TOTAL RM` is the reference workbook's own heading, kept as it is written there.
+        "LOGO", "REMARKS", "RMB", "TOTAL RM",
     ]
     # The lines scroll under the header rather than past it.
     assert ws.freeze_panes == "A17"
@@ -777,7 +659,7 @@ def test_every_block_subtotals_its_own_rows(db):
     assert ws[f"U{subtotal}"].value == f"=SUM(U{first}:U{first + 1})"
     # The factory's own amount sits beside its lines, merged down them.
     assert ws[f"V{first}"].value == f"=SUM(U{first}:U{first + 1})"
-    assert ws[f"V{subtotal}"].value == f"=V{first}"
+    assert ws[f"V{subtotal}"].value == f"=SUM(V{first})"
 
 
 def test_the_grand_total_sums_the_subtotals_and_never_the_lines_twice(db):
@@ -879,44 +761,27 @@ def test_a_container_with_no_number_falls_back_to_the_shipment_number(db):
     assert svc.export_filename(payload) == f"{w.shipment.shipment_number}-packing-list.xlsx"
 
 
-def test_the_workbook_states_what_was_asked_for_and_never_packed(db):
+def test_the_workbook_prints_only_what_is_on_the_container(db):
+    """R20 - a model the loading plan asked for and nobody loaded gets no row.
+
+    It used to get one, with an empty quantity and "Not packed - loading plan asked 100" in
+    REMARKS. On the document the forwarder and the clearance agent read, a row with a model
+    number on it is goods in the box.
+    """
     w = World(db)
     w.notice_for_kailu()
     payload = svc.build(db, str(w.shipment.id))
 
     ws = _sheet(payload)
-    r = _row_of(ws, "C", w.never_packed.product_code)
-
-    assert ws[f"F{r}"].value is None
-    assert ws[f"S{r}"].value == "Not packed - loading plan asked 100"
-
-
-def test_a_factory_that_loaded_only_mocha_goods_still_says_what_it_owes(db):
-    """The unpacked list hangs off the factory's FIRST block, not off its SORENTO one.
-
-    A factory whose whole shipment is MOCHA-branded has no SORENTO block at all, and a
-    list attached to one would simply vanish - the container would read as though nothing
-    had been left behind.
-    """
-    w = World(db)
-    # Caizhou ships one MOCHA line and nothing else, against a plan asking for two models.
-    db.query(InboundShipmentLine).filter(
-        InboundShipmentLine.shipment_id == w.shipment.id,
-        InboundShipmentLine.supplier_id == w.caizhou.id,
-    ).delete(synchronize_session=False)
-    db.flush()
-    w.line(w.caizhou, w.mocha_basin, qty=40, cartons=4)
-    w.notice(
-        w.caizhou,
-        [(w.mocha_basin, 40), (w.never_packed, 25)],
-        created_at=datetime(2026, 8, 1, 9, 0, 0),
-    )
-    payload = svc.build(db, str(w.shipment.id))
-
-    ws = _sheet(payload)
-    r = _row_of(ws, "C", w.never_packed.product_code)
-
-    assert ws[f"S{r}"].value == "Not packed - loading plan asked 25"
+    printed = [
+        str(cell.value)
+        for row in ws.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str)
+    ]
+    assert w.never_packed.product_code not in printed
+    assert not any("Not packed" in value for value in printed)
+    assert not any("loading plan" in value.lower() for value in printed)
 
 
 def test_a_container_with_no_lines_still_produces_a_readable_sheet(db):

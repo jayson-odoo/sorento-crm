@@ -13,7 +13,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtDate, fmtDecimal, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtDecimal, fmtInt } from '../../lib/format';
 import { useConsolidatedPackingList } from '../../hooks/useFulfilment';
 import {
   downloadPackingListExport,
@@ -28,13 +28,12 @@ import {
  * The container as one list, in the order Ms Tee reads it: factory by factory, each with its
  * own subtotal, then the grand total and the company split.
  *
- * She used to build this file by hand from two or three supplier packing lists. What made it
- * work by hand was the remarks column - where the shipment differs from the loading plan that
- * supplier was sent - so that column is derived here rather than left for her to re-check.
+ * She used to build this file by hand from two or three supplier packing lists.
  *
- * The not-packed rows sit UNDER their factory's grid rather than inside it: they are lines the
- * supplier did not ship, so giving them a quantity column would print a figure for something
- * that is not on the container.
+ * It prints the shipment and nothing else (R20). The comparison against the loading plan the
+ * supplier was sent - the derived remarks and the rows the plan asked for but nobody loaded -
+ * is gone: this is the document the forwarder and the factories read, and a line on it that
+ * never went into the container is read as goods that shipped. Remarks are the supplier's own.
  */
 
 /** Shares the page with the allocation grid; an empty key opts out of column persistence. */
@@ -186,24 +185,9 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
         id: 'remarks',
         header: ({ column }) => <DataGridColumnHeader title="Remarks" column={column} />,
         cell: ({ row }) => (
-          <div className="min-w-0">
-            {row.original.remarks ? (
-              <span className="block truncate" title={row.original.remarks}>
-                {row.original.remarks}
-              </span>
-            ) : null}
-            {/* Ours, not the supplier's: kept apart in colour so the two are never confused. */}
-            {row.original.discrepancies.map((d) => (
-              <span
-                key={d}
-                className="block truncate text-amber-600 dark:text-amber-500"
-                title={d}
-              >
-                {d}
-              </span>
-            ))}
-            {!row.original.remarks && !row.original.discrepancies.length ? EM_DASH : null}
-          </div>
+          <span className="block truncate" title={row.original.remarks ?? undefined}>
+            {row.original.remarks ?? EM_DASH}
+          </span>
         ),
         size: 320,
         enableSorting: false,
@@ -229,7 +213,6 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
           {factoryLabel(factory)}
         </h4>
         <div className="flex flex-wrap items-center gap-1.5">
-          <NoticeChip factory={factory} />
           <SubtotalChip label="qty" value={fmtInt(factory.subtotal.qty)} />
           <SubtotalChip label="ctn" value={fmtInt(factory.subtotal.cartons)} />
           <SubtotalChip
@@ -254,44 +237,7 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
           </ScrollArea>
         </div>
       </DataGrid>
-
-      {factory.not_packed.length ? (
-        <ul className="rounded-lg border border-dashed px-3 py-2">
-          {factory.not_packed.map((np) => (
-            <li key={np.product_id} className="truncate py-0.5 text-2xs text-muted-foreground">
-              <span className="font-medium">{np.product_code}</span> - not packed - loading plan
-              asked {fmtInt(np.planned_qty)}
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </section>
-  );
-}
-
-/**
- * Which loading plan the remarks column is comparing against, or that there is none.
- *
- * A discrepancy only means anything next to the plan it was measured from, and a factory that
- * was never sent one has an empty remarks column for a different reason than a factory that
- * packed its plan exactly. A third reason: the plan it was sent asked for production only, so
- * it holds no packing quantity and nothing was compared even though a plan exists.
- *
- * The date is when the plan was RAISED, not when it was sent, because that is the date the
- * server picked the plan by - a sent date can fall after the container and would make the
- * chip disagree with the comparison it labels.
- */
-function NoticeChip({ factory }: { factory: PackingListFactory }) {
-  const raised = factory.notice_created_at ?? factory.notice_sent_at;
-  const label = !factory.notice_id
-    ? 'no plan sent'
-    : factory.has_pack_plan
-      ? `vs plan of ${fmtDate(raised)}`
-      : 'plan asked for production only';
-  return (
-    <Badge variant="secondary" size="sm" className="font-normal text-muted-foreground">
-      {label}
-    </Badge>
   );
 }
 

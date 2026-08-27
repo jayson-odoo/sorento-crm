@@ -101,8 +101,6 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
     mutateAsync: writes.markAsRevision,
     isPending: false,
   }),
-  // The convert dialog offers this supplier's open drafts to add to (F10).
-  useDraftShipments: () => ({ data: [], isLoading: false }),
 }));
 
 vi.mock('../../../hooks/useSupplierCodeAliases', () => ({

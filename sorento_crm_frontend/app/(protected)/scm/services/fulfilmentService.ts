@@ -987,9 +987,10 @@ export async function getIncomingShipments(supplierId?: string | null): Promise<
  *  Auth on both: `scm.dashboard.view`. 200 with no factories on an empty container;
  *  404 only when the shipment id is unknown.
  *
- * `discrepancies` and `company` are DERIVED - the first from the loading plan the supplier
- * was sent, the second from the product's brand. Neither is ever typed in, which is why they
- * arrive as strings to print rather than as fields to edit.
+ * `company` is DERIVED from the product's brand - never typed in, which is why it arrives as
+ * a string to print rather than as a field to edit. The document prints the shipment and
+ * nothing else (R20): the comparison against the loading plan the supplier was sent used to
+ * add its own remarks and a list of what was never loaded, and both are gone.
  */
 export type PackingListCompany = 'SORENTO' | 'MOCHA';
 
@@ -1004,18 +1005,8 @@ export interface PackingListLine {
   cartons: number | null;
   /** Null when neither the supplier's file nor our catalogue dimensions give a volume. */
   cbm: number | null;
-  /** What the supplier wrote on the line, never our own words. */
+  /** What the supplier wrote on the line, and only that. */
   remarks: string | null;
-  /** Where this differs from the loading plan we sent that supplier. */
-  discrepancies: string[];
-}
-
-/** On the loading plan, absent from what the supplier actually loaded. */
-export interface PackingListNotPacked {
-  product_id: string;
-  product_code: string;
-  product_name: string | null;
-  planned_qty: number;
 }
 
 export interface PackingListTotals {
@@ -1036,23 +1027,7 @@ export interface PackingListFactory {
   supplier_id: string | null;
   supplier_code: string | null;
   supplier_name: string | null;
-  loading_plan_id: string | null;
-  /** Null when the supplier was never sent a loading plan, so nothing can be compared. */
-  notice_id: string | null;
-  /**
-   * Whether that plan actually asked for a packing quantity.
-   *
-   * A notice whose lines are all `produce` is a production instruction, not a loading plan:
-   * it exists, but there is nothing in it to compare a shipment against. Without this the
-   * screen would claim a comparison it never made.
-   */
-  has_pack_plan: boolean;
-  /** When that plan was raised, and when it actually reached the supplier. A shipment is
-   *  compared against a plan of a particular date, and an old plan is worth seeing. */
-  notice_created_at: string | null;
-  notice_sent_at: string | null;
   lines: PackingListLine[];
-  not_packed: PackingListNotPacked[];
   subtotal: PackingListTotals;
 }
 
