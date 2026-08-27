@@ -1,6 +1,6 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: Phase 3 review applied 28 Aug 2026 (blockers, should-fixes, tester xfails and nits from the review pass; see section 11). PR next.
+Status: DONE 28 Aug 2026. Phases 1-3 built, reviewed and browser-verified; PR #357 open, CI green. Awaiting merge.
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
