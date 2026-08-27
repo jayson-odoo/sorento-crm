@@ -36,14 +36,14 @@ Every AC is checked in a real browser on the dev server (agent-browser, sidebar 
 ## C. Send to supplier (S3)
 
 - **AC-C1** "Send to supplier" opens "Send this request" with a channel radio Email / Chat; the bare confirm AlertDialog is gone.
-- **AC-C2** Email: To chips prefilled with the supplier's email; the user can add addresses (invalid ones refused inline) and remove any; Send is disabled with zero recipients; the email goes to every chip; the notice row stores `recipients` (JSON list) and the Requests sent card lists them.
+- **AC-C2** Email: To chips prefilled with the supplier's email; the user can add addresses (invalid ones refused inline) and remove any; Send is disabled with zero recipients; the email goes to every chip (one `email_outbox` row per address, so one bounce cannot stop the rest); the notice row stores `recipients` (JSON list) and the Requests sent card lists them. A send that reaches the backend with zero addresses is a 422 `no_recipients` and writes nothing.
 - **AC-C3** Chat = WeChat: a searchable picker over Respond.io contacts on the WeChat channel, prefilled with the contact whose phone equals the supplier's phone; with no match the picker is empty and the hint reads "No WeChat contact for this supplier yet"; Send is disabled until a contact is picked. With no WeChat channel connected in the workspace the Chat option is disabled with that reason.
-- **AC-C4** A chat send goes through the composer's outbound path: within the 24h window a text with the link (xlsx attached where the channel allows), outside it the approved template; an outbox row is written in every case; the notice reads sent / failed with `last_error`.
-- **AC-C5** With no approved template and an out-of-window contact, the send is refused with that reason and nothing else changes.
+- **AC-C4** A chat send goes through the composer's outbound path (`respond_chat_template_service.send_chat_message_for`): within the 24h window a text with the link, outside it the approved template for the `supplier_request_chat` use case; an outbox row (`integration_log`, `respond_io`, outbound) is written in every case; the notice reads sent, or failed with `last_error` when Respond.io refused the send. **Amended 28 Aug:** the xlsx is NOT attached as chat media - the link carries both files, and no WeChat channel exists to establish what it accepts (trigger under R10).
+- **AC-C5** With no approved template and an out-of-window contact, the send is refused (422 `template_missing`) and nothing else changes: no notice row, and the supplier's existing live link is NOT retired. Same shape for `wechat_channel_missing` and `chat_contact_not_found`.
 - **AC-C6** One send writes ONE notice row for the chosen channel only; no `skipped` chat row appears any more (pytest on `request_and_notify`).
 - **AC-C7** The public page and its document downloads stamp `opened_at` (first), `last_opened_at`, `open_count` on the notice(s) of that token; the page still renders when the stamp fails (best-effort).
 - **AC-C8** The list column Opened and the Requests sent card show "Opened n times, last dd/mm HH:mm" / "Not opened yet"; the plan status is `sent`, never `opened`.
-- **AC-C9** Migration 441 adds `recipients` JSONB, `opened_at`, `last_opened_at`, `open_count` (default 0) to `supplier_notices`; single alembic head.
+- **AC-C9** Migration **442** (renumbered from 441: S1 and S6 hold 440/441 in this lane) adds `recipients` JSONB, `opened_at`, `last_opened_at`, `open_count` (default 0) to `supplier_notices`, and backfills `recipients` from the existing `recipient`; single alembic head.
 
 ## D. Supplier document fidelity (S4)
 
