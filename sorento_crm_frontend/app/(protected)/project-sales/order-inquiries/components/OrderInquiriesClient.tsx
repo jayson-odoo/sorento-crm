@@ -32,7 +32,6 @@ import {
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -61,7 +60,7 @@ import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
-import { deliveryMonthLabel, formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
+import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
 import { downloadOrderInquiryWorklistXlsx } from '../../_shared/services/orderInquiryService';
 import type {
@@ -540,17 +539,6 @@ export function OrderInquiriesClient() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">Order inquiries</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">
-            {`${(summary.data?.total_rows ?? total).toLocaleString()} rows`}
-          </Badge>
-          <Badge variant="outline">
-            {`${formatInquiryQty(summary.data?.total_qty) || '0'} qty`}
-          </Badge>
-          <Badge variant="warning" appearance="light">
-            {`${(summary.data?.by_state.raised ?? 0).toLocaleString()} still to link`}
-          </Badge>
         </div>
       </header>
 

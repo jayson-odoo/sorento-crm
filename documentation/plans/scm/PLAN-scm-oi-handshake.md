@@ -240,3 +240,19 @@ grant were deleted, and the slug now sits with **Admin, Purchasing and Purchasin
 Role**. On the data: purchase order `ZZTOI-PO-0001` (the tester's fixture) was re-imported
 at 22 / 12 rather than 20 / 10; SO415898's two SRTSA625A rows were acknowledged and the
 order gained revision 2 from the board walk above (its rows re-raised, no links to move).
+
+## 10. Captain's walk, 27 Aug (lane :3080): follow-ups, not built
+
+- **Link horizon.** Auto-link at acknowledge, Link now after an upload, and the manual
+  Link PO / Link SPO all take whatever open document can cover the row, whatever the row's
+  delivery date. A far-future order (the captain: "a 2030 SO") then eats a PO's quantity
+  that a nearer order needed. Wanted: before any link is made, a prompt for the latest SO
+  delivery date to link up to (default the horizon the reorder plan uses); rows due after
+  it are left Not linked and counted, never linked. One control, shared by the three paths.
+- **Rejected rows on the board.** A reject bounces the line to CS, but only the Order
+  Inquiries page (Acknowledgement = Rejected) shows it; the fulfilment board carries no
+  badge or count. CS finds out by going to look.
+- **UAT redo.** `scripts/uat_reset_so_planning.py --so <SO> [--rewind-book] [--apply]`
+  puts one order back to never-planned on a dev copy (inquiries, links, claims,
+  allocations, transfers, decisions, planning-change rows; `--rewind-book` restores the
+  lines a batch moved from that batch's own `from_json`). Dry run by default.
