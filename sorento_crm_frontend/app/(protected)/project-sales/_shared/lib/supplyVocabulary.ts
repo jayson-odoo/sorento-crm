@@ -701,9 +701,12 @@ export function contributionParts(
  * same switch the cell's colour bar uses, so a line amended from Buy to the shared pool moves
  * its Taken the moment the tick lands.
  *
- * Only a RESERVE or a BORROW is drawn from somewhere. A Buy is not held anywhere yet and an
- * incoming arrives on somebody else's document, so neither takes anything off a location's
- * pile - the same rule `movesOf` applies for the same reason.
+ * A BUY is not drawn from anywhere - it is not held yet - so it never appears here. Everything
+ * else does, INCOMING INCLUDED (the water ruling, 27 August 2026): what question 1 hands over
+ * off the water comes off the SPO qty of a row this very table lists, so leaving it out made
+ * the table contradict the suggestion above it ("Use own location 10 from BRW-SMC" beside
+ * "Taken 1"). Under the retired rung 1 the incoming genuinely was somebody else's document and
+ * this exclusion was right; it stopped being right when the SPO moved inside the group's net.
  *
  * KEYED BY WAREHOUSE CODE, so a quantity only shows up if the server listed that warehouse as
  * a row. The group's siblings and every site pool are always listed, so a suggestion can never
@@ -720,7 +723,7 @@ export function takenByLocation(
   for (const contribution of cell.contributions) {
     const { parts } = contributionParts(contribution, draft[contribution.key] ?? null);
     for (const part of parts) {
-      if (part.kind !== 'reserve' && part.kind !== 'borrow') continue;
+      if (part.kind === 'buy' || part.rung === 'buy') continue;
       const at = locationOf(part);
       if (!at) continue;
       minor.set(at, (minor.get(at) ?? 0) + toMinor(part.qty));

@@ -2185,6 +2185,21 @@ class FulfilmentBoardService:
         # date covers nothing and silence about it reads as "there is none".
         group_water = [] if outside_window else self.supply.group_water_for(fact)
         group_taken = took_at("group_take")
+        # WHAT WAS ACTUALLY DRAWN, per component: the quantity, the location, and whether it
+        # came off a floor or off the water. Read from `components` and not from the
+        # candidate list, because the last candidate is routinely drawn short (offer 10,
+        # need 9), and a sentence quoting the offer beside a component quoting the draw is
+        # two numbers for one fact.
+        group_drawn = [
+            (
+                component.source_location,
+                _dec(component.qty),
+                component.kind == TIMELY_SPO,
+            )
+            for component in components
+            if getattr(component, "rung", None) == "group_take"
+            and component.source_location
+        ]
         group_offered = sum((_dec(c.get("qty")) for c in group_take_candidates), _ZERO)
         add(
             "own",
@@ -2205,7 +2220,7 @@ class FulfilmentBoardService:
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
                 else self._group_take_why(
-                    outcome, group_take_candidates, fact, group_water
+                    outcome, group_take_candidates, fact, group_water, group_drawn
                 )
             ),
         )
@@ -2660,10 +2675,18 @@ class FulfilmentBoardService:
 
     @staticmethod
     def _group_take_note(candidates: List[Dict[str, Any]], fact: Any) -> Optional[str]:
+        """What each of the group's locations OFFERED, floor and water told apart.
+
+        A location routinely appears twice - what is on its floor and what is on its way -
+        and "BRW-SMC 1 · BRW-SMC 10" reads as a repeat rather than as two different piles.
+        The water half says so.
+        """
         if not candidates:
             return None
         shown = " · ".join(
-            f"{c['location']} {qty_text(_dec(c.get('qty')))}" for c in candidates[:3]
+            f"{c['location']} {qty_text(_dec(c.get('qty')))}"
+            + (" (on the water)" if c.get("water") else "")
+            for c in candidates[:3]
         )
         more = len(candidates) - 3
         return f"{shown} (+{more} more)" if more > 0 else shown
@@ -2674,6 +2697,7 @@ class FulfilmentBoardService:
         candidates: List[Dict[str, Any]],
         fact: Any,
         water: Sequence[Any] = (),
+        drawn: Sequence[Tuple[str, Decimal, bool]] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -2717,10 +2741,24 @@ class FulfilmentBoardService:
                 f"{qty_text(offer)} for this line, and none of it sits free at a location "
                 f"this line can draw from.{late}"
             )
-        # WHERE it came from, and whether it was floor or water: the two halves of this
-        # question are one walk, and "20 from BRW-IB, 20 on the water to MWH-IB" is a
-        # sentence a planner can check against the cell's own table.
-        drawn = ", ".join(
+        if outcome == "took":
+            # WHERE it came from, and whether it was floor or water: the two halves of this
+            # question are one walk, and "20 from BRW-IB, 20 on the water to MWH-IB" is the
+            # captain's own wording and a sentence a planner can check against the cell's
+            # own table.
+            taken_at = ", ".join(
+                (
+                    f"{qty_text(qty)} on the water to {location}"
+                    if is_water
+                    else f"{qty_text(qty)} from {location}"
+                )
+                for location, qty, is_water in drawn
+            ) or ", ".join(str(c["location"]) for c in candidates)
+            return (
+                f"The {fact.group_code} group nets {qty_text(net)}, leaving "
+                f"{qty_text(offer)} for this line; it was drawn as {taken_at}.{late}"
+            )
+        offered_at = ", ".join(
             (
                 f"{c['location']} (on the water)"
                 if c.get("water")
@@ -2728,14 +2766,9 @@ class FulfilmentBoardService:
             )
             for c in candidates
         )
-        if outcome == "took":
-            return (
-                f"The {fact.group_code} group nets {qty_text(net)}, leaving "
-                f"{qty_text(offer)} for this line; it was drawn at {drawn}.{late}"
-            )
         return (
             f"The {fact.group_code} group nets {qty_text(net)}, leaving {qty_text(offer)} "
-            f"for this line at {drawn}. {_WHOLE_LINE_RULE_DROPPED}{late}"
+            f"for this line at {offered_at}. {_WHOLE_LINE_RULE_DROPPED}{late}"
         )
 
     @staticmethod

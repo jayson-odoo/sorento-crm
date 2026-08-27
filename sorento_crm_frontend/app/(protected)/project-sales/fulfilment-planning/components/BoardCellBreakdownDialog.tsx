@@ -392,13 +392,21 @@ export function BoardCellBreakdownDialog({
         accessorFn: (row) => row.sources.map((source) => source.kind).join(' '),
         header: ({ column }) => <DataGridColumnHeader title="Sourced from" column={column} />,
         cell: ({ row }) => {
-          const strip = row.original.sources
-            .map(
-              (source) =>
-                `${sourceLabel(source, row.original.fulfilment_location)} ${source.qty}${sourceAt(
-                  source,
-                )}`,
-            )
+          // Merged per label AND location, in the order the ladder drew them. Question 1
+          // hands over TWO components at one location whenever part of the group's offer is
+          // on the water (a `reserve` off the floor and a `timely_spo` off the SPO): both
+          // read "Use own location", so an unmerged strip printed the same words twice with
+          // two quantities, which reads as a defect rather than as one draw in two forms.
+          const merged: { label: string; at: string; minor: number }[] = [];
+          for (const source of row.original.sources) {
+            const label = sourceLabel(source, row.original.fulfilment_location);
+            const at = sourceAt(source);
+            const seen = merged.find((m) => m.label === label && m.at === at);
+            if (seen) seen.minor += toMinor(source.qty);
+            else merged.push({ label, at, minor: toMinor(source.qty) });
+          }
+          const strip = merged
+            .map((m) => `${m.label} ${fromMinor(m.minor)}${m.at}`)
             .join(' · ');
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
           // because the SPO and its date are INSIDE the sentence (deviation 2), so the

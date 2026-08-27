@@ -166,7 +166,7 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         own_step = _step(contribution, "own")
         assert own_step["answer"] == "yes", "the group net offers it (section 1e/1d)"
         assert own_step["took"] == "40"
-        assert "on the water" in own_step["why"]
+        assert f"40 on the water to {own.warehouse_code}" in own_step["why"], own_step["why"]
         assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
             ("timely_spo", "group_take")
         ]
@@ -676,6 +676,9 @@ def test_the_water_is_drawn_at_the_location_it_is_coming_to_not_at_the_lines_own
         assert own_step["answer"] == "yes"
         assert own_step["took"] == "40"
         assert own_step["from"] == f"{own.warehouse_code}, {sibling.warehouse_code}"
-        assert f"{sibling.warehouse_code} (on the water)" in own_step["why"], own_step["why"]
+        assert (
+            f"20 from {own.warehouse_code}, 20 on the water to {sibling.warehouse_code}"
+            in own_step["why"]
+        ), own_step["why"]
         water_source = contribution["sources"][1]
         assert f"arriving {arrives.day} " in water_source["reason"], water_source["reason"]

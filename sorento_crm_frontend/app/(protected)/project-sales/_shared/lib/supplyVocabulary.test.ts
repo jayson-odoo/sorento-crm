@@ -799,6 +799,21 @@ describe('takenByLocation', () => {
     expect([...takenByLocation(cell([buy]), {})]).toEqual([]);
   });
 
+  it('counts what question 1 drew off the water at the row it came to', () => {
+    // The water ruling, 27 August 2026: part of the ownership group's offer is an SPO, and
+    // it comes off the SPO qty of a row this table already lists. Leaving it out made the
+    // table say "Taken 1" under a suggestion reading "Use own location 10 from BRW-SMC".
+    const mixed = line({
+      qty: '10',
+      sources: [
+        source({ kind: 'reserve', rung: 'group_take', qty: '1', location: 'BRW-SMC' }),
+        source({ kind: 'timely_spo', rung: 'group_take', qty: '9', location: 'BRW-SMC' }),
+      ],
+    });
+
+    expect([...takenByLocation(cell([mixed]), {})]).toEqual([['BRW-SMC', '10']]);
+  });
+
   it('leaves incoming supply out: it arrives, it is not taken off a pile', () => {
     const taken = takenByLocation(
       cell([
