@@ -13,8 +13,13 @@
  *         Body: { supplier_id, supplier_code, product_id }. Replaces any earlier ruling and
  *         RE-BINDS the rows already uploaded under that code - the counts come back, so the
  *         screen can say what the decision just moved.
+ *  POST   /api/v1/scm/supplier-code-aliases/dismiss          -> 201 SupplierCodeDismissed
+ *         Body: { supplier_id, supplier_code }. "None of ours": records a ruling with no
+ *         product, UNBINDS the rows already uploaded under that code, and takes it out of
+ *         the unmatched queue.
  *  DELETE /api/v1/scm/supplier-code-aliases/{id}             -> 200 { deleted, rebound_* }
- *         Forgets the ruling and puts those rows back to whatever the ladder says now.
+ *         Forgets the ruling - a match or a dismissal - and puts those rows back to
+ *         whatever the ladder says now.
  *  Auth: read `scm.dashboard.view`; both writes `scm.reorder.run`.
  *
  * A supplier writes their own spelling of our code - reordered tokens, a trap size ours
@@ -31,15 +36,20 @@ export type SupplierCodeRung =
   | 'token_set'
   | 'size_drop'
   | 'manual'
+  | 'dismissed'
   | 'alias';
 
 export interface SupplierCodeAlias {
   id: string;
   supplier_code: string;
-  product_code: string;
-  product_name: string;
-  /** `auto` for a bind the ladder worked out, `manual` for a person's own pick. */
-  source: 'auto' | 'manual';
+  /** Null on a dismissal: "none of ours" is a ruling that names no product. */
+  product_code: string | null;
+  product_name: string | null;
+  /**
+   * `auto` for a bind the ladder worked out, `manual` for a person's own pick,
+   * `dismissed` for a code ruled to be nothing we hold.
+   */
+  source: 'auto' | 'manual' | 'dismissed';
   matched_by: SupplierCodeRung | null;
   created_by: string | null;
   created_at: string | null;
@@ -111,6 +121,30 @@ export async function matchSupplierCode(body: {
     body: JSON.stringify(body),
   });
   return readJson<SupplierCodeAliasWritten>(res, 'Failed to record the match');
+}
+
+/** What comes back from a dismissal: the ruling, and what it just UNBOUND. */
+export interface SupplierCodeDismissed {
+  id: string;
+  supplier_code: string;
+  product_id: null;
+  product_code: null;
+  source: 'dismissed';
+  matched_by: 'dismissed';
+  rebound_stock_rows: number;
+  rebound_invoice_lines: number;
+}
+
+export async function dismissSupplierCode(body: {
+  supplier_id: string;
+  supplier_code: string;
+}): Promise<SupplierCodeDismissed> {
+  const res = await apiFetch('/api/v1/scm/supplier-code-aliases/dismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return readJson<SupplierCodeDismissed>(res, 'Failed to dismiss the code');
 }
 
 export async function forgetSupplierCodeMatch(id: string): Promise<void> {

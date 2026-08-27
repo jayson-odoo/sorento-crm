@@ -84,6 +84,15 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 - AC-F9 Packing list Details tab carries "Source proforma invoices": PI, supplier, invoice date, revision, lines, qty from this PI of its total, amount, Open; Lines tab has "From PI"; Timeline has "Created from PI-x, PI-y by {user}"; Documents tab lists the PI files.
 - AC-F10 Convert dialog pre-fills each line with its remaining qty  and offers "Add to existing draft packing list" listing this supplier's draft shipments; the link row stores the qty; a PI with any remainder reads Split, none reads converted.
 
+## F11. Supplier codes: one matching format (R16, R17)
+
+- AC-F11.1 The loading plan's "n codes match nothing we hold" queue is a DataGrid (fixed layout, resizable columns): Code | Supplier says | Packed | Product | Dismiss, with the count title and the "n packed" badge in the header. Usable and non-clipped at 375px (the grid scrolls in its own container) and at 1280px.
+- AC-F11.2 The Product cell is a server-searched, paginated, clearable `SearchableSelect`; picking a product records the match for THAT row's code straight away and the row leaves the queue. No "Match to product" dialog on this screen; the PI detail keeps the dialog for its Matched cell.
+- AC-F11.3 Dismiss on a row records a ruling with no product (`source = 'dismissed'`), takes the code out of the queue and UNBINDS the stock rows and PI lines already carrying it. It asks no confirmation: it deletes nothing and detaches nothing, and it is reversible.
+- AC-F11.4 The ladder refuses a dismissed code: the next stock-list or PI upload leaves it unmatched, with no automatic bind and no badge.
+- AC-F11.5 Below the grid, "n dismissed" with a Show toggle lists each dismissed code with an Undo (the existing Forget). Undo puts the code back in the queue and the ladder answers it again on the next upload; nothing else changes. Queue empty AND nothing dismissed renders no panel at all.
+- AC-F11.6 `POST /api/v1/scm/supplier-code-aliases/dismiss` takes `{supplier_id, supplier_code}` behind `scm.reorder.run`, answers 201 with `source: 'dismissed'`, `product_id: null` and the rebind counts; the database refuses a dismissal carrying a product and a match carrying none.
+
 ## G. SPO planner: choose the PO and the SO
 
 - AC-G1 PO covers drill lists takes ordered by `purchase_orders.issue_date` ascending, then line expected date, then PO number; each has a checkbox, default ticked.

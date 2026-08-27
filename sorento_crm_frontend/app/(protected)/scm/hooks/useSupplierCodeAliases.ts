@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  dismissSupplierCode,
   forgetSupplierCodeMatch,
   listSupplierCodeAliases,
   listUnmatchedSupplierCodes,
@@ -53,6 +54,26 @@ export function useMatchSupplierCode() {
             } already on file now point at it.`
           : `${written.supplier_code} is ${written.product_code}.`,
       );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * "None of ours." The code stops being asked about, and the rows it was on are unbound.
+ *
+ * The same invalidations as a match, for the same reason: a dismissal moves the stock rows
+ * and the invoice lines too, so every screen reading them is stale the moment it returns.
+ */
+export function useDismissSupplierCode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: dismissSupplierCode,
+    onSuccess: (written) => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
+      toast.success(`${written.supplier_code} will not be asked about again.`);
     },
     onError: (e: Error) => toast.error(e.message),
   });

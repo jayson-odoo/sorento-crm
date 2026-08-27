@@ -1,12 +1,20 @@
 /**
- * F11 / R16 - the queue of supplier codes nothing in the catalogue answers.
+ * F11 / R16 / R17 - the queue of supplier codes nothing in the catalogue answers.
  *
  * The consequence lands on the loading plan: a stock row with no product is stock the plan
  * cannot offer, so a supplier holding 400 pieces of something shows as nothing.
+ *
+ * What is pinned here is the FORMAT, because it is the one the delivery-schedule review
+ * already uses and the two must not drift: a grid, the product picked in the row itself
+ * rather than through a dialog, and a Dismiss beside it for the codes that are not ours at
+ * all - reversible, so it asks nothing before it acts.
+ *
+ * It is the shared DataGrid, so `useListingColumnPreferences` is stubbed - under jsdom
+ * nothing answers its fetch and the grid renders skeletons instead of rows (CLAUDE.md).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -31,14 +39,24 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), custom: vi.fn() },
 }));
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 const state = {
   rows: [] as unknown[],
+  aliases: [] as unknown[],
   match: vi.fn(),
+  dismiss: vi.fn(),
+  forget: vi.fn(),
 };
 
 vi.mock('../../hooks/useSupplierCodeAliases', () => ({
   useUnmatchedSupplierCodes: () => ({ data: state.rows, isLoading: false }),
+  useSupplierCodeAliases: () => ({ data: state.aliases, isLoading: false }),
   useMatchSupplierCode: () => ({ mutateAsync: state.match, isPending: false }),
+  useDismissSupplierCode: () => ({ mutateAsync: state.dismiss, isPending: false }),
+  useForgetSupplierCodeMatch: () => ({ mutate: state.forget, isPending: false }),
 }));
 
 vi.mock(
@@ -58,11 +76,13 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     id,
     value,
     onChange,
+    disabled,
     fetchOptions,
   }: {
     id?: string;
     value?: string;
     onChange?: (v: string) => void;
+    disabled?: boolean;
     fetchOptions?: (q: string, p: number) => Promise<{ value: string; label: string }[]>;
   }) => {
     const [options, setOptions] = React.useState<{ value: string; label: string }[]>([]);
@@ -74,6 +94,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         id={id}
         aria-label="Product"
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange?.(e.target.value)}
       >
         <option value="">Choose</option>
@@ -100,8 +121,21 @@ const row = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+const dismissedAlias = (over: Record<string, unknown> = {}) => ({
+  id: 'a-9',
+  supplier_code: 'THEIR-OWN-SPARE',
+  product_code: null,
+  product_name: null,
+  source: 'dismissed',
+  matched_by: 'dismissed',
+  created_by: 'Ms Tee',
+  created_at: '2026-08-27T02:00:00',
+  ...over,
+});
+
 beforeEach(() => {
   state.rows = [row()];
+  state.aliases = [];
   state.match = vi.fn().mockResolvedValue({
     id: 'a-1',
     supplier_code: 'SRTWC286-SH-250UF',
@@ -112,6 +146,17 @@ beforeEach(() => {
     rebound_stock_rows: 1,
     rebound_invoice_lines: 0,
   });
+  state.dismiss = vi.fn().mockResolvedValue({
+    id: 'a-2',
+    supplier_code: 'SRTWC286-SH-250UF',
+    product_id: null,
+    product_code: null,
+    source: 'dismissed',
+    matched_by: 'dismissed',
+    rebound_stock_rows: 1,
+    rebound_invoice_lines: 0,
+  });
+  state.forget = vi.fn();
 });
 
 describe('UnmatchedSupplierCodesPanel', () => {
@@ -121,29 +166,18 @@ describe('UnmatchedSupplierCodesPanel', () => {
     expect(screen.getByText('1 code matches nothing we hold')).toBeInTheDocument();
     expect(screen.getByText('SRTWC286-SH-250UF')).toBeInTheDocument();
     expect(screen.getByText(/连体马桶 · SORENTO/)).toBeInTheDocument();
-    // Twice: the header's total and this row's own figure.
-    expect(screen.getAllByText(/400 packed/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/400/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('says nothing at all when every code binds', () => {
+  it('says nothing at all when every code binds and nothing was dismissed', () => {
     state.rows = [];
     const { container } = render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
 
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('opens the picker for the code that was pressed', () => {
+  it('records the match from the row itself, against that row s code', async () => {
     render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
-
-    fireEvent.click(screen.getByRole('button', { name: /match to product/i }));
-
-    expect(screen.getByText(/SRTWC286-SH-250UF - 连体马桶/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Product')).toBeInTheDocument();
-  });
-
-  it('records the match against the supplier and the code it was opened for', async () => {
-    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
-    fireEvent.click(screen.getByRole('button', { name: /match to product/i }));
 
     // The picker is server-searched, so the option lands a microtask later - waiting for it
     // is the difference between testing the pick and testing a race.
@@ -152,7 +186,6 @@ describe('UnmatchedSupplierCodesPanel', () => {
       expect(select.querySelector('option[value="p-1"]')).toBeInTheDocument(),
     );
     fireEvent.change(select, { target: { value: 'p-1' } });
-    fireEvent.click(screen.getByRole('button', { name: /^match$/i }));
 
     await waitFor(() => expect(state.match).toHaveBeenCalledTimes(1));
     expect(state.match).toHaveBeenCalledWith({
@@ -160,5 +193,57 @@ describe('UnmatchedSupplierCodesPanel', () => {
       supplier_code: 'SRTWC286-SH-250UF',
       product_id: 'p-1',
     });
+  });
+
+  it('dismisses the code it was pressed for, and asks nothing first', async () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /^dismiss$/i }));
+
+    await waitFor(() => expect(state.dismiss).toHaveBeenCalledTimes(1));
+    expect(state.dismiss).toHaveBeenCalledWith({
+      supplier_id: 'sup-1',
+      supplier_code: 'SRTWC286-SH-250UF',
+    });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('counts what was dismissed, shows it on demand, and undoes it', () => {
+    state.aliases = [
+      dismissedAlias(),
+      // A real match is not a dismissal and is not counted here.
+      {
+        id: 'a-3',
+        supplier_code: 'SRTWC8357-RL-300',
+        product_code: 'SRTWC8357-300-RL',
+        product_name: 'One piece toilet',
+        source: 'manual',
+        matched_by: 'manual',
+        created_by: 'Ms Tee',
+        created_at: '2026-08-27T02:00:00',
+      },
+    ];
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    expect(screen.getByText('1 dismissed')).toBeInTheDocument();
+    expect(screen.queryByText('THEIR-OWN-SPARE')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /show/i }));
+    const listed = screen.getByText('THEIR-OWN-SPARE');
+    expect(listed).toBeInTheDocument();
+
+    fireEvent.click(
+      within(listed.parentElement as HTMLElement).getByRole('button', { name: /undo/i }),
+    );
+
+    expect(state.forget).toHaveBeenCalledWith('a-9');
+  });
+
+  it('keeps the dismissed line when the queue itself is empty', () => {
+    state.rows = [];
+    state.aliases = [dismissedAlias()];
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    expect(screen.getByText('1 dismissed')).toBeInTheDocument();
   });
 });
