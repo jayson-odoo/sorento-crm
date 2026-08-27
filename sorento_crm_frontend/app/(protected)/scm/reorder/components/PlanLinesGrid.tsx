@@ -94,6 +94,7 @@ import {
   type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
 import type { ChannelTrendEntry } from '../lib/trajectory';
+import type { PlanRowChoice, ResolvedRowChoice } from '../hooks/usePlanLines';
 
 /**
  * ONE grid for every line of a plan.
@@ -436,6 +437,22 @@ function GroupMembersPanel({
   );
 }
 
+/**
+ * The price the row is COSTED at: nothing while a new price is being asked for (AC-R13),
+ * the chosen supplier's own last price once the buyer switches supplier (AC-R14), and the
+ * engine's figure otherwise. Null is not zero - it is the reason the line cannot yet be
+ * weighed against a budget.
+ */
+function decidedUnitCost(line: PlanLine, choice: ResolvedRowChoice | undefined): number | null {
+  if (choice?.priceMode === 'ask_new') return null;
+  const code = choice?.supplierCode;
+  if (code && code !== line.supplier?.code) {
+    const picked = (line.alternatives ?? []).find((a) => a.value === code);
+    if (picked) return picked.unit_cost;
+  }
+  return line.unit_cost;
+}
+
 export function PlanLinesGrid({
   lines,
   decisions,
@@ -461,6 +478,8 @@ export function PlanLinesGrid({
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
   healthWindows,
+  choiceFor,
+  onChoose,
   onDecideLifecycle,
   staleAfterDays = 180,
   statusFilter: statusFilterProp = null,
@@ -529,6 +548,10 @@ export function PlanLinesGrid({
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   /** The windows the movement class was judged on, so the popup can say them. */
   healthWindows?: { sold_window_months?: number; bought_window_months?: number };
+  /** The price call + supplier the row is set to (AC-R13 / AC-R14). */
+  choiceFor?: (line: PlanLine) => ResolvedRowChoice;
+  /** Record a change to either. Absent = both controls are read-only. */
+  onChoose?: (line: PlanLine, patch: PlanRowChoice) => Promise<void> | void;
   /** Record (or withdraw) the buyer's keep-or-discontinue answer. Absent = read-only. */
   onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
   /** The age past which the business stops trusting a price. Shown, not implied. */
@@ -1201,12 +1224,22 @@ export function PlanLinesGrid({
           const line = row.original;
           if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
           const qty = decidedQty(line, decisions[line.id]) || line.order_qty;
-          const cost = decidedCost({ ...line }, { buy: qty });
+          // A row waiting on a new price has no cost yet either - carrying the old figure
+          // here while the Price column reads a dash would put two answers on one row.
+          const asking = choiceFor?.(line).priceMode === 'ask_new';
+          const cost = asking ? null : decidedCost({ ...line }, { buy: qty });
           // A price we do not hold is never rendered as a number: it is the reason the line
           // cannot be weighed against a budget. A dash rather than the words, so the row does
           // not repeat "No price" twice; the title carries the detail.
           return cost === null ? (
-            <span className="text-muted-foreground" title="No price on file, so this line cannot be costed">
+            <span
+              className="text-muted-foreground"
+              title={
+                asking
+                  ? 'Waiting on a new price, so this line cannot be costed yet'
+                  : 'No price on file, so this line cannot be costed'
+              }
+            >
               {EM_DASH}
             </span>
           ) : (
@@ -1231,12 +1264,16 @@ export function PlanLinesGrid({
         cell: ({ row }) => (
           <StopClick>
             <PlanPriceCell
-              unitCost={row.original.unit_cost}
+              unitCost={decidedUnitCost(row.original, choiceFor?.(row.original))}
               currency={row.original.currency}
               price={priceFor?.(row.original)}
               cheaper={cheaperFor?.(row.original) ?? null}
               staleAfterDays={staleAfterDays}
               purchasable={row.original.purchasable}
+              priceMode={choiceFor?.(row.original).priceMode ?? 'use_last'}
+              onPriceMode={
+                onChoose ? (mode) => void onChoose(row.original, { priceMode: mode }) : undefined
+              }
             />
           </StopClick>
         ),
@@ -1271,6 +1308,10 @@ export function PlanLinesGrid({
                 price={priceFor?.(row.original)}
                 cheaper={cheaperFor?.(row.original) ?? null}
                 purchasable={row.original.purchasable}
+                chosenCode={choiceFor?.(row.original).supplierCode ?? null}
+                onSupplierChange={
+                  onChoose ? (code) => void onChoose(row.original, { supplierCode: code }) : undefined
+                }
               />
             </StopClick>
           ),
@@ -1488,7 +1529,7 @@ export function PlanLinesGrid({
      coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
      levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
      onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
-     healthWindows,
+     healthWindows, choiceFor, onChoose,
      onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
   );
 

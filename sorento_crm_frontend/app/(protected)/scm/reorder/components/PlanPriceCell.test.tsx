@@ -8,7 +8,7 @@
  * item costs today - every claim is about our own ledger.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PlanPriceCell } from './PlanPriceCell';
 import type { PriceAdvice } from '../lib/priceAdvice';
@@ -179,5 +179,67 @@ describe('the change-supplier suggestion (S13e)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /price history/i }));
     expect(screen.getByText(/on a comparable basis/)).toBeInTheDocument();
+  });
+});
+
+
+describe('PlanPriceCell - the price switch (AC-R13)', () => {
+  const renderSwitch = (
+    mode: 'use_last' | 'ask_new',
+    onPriceMode = vi.fn(),
+    over: Partial<PriceAdvice> = {},
+  ) => {
+    render(
+      <PlanPriceCell
+        unitCost={20.37}
+        currency="USD"
+        price={advice(over)}
+        staleAfterDays={180}
+        purchasable
+        priceMode={mode}
+        onPriceMode={onPriceMode}
+      />,
+    );
+    return onPriceMode;
+  };
+
+  it('offers both calls, with the current one marked', () => {
+    renderSwitch('ask_new');
+
+    const [useLast, askNew] = screen.getAllByRole('radio');
+    expect(useLast).toHaveTextContent('Use last price');
+    expect(askNew).toHaveTextContent('Ask new price');
+    expect(askNew).toHaveAttribute('aria-checked', 'true');
+    expect(useLast).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('switching to the last price records the call', () => {
+    const onPriceMode = renderSwitch('ask_new');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Use last price' }));
+    expect(onPriceMode).toHaveBeenCalledWith('use_last');
+  });
+
+  it('asking for a new price shows no figure, because there is not one yet', () => {
+    renderSwitch('ask_new');
+
+    expect(screen.queryByText('USD 20.37')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /price history/i }));
+    expect(screen.getByText(/the draft PO goes out unpriced/i)).toBeInTheDocument();
+  });
+
+  it('using the last price shows it', () => {
+    renderSwitch('use_last');
+    expect(screen.getByText('USD 20.37')).toBeInTheDocument();
+  });
+
+  it('never prints the same two words twice - the pill IS the switch', () => {
+    renderSwitch('use_last');
+    expect(screen.getAllByText('Ask new price')).toHaveLength(1);
+  });
+
+  it('a price problem the switch cannot express still reaches the row', () => {
+    renderSwitch('use_last', vi.fn(), { advice: 'zero_cost', standing_cost: 0 });
+    expect(screen.getByText('Fix zero price')).toBeInTheDocument();
   });
 });

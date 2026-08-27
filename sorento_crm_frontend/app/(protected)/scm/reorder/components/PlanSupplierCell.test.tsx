@@ -7,7 +7,7 @@
  * about three times more - a wrong conclusion drawn from a correctly-fetched number.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import { PlanSupplierCell } from './PlanSupplierCell';
@@ -94,5 +94,83 @@ describe('PlanSupplierCell - the shortlist prices', () => {
 
     expect(screen.getByText('The only supplier linked to this product.')).toBeInTheDocument();
     expect(screen.queryByText('Also on the shortlist')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('PlanSupplierCell - the supplier select (AC-R14)', () => {
+  const options = [
+    { value: 'SUP-ACME', label: 'Acme Sanitary', unit_cost: 10, currency: 'MYR',
+      unit_cost_base: 10, lead_time_days: 14 },
+    option(),
+  ];
+
+  it('offers the product\u2019s own suppliers, the engine\u2019s proposal first', async () => {
+    render(
+      <PlanSupplierCell
+        supplier={chosen}
+        alternatives={options}
+        price={undefined}
+        cheaper={null}
+        purchasable
+        chosenCode="SUP-ACME"
+        onSupplierChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('combobox'));
+    expect(await screen.findByRole('option', { name: /Acme Sanitary/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Beta Supplies/ })).toBeInTheDocument();
+  });
+
+  it('picking the other supplier records its CODE, never an id', async () => {
+    const onSupplierChange = vi.fn();
+    render(
+      <PlanSupplierCell
+        supplier={chosen}
+        alternatives={options}
+        price={undefined}
+        cheaper={null}
+        purchasable
+        chosenCode="SUP-ACME"
+        onSupplierChange={onSupplierChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(await screen.findByRole('option', { name: /Beta Supplies/ }));
+    expect(onSupplierChange).toHaveBeenCalledWith('SUP-BETA');
+  });
+
+  it('the row reads the chosen supplier\u2019s own lead time, not the engine\u2019s', () => {
+    render(
+      <PlanSupplierCell
+        supplier={chosen}
+        alternatives={options}
+        price={undefined}
+        cheaper={null}
+        purchasable
+        chosenCode="SUP-BETA"
+        onSupplierChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('SUP-BETA, 21 day lead')).toBeInTheDocument();
+    expect(screen.queryByText('SUP-ACME, 14 day lead')).not.toBeInTheDocument();
+  });
+
+  it('offers no select when the product has only one supplier', () => {
+    render(
+      <PlanSupplierCell
+        supplier={chosen}
+        alternatives={[options[0]]}
+        price={undefined}
+        cheaper={null}
+        purchasable
+        onSupplierChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   });
 });

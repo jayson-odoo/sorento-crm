@@ -95,6 +95,9 @@ export interface StockTakeOut {
   qty: number;
 }
 
+/** How the row is costed: what we last paid, or a price still to be asked for. */
+export type PlanRowPriceMode = 'use_last' | 'ask_new';
+
 /** Body of `POST .../recommendations/{rec_id}/decision`. */
 export interface RecordPlanRowDecisionPayload {
   kind: PlanRowDecisionKind;
@@ -103,6 +106,10 @@ export interface RecordPlanRowDecisionPayload {
   po_qty?: number;
   po_refs?: string[];
   reason_text?: string;
+  /** AC-R13 / AC-R14. The supplier travels as a CODE - no UUID crosses the wire. The
+   *  backend re-reads that supplier's last price itself, so no price is sent. */
+  price_mode?: PlanRowPriceMode;
+  supplier_code?: string;
 }
 
 /** The persisted row decision, as the backend returns it (record, clear-idempotent
@@ -115,6 +122,15 @@ export interface PlanRowDecision {
   po_qty: number | null;
   po_refs: string[];
   reason_text: string | null;
+  /** The buyer's price call. `use_last` on a decision that never made one. */
+  price_mode: PlanRowPriceMode;
+  /** The supplier the BUYER chose, when they overrode the engine's. Null = the
+   *  recommendation's own proposed supplier stands. */
+  supplier_code: string | null;
+  supplier_name: string | null;
+  /** What the row is costed at. Null under `ask_new` - not a price of zero. */
+  unit_cost: number | null;
+  lead_time_days: number | null;
   /** Staged like Accept/Adjust - populated only once Confirm decisions has drafted
    *  the buy portion into a PO. Null until then. */
   draft_po_number: string | null;
