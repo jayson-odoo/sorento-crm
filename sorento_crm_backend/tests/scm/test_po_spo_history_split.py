@@ -459,18 +459,27 @@ def test_the_line_level_sales_order_becomes_a_claim_that_names_the_item(db, impo
     assert claim.source == "po_history"
 
 
-def test_the_import_never_invents_a_supplier(db, catalogue, blank_book):
+def test_a_creditor_this_export_names_is_created_rather_than_dropped(db, catalogue,
+                                                                    blank_book):
     """This export carries the creditor's NAME and no creditor code.
 
-    `suppliers.supplier_code` is unique and NOT NULL, so a supplier could only be created
-    here by inventing its code - which is how a supplier master stops meaning anything.
+    Captain's ruling, 28 Aug 2026: a creditor the master has never seen is BACK-CREATED
+    here, under a code slugged from the name, exactly as the outstanding purchase-order
+    upload does it. Left unmatched, its orders were written unlinked - and an expediting
+    list cannot say who is late about an order that belongs to nobody.
+
+    Asserted as "the master grew by exactly what the job reported", not as a named
+    supplier: which of these 2023 creditors a given database already holds is a fact about
+    the environment (several on the local prod copy, none in CI).
     """
     before = db.query(Supplier).count()
 
-    svc.apply(db, STRUCTURED.read_bytes())
+    out = svc.apply(db, STRUCTURED.read_bytes())
     db.flush()
 
-    assert db.query(Supplier).count() == before
+    assert db.query(Supplier).count() == before + out["suppliers_created"]
+    for name in out["suppliers_created_codes"]:
+        assert db.query(Supplier).filter(Supplier.supplier_name == name).first() is not None
 
 
 def test_each_order_is_linked_to_exactly_what_the_matcher_resolved(db, catalogue, blank_book):
@@ -484,24 +493,33 @@ def test_each_order_is_linked_to_exactly_what_the_matcher_resolved(db, catalogue
     parsed = read_purchase_history(STRUCTURED.read_bytes(),
                                    AliasResolver.for_doc_type(db, STRUCTURED_DOC_TYPE))
     names = {o.supplier_name for o in parsed.orders if o.supplier_name}
-    expected = svc._suppliers_by_name(db, names)
+    expected, ambiguous = svc._match_creditors(db, names)
 
     out = svc.apply(db, STRUCTURED.read_bytes())
     db.flush()
 
     for order in parsed.orders:
+        if not order.supplier_name:
+            continue
         written = (
             _allocations(db, order.po_number)[0].supplier_id
             if order.doc_family == "spo"
             else _order(db, order.po_number).supplier_id
         )
         match = expected.get(order.supplier_name)
-        if match is None:
-            assert written is None, "an unmatched creditor was linked to something"
+        if match is not None:
+            assert str(written) == str(match.id)
+        elif order.supplier_name in ambiguous:
+            # Held twice already, so there is no honest row to pick and a third is not
+            # invented. Reported for somebody to merge instead.
+            assert written is None, "an ambiguous creditor was linked to something"
             assert order.supplier_name in out["unmatched_creditors"]
         else:
-            assert str(written) == str(match.id)
-    assert out["unmatched_creditor_count"] == len(names) - len(expected)
+            # Nobody held it, so this upload created it - named as the file names it, with
+            # AutoCount's currency note folded away.
+            created = db.query(Supplier).filter(Supplier.id == str(written)).one()
+            assert created.supplier_name == svc._clean_creditor_name(order.supplier_name)
+    assert out["unmatched_creditor_count"] == len(ambiguous)
 
 
 def test_a_trailing_currency_marker_is_folded_away_and_a_country_is_not(db):

@@ -36,6 +36,15 @@ Two things this service refuses to do:
     catalogue stops meaning anything.
   * **Guess a line-level SO link.** The `**SO:174830**` notes are order-level (see the
     reader), so the claims written here carry no item code.
+
+A creditor is the opposite case, and since the captain's ruling of 28 Aug 2026 this channel
+DOES back-create one - by its code where the file states one, else by its cleaned name under
+a generated code, exactly as the outstanding purchase-order upload does (the rule itself
+lives in `supplier_back_create`, so the two books cannot drift). A supplier named on a real
+purchase order is evidence the supplier exists, where an unknown item code is evidence of a
+typo; and an order with no creditor at all can be neither chased nor reconciled. The one
+creditor this still refuses to create is an AMBIGUOUS name - a company the master already
+holds twice, under one code per currency account.
 """
 from __future__ import annotations
 
@@ -69,6 +78,11 @@ from app.services.scm.po_listing_reader import (
 from app.services.scm.purchase_history_reader import (
     STRUCTURED_DOC_TYPE,
     read_purchase_history,
+)
+from app.services.scm.supplier_back_create import (
+    CREATED_SUPPLIERS_LISTED,
+    back_create_supplier,
+    supplier_slug,
 )
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -133,6 +147,21 @@ _CURRENCY_SUFFIXES = frozenset({
 })
 
 
+def _clean_creditor_name(name: str) -> str:
+    """The creditor's name with AutoCount's trailing currency note removed.
+
+    What a back-created supplier is NAMED, so the master holds `XIAMEN TAIYANG TECHNOLOGY
+    CO.,LTD` rather than one row per currency the client happens to buy in. The case the file
+    used is kept: this is the display name, not the comparison key.
+    """
+    text = " ".join((name or "").split())
+    if text.endswith(")") and "(" in text:
+        head, _, tail = text.rpartition("(")
+        if tail[:-1].upper() in _CURRENCY_SUFFIXES:
+            return head.strip()
+    return text
+
+
 def _creditor_key(name: str) -> str:
     """The comparison key for a creditor NAME.
 
@@ -141,41 +170,45 @@ def _creditor_key(name: str) -> str:
     account's currency. Folding that away is what stops one supplier reading as two, and the
     currency list above is deliberately the ONLY thing folded.
     """
-    text = " ".join((name or "").upper().split())
-    if text.endswith(")") and "(" in text:
-        head, _, tail = text.rpartition("(")
-        if tail[:-1] in _CURRENCY_SUFFIXES:
-            return head.strip()
-    return text
+    return _clean_creditor_name(name).upper()
 
 
-def _suppliers_by_name(db: Session, names: set[str]) -> dict[str, Supplier]:
-    """Creditors matched by NAME, for the export that carries no creditor code.
+def _match_creditors(db: Session,
+                     names: set[str]) -> tuple[dict[str, Supplier], set[str]]:
+    """Creditors matched by NAME, and the names that match more than one supplier.
 
-    Never creates. `suppliers.supplier_code` is unique and NOT NULL, so a supplier could only
-    be created from this file by inventing its code - and an invented code is a supplier
-    nobody can reconcile against AutoCount, on a master that already exists. The banded
-    report DOES carry the code, which is why it may create; this one cannot, so an unmatched
-    creditor is reported and its orders are written unlinked. The quantity and the date, which
-    are what history is for, are true either way.
+    Two answers because they have two different fates. A name nothing holds is BACK-CREATED
+    (captain, 28 Aug 2026 - the same rule the outstanding purchase-order upload applies, in
+    `supplier_back_create`): the structured export states the creditor and never its code, so
+    leaving it unmatched wrote the order unlinked, and an order with no creditor cannot be
+    chased or reconciled. The generated code is a slug of the name; it is reconcilable against
+    AutoCount through the NAME, which is the only identity this export states.
 
-    An AMBIGUOUS name resolves to nothing. Two supplier rows can fold to one key (the same
-    company held twice under two codes, one per currency account), and the query that finds
-    them has no ORDER BY - so picking one would attribute a year of purchases to whichever row
-    Postgres happened to return first, differently on the next run and silently either way.
-    The name comes back unmatched instead, which is a line on the operator's list naming the
-    creditor to merge.
+    An AMBIGUOUS name still resolves to nothing and creates nothing. Two supplier rows can
+    fold to one key (the same company held twice under two codes, one per currency account),
+    and the query that finds them has no ORDER BY - so picking one would attribute a year of
+    purchases to whichever row Postgres happened to return first, differently on the next run
+    and silently either way. Creating a THIRD row for a company already held twice would be
+    worse still. The name is reported instead, which is a line on the operator's list naming
+    the creditor to merge.
     """
     if not names:
-        return {}
+        return {}, set()
     by_key: dict[str, list[Supplier]] = {}
     for supplier in db.query(Supplier).all():
         by_key.setdefault(_creditor_key(supplier.supplier_name), []).append(supplier)
-    return {
+    matched = {
         n: by_key[_creditor_key(n)][0]
         for n in names
         if len(by_key.get(_creditor_key(n), ())) == 1
     }
+    ambiguous = {n for n in names if len(by_key.get(_creditor_key(n), ())) > 1}
+    return matched, ambiguous
+
+
+def _suppliers_by_name(db: Session, names: set[str]) -> dict[str, Supplier]:
+    """The unambiguous half of `_match_creditors`, for a caller that needs only the matches."""
+    return _match_creditors(db, names)[0]
 
 
 def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
@@ -460,7 +493,12 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
     creditor_names = {
         o.supplier_name for o in parsed.orders if o.supplier_name and not o.supplier_code
     }
-    matched_creditors = set(_suppliers_by_name(db, creditor_names))
+    matched_creditors, ambiguous_creditors = _match_creditors(db, creditor_names)
+    # Two lists, because the two names have two different fates and one list would have to
+    # lie about half of them: a name nothing holds gets a supplier created for it, and a name
+    # held twice gets nothing until somebody merges the two rows.
+    to_create = sorted(creditor_names - set(matched_creditors) - ambiguous_creditors)
+    unlinked = sorted(ambiguous_creditors)
     location_codes = {l.location.upper() for o in parsed.orders for l in o.lines if l.location}
     known_locations = set(_warehouses_by_code(db, location_codes))
 
@@ -485,8 +523,15 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
         # `unmatched_items` / `unmatched_item_codes` below. Heading a section with the length
         # of what it happens to be showing turns 400 unmatched creditors into "(200)", which
         # reads like a smaller, closed problem than it is.
-        "unmatched_creditor_count": len(creditor_names - matched_creditors),
-        "unmatched_creditors": sorted(creditor_names - matched_creditors)[:200],
+        # Names that stay UNLINKED, which since the back-create ruling means the ambiguous
+        # ones and nothing else.
+        "unmatched_creditor_count": len(unlinked),
+        "unmatched_creditors": unlinked[:200],
+        # Names this upload would create (preview) or did create (apply, which reports the
+        # same figure as `suppliers_created` afterwards). An operator must never discover an
+        # invented supplier by surprise, so it is on the confirm screen before it happens.
+        "creditors_to_create_count": len(to_create),
+        "creditors_to_create": to_create[:200],
         "unknown_location_count": len(location_codes - known_locations),
         "unknown_locations": sorted(location_codes - known_locations)[:200],
         # Every non-blank row the reader read, so the job's denominator and the operator's own
@@ -543,9 +588,16 @@ def validate(db: Session, file_data: bytes) -> dict:
         (f"{out['charge_lines']:,} charge lines (handling, misc) carry cost but no product, "
          f"so they are counted on the order and not as stock") if out["charge_lines"] else None,
         val.named(
+            out["creditors_to_create_count"], out["creditors_to_create"],
+            one="creditor name we do not hold, so a supplier is created for it",
+            many="creditor names we do not hold, so a supplier is created for each",
+        ),
+        val.named(
             out["unmatched_creditor_count"], out["unmatched_creditors"],
-            one="creditor name we do not hold, so its orders are written unlinked",
-            many="creditor names we do not hold, so their orders are written unlinked",
+            one=("creditor name we already hold twice, so nothing is created and its "
+                 "orders are written unlinked"),
+            many=("creditor names we already hold twice each, so nothing is created and "
+                  "their orders are written unlinked"),
         ),
         val.named(
             out["unknown_location_count"], out["unknown_locations"],
@@ -602,6 +654,8 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     if not parsed.ok:
         summary["orders_created"] = 0
         summary["lines_created"] = 0
+        summary["suppliers_created"] = 0
+        summary["suppliers_created_codes"] = []
         summary["date_from"] = None
         summary["date_to"] = None
         return summary
@@ -624,11 +678,20 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
 
     supplier_codes = {o.supplier_code for o in parsed.orders if o.supplier_code}
     supplier_by_code = _suppliers_by_code(db, supplier_codes)
-    # The structured export names the creditor and never its code, so that half is matched by
-    # name and never created (`_suppliers_by_name`).
-    supplier_by_name = _suppliers_by_name(
+    # The structured export names the creditor and never its code, so that half is matched -
+    # and, since the back-create ruling, created - by NAME. Keyed by the folded key rather
+    # than by the raw cell, because one file states `X` on one document and `X (RMB)` on the
+    # next: keyed by the cell, the second spelling would miss the row the first just created
+    # and invent a second supplier for the same company.
+    supplier_by_name, ambiguous_creditors = _match_creditors(
         db, {o.supplier_name for o in parsed.orders if o.supplier_name and not o.supplier_code}
     )
+    supplier_by_key = {_creditor_key(name): s for name, s in supplier_by_name.items()}
+    ambiguous_keys = {_creditor_key(name) for name in ambiguous_creditors}
+    #: What this upload invented, reported at the end. The count is the whole truth; the list
+    #: is capped, because a report naming every one of a few thousand creditors is not one a
+    #: person can read either.
+    created_supplier_codes: list[str] = []
     warehouse_by_code = _warehouses_by_code(
         db, {l.location.upper() for o in parsed.orders for l in o.lines if l.location}
     )
@@ -663,22 +726,35 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     claim_company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
 
     for parsed_order in parsed.orders:
+        creditor_key = _creditor_key(parsed_order.supplier_name)
         supplier = (supplier_by_code.get(parsed_order.supplier_code)
                     if parsed_order.supplier_code
-                    else supplier_by_name.get(parsed_order.supplier_name))
+                    else supplier_by_key.get(creditor_key))
         if supplier is None and parsed_order.supplier_code:
             # Created from the creditor code, which IS the supplier's identity in AutoCount.
             # Unlike a product, a supplier named on a real purchase order is evidence the
             # supplier exists - and a purchase order with no creditor cannot be reconciled.
-            # `suppliers` carries no source columns, so the provenance of an imported
-            # creditor lives on the orders that name it rather than on the supplier row.
-            supplier = Supplier(
-                supplier_code=parsed_order.supplier_code,
-                supplier_name=parsed_order.supplier_name or parsed_order.supplier_code,
-            )
-            db.add(supplier)
-            db.flush()
-            supplier_by_code[parsed_order.supplier_code] = supplier
+            supplier = back_create_supplier(
+                db, code=parsed_order.supplier_code,
+                name=parsed_order.supplier_name or parsed_order.supplier_code)
+            if supplier is not None:
+                supplier_by_code[parsed_order.supplier_code] = supplier
+                created_supplier_codes.append(parsed_order.supplier_code)
+        elif (supplier is None and creditor_key
+                and creditor_key not in ambiguous_keys):
+            # The structured export's half: a creditor NAME nobody holds, under a code
+            # generated from that name (`supplier_slug`). The name is the only identity this
+            # file states, so it is what the row is reconciled against; a code held twice for
+            # one company is the ONE case left unlinked, above.
+            cleaned = _clean_creditor_name(parsed_order.supplier_name)
+            supplier = back_create_supplier(db, code=supplier_slug(db, cleaned),
+                                            name=cleaned)
+            if supplier is not None:
+                supplier_by_key[creditor_key] = supplier
+                # The cleaned NAME, not the generated slug: it is what the operator's own
+                # file said and what they will recognise, where the slug is an internal code
+                # they never typed. Same choice as the outstanding importer's name path.
+                created_supplier_codes.append(cleaned)
 
         # Which of the two writers this document belongs to, from its NUMBER. The routing is
         # a property of the document rather than of the file it arrived in, so a shipping
@@ -841,6 +917,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             )
     summary["orders_created"] = orders_created
     summary["lines_created"] = lines_created
+    # The creditors this upload invented, by the same rule and with the same cap as the
+    # outstanding purchase-order upload reports its own: an operator must never discover a
+    # back-created supplier by surprise.
+    summary["suppliers_created"] = len(created_supplier_codes)
+    summary["suppliers_created_codes"] = created_supplier_codes[:CREATED_SUPPLIERS_LISTED]
     # What this upload TOUCHED, for whoever presses "Link now" after it
     # (`PLAN-scm-oi-handshake.md` AC-H13). The products it wrote a line for, and the
     # documents it wrote - so the cascade that follows is scoped to the book that just

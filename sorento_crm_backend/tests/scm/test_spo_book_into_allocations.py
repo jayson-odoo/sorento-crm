@@ -72,10 +72,11 @@ def _catalogue(db):
         products[code] = row
     warehouse = Warehouse(id=_uid(), warehouse_code=f"{MARKER}-BRW-IB",
                           warehouse_name=f"{MARKER} BRW-IB", is_active=True)
-    # The structured export names the creditor and never its code, so the supplier has to
-    # exist under that NAME for the row to be attributed to anybody. This channel never
-    # creates one from a name (`_suppliers_by_name`), so an unseeded book writes rows with
-    # no supplier - which is a fact about the file, not a failure.
+    # The structured export names the creditor and never its code, so the supplier is
+    # matched under that NAME. Seeded here so this file's assertions are about the SPO
+    # routing and nothing else; an unseeded book would have the channel back-create the
+    # creditor instead (`supplier_back_create`, captain 28 Aug 2026), which is a different
+    # test's subject.
     supplier = Supplier(id=_uid(), supplier_code=f"{MARKER}{uuid.uuid4().hex[:6]}",
                         supplier_name=f"{MARKER} CREDITOR", is_active=True)
     db.add_all([warehouse, supplier])
