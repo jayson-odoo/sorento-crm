@@ -328,6 +328,17 @@ class CreateDoResponse(BaseModel):
     do_number: str
 
 
+class ResetPlanningRequest(BaseModel):
+    """Also put the lines a planning-change upload moved back to before the first upload."""
+    rewind_book: bool = False
+
+
+class ResetPlanningResponse(BaseModel):
+    so_number: str
+    planned: bool
+    removed: dict[str, int]
+
+
 class SalesAgentOption(BaseModel):
     """One `sales_agents` row, for the Agent filter and the detail page's Agent select.
 

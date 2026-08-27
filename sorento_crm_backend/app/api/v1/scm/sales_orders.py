@@ -193,6 +193,19 @@ def delete_sales_order(so_id: str, db: Session = Depends(get_db), _user: dict = 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/sales-orders/{so_id}/reset-planning", response_model=scm_orders_schemas.ResetPlanningResponse)
+def reset_sales_order_planning(
+    so_id: str,
+    body: scm_orders_schemas.ResetPlanningRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_WRITE),
+):
+    """Back to never-planned: inquiries, links, allocations, transfers, decisions go; the order stays."""
+    from app.services.scm.planning_reset_service import reset_planning
+
+    return reset_planning(db, so_id, rewind_book=body.rewind_book)
+
+
 @router.post("/sales-orders/{so_id}/create-do", response_model=CreateDoResponse)
 def create_do_from_so(
     so_id: str,

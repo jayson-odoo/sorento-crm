@@ -8,6 +8,7 @@ import {
   getSalesOrder,
   getSalesOrderAgents,
   getSalesOrders,
+  resetSalesOrderPlanning,
   updateSalesOrder,
 } from '../services/salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
@@ -131,5 +132,19 @@ export function useCreateDoFromSalesOrder() {
       toast.success(`Delivery order ${res.do_number} created`);
     },
     onError: (e: Error) => toast.error(e.message || 'Failed to create delivery order'),
+  });
+}
+
+export function useResetSalesOrderPlanning() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, rewindBook }: { id: string; rewindBook: boolean }) =>
+      resetSalesOrderPlanning(id, rewindBook),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scm', 'sales-orders'] });
+      qc.invalidateQueries({ queryKey: ['scm', 'net-position'] });
+      qc.invalidateQueries({ queryKey: ['project-sales'] });
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to reset planning'),
   });
 }

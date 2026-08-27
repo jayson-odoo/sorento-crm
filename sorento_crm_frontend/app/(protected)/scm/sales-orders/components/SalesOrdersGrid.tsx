@@ -12,7 +12,16 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,7 +53,12 @@ import {
 } from '../../lib/salesOrderStatus';
 import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
-import { useCreateSalesOrder, useDeleteSalesOrder, useSalesOrders } from '../../hooks/useSalesOrders';
+import {
+  useCreateSalesOrder,
+  useDeleteSalesOrder,
+  useResetSalesOrderPlanning,
+  useSalesOrders,
+} from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
@@ -93,6 +107,8 @@ const MAX_PLAN_SELECTION = 50;
 
 /** Who may open the fulfilment planning board. Same gate the board's own page carries. */
 const PLAN_PERMISSION = 'projects.projects.view';
+/** What the backend gates Reset planning on: the buyer's own write permission. */
+const RESET_PERMISSION = 'scm.reorder.run';
 
 const SOURCE_LABELS: Record<string, string> = {
   inquiry: 'Order inquiry',
@@ -230,11 +246,15 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // project sales order screen, and the row click is the way there.
   const [formOpen, setFormOpen] = useState(false);
   const [deleting, setDeleting] = useState<SalesOrder | null>(null);
+  // Reset planning (the captain, 27 Aug): a UAT walk has to be repeatable from the screen.
+  const [resetOpen, setResetOpen] = useState(false);
+  const [rewindBook, setRewindBook] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   // Which orders to plan together. The board is a URL, not a stored plan, so the selection
   // is the whole state there is: nothing is saved by picking rows here.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const canPlan = useHasPermission(PLAN_PERMISSION);
+  const canReset = useHasPermission(RESET_PERMISSION);
 
   const queryClient = useQueryClient();
 
@@ -263,6 +283,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
 
   const createMut = useCreateSalesOrder();
   const deleteMut = useDeleteSalesOrder();
+  const resetMut = useResetSalesOrderPlanning();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -701,6 +722,21 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     },
   );
 
+  const selectedOrders = table.getSelectedRowModel().rows.map((r) => r.original);
+  const resetActions = canReset
+    ? [
+        {
+          key: 'reset-planning',
+          label: `Reset planning (${selectedOrders.length})`,
+          icon: RotateCcw,
+          onClick: () => setResetOpen(true),
+          disabled: selectedOrders.length < 1,
+          disabledReason:
+            selectedOrders.length < 1 ? 'Tick the sales orders to reset first.' : undefined,
+        },
+      ]
+    : [];
+
   const filtersActive =
     (statusFilter ? 1 : 0) +
     (priorityFilter ? 1 : 0) +
@@ -923,6 +959,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 // Present (and disabled, with its reason) even with nothing ticked, so the
                 // menu teaches that the orders are picked here.
                 ...planActions,
+                ...resetActions,
                 {
                   key: 'refresh',
                   label: 'Refresh',
@@ -1005,6 +1042,52 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         }}
         successMessage="Sales order deleted"
         onSuccess={() => setDeleting(null)}
+      />
+
+      {/* Back to never-planned, for a walk to be redone. Confirmed like a delete, because it
+          is one: the inquiries, links, allocations, transfers and decisions go for good. */}
+      <ConfirmDeleteDialog
+        open={resetOpen}
+        onOpenChange={(o) => {
+          setResetOpen(o);
+          if (!o) setRewindBook(false);
+        }}
+        title="Reset planning"
+        confirmLabel="Reset planning"
+        description={
+          <span className="flex flex-col gap-3">
+            <span>
+              Put{' '}
+              <span className="font-medium">
+                {selectedOrders.map((o) => o.so_number).join(', ')}
+              </span>{' '}
+              back to never planned? Every order inquiry, link, allocation, stock transfer and
+              confirmed revision on {selectedOrders.length === 1 ? 'it' : 'them'} is removed.
+              The sales order and its lines stay. This cannot be undone.
+            </span>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={rewindBook}
+                onChange={(e) => setRewindBook(e.target.checked)}
+              />
+              <span>
+                Also put the lines a sales-order upload changed back to before the first upload
+              </span>
+            </label>
+          </span>
+        }
+        onDelete={async () => {
+          for (const o of selectedOrders) {
+            await resetMut.mutateAsync({ id: o.id, rewindBook });
+          }
+        }}
+        successMessage="Planning reset"
+        onSuccess={() => {
+          setRowSelection({});
+          void refetch();
+        }}
       />
     </>
   );
