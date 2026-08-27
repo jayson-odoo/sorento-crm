@@ -4,7 +4,17 @@ import { summariseContainerRequest } from './containerRequestSummary';
 import type { ContainerRequestRow } from '../../services/fulfilmentService';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
-  return {
+  const merged: ContainerRequestRow = {
+    // F12: an ordinary product row. A set row sets `row_kind`, `product_set_id` and the
+    // driver fields; `row_key` follows `product_id` unless a test names its own.
+    row_key: 'p1',
+    row_kind: 'product' as const,
+    product_set_id: null,
+    set_code: null,
+    set_name: null,
+    driver_product_id: null,
+    driver_item_code: null,
+    driver_product_name: null,
     product_id: 'p1',
     item_code: 'ITEM-1',
     product_name: 'Widget',
@@ -38,6 +48,9 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     has_demand: true,
     ...over,
   };
+  // Keyed off whatever `product_id` ended up being, so two rows in one test never collide
+  // on the grid's row id just because only one of them named a key.
+  return { ...merged, row_key: over.row_key ?? merged.product_id };
 }
 
 const asked = (r: ContainerRequestRow) => r.suggested_qty;

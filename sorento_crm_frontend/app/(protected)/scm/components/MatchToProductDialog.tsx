@@ -14,16 +14,26 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { useMatchSupplierCode } from '../hooks/useSupplierCodeAliases';
+import {
+  aliasTargetFor,
+  fetchProductOrSetOptions,
+  renderProductOrSetOption,
+} from './productOrSetPicker';
 
 /**
- * "This code is that product" - the answer to a supplier code nothing in the catalogue
- * matches (R16).
+ * "This code is that product" - or that SET - the answer to a supplier code nothing in the
+ * catalogue matches (R16, R20).
  *
- * The product picker is SERVER-SEARCHED and paginated. The product master is tens of
- * thousands of rows, and a dropdown holding one cached page silently hides the item the
- * operator is looking for - which is how the same mistake was made twice already.
+ * The picker is SERVER-SEARCHED and paginated, and it holds products and product sets in one
+ * list. The product master is tens of thousands of rows, and a dropdown holding one cached
+ * page silently hides the item the operator is looking for - which is how the same mistake
+ * was made twice already; and the supplier sells the whole WC, so `CWC605-RL` names a set no
+ * product carries and a products-only list could not express the true answer at all.
+ *
+ * Kept for the proforma detail's Matched cell, where ONE code is being corrected. The
+ * loading plan's queue picks inline instead (R17): a dialog per code turns twenty codes into
+ * forty clicks and hides the list being worked down.
  *
  * What the supplier called it is shown beside the code, because that is what the person
  * matching it recognises: `SRTWC286-SH-250UF` means nothing on its own, and "连体马桶,
@@ -49,26 +59,13 @@ export function MatchToProductDialog({
   const [productId, setProductId] = useState<string | null>(null);
   const match = useMatchSupplierCode();
 
-  // Cleared on every open: a product left over from the last code would be one keystroke
+  // Cleared on every open: a choice left over from the last code would be one keystroke
   // away from being recorded against this one.
   useEffect(() => {
     if (open) setProductId(null);
   }, [open, supplierCode]);
 
-  const fetchProducts = async (query: string, pageIndex: number) => {
-    const res = await getProducts({
-      pageIndex,
-      pageSize: 50,
-      sorting: [],
-      searchQuery: query,
-      status: 'active',
-    });
-    return (res.data ?? []).map((p) => ({
-      value: p.id,
-      label: `${p.product_code} - ${p.product_name}`,
-      searchText: `${p.product_code} ${p.product_name}`,
-    }));
-  };
+  const fetchProducts = fetchProductOrSetOptions;
 
   const submit = async () => {
     if (!supplierId || !supplierCode || !productId) return;
@@ -76,7 +73,7 @@ export function MatchToProductDialog({
       await match.mutateAsync({
         supplier_id: supplierId,
         supplier_code: supplierCode,
-        product_id: productId,
+        ...aliasTargetFor(productId),
       });
       onOpenChange(false);
       onMatched?.();
@@ -89,7 +86,7 @@ export function MatchToProductDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Match to product</DialogTitle>
+          <DialogTitle>Match to product or set</DialogTitle>
           <DialogDescription>
             {supplierCode}
             {supplierLabel ? ` - ${supplierLabel}` : ''}
@@ -99,16 +96,17 @@ export function MatchToProductDialog({
         <DialogBody className="space-y-3">
           <div>
             <Label htmlFor="match-product" className="mb-1 block text-xs">
-              Product
+              Product or set
             </Label>
             <SearchableSelect
               id="match-product"
               value={productId ?? ''}
               onChange={(v: string) => setProductId(v || null)}
               fetchOptions={fetchProducts}
+              renderOption={renderProductOrSetOption}
               paginated
               pageSize={50}
-              placeholder="Search a product code or name"
+              placeholder="Search a product or set code"
               clearable
             />
           </div>

@@ -260,8 +260,12 @@ export interface ProformaInvoiceLine {
    *  adjust; these two are theirs and are never written again (AC-E2). */
   supplier_qty: number | null;
   supplier_unit_price: number | null;
-  /** The product we hold, by CODE - null when the line matched nothing (AC-P1.3). */
+  /** What we hold, by CODE - the product's, or the SET's when the line names one of our
+   *  product sets (R19). Null when the line matched nothing (AC-P1.3). */
   product_code: string | null;
+  /** Set only when the line names a product SET, so the cell can badge it rather than read
+   *  as a product code the catalogue does not hold. */
+  set_code: string | null;
   matched: boolean;
   /** Which rung of the supplier-code ladder bound it, or `manual` for a person's own pick
    *  (R16). Null when the codes agreed exactly - nothing was worked out, so there is

@@ -10,9 +10,10 @@
  *  GET    /api/v1/scm/supplier-code-aliases/unmatched?supplier_id
  *                                                            -> 200 { data: UnmatchedSupplierCode[] }
  *  POST   /api/v1/scm/supplier-code-aliases                  -> 201 SupplierCodeAliasWritten
- *         Body: { supplier_id, supplier_code, product_id }. Replaces any earlier ruling and
- *         RE-BINDS the rows already uploaded under that code - the counts come back, so the
- *         screen can say what the decision just moved.
+ *         Body: { supplier_id, supplier_code, product_id | product_set_id } - exactly one of
+ *         the two (R19). Replaces any earlier ruling and RE-BINDS the rows already uploaded
+ *         under that code - the counts come back, so the screen can say what the decision
+ *         just moved.
  *  POST   /api/v1/scm/supplier-code-aliases/dismiss          -> 201 SupplierCodeDismissed
  *         Body: { supplier_id, supplier_code }. "None of ours": records a ruling with no
  *         product, UNBINDS the rows already uploaded under that code, and takes it out of
@@ -38,6 +39,11 @@ export type SupplierCodeRung =
   | 'separator'
   | 'token_set'
   | 'size_drop'
+  // The set rungs (R20). No `set_size_drop`: a set carries no description to confirm a size
+  // against, so a code like `CWC605-RL-180` is answered by a person, never derived.
+  | 'set_exact'
+  | 'set_separator'
+  | 'set_token_set'
   | 'manual'
   | 'dismissed'
   | 'alias';
@@ -45,9 +51,12 @@ export type SupplierCodeRung =
 export interface SupplierCodeAlias {
   id: string;
   supplier_code: string;
-  /** Null on a dismissal: "none of ours" is a ruling that names no product. */
+  /** Null on a dismissal, and null on a ruling that names a SET rather than a product. */
   product_code: string | null;
   product_name: string | null;
+  /** The SET this code names, when it names one (R19). Null otherwise. */
+  set_code: string | null;
+  set_name: string | null;
   /**
    * `auto` for a bind the ladder worked out, `manual` for a person's own pick,
    * `dismissed` for a code ruled to be nothing we hold.
@@ -73,8 +82,12 @@ export interface UnmatchedSupplierCode {
 export interface SupplierCodeAliasWritten {
   id: string;
   supplier_code: string;
-  product_id: string;
-  product_code: string;
+  /** Null when the ruling names a SET - the two are mutually exclusive. */
+  product_id: string | null;
+  product_code: string | null;
+  product_set_id: string | null;
+  set_code: string | null;
+  set_name: string | null;
   source: 'auto' | 'manual';
   matched_by: SupplierCodeRung | null;
   /** What the decision just moved - stock-list rows and invoice lines already on file. */
@@ -113,11 +126,15 @@ export async function listUnmatchedSupplierCodes(
   return body.data ?? [];
 }
 
-export async function matchSupplierCode(body: {
-  supplier_id: string;
-  supplier_code: string;
-  product_id: string;
-}): Promise<SupplierCodeAliasWritten> {
+/** Exactly one of the two, which is what the backend refuses to be given both or neither. */
+export type SupplierCodeTarget = { product_id: string } | { product_set_id: string };
+
+export async function matchSupplierCode(
+  body: {
+    supplier_id: string;
+    supplier_code: string;
+  } & SupplierCodeTarget,
+): Promise<SupplierCodeAliasWritten> {
   const res = await apiFetch('/api/v1/scm/supplier-code-aliases', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -132,6 +149,9 @@ export interface SupplierCodeDismissed {
   supplier_code: string;
   product_id: null;
   product_code: null;
+  product_set_id: null;
+  set_code: null;
+  set_name: null;
   source: 'dismissed';
   matched_by: 'dismissed';
   rebound_stock_rows: number;

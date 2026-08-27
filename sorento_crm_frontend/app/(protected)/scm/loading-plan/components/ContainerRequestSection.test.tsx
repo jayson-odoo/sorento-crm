@@ -122,7 +122,17 @@ vi.mock('../../hooks/useFulfilment', () => ({
 import { ContainerRequestSection, holdingSortValue } from './ContainerRequestSection';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
-  return {
+  const merged: ContainerRequestRow = {
+    // F12: an ordinary product row. A set row sets `row_kind`, `product_set_id` and the
+    // driver fields; `row_key` follows `product_id` unless a test names its own.
+    row_key: 'p1',
+    row_kind: 'product' as const,
+    product_set_id: null,
+    set_code: null,
+    set_name: null,
+    driver_product_id: null,
+    driver_item_code: null,
+    driver_product_name: null,
     product_id: 'p1',
     item_code: 'ITEM-1',
     product_name: 'Widget',
@@ -156,6 +166,9 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     has_demand: true,
     ...over,
   };
+  // Keyed off whatever `product_id` ended up being, so two rows in one test never collide
+  // on the grid's row id just because only one of them named a key.
+  return { ...merged, row_key: over.row_key ?? merged.product_id };
 }
 
 function renderSection(onUploadStockList = vi.fn()) {
@@ -377,6 +390,94 @@ describe('ContainerRequestSection - the grid', () => {
     await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
     const [payload] = state.send.mutate.mock.calls[0];
     expect(payload.lines).toEqual([{ product_id: 'p1', qty: 25 }]);
+  });
+
+  it('a set row wears a Set badge and names the member its figures come from (AC-F12.3)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          set_code: 'CWC605-RL',
+          set_name: 'Close-coupled WC',
+          item_code: 'CWC605-RL',
+          product_name: 'Close-coupled WC',
+          driver_product_id: 'p-driver',
+          driver_item_code: 'CWCX605-RL',
+          driver_product_name: 'Pedestal',
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByTestId('set-badge')).toBeInTheDocument();
+    expect(screen.getByText('CWC605-RL')).toBeInTheDocument();
+    // The driver's code, not the set's name: whose numbers these are is the question the
+    // second line answers.
+    expect(screen.getByText('CWCX605-RL')).toBeInTheDocument();
+  });
+
+  it('a set row is sent as the set, never as one of its members (AC-F12.6)', async () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          set_code: 'CWC605-RL',
+          item_code: 'CWC605-RL',
+          driver_product_id: 'p-driver',
+          driver_item_code: 'CWCX605-RL',
+          suggested_qty: 40,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
+
+    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
+    const [payload] = state.send.mutate.mock.calls[0];
+    expect(payload.lines).toEqual([{ product_set_id: 's-1', qty: 40 }]);
+  });
+
+  it('two set rows sharing a driver each keep their own editable quantity', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          item_code: 'SET-ONE',
+          driver_item_code: 'CWCX605-RL',
+          suggested_qty: 11,
+        }),
+        row({
+          row_key: 'set:s-2',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-2',
+          item_code: 'SET-TWO',
+          driver_item_code: 'CWCX605-RL',
+          suggested_qty: 22,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByDisplayValue('11')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('22')).toBeInTheDocument();
   });
 
   it('a quantity edited to 0 is dropped from what gets sent, without leaving the grid', async () => {

@@ -70,6 +70,17 @@ vi.mock(
   }),
 );
 
+// The picker offers our product SETS beside the products (F12, R20): the supplier sells the
+// whole WC under a code no product carries.
+vi.mock(
+  '@/app/(protected)/master-data-management/product-sets/services/productSetService',
+  () => ({
+    getProductSets: vi.fn(async () => ({
+      data: [{ id: 's-1', set_code: 'CWC605-RL', name: 'Close-coupled WC' }],
+    })),
+  }),
+);
+
 /** The real picker is a server-searched combobox; a plain select is enough to express the
  *  PICK, which is what these tests are about. `fetchOptions` is called so the async path is
  *  still exercised rather than replaced. */
@@ -206,6 +217,23 @@ describe('UnmatchedSupplierCodesPanel', () => {
       supplier_id: 'sup-1',
       supplier_code: 'SRTWC286-SH-250UF',
       product_id: 'p-1',
+    });
+  });
+
+  it('records a SET the same way, from the same list', async () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    const select = screen.getByLabelText('Product') as HTMLSelectElement;
+    await waitFor(() =>
+      expect(select.querySelector('option[value="set:s-1"]')).toBeInTheDocument(),
+    );
+    fireEvent.change(select, { target: { value: 'set:s-1' } });
+
+    await waitFor(() => expect(state.match).toHaveBeenCalledTimes(1));
+    expect(state.match).toHaveBeenCalledWith({
+      supplier_id: 'sup-1',
+      supplier_code: 'SRTWC286-SH-250UF',
+      product_set_id: 's-1',
     });
   });
 

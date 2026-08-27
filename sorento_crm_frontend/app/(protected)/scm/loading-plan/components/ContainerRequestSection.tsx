@@ -37,6 +37,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -69,6 +70,7 @@ import {
 import {
   getNoticeDocumentUrl,
   type ContainerRequestHistoryProduct,
+  type ContainerRequestLine,
   type ContainerRequestRow,
   type ContainerRequestSoLine,
   type SupplierNotice,
@@ -270,9 +272,9 @@ export function ContainerRequestSection({
     useState<ContainerRequestMatrixGranularity>('week');
   const [openingDocId, setOpeningDocId] = useState<string | null>(null);
   const [copiedNoticeId, setCopiedNoticeId] = useState<string | null>(null);
-  // The product whose breakdown is open. Held as an id, not the row object, so a refresh
+  // The row whose breakdown is open. Held as its KEY, not the row object, so a refresh
   // behind an open dialog shows the NEW numbers rather than the ones it opened on.
-  const [openProductId, setOpenProductId] = useState<string | null>(null);
+  const [openRowKey, setOpenRowKey] = useState<string | null>(null);
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
@@ -308,7 +310,9 @@ export function ContainerRequestSection({
   // asking the system to look again, not "keep my edits and re-rank around them".
   useEffect(() => {
     const seed: Record<string, number> = {};
-    for (const r of rows) seed[r.product_id] = r.suggested_qty;
+    // Keyed on `row_key`, not the product id: a set row's figures are its DRIVER member's,
+    // so two set rows sharing a driver would otherwise share one editable quantity.
+    for (const r of rows) seed[r.row_key] = r.suggested_qty;
     setOverrides(seed);
   }, [rows]);
 
@@ -318,11 +322,21 @@ export function ContainerRequestSection({
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
   const historyLoadingRef = useRef(false);
 
-  const qtyFor = (row: ContainerRequestRow) => overrides[row.product_id] ?? row.suggested_qty;
+  const qtyFor = (row: ContainerRequestRow) => overrides[row.row_key] ?? row.suggested_qty;
 
   const lines = useMemo(
     () =>
-      rows.map((r) => ({ product_id: r.product_id, qty: qtyFor(r) })).filter((l) => l.qty > 0),
+      rows
+        .map((r): ContainerRequestLine => {
+          const qty = qtyFor(r);
+          // A set line names the SET and no product: the ask is the whole WC under the code
+          // the supplier wrote, and naming one member would make the document disagree with
+          // the row it came from (R19).
+          return r.row_kind === 'set' && r.product_set_id
+            ? { product_set_id: r.product_set_id, qty }
+            : { product_id: r.product_id, qty };
+        })
+        .filter((l) => l.qty > 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, overrides],
   );
@@ -332,7 +346,7 @@ export function ContainerRequestSection({
   // see and change her mind about it, it just does not go on the document.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
-    const qty = overridesRef.current[original.product_id] ?? original.suggested_qty;
+    const qty = overridesRef.current[original.row_key] ?? original.suggested_qty;
     return (
       <Input
         type="number"
@@ -344,7 +358,7 @@ export function ContainerRequestSection({
         title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.suggested_qty)}`}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
-          setOverrides((prev) => ({ ...prev, [original.product_id]: next }));
+          setOverrides((prev) => ({ ...prev, [original.row_key]: next }));
         }}
       />
     );
@@ -388,21 +402,43 @@ export function ContainerRequestSection({
               type="button"
               // The grid is the scan surface; the breakdown behind it is one click away, the
               // same move the fulfilment board's cell makes.
-              onClick={() => setOpenProductId(original.product_id)}
+              onClick={() => setOpenRowKey(original.row_key)}
               title="What this row is made of"
               className={cn(
                 'flex min-w-0 flex-col text-start underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
                 muted && 'opacity-70',
               )}
             >
-              <span className="truncate font-medium" title={original.item_code ?? ''}>
-                {original.item_code ?? EM_DASH}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-medium" title={original.item_code ?? ''}>
+                  {original.item_code ?? EM_DASH}
+                </span>
+                {original.row_kind === 'set' ? (
+                  // The supplier's code names our SET, so the row is the whole WC and every
+                  // figure on it is the driver member's (R19). Badged rather than explained:
+                  // the driver's own code sits underneath, which is the explanation.
+                  <Badge
+                    variant="secondary"
+                    appearance="light"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="set-badge"
+                  >
+                    Set
+                  </Badge>
+                ) : null}
               </span>
               <span
                 className="truncate text-2xs text-muted-foreground"
-                title={original.product_name ?? ''}
+                title={
+                  original.row_kind === 'set'
+                    ? `Figures from ${original.driver_item_code ?? 'its driver member'}`
+                    : (original.product_name ?? '')
+                }
               >
-                {original.product_name ?? EM_DASH}
+                {original.row_kind === 'set'
+                  ? (original.driver_item_code ?? EM_DASH)
+                  : (original.product_name ?? EM_DASH)}
               </span>
             </button>
           );
@@ -612,7 +648,7 @@ export function ContainerRequestSection({
   const table = useReactTable({
     columns,
     data: rows,
-    getRowId: (row) => row.product_id,
+    getRowId: (row) => row.row_key,
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -647,8 +683,8 @@ export function ContainerRequestSection({
     [rows, overrides],
   );
 
-  const openRow = openProductId
-    ? (rows.find((r) => r.product_id === openProductId) ?? null)
+  const openRow = openRowKey
+    ? (rows.find((r) => r.row_key === openRowKey) ?? null)
     : null;
 
   const requestNotices = (notices.data ?? []).filter(
@@ -1077,7 +1113,7 @@ export function ContainerRequestSection({
           soLines={linesByProduct.get(openRow.product_id) ?? []}
           history={historyRef.current.get(openRow.product_id)}
           historyLoading={history.isFetching}
-          onClose={() => setOpenProductId(null)}
+          onClose={() => setOpenRowKey(null)}
         />
       ) : null}
 

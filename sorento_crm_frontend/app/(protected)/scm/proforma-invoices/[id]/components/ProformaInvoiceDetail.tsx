@@ -846,7 +846,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     className="h-6 px-1.5 text-2xs"
                     onClick={() => setCodeToMatch(line)}
                   >
-                    Match to product
+                    Match to product or set
                   </Button>
                 ) : null}
               </div>
@@ -858,6 +858,18 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 <Badge variant="success" appearance="light">
                   Matched
                 </Badge>
+                {line.set_code ? (
+                  // The supplier priced the whole WC, and our catalogue holds only its
+                  // parts (R19). Badged so nobody reads the set code as a product code we
+                  // are missing; the conversion is what splits it into members.
+                  <Badge
+                    variant="secondary"
+                    appearance="light"
+                    title={`Product set ${line.set_code}`}
+                  >
+                    Set
+                  </Badge>
+                ) : null}
                 {line.match_source === 'auto' ? (
                   // A guess, marked as one, with the rung that made it in the title. The
                   // reason is not spelled out on screen (no explanations here) - it is in

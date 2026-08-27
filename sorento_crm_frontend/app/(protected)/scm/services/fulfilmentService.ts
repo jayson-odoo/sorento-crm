@@ -449,7 +449,25 @@ export async function getNoticeDocumentUrl(
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
 export interface ContainerRequestRow {
+  /** Whose FIGURES this row shows. On a set row that is the driver member's id (R19), which
+   *  is what the SO drill and the twelve-month history are keyed on. */
   product_id: string;
+  /** What the GRID keys its rows on: the product id, or the set's own key. Two sets may
+   *  share a driver, and a grid keyed on the product id would silently drop one of them. */
+  row_key: string;
+  /** `set` when the supplier's statement named one of our product sets (R19). Every figure
+   *  below is then the DRIVER member's - the member in the fewest sets. */
+  row_kind: 'product' | 'set';
+  product_set_id: string | null;
+  set_code: string | null;
+  set_name: string | null;
+  /** The member the figures come from, named so the cell can say whose they are. Null on an
+   *  ordinary product row. */
+  driver_product_id: string | null;
+  driver_item_code: string | null;
+  driver_product_name: string | null;
+  /** The set code on a set row, the product code on a product row - what the supplier is
+   *  asked for either way. */
   item_code: string | null;
   product_name: string | null;
   /** Gross outstanding SO need, all classes - what the Need column shows. */
@@ -658,10 +676,17 @@ export async function getContainerRequestHistory(
   return readJson<ContainerRequestHistory>(res, 'Failed to load the sales history');
 }
 
-export interface ContainerRequestLine {
-  product_id: string;
-  qty: number;
-}
+/**
+ * One reviewed line. It names a product OR one of our product sets, never both (R19).
+ *
+ * A set line carries no product id at all: the supplier sells the whole WC under a code our
+ * catalogue does not hold, so the ask goes out under the set code, and naming one member
+ * here would make the document disagree with the row it came from.
+ */
+export type ContainerRequestLine = { qty: number } & (
+  | { product_id: string; product_set_id?: undefined }
+  | { product_set_id: string; product_id?: undefined }
+);
 
 export async function sendContainerRequest(
   supplierId: string,

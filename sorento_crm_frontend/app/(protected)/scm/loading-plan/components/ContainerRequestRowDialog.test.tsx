@@ -6,7 +6,17 @@ import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
 import type { ContainerRequestRow } from '../../services/fulfilmentService';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
-  return {
+  const merged: ContainerRequestRow = {
+    // F12: an ordinary product row. A set row sets `row_kind`, `product_set_id` and the
+    // driver fields; `row_key` follows `product_id` unless a test names its own.
+    row_key: 'p1',
+    row_kind: 'product' as const,
+    product_set_id: null,
+    set_code: null,
+    set_name: null,
+    driver_product_id: null,
+    driver_item_code: null,
+    driver_product_name: null,
     product_id: 'p1',
     item_code: 'SRTWB241',
     product_name: 'Wall hung basin 600mm',
@@ -59,6 +69,9 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     has_demand: true,
     ...over,
   };
+  // Keyed off whatever `product_id` ended up being, so two rows in one test never collide
+  // on the grid's row id just because only one of them named a key.
+  return { ...merged, row_key: over.row_key ?? merged.product_id };
 }
 
 function renderDialog(over: Partial<ContainerRequestRow> = {}, askQty = 2426) {
@@ -170,6 +183,28 @@ describe('ContainerRequestRowDialog', () => {
 
     expect(
       screen.getByText('Nothing on a packing list or an open PO for this product.'),
+    ).toBeInTheDocument();
+  });
+
+  it('a set row says which member its figures come from (AC-F12.3)', () => {
+    // A set is never stocked and never ordered - its members are - so every figure in this
+    // dialog belongs to ONE member, and a reader who is not told which one cannot check any
+    // of them.
+    renderDialog({
+      row_key: 'set:s-1',
+      row_kind: 'set',
+      item_code: 'CWC605-RL',
+      product_name: 'Close-coupled WC',
+      product_set_id: 's-1',
+      set_code: 'CWC605-RL',
+      set_name: 'Close-coupled WC',
+      driver_product_id: 'p-driver',
+      driver_item_code: 'CWCX605-RL',
+      driver_product_name: 'Pedestal',
+    });
+
+    expect(
+      screen.getByText(/Figures from CWCX605-RL - Pedestal/),
     ).toBeInTheDocument();
   });
 

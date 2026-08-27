@@ -86,7 +86,14 @@ export function ContainerRequestRowDialog({
             ) : null}
           </DialogTitle>
           <DialogDescription className="min-w-0 break-words">
-            {row.product_name ?? 'No product name on file'}
+            {row.row_kind === 'set'
+              ? // Whose numbers these are, said outright. A set is never stocked and never
+                // ordered - its members are - so every figure below belongs to one member,
+                // and a reader who is not told which one cannot check any of them (R19).
+                `Set of members. Figures from ${row.driver_item_code ?? 'its driver member'}${
+                  row.driver_product_name ? ` - ${row.driver_product_name}` : ''
+                }`
+              : (row.product_name ?? 'No product name on file')}
           </DialogDescription>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

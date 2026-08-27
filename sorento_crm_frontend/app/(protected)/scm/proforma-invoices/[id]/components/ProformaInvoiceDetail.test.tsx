@@ -185,6 +185,7 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         match_source: null,
         match_id: null,
         product_code: 'ITEM-1',
+        set_code: null,
         matched: true,
         shipment_id: null,
         shipment_number: null,

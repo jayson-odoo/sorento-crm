@@ -48,12 +48,17 @@ export function useMatchSupplierCode() {
       void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
       void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
       const moved = written.rebound_stock_rows + written.rebound_invoice_lines;
+      // A set ruling names no product, so the sentence has to read off whichever half the
+      // answer actually filled in - "is null" was the alternative.
+      const named = written.set_code
+        ? `set ${written.set_code}`
+        : (written.product_code ?? 'that product');
       toast.success(
         moved > 0
-          ? `${written.supplier_code} is ${written.product_code}. ${moved} row${
+          ? `${written.supplier_code} is ${named}. ${moved} row${
               moved === 1 ? '' : 's'
             } already on file now point at it.`
-          : `${written.supplier_code} is ${written.product_code}.`,
+          : `${written.supplier_code} is ${named}.`,
       );
     },
     onError: (e: Error) => toast.error(e.message),

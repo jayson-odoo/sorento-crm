@@ -10,7 +10,11 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import {
+  aliasTargetFor,
+  fetchProductOrSetOptions,
+  renderProductOrSetOption,
+} from '../../components/productOrSetPicker';
 import {
   useDismissSupplierCode,
   useForgetSupplierCodeMatch,
@@ -97,37 +101,23 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
   );
 
   /**
-   * The product master is tens of thousands of rows, so the picker is SERVER-searched and
-   * paginated. A dropdown holding one cached page silently hides the item the operator is
-   * looking for, which is the same mistake this codebase has made twice.
+   * Products AND our product sets in one list (R20), SERVER-searched and paginated. The
+   * supplier sells the whole WC, and `CWC605-RL` is a set no product carries - a picker that
+   * could only offer products left the operator with the wrong half or Dismiss. The product
+   * master is tens of thousands of rows, so the list is never one cached page: that is how
+   * the item somebody is looking for gets hidden, twice over in this codebase.
    */
-  const fetchProducts = React.useCallback(
-    async (query: string, pageIndex: number) => {
-      const res = await getProducts({
-        pageIndex,
-        pageSize: 50,
-        sorting: [],
-        searchQuery: query,
-        status: 'active',
-      });
-      return (res.data ?? []).map((p) => ({
-        value: p.id,
-        label: `${p.product_code} - ${p.product_name}`,
-        searchText: `${p.product_code} ${p.product_name}`,
-      }));
-    },
-    [],
-  );
+  const fetchProducts = React.useCallback(fetchProductOrSetOptions, []);
 
   const onPick = React.useCallback(
-    async (code: string, productId: string) => {
-      if (!productId) return;
+    async (code: string, value: string) => {
+      if (!value) return;
       setBusy(code);
       try {
         await match.mutateAsync({
           supplier_id: supplierId,
           supplier_code: code,
-          product_id: productId,
+          ...aliasTargetFor(value),
         });
       } catch {
         // The hook toasts the refusal; the row stays in the queue to be answered again.
@@ -210,11 +200,12 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
               value=""
               onChange={(v: string) => void onPick(code, v)}
               fetchOptions={fetchProducts}
+              renderOption={renderProductOrSetOption}
               paginated
               pageSize={50}
               size="sm"
               disabled={busy === code}
-              placeholder="Search a product"
+              placeholder="Search a product or set"
               triggerClassName="w-full"
               clearable
             />
