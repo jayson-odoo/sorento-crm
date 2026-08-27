@@ -72,6 +72,50 @@ Status: GO, 2026-08-26 (captain: no reorder / cut; PO doc date column is `purcha
 - AC-E10 Convert to packing list uses the current revision; a superseded PI cannot be converted.
 - AC-E11 "Mark as revision of" on a PI detail links a wrongly-created new PI to its predecessor.
 
+## E3. The PI list and detail read like every other record (R24, captain 27 Aug)
+
+- AC-E2.1 The proforma-invoice LIST renders on `DataGridListToolbar`: one search box (PI
+  number, supplier, container or BL, reaching the list endpoint's `query`), ONE Filters
+  popover holding the Supplier and Packing list selects with a count on the button, Columns,
+  and "Upload proforma invoice" anchored right as the only primary action.
+- AC-E2.2 The active filter is STATED above the grid as a chip with a clear affordance - the
+  default is "Not converted", and a sticky default the reader did not set this session is
+  otherwise indistinguishable from missing data.
+- AC-E2.3 The whole row opens the invoice, carrying the list's own query into the detail URL;
+  the PI-number cell stays a real anchor and stops its own click propagating. There is no
+  per-row Delete: deleting is a bulk action on the selection, behind an `AlertDialog`.
+- AC-E2.4 The Supplier column shows the supplier NAME once, with no second normalised-code
+  line under it. Pagination renders whether or not there are rows.
+- AC-E2.5 The DETAIL page carries a record header: PI number plus its badges (currency,
+  "Revision n of m", "Superseded", and where the goods are) on the left; on the right, in
+  this order, the prev/next pager, ONE primary CTA ("Convert to packing list", or "Convert
+  the rest" when split, hidden when fully placed, superseded, or the reader lacks
+  `scm.reorder.run`), a gear menu (`aria-label="More actions"`) holding Edit / Export
+  adjusted PI / Mark as revision of / Delete invoice, and Back to proforma invoices.
+- AC-E2.6 Read-only provenance (source file, uploaded by and when, adjusted by and when) is a
+  muted meta line under the header title, never inside a tab body.
+- AC-E2.7 Four tabs in this order, the SAME set in view and in edit: General (Invoice,
+  Supplier and Volume cards), Lines, Revisions, Packing lists. Every one renders, with an
+  explicit empty state; the Packing lists empty state offers the Convert CTA as its next step.
+- AC-E2.8 Editing is a LOCAL DRAFT: nothing is written until Save. `pi_number` is editable and
+  is the first field of the Invoice card; a removed line is struck through with an Undo and is
+  only deleted on Save; "Add line" inserts a draft row with a server-searched product select,
+  item code defaulting to the product code, description, qty, UOM, cartons, CBM per unit, unit
+  price and both weights. Cancel discards the draft. The header states "Nothing is written
+  until you press Save." beside Cancel and Save, and offers nothing else.
+- AC-E2.9 Save is ONE `PUT /scm/proforma-invoices/{id}` carrying the number, the container
+  size and the whole `lines` array: rows with an `id` update, rows without create, and a line
+  the array no longer names is deleted. A rename onto a number the supplier already uses is
+  refused with `duplicate_pi_number`; a converted or superseded invoice refuses the whole save.
+- AC-E2.10 The line grid renders the same columns in the same order in both modes: Item code,
+  Product, Description, Qty, UOM, Cartons, CBM/unit, CBM total, Unit price, Amount, Net wt,
+  Gross wt, Match. The reader maps 净重 / 毛重 / N.W. / G.W. onto the two new columns.
+- AC-E2.11 The upload dialog is the SAME two-step as the order uploads: supplier, dropzone,
+  Test / Cancel / Confirm. Test shows the standard verdict card. There is no Currency field
+  and nothing is read when a file is picked; where neither the document nor the price list
+  states a currency, the verdict names the invoices as an error and Confirm is disabled.
+  Revision candidates are applied as revisions by default, and undone on the detail page.
+
 ## F. Packing list carries volume and edits in place
 
 - AC-F1 Converting PIs to a draft shipment copies each line's total cbm into `inbound_shipment_lines.cbm`.

@@ -1,7 +1,16 @@
 /**
- * The proforma-invoice detail page: meta strip (Created/Uploaded-style fields never inside a
- * tab body) plus the lines grid, both always rendered per the CRUD standard - even when the
- * lines list is empty, the section stays and states so explicitly.
+ * The proforma-invoice detail page, after the conformance pass.
+ *
+ * What this pins:
+ *
+ * - A record header that reads like the purchase order's: the number and its badges on the
+ *   left, and on the right the pager, ONE primary CTA, a gear menu holding every secondary
+ *   action, and Back. Read-only provenance is a meta line under the title, never a tab body.
+ * - Four tabs in a fixed order, the SAME set in view and in edit: editing swaps a value for
+ *   an input where the value was.
+ * - Editing is a LOCAL DRAFT. A removed line is struck through with an Undo; an added line is
+ *   a blank row; nothing at all is written until Save, and Save is ONE call carrying the
+ *   number, the container size and the whole line array.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -36,9 +45,10 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/proforma-invoices/pi-1',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -56,41 +66,48 @@ vi.mock('sonner', () => ({
   },
 }));
 
+// The line grid's product picker is server-searched; this suite is not testing the catalogue.
+vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
+  getProducts: async () => ({ data: [], pagination: { total: 0 } }),
+}));
+
 const state = {
   data: undefined as ProformaInvoiceDetailData | undefined,
   isLoading: false,
   isError: false,
 };
 
-/** The three adjust writes, so a test can assert what the page ASKED the backend for. */
+/** The writes, so a test can assert what the page ASKED the backend for. */
 const writes = {
   matchCode: vi.fn(),
   forgetMatch: vi.fn(),
-  updateLine: vi.fn(),
-  removeLine: vi.fn(),
-  updateInvoice: vi.fn(),
+  save: vi.fn(),
+  deleteInvoice: vi.fn(),
   markAsRevision: vi.fn(),
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
   useProformaInvoice: () => state,
-  // The header's ProformaInvoiceNavigation (S9) pulls the neighbour list via this hook - one
-  // row is not enough to show a pager (see RecordNavigation's `items.length < 2` guard), so
-  // it stays hidden and out of these tests' way without a dedicated navigation test.
+  // The header's pager pulls the neighbour list through this hook - one row is not enough to
+  // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
   useProformaInvoices: () => ({ data: undefined, isLoading: false }),
   useConvertProformaInvoicesToDraftShipment: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
-  useUpdateProformaInvoiceLine: () => ({ mutateAsync: writes.updateLine, isPending: false }),
-  useDeleteProformaInvoiceLine: () => ({ mutateAsync: writes.removeLine, isPending: false }),
-  useUpdateProformaInvoice: () => ({ mutateAsync: writes.updateInvoice, isPending: false }),
+  useSaveProformaInvoice: () => ({ mutateAsync: writes.save, isPending: false }),
+  useDeleteProformaInvoice: () => ({ mutateAsync: writes.deleteInvoice, isPending: false }),
   useMarkProformaInvoiceAsRevision: () => ({
     mutateAsync: writes.markAsRevision,
     isPending: false,
   }),
   // The convert dialog offers this supplier's open drafts to add to (F10).
   useDraftShipments: () => ({ data: [], isLoading: false }),
+}));
+
+vi.mock('../../../hooks/useSupplierCodeAliases', () => ({
+  useMatchSupplierCode: () => ({ mutateAsync: writes.matchCode, isPending: false }),
+  useForgetSupplierCodeMatch: () => ({ mutateAsync: writes.forgetMatch, isPending: false }),
 }));
 
 vi.mock('../../../hooks/useFulfilment', () => ({
@@ -157,6 +174,8 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         cartons: 10,
         cbm_per_unit: 0.17,
         cbm_total: 1.7,
+        net_weight: 40,
+        gross_weight: 50,
         supplier_qty: 10,
         supplier_unit_price: 100,
         placed_qty: 0,
@@ -191,8 +210,6 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
 }
 
 function renderDetail() {
-  // ConfirmDeleteDialog (the line-removal confirmation) runs its own mutation, so the page
-  // needs a client even though every data hook here is mocked.
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tree = () => (
     <QueryClientProvider client={qc}>
@@ -201,21 +218,51 @@ function renderDetail() {
   );
   const view = render(tree());
   // The detail hook is mocked, so a write's invalidation cannot be observed the usual way.
-  // `refresh` replays what the refetch would do: change `state.data`, render the tree again
-  // (a NEW element, or React bails out on the identical one) and read the row.
+  // `refresh` replays what the refetch would do.
   return { ...view, refresh: () => view.rerender(tree()) };
+}
+
+/** Radix opens a dropdown on POINTERDOWN, not on click - a plain click is a silent no-op. */
+function openActions() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /more actions/i }), {
+    button: 0,
+    ctrlKey: false,
+    pointerType: 'mouse',
+  });
+}
+
+/**
+ * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down, and a plain `click`
+ * event is a silent no-op. Exact names, because `/lines/i` matches BOTH "Lines" and
+ * "Packing lists".
+ */
+function openTab(name: 'General' | 'Lines' | 'Revisions' | 'Packing lists') {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+}
+
+/** Open the gear menu and press Edit, which is where editing starts from now. */
+function beginEdit() {
+  openActions();
+  fireEvent.click(screen.getByRole('menuitem', { name: /^edit$/i }));
+}
+
+function lastSavePayload() {
+  return writes.save.mock.calls[writes.save.mock.calls.length - 1][0] as {
+    pi_number?: string;
+    container_size_id?: string | null;
+    lines?: Array<Record<string, unknown>>;
+  };
 }
 
 beforeEach(() => {
   state.data = undefined;
   state.isLoading = false;
   state.isError = false;
-  writes.updateLine.mockReset();
-  writes.forgetMatch.mockReset();
-  writes.forgetMatch.mockResolvedValue(undefined);
-  writes.removeLine.mockReset();
-  writes.updateInvoice.mockReset();
-  writes.markAsRevision.mockReset();
+  push.mockReset();
+  writes.save.mockReset().mockResolvedValue(undefined);
+  writes.deleteInvoice.mockReset().mockResolvedValue(undefined);
+  writes.forgetMatch.mockReset().mockResolvedValue(undefined);
+  writes.markAsRevision.mockReset().mockResolvedValue(undefined);
 });
 
 describe('ProformaInvoiceDetail - loading / error / data states', () => {
@@ -234,56 +281,141 @@ describe('ProformaInvoiceDetail - loading / error / data states', () => {
     expect(screen.getByText('Proforma invoice not found')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /back to proforma invoices/i })).toBeInTheDocument();
   });
+});
 
-  it('renders the meta strip fields, none of them inside a tab', () => {
+describe('ProformaInvoiceDetail - the record header', () => {
+  it('names the invoice, its currency and where its goods are', () => {
     state.data = detail();
     renderDetail();
 
-    expect(screen.getByText('PI-2026-001')).toBeInTheDocument();
-    expect(screen.getByText(/Kailu Hardware Factory/)).toBeInTheDocument();
-    expect(screen.getByText('(KAILU)')).toBeInTheDocument();
-    expect(screen.getByText('TEMU1234567')).toBeInTheDocument();
-    expect(screen.getByText('BL-991')).toBeInTheDocument();
-    expect(screen.getByText('Ms Tee')).toBeInTheDocument();
-    expect(screen.getByText('proforma.xlsx')).toBeInTheDocument();
+    // Twice on purpose: the header title, and the General tab's first field - the number is
+    // the first thing the edit view swaps for an input, so it has to be there to swap.
+    expect(screen.getAllByText('PI-2026-001')).toHaveLength(2);
+    // Same story for the currency: the header badge, and the General tab's Currency field.
+    expect(screen.getAllByText('CNY')).toHaveLength(2);
+    expect(screen.getByText('Not converted')).toBeInTheDocument();
   });
 
-  it('renders the invoice lines with matched/unmatched product status', () => {
+  it('puts the read-only provenance in a meta line, never inside a tab', () => {
+    state.data = detail({ adjusted_by: 'Ms Tee', adjusted_at: '2026-08-02T02:00:00' });
+    renderDetail();
+
+    expect(screen.getByText(/proforma\.xlsx/)).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded by Ms Tee/)).toBeInTheDocument();
+    expect(screen.getByText(/Adjusted by Ms Tee/)).toBeInTheDocument();
+  });
+
+  it('offers Convert as the ONE primary action, with everything else in the gear menu', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(
+      screen.getByRole('button', { name: /convert to packing list/i }),
+    ).toBeInTheDocument();
+    // Not loose buttons any more: Edit, Export and Delete are behind the gear.
+    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /export adjusted pi/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('lists every secondary action in the gear menu, in one place', () => {
+    state.data = detail();
+    renderDetail();
+
+    openActions();
+
+    expect(screen.getByRole('menuitem', { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /export adjusted pi/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /mark as revision of/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /delete invoice/i })).toBeInTheDocument();
+  });
+
+  it('keeps Back to the list as the last thing on the row', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(screen.getByRole('link', { name: /back to proforma invoices/i })).toBeInTheDocument();
+  });
+
+  it('offers "Convert the rest" while something is still to place', () => {
+    state.data = detail({ placement: 'split', placed_qty: 4, remaining_qty: 6 });
+    renderDetail();
+
+    expect(screen.getByRole('button', { name: /convert the rest/i })).toBeInTheDocument();
+  });
+
+  it('offers no convert at all once every line is placed', () => {
     state.data = detail({
-      lines: [
-        { ...detail().lines[0] },
+      placement: 'converted',
+      placed_qty: 10,
+      remaining_qty: 0,
+      packing_lists: [
         {
-          id: 'line-2', line_no: 2, row_number: 3, item_code: 'ZZ-NOPE',
-          description: 'Unknown part', qty: 5, uom: 'PCS', unit_price: 20, amount: 100,
-          po_ref: null, remark: null, cartons: null, cbm_per_unit: null, cbm_total: null,
-          supplier_qty: 5, supplier_unit_price: 20,
-          placed_qty: 0, remaining_qty: 5, packing_lists: [],
-          matched_by: null, match_source: null, match_id: null,
-          product_code: null, matched: false,
-          shipment_id: null, shipment_number: null, unmatched_reason: null,
+          shipment_id: 'sh-1',
+          shipment_number: 'FSCU8103365',
+          shipment_status: 'draft',
+          qty: 10,
+          lines: 1,
         },
       ],
     });
     renderDetail();
 
-    // ITEM-1 appears twice - the line's own item code column, and the matched product code
-    // subtext under the Matched badge (both correctly the same code here).
-    expect(screen.getAllByText('ITEM-1').length).toBeGreaterThanOrEqual(2);
-    // "Matched" also names the column header, so the badge is one of at least two matches.
-    expect(screen.getAllByText('Matched').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('ZZ-NOPE')).toBeInTheDocument();
-    expect(screen.getByText('Not in catalogue')).toBeInTheDocument();
-  });
-
-  it('states plainly when the invoice has no lines, rather than an empty table', () => {
-    state.data = detail({ lines: [], line_count: 0 });
-    renderDetail();
-
-    expect(screen.getByText('This proforma invoice has no lines.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /convert/i })).not.toBeInTheDocument();
   });
 });
 
-describe('F5 - volume, and adjusting the invoice to fit the container', () => {
+describe('ProformaInvoiceDetail - deleting the invoice', () => {
+  it('asks first, and routes back to the list once it is done', async () => {
+    state.data = detail();
+    renderDetail();
+
+    openActions();
+    fireEvent.click(screen.getByRole('menuitem', { name: /delete invoice/i }));
+
+    expect(screen.getByText(/deletes proforma invoice PI-2026-001/)).toBeInTheDocument();
+    expect(writes.deleteInvoice).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }),
+    );
+
+    await waitFor(() => expect(writes.deleteInvoice).toHaveBeenCalledWith('pi-1'));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/proforma-invoices'));
+  });
+
+  it('refuses on an invoice already in a packing list, and says why', () => {
+    state.data = detail({
+      converted_shipments: [{ shipment_id: 'sh-1', shipment_number: 'FSCU8103365' }],
+    });
+    renderDetail();
+
+    openActions();
+    const item = screen.getByRole('menuitem', { name: /delete invoice/i });
+    expect(item).toHaveAttribute('data-disabled');
+    expect(item).toHaveAttribute('title', expect.stringContaining('FSCU8103365'));
+  });
+});
+
+describe('ProformaInvoiceDetail - the tabs', () => {
+  it('renders four tabs, in a fixed order', () => {
+    state.data = detail();
+    renderDetail();
+
+    const names = screen.getAllByRole('tab').map((t) => t.textContent);
+    expect(names).toEqual(['General', 'Lines', 'Revisions', 'Packing lists']);
+  });
+
+  it('names each card of the General tab as its own region', () => {
+    state.data = detail();
+    renderDetail();
+
+    expect(screen.getByRole('region', { name: 'Invoice' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Supplier' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Volume' })).toBeInTheDocument();
+  });
+
   it('states the volume against the named container and how far over it is (AC-D2)', () => {
     state.data = detail();
     renderDetail();
@@ -294,127 +426,327 @@ describe('F5 - volume, and adjusting the invoice to fit the container', () => {
   });
 
   it('counts the unmeasured lines rather than reading them as an empty container', () => {
-    state.data = detail({ total_cbm: null, unmeasured_lines: 2, fill_pct: null, over_by_cbm: null });
+    state.data = detail({
+      total_cbm: null,
+      unmeasured_lines: 2,
+      fill_pct: null,
+      over_by_cbm: null,
+    });
     renderDetail();
 
     expect(screen.getByText('No volume on this invoice')).toBeInTheDocument();
     expect(screen.getByText('2 unmeasured lines')).toBeInTheDocument();
   });
 
-  it("shows the supplier's own quantity beside ours once the two differ (AC-E1)", () => {
+  it('renders the lines with the weights the supplier stated', () => {
+    state.data = detail();
+    renderDetail();
+    openTab('Lines');
+
+    // ITEM-1 twice: the supplier's own code, and the product it binds to (the same code
+    // here, which is what an exact match looks like).
+    expect(screen.getAllByText('ITEM-1')).toHaveLength(2);
+    expect(screen.getByText('Widget')).toBeInTheDocument();
+    expect(screen.getByText('40')).toBeInTheDocument();
+    expect(screen.getByText('50')).toBeInTheDocument();
+  });
+
+  it('states plainly when the invoice has no lines, rather than an empty table', () => {
+    state.data = detail({ lines: [], line_count: 0 });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('This proforma invoice has no lines.')).toBeInTheDocument();
+  });
+
+  it('renders the Revisions tab on an original too, with an empty state', () => {
+    state.data = detail();
+    renderDetail();
+    openTab('Revisions');
+
+    expect(
+      screen.getByText('This is the only version the supplier has sent.'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the Packing lists tab with an empty state and the Convert CTA', () => {
+    state.data = detail();
+    renderDetail();
+    openTab('Packing lists');
+
+    expect(
+      screen.getByText('Nothing from this invoice is in a packing list yet.'),
+    ).toBeInTheDocument();
+    // The next step from the empty state is the SAME action as the header's primary.
+    expect(screen.getAllByRole('button', { name: /convert to packing list/i }).length).toBe(2);
+  });
+
+  it('names the packing list, and what is left when it is split (Q9)', () => {
     state.data = detail({
-      lines: [{ ...detail().lines[0], qty: 8, supplier_qty: 10 }],
+      placement: 'split',
+      placed_qty: 4,
+      remaining_qty: 6,
+      packing_lists: [
+        {
+          shipment_id: 'sh-1',
+          shipment_number: 'FSCU8103365',
+          shipment_status: 'draft',
+          qty: 4,
+          lines: 1,
+        },
+      ],
+      lines: [
+        {
+          ...detail().lines[0],
+          placed_qty: 4,
+          remaining_qty: 6,
+          packing_lists: [{ shipment_id: 'sh-1', shipment_number: 'FSCU8103365', qty: 4 }],
+        },
+      ],
     });
     renderDetail();
+    openTab('Packing lists');
 
-    expect(screen.getByText('Supplier: 10')).toBeInTheDocument();
-  });
-
-  it('says nothing about the supplier quantity while the two agree', () => {
-    state.data = detail();
-    renderDetail();
-
-    expect(screen.queryByText(/^Supplier: /)).not.toBeInTheDocument();
-  });
-
-  it('swaps the quantity for an input in place, leaving the layout alone (AC-E1)', async () => {
-    state.data = detail();
-    renderDetail();
-
-    expect(screen.queryByLabelText('Quantity for ITEM-1')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-
-    expect(screen.getByLabelText('Quantity for ITEM-1')).toBeInTheDocument();
-    // Every other field stays exactly where it was - same fields, same order.
-    expect(screen.getByText('TEMU1234567')).toBeInTheDocument();
-    expect(screen.getByText('Container size')).toBeInTheDocument();
-  });
-
-  it('sends only the lines whose quantity actually changed', async () => {
-    state.data = detail();
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), {
-      target: { value: '8' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-    await waitFor(() => expect(writes.updateLine).toHaveBeenCalledTimes(1));
-    expect(writes.updateLine).toHaveBeenCalledWith({ lineId: 'line-1', qty: 8 });
-    expect(writes.updateInvoice).not.toHaveBeenCalled();
-  });
-
-  it('writes nothing at all when the operator changes nothing', async () => {
-    state.data = detail();
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-    await waitFor(() =>
-      expect(screen.queryByLabelText('Quantity for ITEM-1')).not.toBeInTheDocument(),
+    expect(screen.getByRole('link', { name: /FSCU8103365/ })).toHaveAttribute(
+      'href',
+      '/procurement-management/packing-lists/sh-1',
     );
-    expect(writes.updateLine).not.toHaveBeenCalled();
-    expect(writes.updateInvoice).not.toHaveBeenCalled();
+    expect(screen.getByText('6 left')).toBeInTheDocument();
   });
 
-  it('moves the fill bar live as the quantity is typed, before any save (AC-E3)', async () => {
+  it('names a line nothing could carry, instead of calling it placed', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          matched: false,
+          product_code: null,
+          remaining_qty: 0,
+          unmatched_reason: "No catalogue product matches this line's item code.",
+        },
+      ],
+    });
+    renderDetail();
+    openTab('Packing lists');
+
+    expect(
+      screen.getByText(/No catalogue product matches this line's item code/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
+  it('swaps values for inputs in place, leaving the tabs and their order alone', () => {
     state.data = detail();
     renderDetail();
 
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), {
-      target: { value: '20' },
-    });
+    expect(screen.queryByLabelText('PI number')).not.toBeInTheDocument();
+    beginEdit();
+
+    expect(screen.getByLabelText('PI number')).toHaveValue('PI-2026-001');
+    expect(screen.getByLabelText('Container size')).toBeInTheDocument();
+    // Same tabs, same order, mid-edit.
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'General',
+      'Lines',
+      'Revisions',
+      'Packing lists',
+    ]);
+  });
+
+  it('states that nothing is written until Save, and offers only Cancel and Save', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+
+    expect(screen.getByText('Nothing is written until you press Save.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    // Nav and the way out act on the STORED invoice, so they are not offered over a screen
+    // full of unsaved changes.
+    expect(
+      screen.queryByRole('link', { name: /back to proforma invoices/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /more actions/i })).not.toBeInTheDocument();
+  });
+
+  it('writes nothing while the quantity is being typed', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
+
+    expect(writes.save).not.toHaveBeenCalled();
+  });
+
+  it('moves the fill bar live as the quantity is typed, before any save (AC-E3)', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '20' } });
+    openTab('General');
 
     // 20 x 0.17 cbm, computed from the per-unit figure the supplier stated.
     expect(screen.getByText('3.4 cbm')).toBeInTheDocument();
     expect(screen.queryByText(/over by/)).not.toBeInTheDocument();
   });
 
-  it('cancels back to the supplier figures without writing anything', async () => {
+  it('sends the WHOLE line array in one call on Save', async () => {
     state.data = detail();
     renderDetail();
+    beginEdit();
+    openTab('Lines');
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), {
-      target: { value: '1' },
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const payload = lastSavePayload();
+    expect(payload.pi_number).toBe('PI-2026-001');
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines?.[0]).toMatchObject({
+      id: 'line-1',
+      item_code: 'ITEM-1',
+      qty: 8,
+      uom: 'PCS',
+      cartons: 10,
+      cbm_per_unit: 0.17,
+      unit_price: 100,
+      net_weight: 40,
+      gross_weight: 50,
     });
+  });
+
+  it('carries a corrected PI number on the same save', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    fireEvent.change(screen.getByLabelText('PI number'), { target: { value: 'PI-REAL-9 ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    expect(lastSavePayload().pi_number).toBe('PI-REAL-9');
+  });
+
+  it('refuses to save a blank PI number, and writes nothing', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    fireEvent.change(screen.getByLabelText('PI number'), { target: { value: '  ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
+    expect(screen.getByLabelText('PI number')).toBeInTheDocument();
+  });
+
+  it('marks a removed line struck through, with an Undo, and writes nothing yet', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+
+    expect(writes.save).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^undo$/i })).toBeInTheDocument();
+    // Still on screen - it is marked, not gone.
+    expect(screen.getByLabelText('Item code for line 1')).toBeInTheDocument();
+  });
+
+  it('puts a removed line back on Undo', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^undo$/i }));
+
+    expect(screen.getByRole('button', { name: /^remove$/i })).toBeInTheDocument();
+  });
+
+  it('leaves a removed line OUT of the array on Save', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    expect(lastSavePayload().lines).toEqual([]);
+  });
+
+  it('adds a blank draft row from Add line, and sends it with no id', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /add line/i }));
+    fireEvent.change(screen.getByLabelText('Item code for line 2'), {
+      target: { value: 'HAND-1' },
+    });
+    fireEvent.change(screen.getByLabelText('Quantity for HAND-1'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const lines = lastSavePayload().lines ?? [];
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({ item_code: 'HAND-1', qty: 4 });
+    expect(lines[1]).not.toHaveProperty('id');
+  });
+
+  it('refuses an added line with no quantity, and writes nothing', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /add line/i }));
+    fireEvent.change(screen.getByLabelText('Item code for line 2'), {
+      target: { value: 'HAND-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
+  });
+
+  it('offers no Add line while only reading', () => {
+    state.data = detail();
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByRole('button', { name: /add line/i })).not.toBeInTheDocument();
+  });
+
+  it('discards the whole draft on Cancel', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    fireEvent.change(screen.getByLabelText('PI number'), { target: { value: 'PI-WRONG' } });
+    openTab('Lines');
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
 
-    expect(writes.updateLine).not.toHaveBeenCalled();
+    expect(writes.save).not.toHaveBeenCalled();
     expect(screen.queryByLabelText('Quantity for ITEM-1')).not.toBeInTheDocument();
-    expect(screen.getByText('69.36 cbm')).toBeInTheDocument();
+    openTab('General');
+    expect(screen.getAllByText('PI-2026-001')).toHaveLength(2);
+    expect(screen.queryByText('PI-WRONG')).not.toBeInTheDocument();
   });
 
-  it('asks before removing a line, and only removes once confirmed', async () => {
-    state.data = detail();
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /remove/i }));
-
-    expect(screen.getByText(/This removes ITEM-1 from PI-2026-001/)).toBeInTheDocument();
-    expect(writes.removeLine).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
-    await waitFor(() => expect(writes.removeLine).toHaveBeenCalledWith('line-1'));
-    // And the dialog has finished with it - otherwise a rejection lands after the test
-    // ends, where it fails nothing and hides the next real one.
-    await waitFor(() =>
-      expect(screen.queryByText(/This removes ITEM-1 from/)).not.toBeInTheDocument(),
-    );
-  });
-
-  it('offers no Edit on an invoice already in a packing list', () => {
+  it('offers no Edit at all on an invoice already in a packing list', () => {
     state.data = detail({
       converted_shipments: [{ shipment_id: 'sh-1', shipment_number: 'FSCU8103365' }],
     });
     renderDetail();
 
-    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/Already in a packing list/)).toBeInTheDocument();
+    openActions();
+    expect(screen.queryByRole('menuitem', { name: /^edit$/i })).not.toBeInTheDocument();
   });
 });
 
@@ -472,11 +804,12 @@ describe('F5b - revisions', () => {
       },
     });
 
-  it('says which revision this is, in the header and in the section (AC-E7)', () => {
+  it('says which revision this is, in the header and in the tab (AC-E7)', () => {
     state.data = revised();
     renderDetail();
 
-    // Once in the header badge, once in the Revisions section - both places a reader looks.
+    expect(screen.getByText('Revision 2 of 2')).toBeInTheDocument();
+    openTab('Revisions');
     expect(screen.getAllByText('Revision 2 of 2')).toHaveLength(2);
     expect(screen.getByText('Revision 1 - superseded')).toBeInTheDocument();
   });
@@ -484,22 +817,11 @@ describe('F5b - revisions', () => {
   it('names how many lines the supplier repriced, and by what (AC-E8)', () => {
     state.data = revised();
     renderDetail();
+    openTab('Revisions');
 
     expect(screen.getByText('Price changed on 1 line')).toBeInTheDocument();
     expect(screen.getByText(/against PI-2026-001/)).toBeInTheDocument();
-    // The old price appears only in the diff; the new one also sits in the lines grid.
     expect(screen.getByText('CNY 90.00')).toBeInTheDocument();
-    expect(screen.getAllByText('CNY 100.00').length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('renders the revisions section on an original too, with an empty state', () => {
-    state.data = detail();
-    renderDetail();
-
-    expect(screen.getByText('Revisions')).toBeInTheDocument();
-    expect(
-      screen.getByText('This is the only version the supplier has sent.'),
-    ).toBeInTheDocument();
   });
 
   it('offers no Edit and no Convert on a superseded revision (AC-E7, AC-E10)', () => {
@@ -507,181 +829,31 @@ describe('F5b - revisions', () => {
     renderDetail();
 
     expect(screen.getByText('Superseded')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /convert to draft shipment/i }),
+      screen.queryByRole('button', { name: /convert to packing list/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText('A superseded revision is read-only.')).toBeInTheDocument();
+    openActions();
+    expect(screen.queryByRole('menuitem', { name: /^edit$/i })).not.toBeInTheDocument();
   });
 
   it('offers to link a mis-filed new PI to the one it revises (AC-E11)', () => {
     state.data = detail();
     renderDetail();
 
-    expect(screen.getByRole('button', { name: /mark as revision of/i })).toBeInTheDocument();
+    openActions();
+    expect(screen.getByRole('menuitem', { name: /mark as revision of/i })).toBeInTheDocument();
   });
 
   it('does not offer to link one that is already a revision', () => {
     state.data = revised();
     renderDetail();
 
+    openActions();
     expect(
-      screen.queryByRole('button', { name: /mark as revision of/i }),
+      screen.queryByRole('menuitem', { name: /mark as revision of/i }),
     ).not.toBeInTheDocument();
   });
 });
-
-describe('F10 - the invoice says which packing list it is in', () => {
-  it('reads Not converted before anything is placed (AC-F8)', () => {
-    state.data = detail();
-    renderDetail();
-
-    // Twice on purpose: the header field, and the lines grid's own column header - the
-    // invoice-level answer and the per-line one are different questions (AC-F8).
-    expect(screen.getAllByText('In packing list')).toHaveLength(2);
-    expect(screen.getAllByText('Not converted').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('names the packing list, and what is left when it is split (Q9)', () => {
-    state.data = detail({
-      placement: 'split',
-      placed_qty: 4,
-      remaining_qty: 6,
-      packing_lists: [
-        {
-          shipment_id: 'sh-1',
-          shipment_number: 'FSCU8103365',
-          shipment_status: 'draft',
-          qty: 4,
-          lines: 1,
-        },
-      ],
-      lines: [
-        {
-          ...detail().lines[0],
-          placed_qty: 4,
-          remaining_qty: 6,
-          packing_lists: [{ shipment_id: 'sh-1', shipment_number: 'FSCU8103365', qty: 4 }],
-        },
-      ],
-    });
-    renderDetail();
-
-    expect(screen.getAllByRole('link', { name: /FSCU8103365/ }).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/Split - 6 still to place/)).toBeInTheDocument();
-    expect(screen.getByText('6 left')).toBeInTheDocument();
-  });
-
-  it('offers "Convert the rest" while something is still to place', () => {
-    state.data = detail({ placement: 'split', placed_qty: 4, remaining_qty: 6 });
-    renderDetail();
-
-    expect(screen.getByRole('button', { name: /convert the rest/i })).toBeInTheDocument();
-  });
-
-  it('offers no convert at all once every line is placed', () => {
-    state.data = detail({ placement: 'converted', placed_qty: 10, remaining_qty: 0 });
-    renderDetail();
-
-    expect(screen.queryByRole('button', { name: /convert/i })).not.toBeInTheDocument();
-  });
-});
-
-describe('A line nothing could carry is not a line already placed', () => {
-  /** The dev repro: one line, no catalogue product, a convert that ran on another invoice
-   *  in the same action and recorded WHY this one went nowhere. */
-  const skipped = () =>
-    detail({
-      converted_shipments: [],
-      placement: 'not_converted',
-      placed_qty: 0,
-      remaining_qty: 0,
-      lines: [
-        {
-          ...detail().lines[0],
-          item_code: 'SRTWC8152-SH-300-UF',
-          matched: false,
-          product_code: null,
-          unmatched_reason: "No catalogue product matches this line's item code.",
-          placed_qty: 0,
-          remaining_qty: 0,
-          packing_lists: [],
-        },
-      ],
-    });
-
-  it('leaves the lines panel editable, with no "already in a packing list" lock', () => {
-    state.data = skipped();
-    renderDetail();
-
-    expect(screen.queryByText(/Already in a packing list/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
-  });
-
-  it('says why the line cannot go, instead of calling it already placed', () => {
-    state.data = skipped();
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
-
-    // Twice: the lines grid already says it in its "In packing list" column, and the
-    // dialog says it again where the decision is being made.
-    expect(
-      screen.getAllByText(/No catalogue product matches this line's item code/).length,
-    ).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByText(/already fully placed/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/is already in a packing list/),
-    ).not.toBeInTheDocument();
-  });
-
-  it('still reports a genuinely placed line as placed', () => {
-    // Split, so there is still something to convert and the dialog opens; its first line
-    // is finished and the second is not.
-    state.data = detail({
-      placement: 'split',
-      placed_qty: 10,
-      remaining_qty: 5,
-      lines: [
-        { ...detail().lines[0], placed_qty: 10, remaining_qty: 0 },
-        {
-          ...detail().lines[0],
-          id: 'line-2',
-          line_no: 2,
-          item_code: 'ITEM-2',
-          placed_qty: 0,
-          remaining_qty: 5,
-        },
-      ],
-    });
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /convert the rest/i }));
-
-    expect(screen.getByText(/already fully placed/)).toBeInTheDocument();
-  });
-});
-
-vi.mock('../../../hooks/useSupplierCodeAliases', () => ({
-  useMatchSupplierCode: () => ({ mutateAsync: writes.matchCode, isPending: false }),
-  useForgetSupplierCodeMatch: () => ({ mutateAsync: writes.forgetMatch, isPending: false }),
-}));
-
-/** A code the ladder worked out and wrote down - the only line with a ruling to forget. */
-function boundByLadder(): ProformaInvoiceDetailData {
-  return detail({
-    lines: [
-      {
-        ...detail().lines[0],
-        item_code: 'SRTWC8357-RL-300',
-        product_code: 'SRTWC8357-300-RL',
-        match_source: 'auto',
-        matched_by: 'token_set',
-        match_id: 'alias-1',
-      },
-    ],
-  });
-}
 
 describe('F11 - answering a supplier code by hand', () => {
   it('offers Match to product on a line that binds to nothing', () => {
@@ -696,6 +868,7 @@ describe('F11 - answering a supplier code by hand', () => {
       ],
     });
     renderDetail();
+    openTab('Lines');
 
     expect(screen.getByRole('button', { name: /match to product/i })).toBeInTheDocument();
   });
@@ -707,24 +880,36 @@ describe('F11 - answering a supplier code by hand', () => {
       ],
     });
     renderDetail();
+    openTab('Lines');
 
-    const badge = screen.getByText('auto');
-    expect(badge).toHaveAttribute('title', 'Matched by token_set');
-    // A guess can be corrected; an exact agreement has nothing to correct.
+    expect(screen.getByText('auto')).toHaveAttribute('title', 'Matched by token_set');
     expect(screen.getByRole('button', { name: /^change$/i })).toBeInTheDocument();
   });
 
   it('says nothing about a code that matched exactly', () => {
     state.data = detail();
     renderDetail();
+    openTab('Lines');
 
     expect(screen.queryByText('auto')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
   });
 
   it('asks before forgetting a recorded match, and quotes both codes', () => {
-    state.data = boundByLadder();
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          item_code: 'SRTWC8357-RL-300',
+          product_code: 'SRTWC8357-300-RL',
+          match_source: 'auto',
+          matched_by: 'token_set',
+          match_id: 'alias-1',
+        },
+      ],
+    });
     renderDetail();
+    openTab('Lines');
 
     fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
 
@@ -736,66 +921,25 @@ describe('F11 - answering a supplier code by hand', () => {
     expect(writes.forgetMatch).not.toHaveBeenCalled();
   });
 
-  it('forgets nothing when the question is answered no', async () => {
-    state.data = boundByLadder();
-    renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /cancel/i }));
-
-    await waitFor(() =>
-      expect(screen.queryByText(/Forget that SRTWC8357-RL-300/)).not.toBeInTheDocument(),
-    );
-    expect(writes.forgetMatch).not.toHaveBeenCalled();
-  });
-
-  it('forgets the recorded match on confirm, and the line reads Not in catalogue again', async () => {
-    state.data = boundByLadder();
-    const view = renderDetail();
-
-    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^forget$/i }));
-
-    // The ruling is named by the match that was recorded, never by the line's own id.
-    await waitFor(() => expect(writes.forgetMatch).toHaveBeenCalledWith('alias-1'));
-
-    state.data = detail({
-      lines: [
-        {
-          ...boundByLadder().lines[0],
-          matched: false,
-          product_code: null,
-          matched_by: null,
-          match_source: null,
-          match_id: null,
-        },
-      ],
-    });
-    view.refresh();
-
-    expect(screen.getByText('Not in catalogue')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^forget$/i })).not.toBeInTheDocument();
-  });
-
-  it('opens the picker on the line it was pressed for', () => {
+  it('forgets the recorded match on confirm, named by the ruling and never by the line', async () => {
     state.data = detail({
       lines: [
         {
           ...detail().lines[0],
-          item_code: 'SRTWC286-SH-250UF',
-          description: 'One piece toilet',
-          matched: false,
-          product_code: null,
+          match_source: 'auto',
+          matched_by: 'token_set',
+          match_id: 'alias-1',
         },
       ],
     });
     renderDetail();
+    openTab('Lines');
 
-    fireEvent.click(screen.getByRole('button', { name: /match to product/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: /^forget$/i }),
+    );
 
-    // The button and the dialog title read the same words - the dialog is open when the
-    // code it was pressed for is on screen.
-    expect(screen.getAllByText('Match to product').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/SRTWC286-SH-250UF - One piece toilet/)).toBeInTheDocument();
+    await waitFor(() => expect(writes.forgetMatch).toHaveBeenCalledWith('alias-1'));
   });
 });

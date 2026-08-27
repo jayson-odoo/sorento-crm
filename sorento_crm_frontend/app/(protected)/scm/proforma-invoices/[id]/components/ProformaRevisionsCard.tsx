@@ -1,26 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { toast } from 'sonner';
-import { GitBranch } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardHeading, CardTitle, CardToolbar } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import {
-  useMarkProformaInvoiceAsRevision,
-  useProformaInvoices,
-} from '../../../hooks/useProformaInvoices';
+import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { EM_DASH, fmtDate, fmtQty, fmtSupplierCost } from '../../../lib/format';
 import type { ProformaInvoiceDetail } from '../../../services/proformaInvoiceService';
 
@@ -34,46 +16,14 @@ import type { ProformaInvoiceDetail } from '../../../services/proformaInvoiceSer
  * The diff compares the two documents AS THE SUPPLIER SENT THEM - their frozen quantity and
  * price on both sides - so a line Sorento trimmed to fit the container is not reported as
  * something the supplier changed.
+ *
+ * READ-ONLY. "Mark as revision of" acts on the whole record, so it lives in the page
+ * header's actions menu (`MarkAsRevisionDialog`) rather than inside this tab: a control that
+ * only exists once you have found the right tab is a control nobody finds.
  */
-export function ProformaRevisionsCard({
-  invoice,
-  canEdit,
-}: {
-  invoice: ProformaInvoiceDetail;
-  canEdit: boolean;
-}) {
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [previousId, setPreviousId] = useState<string | null>(null);
-  const markAsRevision = useMarkProformaInvoiceAsRevision(invoice.id);
-  // The supplier's other invoices, so "which document does this revise" is a pick, never a
-  // typed identifier. Loaded only while the dialog is open.
-  const siblings = useProformaInvoices(linkOpen ? invoice.supplier_id : null, { limit: 100 });
-
-  const options = useMemo(
-    () =>
-      (siblings.data?.data ?? [])
-        .filter((row) => row.id !== invoice.id && row.status !== 'superseded')
-        .map((row) => ({
-          value: row.id,
-          label: `${row.pi_number} - ${fmtDate(row.invoice_date)}`,
-        })),
-    [siblings.data, invoice.id],
-  );
-
+export function ProformaRevisionsCard({ invoice }: { invoice: ProformaInvoiceDetail }) {
   const diff = invoice.diff;
   const chain = invoice.revisions ?? [];
-
-  const runLink = async () => {
-    if (!previousId) return;
-    try {
-      await markAsRevision.mutateAsync(previousId);
-      setLinkOpen(false);
-      setPreviousId(null);
-      toast.success('Linked to the document it revises.');
-    } catch {
-      // The hook toasts the refusal; the dialog stays open on the choice that was refused.
-    }
-  };
 
   return (
     <Card>
@@ -81,19 +31,6 @@ export function ProformaRevisionsCard({
         <CardHeading>
           <CardTitle>Revisions</CardTitle>
         </CardHeading>
-        <CardToolbar>
-          {canEdit && !invoice.revision_of_pi_number ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => setLinkOpen(true)}
-            >
-              <GitBranch className="size-4" />
-              Mark as revision of
-            </Button>
-          ) : null}
-        </CardToolbar>
       </CardHeader>
 
       <div className="space-y-3 p-4 pt-0">
@@ -212,43 +149,6 @@ export function ProformaRevisionsCard({
           </div>
         ) : null}
       </div>
-
-      <AlertDialog open={linkOpen} onOpenChange={setLinkOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark as a revision</AlertDialogTitle>
-            <AlertDialogDescription>
-              {invoice.pi_number} becomes the current version, and the document it revises is
-              superseded and read-only.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="pi-previous-revision" className="text-xs">
-              This is a revision of
-            </Label>
-            <SearchableSelect
-              id="pi-previous-revision"
-              value={previousId ?? ''}
-              onChange={(v: string) => setPreviousId(v || null)}
-              options={options}
-              placeholder="Choose the earlier document"
-              emptyMessage="No other proforma invoice on file for this supplier."
-              clearable
-            />
-          </div>
-          <AlertDialogFooter>
-            <Button variant="outline" onClick={() => setLinkOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void runLink()}
-              disabled={!previousId || markAsRevision.isPending}
-            >
-              Link
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </Card>
   );
 }

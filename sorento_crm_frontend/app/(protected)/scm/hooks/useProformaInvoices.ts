@@ -7,16 +7,15 @@ import {
   bulkDeleteProformaInvoices,
   convertProformaInvoicesToDraftShipment,
   deleteProformaInvoice,
-  deleteProformaInvoiceLine,
   getProformaInvoice,
   listDraftShipments,
   listProformaInvoices,
   markProformaInvoiceAsRevisionOf,
-  updateProformaInvoice,
-  updateProformaInvoiceLine,
+  saveProformaInvoice,
   type ConvertOptions,
   type ListProformaInvoicesOptions,
   type ProformaInvoiceDetail,
+  type ProformaInvoiceWrite,
   type ProformaPlacement,
 } from '../services/proformaInvoiceService';
 
@@ -108,7 +107,7 @@ export function useBulkDeleteProformaInvoices() {
 }
 
 /**
- * The three writes that adjust ONE invoice to fit the container (AC-E1, AC-E2, AC-D4).
+ * The writes that change ONE invoice (AC-E1, AC-E2, AC-D4, AC-E11).
  *
  * Each returns the whole invoice, so the detail cache is SEEDED with the server's answer
  * rather than invalidated and re-fetched: the fill bar, the totals and the was/now figures
@@ -130,18 +129,6 @@ function useInvoiceWrite<TArgs>(
   });
 }
 
-export function useUpdateProformaInvoiceLine(invoiceId: string) {
-  return useInvoiceWrite<{ lineId: string; qty: number }>(invoiceId, ({ lineId, qty }) =>
-    updateProformaInvoiceLine(invoiceId, lineId, qty),
-  );
-}
-
-export function useDeleteProformaInvoiceLine(invoiceId: string) {
-  return useInvoiceWrite<string>(invoiceId, (lineId) =>
-    deleteProformaInvoiceLine(invoiceId, lineId),
-  );
-}
-
 /** Link a PI uploaded as new to the document it actually revises (AC-E11). */
 export function useMarkProformaInvoiceAsRevision(invoiceId: string) {
   return useInvoiceWrite<string>(invoiceId, (previousId) =>
@@ -149,9 +136,17 @@ export function useMarkProformaInvoiceAsRevision(invoiceId: string) {
   );
 }
 
-export function useUpdateProformaInvoice(invoiceId: string) {
-  return useInvoiceWrite<{ container_size_id: string | null }>(invoiceId, (body) =>
-    updateProformaInvoice(invoiceId, body),
+/**
+ * The edit screen's Save: the number, the container size and the whole line array, together.
+ *
+ * There is deliberately no per-line hook beside it. The screen holds a DRAFT - a struck-
+ * through line is not gone until Save - so a per-line write would have to be replayed in
+ * order, and a refusal halfway through would leave the document half-applied under a screen
+ * still showing the draft.
+ */
+export function useSaveProformaInvoice(invoiceId: string) {
+  return useInvoiceWrite<ProformaInvoiceWrite>(invoiceId, (body) =>
+    saveProformaInvoice(invoiceId, body),
   );
 }
 

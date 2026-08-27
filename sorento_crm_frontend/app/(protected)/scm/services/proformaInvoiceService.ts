@@ -43,16 +43,15 @@
  *       Body: { previous_id }. Links a PI uploaded as new to its predecessor and supersedes
  *       that one (AC-E11). 422 on itself or another supplier's; 409 when either end is
  *       already superseded or already a revision.
- *  PATCH /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
- *       Body: { container_size_id: string | null }. Null means "the tenant's default size".
- *  PATCH /api/v1/scm/proforma-invoices/{id}/lines/{lineId} -> 200 ProformaInvoiceDetail
- *       Body: { qty: number }. Sorento's own figure; `supplier_qty` is never touched
- *       (AC-E2). Returns the WHOLE invoice so the fill bar and totals refresh in one round
- *       trip rather than being recomputed in the browser.
- *  DELETE /api/v1/scm/proforma-invoices/{id}/lines/{lineId} -> 200 ProformaInvoiceDetail
- *       Hard delete of one line, behind a confirmation dialog.
- *       Both writes: `scm.proforma_invoice.upload`; both 409 on a superseded revision or an
- *       invoice already converted to a shipment.
+ *  PUT  /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
+ *       Body: { pi_number?, container_size_id?, lines? }. The whole document as the edit
+ *       screen holds it: rows with an `id` update, rows without create, and a line the array
+ *       no longer names is deleted. An ABSENT field is left alone; `container_size_id: null`
+ *       means the tenant's default size. 409 `duplicate_pi_number` on a rename onto a number
+ *       this supplier already uses, and 409 on a superseded revision or an invoice already
+ *       converted to a shipment. Auth: `scm.proforma_invoice.upload`.
+ *       The per-line `PATCH`/`DELETE` routes still exist on the backend; nothing here calls
+ *       them, because a draft that is saved once cannot be sent one line at a time.
  *  GET  /api/v1/scm/proforma-invoices/{id}/export    -> 200 .xlsx bytes, the pre-loading
  *       block layout with the ADJUSTED quantities (AC-E4). Auth: `scm.dashboard.view`.
  *
@@ -253,6 +252,10 @@ export interface ProformaInvoiceLine {
   cartons: number | null;
   cbm_per_unit: number | null;
   cbm_total: number | null;
+  /** What the supplier states the line weighs (净重 / 毛重). Null, never 0, on a document
+   *  that states neither - same rule as the volumes above. */
+  net_weight: number | null;
+  gross_weight: number | null;
   /** What the SUPPLIER stated, frozen at import. `qty` / `unit_price` above are ours to
    *  adjust; these two are theirs and are never written again (AC-E2). */
   supplier_qty: number | null;
@@ -543,33 +546,33 @@ export async function convertProformaInvoicesToDraftShipment(
   return (await res.json()) as ConvertToDraftShipmentResult;
 }
 
-/** Sorento's own quantity for one line. The supplier's stays where it is (AC-E2). */
-export async function updateProformaInvoiceLine(
-  invoiceId: string,
-  lineId: string,
-  qty: number,
-): Promise<ProformaInvoiceDetail> {
-  const res = await apiFetch(
-    `/api/v1/scm/proforma-invoices/${invoiceId}/lines/${lineId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qty }),
-    },
-  );
-  return readJson<ProformaInvoiceDetail>(res, 'Failed to save the line');
+/**
+ * One line AS THE EDIT SCREEN HOLDS IT.
+ *
+ * `id` present = update that line; absent = a line the operator added. A line already on the
+ * invoice and missing from the array is DELETED - the array is the document.
+ */
+export interface ProformaInvoiceLineWrite {
+  id?: string;
+  product_id?: string | null;
+  item_code: string;
+  description?: string | null;
+  qty: number;
+  uom?: string | null;
+  cartons?: number | null;
+  /** Per unit. The total volume is derived server-side, never sent. */
+  cbm_per_unit?: number | null;
+  unit_price?: number | null;
+  net_weight?: number | null;
+  gross_weight?: number | null;
 }
 
-/** Take a line off the invoice entirely - it is not going in this container. */
-export async function deleteProformaInvoiceLine(
-  invoiceId: string,
-  lineId: string,
-): Promise<ProformaInvoiceDetail> {
-  const res = await apiFetch(
-    `/api/v1/scm/proforma-invoices/${invoiceId}/lines/${lineId}`,
-    { method: 'DELETE' },
-  );
-  return readJson<ProformaInvoiceDetail>(res, 'Failed to remove the line');
+/** The whole document as one Save. An ABSENT field is left alone - `container_size_id: null`
+ *  means the tenant default, which is a different instruction from not mentioning it. */
+export interface ProformaInvoiceWrite {
+  pi_number?: string;
+  container_size_id?: string | null;
+  lines?: ProformaInvoiceLineWrite[];
 }
 
 /** The draft packing lists this convert could be added to instead of making a new one. */
@@ -609,13 +612,19 @@ export async function markProformaInvoiceAsRevisionOf(
   return readJson<ProformaInvoiceDetail>(res, 'Failed to link this revision');
 }
 
-/** Which box this invoice is being fitted into. Null means the tenant's default size. */
-export async function updateProformaInvoice(
+/**
+ * The whole document, written in ONE call.
+ *
+ * The detail page edits a LOCAL DRAFT - a struck-through line is not gone until Save - so
+ * one PUT carries the number, the container size and the entire line array together. Writing
+ * them one at a time is what left a half-applied invoice on screen when the third refused.
+ */
+export async function saveProformaInvoice(
   invoiceId: string,
-  body: { container_size_id: string | null },
+  body: ProformaInvoiceWrite,
 ): Promise<ProformaInvoiceDetail> {
   const res = await apiFetch(`/api/v1/scm/proforma-invoices/${invoiceId}`, {
-    method: 'PATCH',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
