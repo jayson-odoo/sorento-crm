@@ -52,12 +52,16 @@ def _seed_container_sizes(db) -> None:
 
 
 def _apply_preloading(db, w: World) -> list[ProformaInvoice]:
-    # One code per block we actually convert, so a convert test is refused for CAPACITY
-    # rather than for having no catalogue match at all.
+    # One code per block, EVERY block, so a convert test is refused for CAPACITY rather
+    # than for having no catalogue match at all - whichever block an index lands on. With
+    # only three blocks mapped this passed on the prod-copy dev database (whose catalogue
+    # matched the other two) and failed on CI's empty one.
     data = preloading_list_workbook(
         {
             "SRTWC287A-RL-250": w.code("A"),
+            "SRTWC8152-SH-300-UF": w.code("D"),
             "CWB242": w.code("B"),
+            "SRTWC283-SH-250": w.code("E"),
             "SRTWC8357-RL-180": w.code("C"),
         }
     )
