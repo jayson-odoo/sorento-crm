@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -308,16 +309,33 @@ def confirm_all(
     orders around it down: each entry commits or rolls back on its own, and every order named
     in the body gets a result - there is no silent partial success. `orders: []` answers with
     an empty result rather than a refusal; a board with nothing approved yet is not an error.
+
+    `batch_id` on the BODY (part 3, AC-P3-4): the board is opened at `?orders=...&batch=<id>`
+    and every order on it belongs to that batch, so one press answers one planning change.
+    Each order then takes the same apply the per-order Confirm takes - one press, one call,
+    one revision per order - rather than an ordinary revision that would leave the batch
+    pending for ever.
     """
     try:
         if not payload.orders:
             return {"results": []}
+        actor_id = current_user["id"]
+        batch_id = payload.batch_id
+
+        def apply_the_batch(order, entry):
+            return _confirm_a_planning_change(
+                db, order, _BatchedEntry(list(entry.lines), batch_id), actor_id
+            )
+
         results = ProjectSupplyService(db).confirm_many(
             payload.orders,
-            actor_user_id=current_user["id"],
+            actor_user_id=actor_id,
             assert_can_act=lambda session, order: _assert_can_act_on(
                 session, order, current_user
             ),
+            # `None` is the ordinary press: `confirm_many` writes each order the way the
+            # per-order Confirm does.
+            write=apply_the_batch if batch_id else None,
         )
         return {"results": results}
     except Exception as exc:
@@ -329,6 +347,14 @@ def confirm_all(
 def get_stock_detail(
     product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
     warehouse_id: str = Query(...),
+    line_ids: Optional[str] = Query(
+        None,
+        description=(
+            "The CORE sales-order lines the drawer was opened for, comma separated. Their "
+            "rows come back marked `is_this_line`. Omitted lists the documents on nobody's "
+            "behalf, which is what the pile looks like to somebody not in it."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -343,7 +369,12 @@ def get_stock_detail(
     try:
         validate_uuid_path(product_id, resource="Product")
         validate_uuid_path(warehouse_id, resource="Warehouse")
-        return FulfilmentBoardService(db).stock_detail(product_id, warehouse_id)
+        wanted = [value.strip() for value in (line_ids or "").split(",") if value.strip()]
+        for value in wanted:
+            validate_uuid_path(value, resource="Sales order line")
+        return FulfilmentBoardService(db).stock_detail(
+            product_id, warehouse_id, line_ids=wanted
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -480,6 +511,20 @@ def confirm_supply(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@dataclass
+class _BatchedEntry:
+    """One order's half of a batched `confirm-all`, in the shape the batch apply reads.
+
+    `_confirm_a_planning_change` takes a `ConfirmSupplyBody` - `.lines` and `.batch_id` -
+    while `ConfirmManyOrderBody` carries the lines under a body-level batch. This joins the
+    two without giving every per-order entry a batch field it would have to be told to
+    ignore.
+    """
+
+    lines: list
+    batch_id: str
 
 
 def _confirm_a_planning_change(db, order, payload, actor_user_id: str) -> dict:

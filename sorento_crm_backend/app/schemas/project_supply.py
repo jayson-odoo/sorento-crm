@@ -301,6 +301,15 @@ class ConfirmLine(BaseModel):
     #: a mandatory field becomes a rubber stamp. It is FROZEN with the line, beside the
     #: engine's own sentences, because those explain a decision nobody took once it is amended.
     amend_reason: Optional[str] = None
+    #: "This might be a system problem, flag it for investigation" (R10,
+    #: `PLAN-scm-planning-inline-decisions.md` section 3.D5).
+    #:
+    #: A SECOND answer, beside the verdict rather than instead of it: a planner who amends a
+    #: line because the availability printed next to it reads wrong is telling us two
+    #: different things, and a decision that recorded only the amendment lost the one worth
+    #: chasing. It travels with whichever verdict was given - approved, amended or rejected -
+    #: and is frozen beside `amend_reason` so the warning is still on the pill after a reload.
+    suspected_system_issue: bool = False
 
 
 class ConfirmSupplyBody(BaseModel):
@@ -347,6 +356,10 @@ class ConfirmResult(BaseModel):
     #: a movement nobody makes - so the count reaches the screen rather than a server log.
     transfers_written: int = 0
     transfers_failed: int = 0
+    #: How many of this revision's lines the planner flagged as a suspected system problem
+    #: (R10). Reported rather than logged: the flag is a request to look at something, and a
+    #: request nobody is told about is a request nobody answers.
+    suspected_issues: int = 0
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -395,6 +408,15 @@ class ConfirmManyOrderBody(BaseModel):
 
 class ConfirmManyBody(BaseModel):
     orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
+    #: The planning-change batch this press is ANSWERING (part 3, AC-P3-4).
+    #:
+    #: One batch per board, which is the shape the board already has: it is opened at
+    #: `?orders=...&batch=<id>` and every order on it belongs to that batch. Set, each
+    #: order's lines become its batch rows' own compositions and the batch is applied for
+    #: THAT order - the same single write `POST .../sales-orders/{id}/confirm` does with its
+    #: own `batch_id`, once per order rather than once per press. Absent on every ordinary
+    #: board Confirm.
+    batch_id: Optional[str] = None
 
 
 class ConfirmManyOrderResult(BaseModel):
@@ -408,6 +430,13 @@ class ConfirmManyOrderResult(BaseModel):
     inquiry_rows_created: Optional[int] = None
     lines_decided: Optional[int] = None
     lines_undecided: Optional[int] = None
+    #: The movements this order's confirmation raised, and how many could NOT be written -
+    #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
+    #: lines confirmed, T transfers proposed", and T comes from here.
+    transfers_written: Optional[int] = None
+    transfers_failed: Optional[int] = None
+    #: The lines flagged as a suspected system problem, summed the same way (R10).
+    suspected_issues: Optional[int] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

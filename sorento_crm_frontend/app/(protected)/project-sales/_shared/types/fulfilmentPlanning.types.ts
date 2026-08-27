@@ -510,6 +510,11 @@ export interface ConfirmLine {
    * explain a decision nobody took once a person has overridden them.
    */
   amend_reason?: string | null;
+  /**
+   * "This might be a system problem, flag it for investigation" (R10). Travels with whichever
+   * verdict was given and is frozen beside the reason, so the pill still warns after a reload.
+   */
+  suspected_system_issue?: boolean;
 }
 
 export interface ConfirmSupplyBody {
@@ -552,6 +557,8 @@ export interface ConfirmResult {
    */
   transfers_written?: number | null;
   transfers_failed?: number | null;
+  /** How many of the confirmed lines were flagged as a suspected system problem (R10). */
+  suspected_issues?: number | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -1612,19 +1619,16 @@ export interface StockDetailSalesOrder {
   doc_date?: string | null;
   delivery_date?: string | null;
   so_qty: string;
-  /** Already covered by a confirmed decision, so it is not competing for this stock. */
-  is_covered?: boolean;
   /** The core sales-order line this row is. Addressing only. */
   line_id?: string | null;
-  line_no?: number | null;
   /**
-   * Where the line stands in the pile's queue (1-based, the order the stock is served in) and
-   * the score that put it there, with the same factors the queue screen shows. Null on a
-   * covered line, which is not in the queue at all.
+   * One of the lines the drawer was opened for (R5). The list is otherwise a wall of other
+   * people's documents, and a planner has to be able to find their own row in it.
+   *
+   * No rank and no queue state here any more: the queue screen exists to explain a ranking,
+   * and half of that question in this list made the one it answers harder to read.
    */
-  rank_position?: number | null;
-  rank_score?: number | null;
-  rank_factors?: BoardRankFactor[];
+  is_this_line?: boolean;
 }
 
 /** One purchase order standing behind the SPO quantity. */
@@ -1670,8 +1674,6 @@ export interface StockDetail {
   qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
-  /** The priority policy the ranks in `sales_orders` came from. */
-  policy_name?: string | null;
 }
 
 /**
@@ -1840,6 +1842,13 @@ export interface ConfirmManyOrderBody {
 
 export interface ConfirmManyBody {
   orders: ConfirmManyOrderBody[];
+  /**
+   * The planning-change batch this press is answering (AC-P3-4). One per board: it is opened
+   * at `?orders=...&batch=<id>` and every order on it belongs to that batch. Absent on an
+   * ordinary Confirm; set, each order APPLIES its half of the batch rather than writing a
+   * plain revision beside it.
+   */
+  batch_id?: string | null;
 }
 
 /** One order's outcome. `ok` decides which half is populated. */
@@ -1857,6 +1866,8 @@ export interface ConfirmManyOrderResult {
    */
   transfers_written?: number | null;
   transfers_failed?: number | null;
+  /** The lines this order's planner flagged as a suspected system problem (R10). */
+  suspected_issues?: number | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

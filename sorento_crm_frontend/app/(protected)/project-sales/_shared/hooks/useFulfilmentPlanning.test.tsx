@@ -464,13 +464,16 @@ describe('useStockDetail', () => {
   it('reads the detail by ids under the exported key, so a confirmation can invalidate it', async () => {
     getStockDetail.mockResolvedValue({ product_id: 'prod-1', warehouse_id: 'wh-1' });
 
-    const { result } = renderHook(() => useStockDetail('prod-1', 'wh-1'), {
+    const { result } = renderHook(() => useStockDetail('prod-1', 'wh-1', ['line-a']), {
       wrapper: wrapper(),
     });
 
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a']),
+    );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1'])).toEqual({
+    // The asking lines are part of the key: a different asker is a different answer.
+    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1', 'line-a'])).toEqual({
       product_id: 'prod-1',
       warehouse_id: 'wh-1',
     });

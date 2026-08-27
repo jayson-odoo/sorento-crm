@@ -18,6 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.models.stock_transfer import (
+    TRANSFER_APPROVED,
+    TRANSFER_CANCELLED,
+    TRANSFER_MOVED,
+    TRANSFER_PROPOSED,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_transfer import (
     BulkApproveRequest,
@@ -26,7 +32,7 @@ from app.schemas.stock_transfer import (
     MarkMovedRequest,
     StockTransferOut,
 )
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.stock_transfer_service import StockTransferService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -35,8 +41,17 @@ router = APIRouter()
 VIEW = "inventory.stock_transfers.view"
 EDIT = "inventory.stock_transfers.edit"
 
-#: A closed set for the same reason the order-inquiry worklist's is: a filter nothing can
-#: equal reads on screen as "no work to do" when the truth is "that is not a state".
+#: Every state a transfer can be in. Checked by hand rather than declared as a `Literal`,
+#: because the filter takes a comma-separated LIST now (the board asks for "not moved yet",
+#: which is two of them) - the closed set itself is unchanged, and so is the 422 an unknown
+#: value gets: a filter nothing can equal reads on screen as "no work to do" when the truth
+#: is "that is not a state".
+TRANSFER_STATES = frozenset(
+    {TRANSFER_APPROVED, TRANSFER_CANCELLED, TRANSFER_MOVED, TRANSFER_PROPOSED}
+)
+
+#: A closed set for the same reason: a sort key nothing can order by silently reorders by
+#: something else.
 TransferSort = Literal[
     "transfer_no",
     "state",
@@ -61,13 +76,29 @@ def list_stock_transfers(
             "customer."
         ),
     ),
-    state: Optional[Literal["proposed", "approved", "moved", "cancelled"]] = Query(None),
+    state: Optional[str] = Query(
+        None,
+        description=(
+            "One state, or several comma separated. The planning board asks for "
+            "`proposed,approved` - everything that has not moved yet - as one question."
+        ),
+    ),
     kind: Optional[Literal["own_group", "pool", "borrow"]] = Query(None),
     from_warehouse_id: Optional[str] = Query(None),
     to_warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(None),
     sales_order_id: Optional[str] = Query(
         None, description="The CORE sales order, for the SO detail page's Transfers tab."
+    ),
+    so_numbers: Optional[str] = Query(
+        None,
+        description=(
+            "Sales-order DOCUMENT numbers, comma separated, resolved through the transfer's "
+            "own line. The planning board is addressed by number (`?orders=SO404352`), so a "
+            "lookup to ids on the way in would be a round trip for nothing. A number this "
+            "system does not hold matches nothing rather than being an error: a board can "
+            "name an order that has never had a transfer."
+        ),
     ),
     project_sales_order_id: Optional[str] = Query(None),
     sales_agent_id: Optional[str] = Query(
@@ -82,6 +113,20 @@ def list_stock_transfers(
 ):
     """Every movement a supply decision has asked for, newest proposal first."""
     try:
+        states = [value.strip() for value in (state or "").split(",") if value.strip()]
+        unknown = [value for value in states if value not in TRANSFER_STATES]
+        if unknown:
+            # A state that is not a state must be REFUSED, not silently matched by nothing:
+            # an empty page reads as "no work to do", which is the opposite of the truth.
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{', '.join(unknown)} is not a transfer state. Ask for one of "
+                    f"{', '.join(sorted(TRANSFER_STATES))}."
+                ),
+                code="stock_transfer_bad_state",
+            )
+        numbers = [value.strip() for value in (so_numbers or "").split(",") if value.strip()]
         for value, resource in (
             (from_warehouse_id, "Warehouse"),
             (to_warehouse_id, "Warehouse"),
@@ -98,7 +143,8 @@ def list_stock_transfers(
             sort=sort,
             direction=direction or "desc",
             query=query,
-            state=state,
+            state=states or None,
+            so_numbers=numbers or None,
             kind=kind,
             from_warehouse_id=from_warehouse_id,
             to_warehouse_id=to_warehouse_id,

@@ -345,6 +345,9 @@ function lineFor(
       // Frozen with the line. Every other component carries the sentence of the RULE that
       // produced it, and those explain a decision nobody took once a person overrode them.
       amend_reason: decision.reason,
+      // The doubt beside the verdict (R10). Sent on every verdict, not only an amendment:
+      // "I did what it said and I think the numbers are wrong" is the case worth chasing.
+      suspected_system_issue: decision.suspected_system_issue ?? false,
     };
   }
 
@@ -394,6 +397,8 @@ function lineFor(
     buy_reason: buyReason,
     // Present only on the legacy single-number amendment, which is still an override.
     amend_reason: decision?.verdict === 'amended' ? decision.reason : undefined,
+    // An approved or untouched line can still carry the flag (R10).
+    suspected_system_issue: decision?.suspected_system_issue ?? false,
   };
 }
 
