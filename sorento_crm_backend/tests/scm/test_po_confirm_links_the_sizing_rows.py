@@ -14,12 +14,12 @@ must give the 8 to the two rows that sized it.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import text
 
 from app.services.scm.purchase_order_service import PurchaseOrderService
-from tests.scm.conftest import requires_pg, seed_user
+from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg, seed_user
 from tests.scm.test_channel_read_model import _confirmed_leg
 from tests.scm.test_m3_run import _mk_product, _mk_warehouse
 
@@ -142,34 +142,40 @@ def test_rows_needed_at_reads_the_location_the_view_reads(scm_app):
 # ---------------------------------------------------------------------------
 
 
-def _plan_horizon(db, when):
-    """The reorder plan's own coverage date, on the active fulfilment policy. ONE setting:
-    a confirm links to the same horizon the plan bought to."""
-    from app.models.scm import PriorityPolicy
+def _plan_run(db, when, *, finished_at=None) -> str:
+    """One COMPLETED reorder run, at a "Plan until" date.
 
-    policy = db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
-    assert policy is not None, "the migrated database always has one active policy"
-    policy.reorder_coverage_until = when
+    The plan run - not `scm.priority_policy.reorder_coverage_until` (S2, code review
+    27 Aug 2026). That policy field is the ladder's BUY-NOW line: a row needed AFTER it is
+    the row the engine proposes buying, so reading it as the link horizon meant the
+    purchase order raised for those rows could never be linked back to them.
+    """
+    run_id = _u()
+    db.execute(text(
+        "INSERT INTO scm.reorder_run (id, company_id, status, plan_horizon_date, "
+        "started_at, finished_at, created_at) "
+        "VALUES (:i, :c, 'completed', :h, :f, :f, :f)"),
+        {"i": run_id, "c": SORENTO_COMPANY_ID, "h": when,
+         "f": finished_at or datetime(2026, 8, 20, 9, 0, 0)})
     db.flush()
-    return policy
+    return run_id
 
 
-def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
-    """A confirm has nobody to ask for a date, so it uses the plan's own - the horizon the
-    buy was sized against. A 2030 line eating the purchase order a 2026 line asked for is
-    the whole reason the date exists."""
-    _, db, _, _ = scm_app
-    actor = seed_user(db, None)
-    _plan_horizon(db, date(2026, 12, 31))
-    here = _mk_warehouse(db, f"{MARKER}HZN")
-    pid = _mk_product(db, f"{MARKER}-HZNSKU")
-
-    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
-    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
-    near["inquiry_row"].delivery_date = date(2026, 10, 1)
-    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+def _rec_of(db, run_id: str, product_id: str) -> str:
+    """The recommendation a draft PO line names in its `source_ref` - the ONE thread back
+    from a confirmed buy to the run that sized it."""
+    rec_id = _u()
+    db.execute(text(
+        "INSERT INTO scm.reorder_recommendation (id, company_id, run_id, rec_type, "
+        "product_id) VALUES (:i, :c, :r, 'buy', :p)"),
+        {"i": rec_id, "c": SORENTO_COMPANY_ID, "r": run_id, "p": product_id})
     db.flush()
+    return rec_id
 
+
+def _draft_po(db, *, product_id, warehouse_id, qty, source_ref=None) -> str:
+    """A `draft_recommendation` purchase order of one line, optionally threaded back to
+    the recommendation (and therefore the run) it was drafted off."""
     poid = _u()
     db.execute(text(
         "INSERT INTO purchase_orders (id, po_number, status, issue_date, currency, "
@@ -178,16 +184,70 @@ def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
         {"i": poid, "n": f"{MARKER}-{uuid.uuid4().hex[:8]}", "d": date(2026, 7, 1)})
     db.execute(text(
         "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
-        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
-        "VALUES (:i, :po, :p, :w, 8, 0, 10, 'MYR', 'open')"),
-        {"i": _u(), "po": poid, "p": pid, "w": here})
+        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status, "
+        "source_system, source_ref) "
+        "VALUES (:i, :po, :p, :w, :q, 0, 10, 'MYR', 'open', :ss, :sr)"),
+        {"i": _u(), "po": poid, "p": product_id, "w": warehouse_id, "q": qty,
+         "ss": "scm_recommendation" if source_ref else None, "sr": source_ref})
     db.flush()
+    return poid
+
+
+def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
+    """A confirm has nobody to ask for a date, so it uses the plan's own - the horizon the
+    buy was sized against. A 2030 line eating the purchase order a 2026 line asked for is
+    the whole reason the date exists."""
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _mk_warehouse(db, f"{MARKER}HZN")
+    pid = _mk_product(db, f"{MARKER}-HZNSKU")
+    run = _plan_run(db, date(2026, 12, 31))
+
+    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
+    near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    db.flush()
+
+    poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
+                     source_ref=_rec_of(db, run, pid))
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
     assert _linked_qty(db, near["inquiry_row"].id) == 5.0
     assert _linked_qty(db, far["inquiry_row"].id) == 0.0, (
         "the 2030 row took the buy under a horizon that does not reach it"
+    )
+
+
+def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app):
+    """S2 (code review, 27 Aug 2026): ITS run, not the newest one.
+
+    A draft purchase order is a buy sized by one particular plan run, and it may sit in
+    the drafts for days while another run plans further out. Linking it under the newer
+    run's horizon would hand the buy to rows the run that ordered it never counted.
+    """
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _mk_warehouse(db, f"{MARKER}OWNRUN")
+    pid = _mk_product(db, f"{MARKER}-OWNRUNSKU")
+    own = _plan_run(db, date(2026, 12, 31), finished_at=datetime(2026, 8, 20, 9, 0, 0))
+    _plan_run(db, date(2030, 12, 31), finished_at=datetime(2026, 8, 26, 9, 0, 0))
+
+    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
+    near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    db.flush()
+
+    poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
+                     source_ref=_rec_of(db, own, pid))
+
+    PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
+
+    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
+    assert _linked_qty(db, far["inquiry_row"].id) == 0.0, (
+        "the buy was linked under a horizon a LATER run planned to"
     )
 
 

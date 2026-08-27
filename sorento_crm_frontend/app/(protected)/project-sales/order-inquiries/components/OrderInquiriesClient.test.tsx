@@ -865,10 +865,11 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     const button = await screen.findByRole('button', { name: 'Acknowledge (2)' });
     fireEvent.click(button);
 
-    // The horizon travels with the press (AC-LH1) and is `undefined` here, because this
-    // summary states no plan coverage date and nothing is in the URL or in storage.
+    // The horizon travels with the press (AC-LH1) and is EMPTY here: this summary names no
+    // plan horizon, nothing is in the URL or in storage, and nobody has cleared the box -
+    // so the press says nothing about the horizon and the server takes the plan's own.
     await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3'], undefined),
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3'], {}),
     );
   });
 
@@ -1124,7 +1125,94 @@ describe('The link horizon', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
 
     await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], HORIZON),
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_up_to: HORIZON,
+      }),
+    );
+  });
+
+  it('S1: clearing the date is remembered, and the plan default never seeds back', async () => {
+    withPlanHorizon(HORIZON);
+    const first = renderClient();
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+
+    fireEvent.change(input, { target: { value: '' } });
+    expect(input.value).toBe('');
+
+    // A reload. The plan still names a horizon, and it must not put itself back: a control
+    // that undoes itself is one nobody uses twice.
+    first.unmount();
+    renderClient();
+
+    const again = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(again.value).toBe('');
+    await screen.findByText('SO385126');
+    expect(again.value).toBe('');
+  });
+
+  it('S1: a cleared date sends an explicit no-horizon, not silence', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+    fireEvent.change(input, { target: { value: '' } });
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    // Silence means "take the plan's own date", which is the opposite of what the buyer
+    // just said by emptying the box.
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], {
+        link_horizon: 'none',
+      }),
+    );
+  });
+
+  it('B2: Auto-link shows the page date and sends it', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    expect(within(dialog).getByTestId('auto-link-horizon')).toHaveTextContent(
+      'Link up to 31/12/2026',
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ link_up_to: HORIZON }),
+    );
+  });
+
+  it('B2: Auto-link carries a cleared horizon too', async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+    await screen.findByText('SO385126');
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+    fireEvent.change(input, { target: { value: '' } });
+
+    openActionsMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Auto-link' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    expect(within(dialog).getByTestId('auto-link-horizon')).toHaveTextContent(
+      'Link up to No horizon',
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Auto-link' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ link_horizon: 'none' }),
     );
   });
 

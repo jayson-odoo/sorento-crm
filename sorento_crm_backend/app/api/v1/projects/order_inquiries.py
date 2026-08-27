@@ -326,7 +326,8 @@ async def acknowledge_order_inquiry_rows(
 
     `link_up_to` is how far out the linking half reaches (AC-LH1): every named row is taken
     on, and one due after that date is left Not linked and counted on `after_horizon`.
-    Omitted, it is the reorder plan's own coverage date."""
+    Omitted, it is the reorder plan's own horizon; `link_horizon: "none"` is how a caller
+    asks for no horizon at all (S1)."""
     try:
         for row_id in payload.row_ids:
             validate_uuid_path(row_id, resource="Order inquiry row")
@@ -334,6 +335,7 @@ async def acknowledge_order_inquiry_rows(
             payload.row_ids,
             actor_user_id=current_user["id"],
             link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body
@@ -383,6 +385,7 @@ async def link_acknowledged_order_inquiry_rows(
             payload.product_ids,
             actor_user_id=current_user["id"],
             link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body
@@ -670,6 +673,7 @@ async def auto_place_order_inquiries(
             trigger="worklist",
             row_ids=payload.row_ids,
             link_up_to=payload.link_up_to,
+            link_horizon=payload.link_horizon,
         )
         db.commit()
         return body

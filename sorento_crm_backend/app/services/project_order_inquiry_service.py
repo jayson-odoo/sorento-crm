@@ -346,6 +346,14 @@ def link_location_tier(
     return TIER_ELSEWHERE, 0
 
 
+#: How a caller says WHICH horizon it means (S1, `PLAN-scm-oi-handshake.md` section 11).
+#: A date lives in `link_up_to`; this field never carries one, so "no horizon" is never a
+#: magic string inside a date field.
+LINK_HORIZON_DATE = "date"
+LINK_HORIZON_PLAN = "plan"
+LINK_HORIZON_NONE = "none"
+
+
 class ProjectOrderInquiryService:
     """Derives, serves, exports and closes off what purchasing is told to do."""
 
@@ -367,6 +375,11 @@ class ProjectOrderInquiryService:
         # of fifty products at once.
         self._netting_value: Optional[GroupNetting] = None
         self._netted_products: set = set()
+        # Which ownership groups hold an ACKNOWLEDGED, still-unlinked row of a product,
+        # and WHICH rows those are - the deficit exemption's evidence (B1, code review
+        # 27 Aug 2026). Five uncached queries per product, and the cascade asks it once
+        # per row, so it is answered per product and remembered for the instance.
+        self._awaiting_link_cache: Dict[str, Dict[str, set]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -2067,6 +2080,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: str,
         link_up_to: Optional[date] = None,
+        link_horizon: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Purchasing takes these instructions on, and the cascade runs for exactly them.
 
@@ -2131,6 +2145,7 @@ class ProjectOrderInquiryService:
             trigger="acknowledge",
             row_ids=[str(row.id) for row in rows],
             link_up_to=link_up_to,
+            link_horizon=link_horizon,
         )
         return {
             "acknowledged": len(rows),
@@ -2138,6 +2153,7 @@ class ProjectOrderInquiryService:
             "links": placed["allocations"],
             "after_horizon": placed["after_horizon"],
             "link_up_to": placed["link_up_to"],
+            "link_horizon": placed["link_horizon"],
         }
 
     def reject_row(
@@ -2230,6 +2246,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: str,
         link_up_to: Optional[date] = None,
+        link_horizon: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The cascade over ACKNOWLEDGED rows, now (AC-H13).
 
@@ -2243,6 +2260,7 @@ class ProjectOrderInquiryService:
             actor_user_id=actor_user_id,
             trigger="link_now",
             link_up_to=link_up_to,
+            link_horizon=link_horizon,
         )
 
     def _rows_or_404(self, row_ids: Sequence[str]) -> List[OrderInquiryRow]:
@@ -2560,8 +2578,18 @@ class ProjectOrderInquiryService:
         # `manual` already lets them through to a purchase order that is not yet active:
         # this dialog is override and audit rather than the workflow, and refusing a link
         # somebody has deliberately typed would be a narrowing nobody asked for.
+        #
+        # THIS row's own exemption comes off it, and only this row's (B1, code review
+        # 27 Aug 2026): a group holding an acknowledged, unlinked row may reach its own
+        # purchase order, and the row that earns that is the one being placed. Lifted per
+        # product instead, a row at any other group walked first took the line.
         deficit = (
-            set() if manual else self._groups_in_deficit(product_id, po_rows, by_po)
+            set()
+            if manual
+            else (
+                self._groups_in_deficit(product_id, po_rows, by_po)
+                - self._exempt_groups_for_row(row, product_id)
+            )
         )
         for line, po, supplier, warehouse in po_rows:
             remaining = (
@@ -2683,16 +2711,21 @@ class ProjectOrderInquiryService:
         them nothing and the Link dialog listed nothing. Nothing is promised twice at zero -
         the demand the buy covers IS the demand the group carries.
 
-        AND A GROUP HOLDING AN ACKNOWLEDGED, UNLINKED ROW FOR THIS PRODUCT IS NEVER IN
-        DEFICIT, however short the arithmetic says it is (same ruling). That row is the
-        demand somebody bought the purchase order for; refusing it would leave a buy sitting
-        open beside the instruction it answers, and the honest outcome the rule was written
-        for - "the row that finds nothing stays raised and buys" - is the wrong one when the
-        buying has already happened.
+        The second half of the same ruling - a group holding an ACKNOWLEDGED, UNLINKED row
+        for this product may reach its own purchase order however short the arithmetic says
+        it is - is NOT applied here. It is a per-ROW exemption and it is applied by
+        `_candidates_for_row` to the row being placed (B1, code review 27 Aug 2026):
+        lifting the group out of this set instead exempted EVERY row of the product, so a
+        row at another group entirely - walked first, because candidates are ranked by
+        location and never filtered by it - helped itself to the line the exempt group's
+        own backlog had been bought.
 
         The deficit itself is computed off the CANDIDATE ROWS, so it costs no query beyond
         the netting read: those rows already are the product's whole open purchase-order
-        book, and `by_po` is already netted for the links written against them.
+        book, and `by_po` is already netted for the links written against them. That claim
+        was FALSE while the exemption lived here - it ran up to three uncached queries per
+        row through `_groups_awaiting_a_link` (S3, code review 27 Aug 2026) - and is true
+        again now the exemption is the caller's, and memoised per product besides.
         """
         remaining_by_group: Dict[str, Decimal] = {}
         for line, _po, _supplier, warehouse in po_rows:
@@ -2713,18 +2746,45 @@ class ProjectOrderInquiryService:
         if not remaining_by_group:
             return set()
         netting = self._netting([product_id])
-        short = {
+        return {
             group
             for group, remaining in remaining_by_group.items()
             if netting.group_net(product_id, group).net + remaining < _ZERO
         }
-        if not short:
-            return set()
-        return short - self._groups_awaiting_a_link(product_id)
+
+    def _exempt_groups_for_row(self, row: OrderInquiryRow, product_id: str) -> set:
+        """The deficit exemption THIS row has earned, and nobody else's (B1, code review
+        27 Aug 2026).
+
+        A group holding an acknowledged, still-unlinked row for the product may reach its
+        own purchase order however short it is, because that row is the demand somebody
+        bought the order for (captain, 27 Aug). The exemption is the ROW's, not the
+        product's: subtracting it from the deficit set once per product let any row of the
+        product take the line, and the walk ranks candidates by location without ever
+        filtering by it, so a row at another group walked first simply took it.
+
+        `set()` for a row that is awaiting, rejected, fully linked, or resolves to no
+        location - none of those is the instruction a buy answers.
+        """
+        return {
+            group
+            for group, row_ids in self._rows_awaiting_a_link(product_id).items()
+            if str(row.id) in row_ids
+        }
 
     def _groups_awaiting_a_link(self, product_id: str) -> set:
         """The ownership groups holding an ACKNOWLEDGED row of this product with something
         still unlinked - the demand a purchase order at that group was bought for.
+
+        The LISTING's own read (`link_candidate_products`), which answers per product and
+        has no row in hand. The per-ROW exemption the candidate walk applies is
+        `_exempt_groups_for_row`.
+        """
+        return set(self._rows_awaiting_a_link(product_id))
+
+    def _rows_awaiting_a_link(self, product_id: str) -> Dict[str, set]:
+        """`{group: {row ids}}` - every ACKNOWLEDGED row of this product with something
+        still unlinked, filed under the group it sits at.
 
         Read off the rows the cascade itself would walk (open supply state, linkable verb,
         `ACK_LINKABLE`), so "there is an instruction waiting" here and "there is a row to
@@ -2732,7 +2792,22 @@ class ProjectOrderInquiryService:
         where it has one, and otherwise the reconciled core line's warehouse - the same two
         arms `rows_needed_at` reads a row's location through. A row that resolves to no
         location belongs to no group and is not evidence about one.
+
+        MEMOISED per product on the instance (S3, code review 27 Aug 2026): it costs up to
+        three queries and the cascade asks it once per row, which on a full pass over one
+        product is the same three queries answered over and over. A row this pass has since
+        linked cannot change the answer for the row being placed now - it is placed before
+        its own links are written, and it is walked once.
         """
+        cached = self._awaiting_link_cache.get(str(product_id))
+        if cached is not None:
+            return cached
+        answer = self._read_rows_awaiting_a_link(product_id)
+        self._awaiting_link_cache[str(product_id)] = answer
+        return answer
+
+    def _read_rows_awaiting_a_link(self, product_id: str) -> Dict[str, set]:
+        """`_rows_awaiting_a_link` without the memo - the queries themselves."""
         query = self.db.query(OrderInquiryRow).filter(
             OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
             OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
@@ -2741,7 +2816,7 @@ class ProjectOrderInquiryService:
         query = self._narrow_to_products(query, [product_id])
         rows = query.all() if query is not None else []
         if not rows:
-            return set()
+            return {}
         linked = self._linked_qty_by_row([str(row.id) for row in rows])
         owed = [
             row
@@ -2749,7 +2824,7 @@ class ProjectOrderInquiryService:
             if _dec(row.qty) - linked.get(str(row.id), _ZERO) > _ZERO
         ]
         if not owed:
-            return set()
+            return {}
 
         # The core line's warehouse CODE, for the rows that state no location of their own.
         so_line_ids = [row.so_line_id for row in owed if row.so_line_id]
@@ -2767,14 +2842,14 @@ class ProjectOrderInquiryService:
             ):
                 core_code[str(psl_id)] = code
 
-        groups: set = set()
+        groups: Dict[str, set] = {}
         for row in owed:
             code = (row.stock_location or "").strip() or core_code.get(
                 str(row.so_line_id or "")
             )
             group = group_of_warehouse_code(code)
             if group:
-                groups.add(group)
+                groups.setdefault(group, set()).add(str(row.id))
         return groups
 
     @staticmethod
@@ -3409,20 +3484,47 @@ class ProjectOrderInquiryService:
                 out.append(str(row.id))
         return out
 
-    def link_horizon(self, link_up_to: Optional[date]) -> Optional[date]:
-        """The date this pass may link up to: the caller's own, or the plan's.
+    def resolve_link_horizon(
+        self, link_up_to: Optional[date], link_horizon: Optional[str] = None
+    ) -> Optional[date]:
+        """The date this pass may link up to: the caller's own, the plan's, or none at all.
 
-        `PLAN-scm-oi-handshake.md` section 11. A caller that names no date is not asking for
-        "no horizon" - it is asking for the one the reorder plan already buys to
-        (`scm.priority.plan_link_horizon`, the active policy's `reorder_coverage_until`).
-        A purchase-order confirm has nobody to ask and always lands here; the buyer's own
-        two presses carry the date the page shows them.
+        `PLAN-scm-oi-handshake.md` section 11. Three answers, and until S1 of the 27 August
+        review only two could be SAID: a caller that named no date got the plan's, and
+        there was no way to ask for no horizon. The buyer's own empty date box therefore
+        travelled as silence and came back as the plan's date, so once a plan run named a
+        horizon the page could not link a far-future row at all.
+
+          `link_horizon="none"` -> no horizon, `link_up_to` ignored.
+          `link_horizon="plan"` -> the reorder plan's own (`scm.priority.plan_link_horizon`).
+          `link_horizon="date"` -> `link_up_to`, which must be there.
+          OMITTED               -> inferred: the date when one is given, the plan when not.
+
+        The inferred arm is what keeps every existing caller - the CS form's own pass, a
+        purchase-order confirm, the MCP - meaning exactly what it always did without
+        stating anything new.
         """
-        if link_up_to is not None:
+        mode = (link_horizon or "").strip().lower() or None
+        if mode == LINK_HORIZON_NONE:
+            return None
+        if mode == LINK_HORIZON_DATE and link_up_to is None:
+            raise AppException(
+                status_code=422,
+                message="Name the date to link up to, or ask for no horizon.",
+                code="order_inquiry_horizon_without_a_date",
+            )
+        if mode != LINK_HORIZON_PLAN and link_up_to is not None:
             return link_up_to
         from app.services.scm import priority
 
         return priority.plan_link_horizon(self.db)
+
+    @staticmethod
+    def _horizon_mode(link_up_to: Optional[date]) -> str:
+        """What the RESULT says about the horizon it ran under (S1). `"none"` is "nothing
+        was held back for a date", which a null `link_up_to` alone could not tell from "the
+        plan has never named one"."""
+        return LINK_HORIZON_NONE if link_up_to is None else LINK_HORIZON_DATE
 
     @staticmethod
     def _after_horizon(row: OrderInquiryRow, link_up_to: Optional[date]) -> bool:
@@ -3446,6 +3548,7 @@ class ProjectOrderInquiryService:
         trigger: str,
         row_ids: Optional[Sequence[str]] = None,
         link_up_to: Optional[date] = None,
+        link_horizon: Optional[str] = None,
     ) -> Dict[str, Any]:
         """The bulk, idempotent cascade pass (G2 rule 1: "we need to link already at
         first already instead of suggesting and needing the users to click 1 by 1").
@@ -3478,10 +3581,11 @@ class ProjectOrderInquiryService:
         `link_up_to` is the LINK HORIZON (section 11, captain 27 Aug): a row due AFTER it is
         left Not linked and counted on `after_horizon` rather than skipped silently, so a
         2030 order stops eating a purchase order a nearer one needed. Omitted, it is the
-        reorder plan's own coverage date (`link_horizon`) - never "no horizon", because a
-        press that says nothing is a press under the horizon the plan bought to.
+        reorder plan's own horizon (`resolve_link_horizon`) - a press that says nothing is
+        a press under the horizon the plan planned to. A caller that genuinely wants NO
+        horizon says so, with `link_horizon="none"` (S1).
         """
-        link_up_to = self.link_horizon(link_up_to)
+        link_up_to = self.resolve_link_horizon(link_up_to, link_horizon)
         query = self.db.query(OrderInquiryRow).filter(
             # PARTLY LINKED rows are in scope too, which is new with the links table: a row
             # the last pass could only half cover is exactly the row a fresh purchase order
@@ -3568,6 +3672,7 @@ class ProjectOrderInquiryService:
             "products_touched": len(products_touched),
             "after_horizon": after_horizon,
             "link_up_to": link_up_to,
+            "link_horizon": self._horizon_mode(link_up_to),
         }
 
     @staticmethod
@@ -3580,6 +3685,7 @@ class ProjectOrderInquiryService:
             "products_touched": 0,
             "after_horizon": 0,
             "link_up_to": link_up_to,
+            "link_horizon": ProjectOrderInquiryService._horizon_mode(link_up_to),
         }
 
     def _rank_raised_rows(
@@ -4127,6 +4233,13 @@ class ProjectOrderInquiryService:
         # does, so a row is never offered a Link that the dialog would then show as empty.
         # Per (product, group), because a product can be flush in one group and 15,514
         # short in another, and a pool-location line belongs to no group and always counts.
+        # ZERO IS OFFERED and a group holding an acknowledged unlinked row is offered
+        # whatever its arithmetic (captain, 27 Aug 2026) - both halves of the ruling
+        # `_groups_in_deficit` and `_candidates_for_row` carry, or the row action would
+        # hide the Link the dialog is about to fill. The row exemption is answered per
+        # PRODUCT here, which is all a listing-wide flag has to go on: it cannot tell the
+        # exempt group's own row from a neighbour's, so it errs towards offering and the
+        # dialog stays the exact answer.
         po_open: Dict[str, Dict[Optional[str], Decimal]] = {}
         for line_id, product_id, qty_ordered, qty_received, warehouse_code in (
             self.db.query(
@@ -4159,9 +4272,12 @@ class ProjectOrderInquiryService:
         if po_open:
             netting = self._netting(list(po_open))
             for product_id, per_group in po_open.items():
+                awaiting = self._groups_awaiting_a_link(product_id)
                 for group, remaining in per_group.items():
-                    if group is None or (
-                        netting.group_net(product_id, group).net + remaining > _ZERO
+                    if (
+                        group is None
+                        or group in awaiting
+                        or netting.group_net(product_id, group).net + remaining >= _ZERO
                     ):
                         po_products.add(product_id)
                         break

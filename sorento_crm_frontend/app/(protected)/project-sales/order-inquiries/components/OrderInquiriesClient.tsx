@@ -58,8 +58,11 @@ import {
 } from '../../_shared/hooks/useOrderInquiry';
 import { ACK_LABELS, ACK_STATES, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
 import {
+  NO_LINK_HORIZON,
   initialLinkHorizon,
+  linkHorizonRequest,
   readStoredLinkHorizon,
+  startsCleared,
   storeLinkHorizon,
 } from '../../_shared/lib/linkHorizon';
 import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
@@ -225,10 +228,25 @@ export function OrderInquiriesClient() {
   // coverage date once the summary answers - the URL first, because a shared link is the
   // buyer telling somebody else which horizon to look at. `seededHorizon` is what stops
   // that seeding from overwriting a date the buyer has since cleared on purpose.
+  const storedHorizon = React.useRef(readStoredLinkHorizon());
   const [linkUpTo, setLinkUpTo] = React.useState(() =>
-    initialLinkHorizon(searchParams.get('link_up_to'), readStoredLinkHorizon(), null),
+    initialLinkHorizon(searchParams.get('link_up_to'), storedHorizon.current, null),
+  );
+  // The buyer took the horizon OFF, as opposed to never having set one (S1). The two used
+  // to be the same empty box: an empty date sent nothing, the server read that as "the
+  // caller named none" and used the plan's own, so once a plan run named a horizon this
+  // page could not link a far-future row at all. Held apart here, remembered per browser,
+  // and stated on the wire as `link_horizon: 'none'`.
+  const [horizonCleared, setHorizonCleared] = React.useState(() =>
+    startsCleared(searchParams.get('link_up_to'), storedHorizon.current),
   );
   const seededHorizon = React.useRef(false);
+  // What every press says about the horizon - one fragment, four callers, so Acknowledge,
+  // Link selected, Link now and Auto-link can never mean different things by the same box.
+  const horizonRequest = React.useMemo(
+    () => linkHorizonRequest(linkUpTo, horizonCleared),
+    [linkUpTo, horizonCleared],
+  );
   // Which rows are ticked for the bulk Acknowledge (AC-H2). react-table's own selection
   // state through `buildSelectColumn`, never a hand-rolled Set: the canonical toolbar
   // reads exactly this for its bulk strip.
@@ -417,15 +435,17 @@ export function OrderInquiriesClient() {
   // screen is the buyer's - re-seeding on every refetch would put it back the moment they
   // cleared it, and a control that undoes itself is one nobody uses twice.
   React.useEffect(() => {
-    if (seededHorizon.current || !planHorizon) return;
+    if (seededHorizon.current || horizonCleared || !planHorizon) return;
     seededHorizon.current = true;
     setLinkUpTo((current) => current || planHorizon);
-  }, [planHorizon]);
+  }, [horizonCleared, planHorizon]);
 
-  // Remembered per browser, so the buyer states their horizon once rather than every visit.
+  // Remembered per browser, so the buyer states their horizon once rather than every visit
+  // - INCLUDING "no horizon", which used to remove the key and so read as "never chosen"
+  // on the next visit, letting the plan default seed straight back over the choice.
   React.useEffect(() => {
-    storeLinkHorizon(linkUpTo);
-  }, [linkUpTo]);
+    storeLinkHorizon(linkUpTo || (horizonCleared ? NO_LINK_HORIZON : null));
+  }, [horizonCleared, linkUpTo]);
 
   // The Schedule view's own request: the same filters, unpaged, so the matrix groups
   // exactly what the list would otherwise page through.
@@ -691,7 +711,7 @@ export function OrderInquiriesClient() {
                         ...(uploadedProducts.length
                           ? { product_ids: uploadedProducts }
                           : {}),
-                        ...(linkUpTo ? { link_up_to: linkUpTo } : {}),
+                        ...horizonRequest,
                       },
                       { onSuccess: () => setUploadJobId(null) },
                     )
@@ -1023,7 +1043,7 @@ export function OrderInquiriesClient() {
                             autoPlaceRows.mutate(
                               {
                                 row_ids: selectedLinkable.map((row) => row.id),
-                                ...(linkUpTo ? { link_up_to: linkUpTo } : {}),
+                                ...horizonRequest,
                               },
                               { onSuccess: () => setRowSelection({}) },
                             ),
@@ -1092,7 +1112,12 @@ export function OrderInquiriesClient() {
                           type="date"
                           className="w-40"
                           value={linkUpTo}
-                          onChange={(event) => setLinkUpTo(event.target.value)}
+                          onChange={(event) => {
+                            setLinkUpTo(event.target.value);
+                            // Emptying the box is a DECISION - "no horizon" - and not the
+                            // same as never having chosen (S1).
+                            setHorizonCleared(!event.target.value);
+                          }}
                         />
                       </div>
                     ) : null}
@@ -1117,7 +1142,7 @@ export function OrderInquiriesClient() {
                           acknowledge.mutate(
                             {
                               rowIds: selectedAcknowledgeable.map((row) => row.id),
-                              linkUpTo: linkUpTo || undefined,
+                              horizon: horizonRequest,
                             },
                             { onSuccess: () => setRowSelection({}) },
                           )
@@ -1160,7 +1185,12 @@ export function OrderInquiriesClient() {
         </DataGrid>
       )}
 
-      <AutoLinkOrderInquiryDialog open={autoPlacing} onOpenChange={setAutoPlacing} />
+      <AutoLinkOrderInquiryDialog
+        open={autoPlacing}
+        onOpenChange={setAutoPlacing}
+        linkUpTo={linkUpTo}
+        horizonCleared={horizonCleared}
+      />
       <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}

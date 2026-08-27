@@ -920,7 +920,8 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
         )
     db.commit()
     assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
-                      "after_horizon": 0, "link_up_to": None}
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_RAISED
 
@@ -1063,9 +1064,11 @@ def test_auto_place_for_products_is_idempotent(api):
         db.commit()
 
     assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
-                     "after_horizon": 0, "link_up_to": None}
+                     "after_horizon": 0, "link_up_to": None,
+                     "link_horizon": "none"}
     assert second == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
-                      "after_horizon": 0, "link_up_to": None}
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_PLACED
     assert "auto: test" in (row.note or "")
@@ -1084,7 +1087,8 @@ def test_auto_place_route_places_raised_rows_and_reports_totals(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
-                    "after_horizon": 0, "link_up_to": None}
+                    "after_horizon": 0, "link_up_to": None,
+                    "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_PLACED
 
@@ -1345,7 +1349,8 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
         db.commit()
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
-                      "after_horizon": 0, "link_up_to": None}
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
     assert older.state == INQUIRY_PLACED, "the older document must draw the scarce quantity"
@@ -1383,7 +1388,8 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
         db.commit()
 
     assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
-                      "after_horizon": 0, "link_up_to": None}
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
     assert newer.state == INQUIRY_PLACED, "the sooner delivery date must draw the scarce quantity"
@@ -1518,9 +1524,11 @@ def test_auto_place_resolves_the_active_policy_once_not_once_per_product(api):
 
     assert result["products_touched"] == 2
     # Two products competed for two scarce PO lines, so the ranking ran twice - but the
-    # policy behind it is resolved once, not once per product.
-    # TWO reads, both once per RUN: the link horizon at the top of the pass
-    # (`link_horizon`, `PLAN-scm-oi-handshake.md` section 11) and the ranking's own
-    # weights. Once per PRODUCT would be four here and once per ROW eight, which is the
-    # shape this pins against rather than the literal 1 it used to read.
-    assert spy.call_count == 2, "the active policy must be resolved once per auto-place run"
+    # policy behind it is resolved ONCE, not once per product (and not once per row, which
+    # would be eight here).
+    #
+    # One read, not the two it briefly counted: the link horizon at the top of the pass
+    # used to resolve the active policy as well, and since S2 (code review 27 Aug 2026) it
+    # reads the reorder RUN instead - `reorder_coverage_until` was never the right date to
+    # link to. Only the ranking's own weights come off the policy now.
+    assert spy.call_count == 1, "the active policy must be resolved once per auto-place run"

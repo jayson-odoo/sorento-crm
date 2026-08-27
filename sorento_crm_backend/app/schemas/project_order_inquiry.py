@@ -11,7 +11,7 @@ raw ``verb`` so the screen can colour by verb while printing what purchasing rea
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -363,10 +363,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: How many rows sit at each acknowledgement state (AC-H4), computed with the `ack`
     #: filter dropped for the same reason `kinds` drops its own.
     ack: OrderInquiryAckCounts = OrderInquiryAckCounts()
-    #: What the page's "Link up to" date starts at (AC-LH5): the reorder plan's own coverage
-    #: date, off the active fulfilment policy. Read from here rather than invented on the
-    #: page, so the plan and the buyer cannot be working to two different horizons. `None`
-    #: when no coverage limit is set, which means no horizon is in force.
+    #: What the page's "Link up to" date starts at (AC-LH5): the latest completed reorder
+    #: run's own "Plan until". Read from here rather than invented on the page, so the plan
+    #: and the buyer cannot be working to two different horizons. `None` when no run has
+    #: named one, which means no horizon is in force.
     link_up_to_default: Optional[date] = None
 
 
@@ -380,9 +380,15 @@ class AcknowledgeRowsRequest(BaseModel):
     row_ids: List[str] = Field(..., min_length=1)
     #: The LINK HORIZON (`PLAN-scm-oi-handshake.md` section 11): rows due AFTER this date
     #: are still TAKEN ON, but they are left Not linked, so a 2030 order stops eating a
-    #: purchase order a nearer one needed. Omitted means the reorder plan's own coverage
-    #: date, never "no horizon".
+    #: purchase order a nearer one needed. Omitted means the reorder plan's own horizon,
+    #: unless `link_horizon` says otherwise.
     link_up_to: Optional[date] = None
+    #: WHICH horizon this call means (S1, code review 27 Aug 2026). `"none"` is an explicit
+    #: NO horizon - the buyer emptied the date box, which is a different instruction from
+    #: naming none and used to travel as the same silence; `"plan"` is the reorder plan's
+    #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
+    #: given, the plan when it is not - so every existing caller means what it always did.
+    link_horizon: Optional[Literal["date", "plan", "none"]] = None
 
 
 class AcknowledgeResult(BaseModel):
@@ -402,6 +408,9 @@ class AcknowledgeResult(BaseModel):
     #: they named none. Stated back so a zero is never a figure measured against a date
     #: nobody can see.
     link_up_to: Optional[date] = None
+    #: WHETHER a horizon was in force, so a null `link_up_to` is never read two ways: `"none"`
+    #: is "nothing was held back for a date", `"date"` names the one above (S1).
+    link_horizon: Literal["date", "none"] = "none"
 
 
 class RejectRowRequest(BaseModel):
@@ -426,8 +435,14 @@ class LinkNowRequest(BaseModel):
     changed row that still has something unlinked."""
 
     product_ids: Optional[List[str]] = None
-    #: The LINK HORIZON (section 11). Omitted means the reorder plan's own coverage date.
+    #: The LINK HORIZON (section 11). Omitted means the reorder plan's own horizon.
     link_up_to: Optional[date] = None
+    #: WHICH horizon this call means (S1, code review 27 Aug 2026). `"none"` is an explicit
+    #: NO horizon - the buyer emptied the date box, which is a different instruction from
+    #: naming none and used to travel as the same silence; `"plan"` is the reorder plan's
+    #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
+    #: given, the plan when it is not - so every existing caller means what it always did.
+    link_horizon: Optional[Literal["date", "plan", "none"]] = None
 
 
 class MarkInquiryRowsRequest(BaseModel):
@@ -546,8 +561,14 @@ class AutoPlaceRequest(BaseModel):
     product_ids: Optional[List[str]] = None
     row_ids: Optional[List[str]] = None
     #: The LINK HORIZON (section 11) the page's "Link selected" carries. Omitted means the
-    #: reorder plan's own coverage date.
+    #: reorder plan's own horizon.
     link_up_to: Optional[date] = None
+    #: WHICH horizon this call means (S1, code review 27 Aug 2026). `"none"` is an explicit
+    #: NO horizon - the buyer emptied the date box, which is a different instruction from
+    #: naming none and used to travel as the same silence; `"plan"` is the reorder plan's
+    #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
+    #: given, the plan when it is not - so every existing caller means what it always did.
+    link_horizon: Optional[Literal["date", "plan", "none"]] = None
 
 
 class UnlinkRequest(BaseModel):
@@ -563,9 +584,11 @@ class AutoPlaceResult(BaseModel):
     products_touched: int = 0
     #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH2).
     after_horizon: int = 0
-    #: The horizon the pass ran under - the caller's own date, or the plan's coverage date
-    #: when they named none.
+    #: The horizon the pass ran under - the caller's own date, or the plan's own when they
+    #: named none.
     link_up_to: Optional[date] = None
+    #: WHETHER a horizon was in force at all (S1). See `AcknowledgeResult.link_horizon`.
+    link_horizon: Literal["date", "none"] = "none"
 
 
 class UnplaceAllRequest(BaseModel):

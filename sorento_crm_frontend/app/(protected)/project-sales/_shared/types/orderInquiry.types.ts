@@ -419,10 +419,10 @@ export interface OrderInquiryWorklistSummary {
    */
   ack?: OrderInquiryAckCounts;
   /**
-   * Where the page's "Link up to" date starts (AC-LH5): the reorder plan's own coverage
-   * date, `YYYY-MM-DD`. Read from here rather than invented on the page, so the plan and
-   * the buyer cannot be working to two different horizons. Null or absent means no
-   * coverage limit is set, and then no horizon is in force.
+   * Where the page's "Link up to" date starts (AC-LH5): the latest completed reorder
+   * run's own "Plan until", `YYYY-MM-DD`. Read from here rather than invented on the page,
+   * so the plan and the buyer cannot be working to two different horizons. Null or absent
+   * means no run has named one, and then no horizon is in force.
    */
   link_up_to_default?: string | null;
 }
@@ -465,6 +465,8 @@ export interface AcknowledgeResult {
   after_horizon?: number;
   /** The horizon the press ran under, `YYYY-MM-DD`. */
   link_up_to?: string | null;
+  /** Whether a horizon was in force at all (S1). */
+  link_horizon?: 'date' | 'none';
 }
 
 /* --------------------------------------------------------- the schedule matrix
@@ -605,9 +607,16 @@ export interface AutoPlaceRequest {
   row_ids?: string[];
   /**
    * The LINK HORIZON (AC-LH1), `YYYY-MM-DD`. A row due after it is left Not linked and
-   * counted on `after_horizon`. Omitted means the reorder plan's own coverage date.
+   * counted on `after_horizon`. Omitted means the reorder plan's own horizon.
    */
   link_up_to?: string;
+  /**
+   * "No horizon at all", said out loud (S1). An empty date box used to send NOTHING, which
+   * the server reads as "take the plan's own" - the opposite of what clearing it means, and
+   * it left the page unable to link a far-future row once a plan run named a horizon.
+   * Omitted still means the plan's own; `'date'` is implied by `link_up_to`.
+   */
+  link_horizon?: 'date' | 'plan' | 'none';
 }
 
 export interface AutoPlaceResult {
@@ -618,6 +627,9 @@ export interface AutoPlaceResult {
   after_horizon?: number;
   /** The horizon the pass ran under, stated back so a zero has a date beside it. */
   link_up_to?: string | null;
+  /** Whether a horizon was in force at all (S1) - `'none'` says the null above is a
+   *  deliberate "no horizon", not a plan that has never named one. */
+  link_horizon?: 'date' | 'none';
 }
 
 /**

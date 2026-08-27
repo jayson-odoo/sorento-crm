@@ -24,6 +24,7 @@ import {
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
+import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import { acknowledgeOutcomeText, linkOutcomeText } from '../lib/linkHorizon';
 import type {
   AutoPlaceRequest,
@@ -363,11 +364,12 @@ export function useOrderInquiryHandshake() {
   }
 
   const acknowledge = useMutation({
-    // `linkUpTo` is the LINK HORIZON the cascade half of the press runs under (AC-LH1):
+    // `horizon` is the LINK HORIZON the cascade half of the press runs under (AC-LH1):
     // every ticked row is taken on, and one due after that date is left Not linked and
-    // reported back as "N after <date>".
-    mutationFn: ({ rowIds, linkUpTo }: { rowIds: string[]; linkUpTo?: string }) =>
-      acknowledgeOrderInquiryRows(rowIds, linkUpTo),
+    // reported back as "N after <date>". `linkHorizonRequest` builds it, so this press and
+    // the other three say the same thing about the same date (S1).
+    mutationFn: ({ rowIds, horizon }: { rowIds: string[]; horizon?: LinkHorizonRequest }) =>
+      acknowledgeOrderInquiryRows(rowIds, horizon),
     onSuccess: (result) => {
       invalidate();
       toast.success(acknowledgeOutcomeText(result));

@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useAutoPlaceOrderInquiryRows } from '../hooks/useOrderInquiry';
+import { horizonLabel, linkHorizonRequest } from '../lib/linkHorizon';
 
 /**
  * "Auto-link" (AC-I1; the captain, 20 Aug: "we need to link already at first already
@@ -20,15 +21,27 @@ import { useAutoPlaceOrderInquiryRows } from '../hooks/useOrderInquiry';
  * automatically (a decision confirm, an outstanding PO import, a PO confirm). Confirmed
  * like any bulk write: it links real document lines and writes the audit claim behind
  * each one, even though nothing is deleted and Unlink always reverses it.
+ *
+ * It runs under the page's own LINK HORIZON, and SHOWS it (B2, code review 27 Aug 2026).
+ * This press sat on the same toolbar as the date and ignored it, so the one press that
+ * reaches every open row in the company was also the one that could reach past the date
+ * beside it - and nothing on the confirmation said so.
  */
 export function AutoLinkOrderInquiryDialog({
   open,
   onOpenChange,
+  linkUpTo = '',
+  horizonCleared = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The page's "Link up to" date, `YYYY-MM-DD`, or blank. */
+  linkUpTo?: string;
+  /** The buyer took the horizon off, as opposed to never having set one (S1). */
+  horizonCleared?: boolean;
 }) {
   const autoPlace = useAutoPlaceOrderInquiryRows();
+  const horizon = horizonLabel(linkUpTo, horizonCleared);
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -40,12 +53,24 @@ export function AutoLinkOrderInquiryDialog({
             purchase order first?
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {/* The horizon this press runs to, worded exactly as the manual Link dialog words
+            it. A fact and a date, never an explanation of what a horizon is. */}
+        {horizon ? (
+          <div
+            data-testid="auto-link-horizon"
+            className="text-xs text-muted-foreground"
+          >
+            {`Link up to ${horizon}`}
+          </div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={autoPlace.isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={(event) => {
               event.preventDefault();
-              autoPlace.mutate({}, { onSuccess: () => onOpenChange(false) });
+              autoPlace.mutate(linkHorizonRequest(linkUpTo, horizonCleared), {
+                onSuccess: () => onOpenChange(false),
+              });
             }}
             disabled={autoPlace.isPending}
           >

@@ -144,7 +144,8 @@ def _restore(originals) -> None:
 
 
 class _World:
-    def __init__(self, db, company_id, cs_user, buyer, project, product, warehouse):
+    def __init__(self, db, company_id, cs_user, buyer, project, product, warehouse,
+                 plan_run):
         self.db = db
         self.company_id = company_id
         self.cs_user = cs_user
@@ -152,6 +153,35 @@ class _World:
         self.project = project
         self.product = product
         self.warehouse = warehouse
+        #: The reorder run this suite's LINK HORIZON default is read off (S5, code review
+        #: 27 Aug 2026). See `_pin_the_plan_horizon`.
+        self.plan_run = plan_run
+
+
+def _pin_the_plan_horizon(db, company_id) -> str:
+    """The LATEST COMPLETED reorder run, seeded with NO "Plan until" (S5, code review
+    27 Aug 2026).
+
+    `plan_link_horizon` reads the latest completed run, and this suite runs on the SHARED
+    local database - a copy of production, carrying real planning runs. Left alone, every
+    acknowledge in this file and in `test_order_inquiry_handshake_edges.py` would link
+    under whatever horizon somebody's last real run happened to name, and the same test
+    would pass or fail depending on the copy. One seeded run, finishing now and naming no
+    horizon, makes the default a fact of the fixture: NO horizon unless a test says
+    otherwise, which the two AC-LH5 tests do by writing a date onto this run.
+    """
+    run_id = _uid()
+    finished = datetime.utcnow()
+    db.execute(
+        text(
+            "INSERT INTO scm.reorder_run (id, company_id, status, plan_horizon_date, "
+            "started_at, finished_at, created_at) "
+            "VALUES (:i, :c, 'completed', NULL, :f, :f, :f)"
+        ),
+        {"i": run_id, "c": company_id, "f": finished},
+    )
+    db.flush()
+    return run_id
 
 
 @pytest.fixture()
@@ -172,9 +202,12 @@ def world():
         )
         product = _product(db)
         warehouse = _warehouse(db, f"ZZT-IB-{_uid()[:4]}", segment="project")
+        plan_run = _pin_the_plan_horizon(db, company_id)
         db.flush()
         db.commit()
-        yield _World(db, company_id, cs_user, buyer, project, product, warehouse)
+        yield _World(
+            db, company_id, cs_user, buyer, project, product, warehouse, plan_run
+        )
 
 
 @pytest.fixture()
@@ -1182,19 +1215,29 @@ def test_a_row_with_no_delivery_date_is_inside_the_horizon(api):
     ) == Decimal("10")
 
 
+def _plan_until(world, when):
+    """The "Plan until" of the latest completed reorder run - which IS the link horizon's
+    default (S2, code review 27 Aug 2026).
+
+    NOT `scm.priority_policy.reorder_coverage_until`, which this used to write. That field
+    is the ladder's BUY-NOW line - a row needed after it is one the engine proposes buying
+    - so using it as the link horizon meant the purchase order raised for those very rows
+    could never be linked back to them. The run's own horizon is the date its netting
+    stopped at, which is the honest answer to "how far out has anybody planned".
+    """
+    world.db.execute(
+        text("UPDATE scm.reorder_run SET plan_horizon_date = :d WHERE id = :i"),
+        {"d": when, "i": world.plan_run},
+    )
+    world.db.flush()
+
+
 def test_the_summary_offers_the_plans_own_horizon_as_the_default(api):
     """AC-LH5's own half of the contract: the page does not invent a default date, it reads
-    the reorder plan's coverage date off the active fulfilment policy. One setting, so the
-    plan and the buyer cannot be working to two different horizons."""
-    from app.models.scm import PriorityPolicy
-
+    the reorder plan's own "Plan until". One setting, so the plan and the buyer cannot be
+    working to two different horizons."""
     client, world = api
-    policy = (
-        world.db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
-    )
-    assert policy is not None, "the migrated database always has one active policy"
-    policy.reorder_coverage_until = HORIZON
-    world.db.flush()
+    _plan_until(world, HORIZON)
     world.db.commit()
 
     body = client.get(SUMMARY).json()
@@ -1204,17 +1247,103 @@ def test_the_summary_offers_the_plans_own_horizon_as_the_default(api):
     )
 
 
+def test_an_explicit_no_horizon_links_a_row_the_plan_does_not_reach(api):
+    """S1 (code review, 27 Aug 2026). Clearing the date on the page means "no horizon", and
+    that is a different instruction from naming none.
+
+    Both used to travel as the same nothing: an empty box sent no `link_up_to`, the server
+    read that as "the caller named none" and used the plan's own date - so once a plan run
+    named a horizon, the page could not link a far-future row at ALL. The buyer could see
+    the box empty and still be refused.
+    """
+    _client, world = api
+    _plan_until(world, HORIZON)
+    _open_po_line(world, qty=100)
+    far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL,
+            json={"row_ids": [str(far.id)], "link_horizon": "none"},
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    body = response.json()
+    assert body["linked_rows"] == 1
+    assert body["after_horizon"] == 0
+    assert body["link_up_to"] is None
+    assert body["link_horizon"] == "none", "`response_model` dropped link_horizon"
+    assert sum(Decimal(str(link.qty)) for link in _links_of(world, far)) == Decimal("10")
+
+
+def test_a_result_states_which_horizon_it_ran_under(api):
+    """The other half of the same field: a pass that DID run to a date says so, so the FE
+    never has to read a null `link_up_to` two ways."""
+    _client, world = api
+    _open_po_line(world, qty=100)
+    near = _due(world, _raise_one_row(api, qty="10")["row"], NEAR)
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL,
+            json={"row_ids": [str(near.id)], "link_up_to": HORIZON.isoformat()},
+        )
+    assert response.status_code == 200, response.text
+
+    body = response.json()
+    assert body["link_horizon"] == "date"
+    assert body["link_up_to"] == HORIZON.isoformat()
+
+
+def test_link_selected_carries_the_explicit_no_horizon_too(api):
+    """One rule, every door: the worklist's own press says the same thing about the same
+    box as Acknowledge does."""
+    _client, world = api
+    _plan_until(world, HORIZON)
+    _open_po_line(world, qty=100)
+    far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
+
+    with _as_purchasing(world) as buyer:
+        taken_on = buyer.post(
+            ACK_URL,
+            json={"row_ids": [str(far.id)], "link_up_to": BEFORE_BOTH.isoformat()},
+        )
+        assert taken_on.json()["linked_rows"] == 0
+        world.db.commit()
+
+        response = buyer.post(
+            AUTO_PLACE, json={"row_ids": [str(far.id)], "link_horizon": "none"}
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    body = response.json()
+    assert body["placed_rows"] == 1
+    assert body["link_horizon"] == "none"
+    assert body["link_up_to"] is None
+
+
+def test_naming_a_date_horizon_without_a_date_is_refused(api):
+    """`link_horizon: "date"` and no date is a caller contradicting itself. Refused rather
+    than quietly read as one of the other two, which would link under a horizon nobody
+    asked for."""
+    _client, world = api
+    row = _raise_one_row(api, qty="10")["row"]
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL, json={"row_ids": [str(row.id)], "link_horizon": "date"}
+        )
+
+    assert response.status_code == 422, response.text
+
+
 def test_a_caller_that_names_no_horizon_takes_the_plans_own(api):
     """The default is not "no horizon": a press that says nothing is a press under the
-    plan's own coverage date, which is what a purchase-order confirm uses too."""
-    from app.models.scm import PriorityPolicy
-
+    plan's own horizon, which is what a purchase-order confirm uses too."""
     _client, world = api
-    policy = (
-        world.db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
-    )
-    policy.reorder_coverage_until = HORIZON
-    world.db.flush()
+    _plan_until(world, HORIZON)
     _open_po_line(world, qty=100)
     far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
 

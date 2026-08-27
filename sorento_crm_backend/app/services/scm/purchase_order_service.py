@@ -35,6 +35,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm import priority
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
@@ -919,6 +920,10 @@ class PurchaseOrderService:
         # lifted. A line with no warehouse contributes a None, which matches an inquiry row
         # that resolves to no location either - the same NULL `scm.committed_v` emits.
         cells: set[tuple[str, str | None]] = set()
+        # What the confirmed lines were drafted OFF - the thread back to the plan run that
+        # sized the buy, and therefore to the horizon it may link under (S2, code review
+        # 27 Aug 2026).
+        source_refs: set[str] = set()
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -936,6 +941,8 @@ class PurchaseOrderService:
                 po.expected_date = max(dates) if dates else None
             for ln in po.lines:
                 ln.line_status = "open"
+                if ln.source_ref:
+                    source_refs.add(str(ln.source_ref))
                 if ln.product_id:
                     product_ids.add(str(ln.product_id))
                     cells.add((str(ln.product_id),
@@ -959,6 +966,16 @@ class PurchaseOrderService:
             )
 
             service = ProjectOrderInquiryService(self.db)
+            # The LINK HORIZON this confirm runs under (`PLAN-scm-oi-handshake.md` section
+            # 11, S2). A confirm has nobody to ask for a date, so it takes the one the buy
+            # was sized under: the plan run its own draft lines were drafted off, and the
+            # latest completed run when it cannot name one (a purchase order somebody
+            # keyed by hand). Not the newest run in either case - a draft may sit for days
+            # while a later run plans further out, and linking under THAT horizon would
+            # hand the buy to rows the run that ordered it never counted.
+            link_up_to = priority.plan_link_horizon(
+                self.db, run_id=self._plan_run_for_source_refs(source_refs)
+            )
             # Pass one: the rows that sized these plan cells, first claim on the lines
             # this confirm just opened.
             # Sorted only so the pass is deterministic, and sorted with a KEY because a
@@ -972,11 +989,13 @@ class PurchaseOrderService:
             if sized_by:
                 service.auto_place_for_products(
                     None, actor_user_id=actor, trigger="po_confirm", row_ids=sized_by,
+                    link_up_to=link_up_to,
                 )
             # Pass two: everybody else waiting on these products. Idempotent - a row pass
             # one fully linked is no longer raised, so it drops out of this query.
             service.auto_place_for_products(
                 list(product_ids), actor_user_id=actor, trigger="po_confirm",
+                link_up_to=link_up_to,
             )
             self.db.commit()
         except Exception as exc:  # noqa: BLE001
@@ -987,6 +1006,47 @@ class PurchaseOrderService:
             )
 
         return {"confirmed_count": confirmed}
+
+    def _plan_run_for_source_refs(self, source_refs: set[str]) -> Optional[str]:
+        """The reorder run a set of draft-PO lines was drafted off, or `None`.
+
+        `decision_service` threads the run onto every line it drafts through
+        `source_ref`: a LOCATION-grain line names its `scm.reorder_recommendation` id, a
+        PRODUCT-grain line names either a member recommendation id or
+        `"{order_summary_row id}:{warehouse id}"`. Both tables carry `run_id`, so the
+        stem of the ref is all that has to be read.
+
+        `None` for a purchase order nobody drafted from a plan - somebody keyed it, and
+        there is no run whose horizon it was sized under. A ref that is not a uuid is
+        dropped before the query rather than sent to Postgres, which would reject the
+        whole `IN` list rather than that one value.
+        """
+        from app.models.scm import OrderSummaryRow, ReorderRecommendation
+
+        keys: set[str] = set()
+        for ref in source_refs:
+            stem = str(ref).split(":", 1)[0]
+            try:
+                uuid.UUID(stem)
+            except (ValueError, AttributeError, TypeError):
+                continue
+            keys.add(stem)
+        if not keys:
+            return None
+        run_id = (
+            self.db.query(ReorderRecommendation.run_id)
+            .filter(ReorderRecommendation.id.in_(list(keys)))
+            .limit(1)
+            .scalar()
+        )
+        if run_id is None:
+            run_id = (
+                self.db.query(OrderSummaryRow.run_id)
+                .filter(OrderSummaryRow.id.in_(list(keys)))
+                .limit(1)
+                .scalar()
+            )
+        return str(run_id) if run_id else None
 
     def create_gr(self, po_id: str, actor: Optional[str] = None) -> dict:
         """Create a goods receipt from an active/partial PO (M4-D6): a full receipt
