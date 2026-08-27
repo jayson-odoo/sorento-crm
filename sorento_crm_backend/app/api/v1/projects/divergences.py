@@ -41,6 +41,7 @@ from app.services.project_so_ingest_service import (
     ProjectSOIngestService,
 )
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ async def corrective_import_file(
         return Response(
             content=body,
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         db.rollback()

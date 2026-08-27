@@ -44,6 +44,7 @@ from app.services.scm import (
     supplier_notice_service,
 )
 from app.services.scm.upload_intake import read_upload, read_upload_retained
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -816,7 +817,7 @@ def export_consolidated_packing_list(
     return Response(
         content=consolidated_packing_list.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 
@@ -914,5 +915,5 @@ def export_spo_worksheet(
     return Response(
         content=spo_conversion_service.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )

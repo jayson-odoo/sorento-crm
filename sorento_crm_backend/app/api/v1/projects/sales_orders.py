@@ -66,6 +66,7 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_so_delta_service import ProjectSODeltaService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -809,7 +810,7 @@ def sales_order_import_file(
         return Response(
             content=body,
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -970,7 +971,7 @@ async def export_autocount_change_list(
         return Response(
             content=body,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

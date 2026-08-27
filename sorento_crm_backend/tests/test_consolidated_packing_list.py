@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from io import BytesIO
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -707,9 +708,9 @@ def test_the_export_route_returns_a_workbook_named_after_the_container(db, clien
 
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == _XLSX
-    assert (
-        r.headers["content-disposition"]
-        == f'attachment; filename="{w.shipment.shipping_container_number}-packing-list.xlsx"'
+    expected_name = f"{w.shipment.shipping_container_number}-packing-list.xlsx"
+    assert r.headers["content-disposition"] == (
+        f'attachment; filename="{expected_name}"; filename*=UTF-8\'\'{quote(expected_name)}'
     )
     wb = openpyxl.load_workbook(BytesIO(r.content))
     first_column = [row[0] for row in wb["PACKING LIST"].iter_rows(values_only=True)]

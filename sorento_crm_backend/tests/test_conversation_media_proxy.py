@@ -245,7 +245,9 @@ def test_an_allowlisted_url_is_proxied_inline_with_its_filename(client, seed, mo
     assert got.status_code == 200, got.text
     assert got.content == b"PK\x03\x04 spreadsheet bytes"
     assert got.headers["content-type"].startswith("application/vnd.ms-excel")
-    assert got.headers["content-disposition"] == 'inline; filename="quotation.xlsx"'
+    assert got.headers["content-disposition"] == (
+        "inline; filename=\"quotation.xlsx\"; filename*=UTF-8''quotation.xlsx"
+    )
 
 
 def test_a_non_allowlisted_url_is_400_on_the_route(client, seed):
