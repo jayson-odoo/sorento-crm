@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Check, Info, Pencil, X } from 'lucide-react';
+import { Check, Info, Pencil, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -457,12 +457,6 @@ export function BoardCellBreakdownDialog({
                     explaining, you can put it under the tooltip"). */}
                 <BoardTrailPopover contribution={row.original} />
               </div>
-              {row.original.contested && (
-                <span className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
-                  <AlertTriangle className="size-3" aria-hidden />
-                  Contested
-                </span>
-              )}
             </div>
           );
         },

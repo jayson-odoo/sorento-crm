@@ -343,7 +343,8 @@ describe('BoardCellBreakdownDialog: the table', () => {
       { 'WESERP10B|BRW-BB': '100' },
     );
 
-    expect(screen.getByText('Contested')).toBeInTheDocument();
+    // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
+    expect(screen.queryByText('Contested')).toBeNull();
   });
 
   it('lists the rows in the order the allocation rule served them', () => {
@@ -1671,7 +1672,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(screen.getByText('MWH-IB 20 · BRW 5')).toBeInTheDocument();
   });
 
-  it('leaves the source strip, the share note and the Contested chip exactly as they were', async () => {
+  it('leaves the source strip and the share note exactly as they were, and shows no Contested chip', async () => {
     const lines = [
       demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '100', required_date: '2026-09-04' }),
       demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '100', required_date: '2026-09-02' }),
@@ -1681,7 +1682,8 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderDialog(lines, freeStock);
 
     expect(screen.getByText(/Own 100/)).toBeInTheDocument();
-    expect(screen.getByText('Contested')).toBeInTheDocument();
+    // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
+    expect(screen.queryByText('Contested')).toBeNull();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain('left for this line');
     expect(await sourceNoteOf(cell.contributions[1].key)).toContain('left for this line');

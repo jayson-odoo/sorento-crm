@@ -364,11 +364,6 @@ function BoardCellButton({
             {`${cell.unplannable_count} need${cell.unplannable_count === 1 ? 's' : ''} a location`}
           </span>
         )}
-        {cell.contested_count > 0 && (
-          <span className="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">
-            {`${cell.contested_count} contested`}
-          </span>
-        )}
         {decided > 0 && (
           <span className="rounded bg-emerald-100 px-1 text-[10px] font-medium text-emerald-800">
             {`${decided}/${cell.contributions.length} decided`}

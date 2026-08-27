@@ -417,7 +417,9 @@ describe('FulfilmentBoardPanel: the cells', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('1 contested')).toBeInTheDocument();
+    await screen.findByText('SO403340');
+    // The count is gone from the cell (the captain, 27 Aug); the flag stays in the data.
+    expect(screen.queryByText('1 contested')).toBeNull();
   });
 
   it('leaves a product-and-date nobody owes blank, because a blank cell is not a zero', async () => {
