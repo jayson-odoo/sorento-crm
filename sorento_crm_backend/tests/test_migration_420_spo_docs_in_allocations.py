@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -32,7 +32,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.scm import OrderLinkClaim
+from app.models.scm import OrderLinkClaim, PlanException, PlanExceptionBatch
 
 from ._pg_fixture import blank_session
 
@@ -291,6 +291,49 @@ def test_a_reference_with_nowhere_to_go_refuses_loudly():
 
     assert "spo_allocations.po_line_id" in str(raised.value)
     assert "1" in str(raised.value)
+
+
+def test_a_plan_exception_about_an_spo_document_is_cleared_not_refused():
+    """The one reference the migration resolves itself: a finding a batch raised ABOUT an
+    SPO document while it was filed as a purchase order (prod held one on 27 Aug 2026 and
+    the first deploy refused on it). The finding stays, its document link goes, the SPO
+    still moves.
+    """
+    with blank_session() as db:
+        world = _book(db)
+        batch = PlanExceptionBatch(
+            id=_uid(), company_id=world["company_id"], as_of=date.today(),
+            generated_at=datetime.now(), delta_count=1,
+        )
+        db.add(batch)
+        db.flush()
+        on_spo = PlanException(
+            id=_uid(), company_id=world["company_id"], batch_id=batch.id,
+            product_id=world["product"].id, warehouse_id=world["brw_ib"].id,
+            exception_type="supply_surplus", quantity=Decimal("10"),
+            purchase_order_id=world["live"].id, po_expected_date=SOON, status="open",
+        )
+        on_po = PlanException(
+            id=_uid(), company_id=world["company_id"], batch_id=batch.id,
+            product_id=world["product"].id, warehouse_id=world["brw_bb"].id,
+            exception_type="supply_surplus", quantity=Decimal("3"),
+            purchase_order_id=world["keep"].id, po_expected_date=SOON, status="open",
+        )
+        db.add_all([on_spo, on_po])
+        db.commit()
+        on_spo_id, on_po_id = on_spo.id, on_po.id
+        live_id, keep_id = world["live"].id, world["keep"].id
+
+        _migration().move_spo_documents(db.connection())
+        db.commit()
+        db.expunge_all()
+
+        assert db.get(PlanException, on_spo_id).purchase_order_id is None
+        assert db.get(PlanException, on_spo_id).quantity == Decimal("10")
+        # A finding about a real purchase order keeps its link.
+        assert db.get(PlanException, on_po_id).purchase_order_id == keep_id
+        assert len(_allocations(db, "SPO-2026/08-0061")) == 3
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == live_id).count() == 0
 
 
 # ------------------------------------------------------------------- the claim it clears
