@@ -3,13 +3,14 @@
  *
  * What this pins: the search box reaches the service, the two filters live behind ONE
  * Filters popover that says what it is filtering, the whole row opens the invoice, the
- * primary CTA is Upload, and deleting is a bulk action on the selection rather than a
- * destructive button sitting in every row under the cursor.
+ * right cluster is [gear] [Start] (R14), and a convert from the list runs at once with no
+ * dialog in front of it (R15).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 
 if (!window.matchMedia) {
@@ -127,10 +128,7 @@ vi.mock('../../hooks/useProformaInvoices', () => ({
     listCalls.push(args);
     return { data: state.data, isLoading: state.isLoading };
   },
-  // The convert dialog reads the one invoice it is about, and this supplier's open drafts
-  // to offer as a target (F10). Neither is what this suite is testing.
   useProformaInvoice: () => ({ data: undefined, isLoading: false }),
-  useDraftShipments: () => ({ data: [], isLoading: false }),
   useConvertProformaInvoicesToDraftShipment: () => ({
     mutateAsync: state.convertInvoices,
     isPending: false,
@@ -203,6 +201,28 @@ function openFilters() {
   });
 }
 
+/** Radix opens on POINTERDOWN, so a plain click on either menu trigger is a no-op. */
+function openMenu(name: RegExp | string) {
+  fireEvent.pointerDown(screen.getByRole('button', { name }), {
+    button: 0,
+    ctrlKey: false,
+    pointerType: 'mouse',
+  });
+}
+
+const openGear = () => openMenu('More actions');
+const openStart = () => openMenu(/^Start/);
+
+/** An open Radix menu `aria-hidden`s the rest of the page, so the other trigger is
+ *  unreachable until this one is dismissed. */
+function closeMenu() {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+}
+
+function tickFirstRow() {
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+}
+
 function searchBox(): HTMLInputElement {
   return screen.getByLabelText('Search proforma invoices') as HTMLInputElement;
 }
@@ -219,7 +239,7 @@ beforeEach(() => {
   state.isLoading = false;
   state.convertInvoices = vi.fn().mockResolvedValue({
     shipment_id: 'ship-1',
-    shipment_number: 'SHIP-DRAFT-1',
+    shipment_number: 'PL-2608-003',
     shipment_status: 'draft',
     supplier_id: null,
     lines_created: 1,
@@ -366,32 +386,113 @@ describe('ProformaInvoicesView - the standard toolbar', () => {
     expect(screen.getByRole('button', { name: /columns/i })).toBeInTheDocument();
   });
 
-  it('anchors Upload as the one primary action', () => {
+  it('anchors [gear] [Start] as the right cluster (AC-E1)', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    expect(
-      screen.getByRole('button', { name: /upload proforma invoice/i }),
-    ).toBeInTheDocument();
-  });
-
-  it('hides Upload entirely without the permission, not just disables it', () => {
-    hasPermission.mockReturnValue(false);
-    state.data = { data: [invoiceRow()], total: 1 };
-    renderView();
-
+    expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Start/ })).toBeInTheDocument();
+    // Upload is INSIDE Start now, not a button of its own.
     expect(
       screen.queryByRole('button', { name: /upload proforma invoice/i }),
     ).not.toBeInTheDocument();
   });
 
-  it('opens the upload dialog from the primary action', () => {
+  it('offers Upload and Convert under Start', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('button', { name: /upload proforma invoice/i }));
+    openStart();
+
+    expect(
+      screen.getByRole('menuitem', { name: /upload proforma invoice/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /convert to packing list/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('refuses Convert until something is ticked, and says why', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    openStart();
+
+    const convert = screen.getByRole('menuitem', { name: /convert to packing list/i });
+    expect(convert).toHaveAttribute('data-disabled');
+    expect(convert).toHaveAttribute('title', 'Select invoices first');
+  });
+
+  it('counts the ticked rows in the Convert item', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    tickFirstRow();
+    openStart();
+
+    expect(
+      screen.getByRole('menuitem', { name: /convert 1 to packing list/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides Upload from Start without the permission, not just disables it', () => {
+    hasPermission.mockImplementation((slug: string) => slug !== 'scm.proforma_invoice.upload');
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    openStart();
+
+    expect(
+      screen.queryByRole('menuitem', { name: /upload proforma invoice/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens the upload dialog from the Start menu', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /upload proforma invoice/i }));
 
     expect(screen.getByTestId('upload-dialog')).toBeInTheDocument();
+  });
+
+  it('holds Export and Delete under the gear, both refused without a selection', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    openGear();
+
+    const exportItem = screen.getByRole('menuitem', { name: /export/i });
+    const deleteItem = screen.getByRole('menuitem', { name: /^delete$/i });
+    expect(exportItem).toHaveAttribute('data-disabled');
+    expect(deleteItem).toHaveAttribute('data-disabled');
+    expect(deleteItem).toHaveAttribute('title', 'Select invoices first');
+  });
+
+  it('leaves the selection strip with the count and Clear only (AC-E2)', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    tickFirstRow();
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
+    // Neither bulk button survives the move into the right cluster.
+    expect(
+      screen.queryByRole('button', { name: /convert 1 to packing list/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete 1/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^export$/i })).not.toBeInTheDocument();
+  });
+
+  it('never says "draft shipment" anywhere on this screen (AC-E5)', () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    const { container } = renderView();
+
+    tickFirstRow();
+
+    expect(container.textContent).not.toMatch(/draft shipment/i);
   });
 });
 
@@ -420,7 +521,7 @@ describe('ProformaInvoicesView - the whole row opens the invoice', () => {
   });
 });
 
-describe('ProformaInvoicesView - delete is a bulk action, never a per-row button', () => {
+describe('ProformaInvoicesView - delete lives under the gear, never in a row', () => {
   it('renders no Delete control while nothing is selected', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
@@ -428,25 +529,23 @@ describe('ProformaInvoicesView - delete is a bulk action, never a per-row button
     expect(screen.queryByRole('button', { name: /^delete/i })).not.toBeInTheDocument();
   });
 
-  it('offers Convert and Delete once a row is ticked', () => {
+  it('counts the selection in the gear\'s Delete', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+    tickFirstRow();
+    openGear();
 
-    expect(screen.getByText('1 selected')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /convert 1 to draft shipment/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /delete 1/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /delete 1/i })).toBeInTheDocument();
   });
 
   it('uses the standard confirm copy, never a browser confirm()', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
-    fireEvent.click(screen.getByRole('button', { name: /delete 1/i }));
+    tickFirstRow();
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: /delete 1/i }));
 
     const dialog = screen.getByRole('alertdialog');
     expect(within(dialog).getByText('Confirm delete')).toBeInTheDocument();
@@ -457,8 +556,9 @@ describe('ProformaInvoicesView - delete is a bulk action, never a per-row button
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
-    fireEvent.click(screen.getByRole('button', { name: /delete 1/i }));
+    tickFirstRow();
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: /delete 1/i }));
     expect(state.bulkDeleteInvoices).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('alertdialog');
@@ -467,17 +567,112 @@ describe('ProformaInvoicesView - delete is a bulk action, never a per-row button
     await waitFor(() => expect(state.bulkDeleteInvoices).toHaveBeenCalledWith(['pi-1']));
   });
 
-  it('hides the bulk delete from a caller who cannot upload', () => {
+  it('hides Delete from a caller who cannot upload, and keeps Convert', () => {
     hasPermission.mockImplementation((slug: string) => slug !== 'scm.proforma_invoice.upload');
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select PI-2026-001' }));
+    tickFirstRow();
+    openGear();
+    expect(screen.queryByRole('menuitem', { name: /delete 1/i })).not.toBeInTheDocument();
+    closeMenu();
 
-    expect(screen.queryByRole('button', { name: /delete 1/i })).not.toBeInTheDocument();
+    openStart();
     expect(
-      screen.getByRole('button', { name: /convert 1 to draft shipment/i }),
+      screen.getByRole('menuitem', { name: /convert 1 to packing list/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('R15 - a convert from the list runs at once', () => {
+  it('calls the convert with the ticked invoices and no dialog in between', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    tickFirstRow();
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+
+    await waitFor(() =>
+      expect(state.convertInvoices).toHaveBeenCalledWith({
+        invoiceIds: ['pi-1'],
+        overrideReason: undefined,
+      }),
+    );
+    // No packing-list dialog stood in front of it.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('names the packing list in the toast and lands on it', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    tickFirstRow();
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        'Packing list PL-2608-003 created with 1 line',
+      ),
+    );
+    expect(push).toHaveBeenCalledWith('/procurement-management/packing-lists/ship-1');
+  });
+
+  it('asks whether to load the box anyway when the placement is over capacity', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    state.convertInvoices = vi.fn().mockRejectedValue(
+      Object.assign(new Error('PI-2026-001 is 69.36 cbm and the 40HQ holds 65.'), {
+        code: 'over_capacity',
+      }),
+    );
+    renderView();
+
+    tickFirstRow();
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+
+    expect(await screen.findByText('This will not fit')).toBeInTheDocument();
+    expect(
+      screen.getByText('PI-2026-001 is 69.36 cbm and the 40HQ holds 65.'),
+    ).toBeInTheDocument();
+  });
+
+  it('retries with the reason once "Convert anyway" is pressed', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    state.convertInvoices = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error('over its planned volume'), { code: 'over_capacity' }),
+      )
+      .mockResolvedValue({
+        shipment_id: 'ship-1',
+        shipment_number: 'PL-2608-003',
+        shipment_status: 'draft',
+        supplier_id: null,
+        lines_created: 1,
+        lines_skipped: 0,
+        invoices: [],
+        unmatched: [],
+      });
+    renderView();
+
+    tickFirstRow();
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+    await screen.findByText('This will not fit');
+
+    fireEvent.change(screen.getByLabelText(/why convert anyway/i), {
+      target: { value: 'Second container booked' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /convert anyway/i }));
+
+    await waitFor(() =>
+      expect(state.convertInvoices).toHaveBeenLastCalledWith({
+        invoiceIds: ['pi-1'],
+        overrideReason: 'Second container booked',
+      }),
+    );
   });
 });
 

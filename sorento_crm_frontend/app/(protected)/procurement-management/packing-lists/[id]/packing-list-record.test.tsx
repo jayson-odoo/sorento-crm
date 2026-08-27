@@ -26,10 +26,16 @@ import {
 } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const routerState = { pathname: '/procurement-management/packing-lists/pl-1', push: vi.fn() };
+const routerState = {
+  pathname: '/procurement-management/packing-lists/pl-1',
+  push: vi.fn(),
+  // Watched as well as `push` (R19): an edit that moved the operator off the tab they
+  // pressed Edit on would do it with either.
+  replace: vi.fn(),
+};
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: routerState.push, replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: routerState.push, replace: routerState.replace, back: vi.fn() }),
   usePathname: () => routerState.pathname,
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -51,6 +57,8 @@ const state = {
   packingList: null as unknown,
   /** The proforma invoices behind the container - four readings of one payload. */
   sourceInvoices: undefined as unknown,
+  /** The container's audit trail, which is what the Timeline's History card lists. */
+  history: undefined as unknown,
 };
 
 const updatePackingList = vi.fn();
@@ -60,6 +68,8 @@ vi.mock('../hooks/usePackingLists', () => ({
   useDeletePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePackingList: () => ({ mutateAsync: updatePackingList, isPending: false }),
   usePackingListSourceInvoices: () => ({ data: state.sourceInvoices, isLoading: false }),
+  // The Timeline's History card reads the container's audit trail (R17).
+  usePackingListHistory: () => ({ data: state.history, isLoading: false, isError: false }),
   // Checkpoint labels and order come from config, and the edit-in-place clearance fields
   // read the same list the timeline does.
   useClearanceCheckpoints: () => ({
@@ -93,7 +103,7 @@ vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentSe
   getAttachmentPreviewUrl: vi.fn(),
 }));
 
-const downloadWorkbook = vi.fn(async (_id: string, _fallback?: string | null) => undefined);
+const downloadWorkbook = vi.fn<(id: string, fallback?: string | null) => Promise<void>>();
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   downloadPackingListExport: (id: string, fallback?: string | null) =>
     downloadWorkbook(id, fallback),
@@ -236,8 +246,10 @@ beforeEach(async () => {
   vi.clearAllMocks();
   routerState.pathname = '/procurement-management/packing-lists/pl-1';
   routerState.push = vi.fn();
+  routerState.replace = vi.fn();
   state.packingList = mixedContainer();
   state.sourceInvoices = undefined;
+  state.history = undefined;
   updatePackingList.mockReset();
   updatePackingList.mockResolvedValue({});
 });
@@ -343,14 +355,42 @@ describe('the Proforma invoices tab', () => {
     ).toBeInTheDocument();
   });
 
-  it('leaves the Timeline to the clearance checkpoints alone', async () => {
+  it('leaves the Timeline to the checkpoints and the container history', async () => {
     state.sourceInvoices = sourceInvoices();
     routerState.pathname = '/procurement-management/packing-lists/pl-1/timeline';
     await renderTab(<TimelinePage />);
 
     expect(screen.getByText('Clearance & Delivery')).toBeInTheDocument();
+    expect(screen.getByText('History')).toBeInTheDocument();
     // The Origin card is gone: it is a whole tab now.
     expect(screen.queryByText(/Created from PI-2026-001/)).not.toBeInTheDocument();
+  });
+
+  it('prints the over-capacity reason on the Timeline, where the conversion wrote it', async () => {
+    // R17: the reason is an audit entry on the container, not a sentence appended to the
+    // operator's own Notes field.
+    state.history = {
+      data: [
+        {
+          id: 'a-1',
+          entity_type: 'inbound_shipments',
+          entity_id: 'pl-1',
+          action: 'CREATE',
+          changed_at: '2026-08-28T02:15:00',
+          user_display_name: 'Ms Tee',
+          description:
+            'Converted over capacity: PI-2026-001 places 71.2 cbm into a 65 cbm 40HQ. ' +
+            'Reason: the forwarder agreed to the extra pallet.',
+        },
+      ],
+      empty: false,
+      pagination: { total: 1, page: 1 },
+    };
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/timeline';
+    await renderTab(<TimelinePage />);
+
+    expect(screen.getByText(/Converted over capacity/)).toBeInTheDocument();
+    expect(screen.getByText(/the forwarder agreed to the extra pallet/)).toBeInTheDocument();
   });
 });
 
@@ -414,6 +454,62 @@ describe('the Shipment lines tab', () => {
       'href',
       '/scm/proforma-invoices/pi-1',
     );
+  });
+
+  /**
+   * ONE invoice can charge the same container line twice - two of its own lines for the
+   * same item, consolidated into one shipment line. The key was (invoice, line), so the
+   * pair repeated, React kept one child and the second charge vanished from the cell.
+   */
+  it('lists both charges when one invoice bills the same line twice', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    state.sourceInvoices = {
+      ...sourceInvoices(),
+      by_shipment_line: {
+        'l-1': [
+          { proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 300 },
+          { proforma_invoice_id: 'pi-1', pi_number: 'PI-2026-001', qty: 190 },
+        ],
+      },
+    };
+    await renderTab(<LinesPage />);
+
+    const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailu).getAllByRole('link', { name: /PI-2026-001/ })).toHaveLength(2);
+    expect(within(kailu).getByText('300')).toBeInTheDocument();
+    expect(within(kailu).getByText('190')).toBeInTheDocument();
+    expect(errors.mock.calls.map(String).join(' ')).not.toMatch(/same key/);
+    errors.mockRestore();
+  });
+
+  /**
+   * R19 / AC-F5 - Edit is pressed on the tab the operator is reading, and it has to leave
+   * them there. Editing that navigated back to Details would lose the place in a long line
+   * list, and reads as the page throwing the edit away.
+   */
+  it('edits in place: Edit, Cancel and Save never leave /lines', async () => {
+    await renderTab(<LinesPage />);
+
+    fireEvent.click(within(await openGear()).getByText('Edit'));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Shipment lines/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(routerState.push).not.toHaveBeenCalled();
+    expect(routerState.replace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(routerState.push).not.toHaveBeenCalled();
+    expect(routerState.replace).not.toHaveBeenCalled();
+
+    fireEvent.click(within(await openGear()).getByText('Edit'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    });
+    expect(updatePackingList).toHaveBeenCalled();
+    expect(routerState.push).not.toHaveBeenCalled();
+    expect(routerState.replace).not.toHaveBeenCalled();
   });
 });
 

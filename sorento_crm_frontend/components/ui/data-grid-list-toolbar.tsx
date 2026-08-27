@@ -96,7 +96,7 @@ export type ListToolbarFilters =
       content: ReactNode;
     };
 
-export type ListToolbarExport<TData extends object> = {
+export type ListToolbarExport = {
   filename?: string;
   /**
    * All-records (server) export. Used when the user has chosen "select all N
@@ -159,9 +159,18 @@ export type DataGridListToolbarProps<TData extends object> = {
   filters?: ListToolbarFilters;
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
    *  pass a `{kind:'listQuery'}` config for server-side filtered-set export. */
-  exportConfig?: ListToolbarExport<TData> | ListToolbarListQueryExport | false;
+  exportConfig?: ListToolbarExport | ListToolbarListQueryExport | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
+  /**
+   * Show the toolbar's OWN Export button. Default true.
+   *
+   * The same shape as `showColumns`, and for the same reason: a page whose right cluster owns
+   * Export itself (the proforma-invoice book's gear, AC-E2) hides the toolbar's button and
+   * calls `openExport` from its own menu. It used to say `exportConfig={false}` for this,
+   * which also threw away the `filename` - so the file the user got was called `export.xlsx`.
+   */
+  showExport?: boolean;
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
@@ -173,8 +182,15 @@ export type DataGridListToolbarProps<TData extends object> = {
    * Hidden while the bulk strip is up, like everything else in that cluster.
    */
   leftActions?: ReactNode;
-  /** Primary call-to-action (e.g. the "Add" button). Anchored to the right edge. */
-  primaryAction?: ReactNode;
+  /**
+   * Primary call-to-action (e.g. the "Add" button). Anchored to the right edge.
+   *
+   * May be a render function receiving `{ openExport }` - for a page whose right cluster
+   * owns Export itself (the proforma-invoice book's gear, AC-E2) and passes
+   * `exportConfig={false}` so the toolbar renders no Export button of its own. The dialog
+   * behind `openExport` is the SAME selected-rows export, so the two cannot drift.
+   */
+  primaryAction?: ReactNode | ((api: { openExport: () => void }) => ReactNode);
   /** Secondary actions (Import, attachment links, templates). Overflow `▾` at >=2 (D7). */
   secondaryActions?: ToolbarAction[];
   /** Bulk actions shown in the bulk strip when rows are selected (H). */
@@ -246,6 +262,7 @@ export function DataGridListToolbar<TData extends object>({
   filters,
   exportConfig,
   showColumns = true,
+  showExport = true,
   primaryAction,
   secondaryActions = [],
   bulkActions = [],
@@ -365,7 +382,7 @@ export function DataGridListToolbar<TData extends object>({
     filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
 
   const exportButtonEl =
-    exportConfig === false ? null : exportEnabled ? (
+    exportConfig === false || !showExport ? null : exportEnabled ? (
       <Button
         variant="outline"
         size="sm"
@@ -541,7 +558,9 @@ export function DataGridListToolbar<TData extends object>({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          {primaryAction}
+          {typeof primaryAction === 'function'
+            ? primaryAction({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+            : primaryAction}
         </div>
       </div>
 

@@ -1,9 +1,19 @@
 'use client';
 
 import * as React from 'react';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
+import { DocTable, EmptyRow, Td, Th } from '../../components/PlanRowDialog';
 import { EM_DASH, fmtInt } from '../../lib/format';
-import { SoLinesDrillPopover } from './SoLinesDrillPopover';
+import type { ContainerRequestSoLine } from '../../services/fulfilmentService';
 import type {
   ContainerRequestMatrixBucket,
   ContainerRequestMatrixCell,
@@ -28,10 +38,9 @@ const Z_CORNER = 'z-30';
  *
  * A BLANK CELL IS NOT A ZERO: no line in this selection lands on that row and bucket.
  *
- * Each cell IS its own drill trigger (`SoLinesDrillPopover`) rather than a click handler lifted
- * to a parent's `openCell` state - the same popover component the Open SOs column drill uses,
- * so a cell's own `lines` are exactly what its popover shows: no second idea of "what is in
- * this cell".
+ * A cell opens the lines behind it in a dialog, the same object the eight grid figures open
+ * (R7). It was a hover popover until S2, pinned to `document.body` to escape this table's own
+ * sticky columns; the lines it lists are a document table, which is what a dialog is for.
  */
 export function ContainerRequestScheduleMatrix({
   buckets,
@@ -49,6 +58,13 @@ export function ContainerRequestScheduleMatrix({
     for (const cell of cells) map.set(`${cell.row_key}|${cell.bucket_key}`, cell);
     return map;
   }, [cells]);
+
+  // The cell whose lines are open. One state for the whole matrix: two cells cannot be open
+  // at once, and the lines are the cell's own, so there is no second idea of what is in it.
+  const [openCell, setOpenCell] = React.useState<{
+    title: string;
+    lines: ContainerRequestSoLine[];
+  } | null>(null);
 
   return (
     <div
@@ -131,21 +147,17 @@ export function ContainerRequestScheduleMatrix({
                       className="border-b border-e border-border p-0 align-top"
                     >
                       {cell ? (
-                        <SoLinesDrillPopover
+                        <button
+                          type="button"
                           title={`${row.label} - ${bucket.label}`}
-                          lines={cell.lines}
-                          trigger={
-                            <button
-                              type="button"
-                              className="flex w-full flex-col items-end gap-0.5 px-2 py-1.5 text-end hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                            >
-                              <span className="font-medium tabular-nums">{fmtInt(cell.qty)}</span>
-                              <span className="text-[11px] text-muted-foreground">
-                                {cell.lines.length} line{cell.lines.length === 1 ? '' : 's'}
-                              </span>
-                            </button>
-                          }
-                        />
+                          onClick={() => setOpenCell({ title: `${row.label} · ${bucket.label}`, lines: cell.lines })}
+                          className="flex w-full flex-col items-end gap-0.5 px-2 py-1.5 text-end hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        >
+                          <span className="font-medium tabular-nums">{fmtInt(cell.qty)}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {cell.lines.length} line{cell.lines.length === 1 ? '' : 's'}
+                          </span>
+                        </button>
                       ) : null}
                     </td>
                   );
@@ -158,8 +170,69 @@ export function ContainerRequestScheduleMatrix({
           })}
         </tbody>
       </table>
+
+      {openCell ? (
+        <Dialog open onOpenChange={(next) => (next ? null : setOpenCell(null))}>
+          <DialogContent className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-[95vw]">
+            <DialogHeader className="shrink-0 space-y-1 border-b p-4 sm:p-6">
+              <DialogTitle className="min-w-0 break-words">{openCell.title}</DialogTitle>
+              <DialogDescription className="text-xs">
+                {`${fmtInt(openCell.lines.length)} SO line${openCell.lines.length === 1 ? '' : 's'}`}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+              <DocTable>
+                <thead>
+                  <tr className="border-b">
+                    <Th>Sales order</Th>
+                    <Th>Customer</Th>
+                    <Th>Class</Th>
+                    <Th right>Ordered</Th>
+                    <Th right>Qty</Th>
+                    <Th right>Needed</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openCell.lines.length === 0 ? (
+                    <EmptyRow colSpan={6}>No lines here.</EmptyRow>
+                  ) : (
+                    openCell.lines.map((l, i) => (
+                      <tr
+                        key={`${l.so_number ?? 'unnumbered'}-${i}`}
+                        className="border-b last:border-0"
+                      >
+                        <Td>{l.so_number ?? 'Not numbered'}</Td>
+                        <Td title={l.customer_label ?? undefined}>
+                          <span className="block max-w-56 truncate">
+                            {l.customer_label ?? EM_DASH}
+                          </span>
+                        </Td>
+                        <Td>{classLabel(l.demand_class)}</Td>
+                        <Td right>
+                          {l.order_date ? formatDateInMalaysia(l.order_date) : EM_DASH}
+                        </Td>
+                        <Td right>{fmtInt(l.qty)}</Td>
+                        <Td right>
+                          {l.required_date ? formatDateInMalaysia(l.required_date) : EM_DASH}
+                        </Td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </DocTable>
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
+}
+
+/** An unclassified line is named as such, never quietly counted as retail. */
+function classLabel(demandClass: string | null): string {
+  if (demandClass === 'project') return 'Project';
+  if (demandClass) return 'Retail';
+  return 'Unclassified';
 }
 
 export default ContainerRequestScheduleMatrix;

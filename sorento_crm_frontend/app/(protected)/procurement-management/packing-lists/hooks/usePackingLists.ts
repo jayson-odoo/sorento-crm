@@ -17,7 +17,33 @@ import {
   getPackingListSourceInvoices,
   type PackingListsListParams,
 } from '../services/packingListService';
+import { getAuditLogs } from '@/app/(protected)/system-management/audit-logs/services/auditLogService';
 import type { PackingListFormData } from '../types/packingList.types';
+
+/** `audit_logs.entity_type` for a container - `InboundShipment.__tablename__`. */
+const PACKING_LIST_ENTITY_TYPE = 'inbound_shipments';
+
+/**
+ * What has happened to this container, newest first (R17).
+ *
+ * The audit trail IS the timeline: `InboundShipment` is `__audit_track__`, so every save
+ * already writes a row, and the conversion's over-capacity reason is written there as one
+ * described entry rather than appended to the operator's own Notes field.
+ */
+export function usePackingListHistory(packingListId: string | null) {
+  return useQuery({
+    queryKey: ['packing-lists', 'history', packingListId],
+    queryFn: () =>
+      getAuditLogs({
+        entity_type: PACKING_LIST_ENTITY_TYPE,
+        entity_id: packingListId as string,
+        pageIndex: 0,
+        pageSize: 50,
+      }),
+    enabled: !!packingListId,
+    refetchOnWindowFocus: false,
+  });
+}
 
 /**
  * The proforma invoices this container's lines were charged on (F10).

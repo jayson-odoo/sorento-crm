@@ -49,6 +49,8 @@ Two moves, two functions:
 """
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import date
 from typing import Any, Optional
 
@@ -71,19 +73,40 @@ from app.services.scm.demand import (
     is_plan_demand_order,
 )
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
+from app.services.scm.pool_predicate import site_pool_sql
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 from app.services.scm.trajectory import month_shift
 
+logger = logging.getLogger(__name__)
 
-def _pool_predicate(alias: str = "w") -> str:
-    """The site-pool test, character for character the reorder engine's own
-    (`reorder_run_service._positions_for_run`): a location with no segment stated IS a site
-    pool, because a warehouse nobody has classified is not assumed to be a project bin.
 
-    Takes its alias so the one rule can be written into any of this module's queries without
-    a second spelling of it existing anywhere.
-    """
-    return f"(COALESCE({alias}.segment, 'dealer') <> 'project')"
+#: The site-pool test, from the one module that spells it (`pool_predicate`). It used to be
+#: written here and re-written in three more files, each with a comment saying it was
+#: "character for character" one of the others - a rule that only holds while four files
+#: agree, feeding the very cells AC-G3 requires to foot with their own lightboxes.
+_pool_predicate = site_pool_sql
+
+#: The open-PO predicate - `scm.po_ordered_v`'s own, and what the "Outstanding PO" cell
+#: counts. Exposed rather than left inline because the lightbox behind that cell
+#: (`container_request_drill`) has to read the same rows or the cell and its own list of
+#: documents disagree, which is the AC-G3 failure this file already fixed for On hand.
+OPEN_PO_SQL = (
+    "po.status IN ('active', 'received', 'partial', 'closed') "
+    "AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
+)
+
+#: What is still to land on one packing-list line, floored at zero.
+PL_REMAINING_SQL = (
+    "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
+)
+
+#: "Has not arrived" - BOTH halves. A shipment that has landed is already counted in
+#: `on_hand`, and counting it here too would show the same units twice on one row. Exposed
+#: for the same reason as `OPEN_PO_SQL`.
+PL_NOT_ARRIVED_SQL = (
+    "s.actual_arrival_date IS NULL "
+    "AND s.shipment_status NOT IN ('fully_received', 'closed')"
+)
 
 
 def _supplier(db: Session, supplier_id: str) -> dict:
@@ -624,12 +647,27 @@ def _open_lines(
             SELECT sol.product_id::text AS product_id, so.so_number, so.demand_class,
                    so.order_date, sol.required_date,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
+                   pj.title AS project_title,
+                   COALESCE(NULLIF(sa.person_label, ''), NULLIF(sa.sales_agent, '')) AS agent_label,
+                   sol.unit_price AS unit_price,
                    CASE WHEN so.demand_class = 'project'
                         THEN GREATEST({qty} - COALESCE(lk.placed, 0), 0)
                         ELSE {qty} END AS qty
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            -- The person, then the code: `person_label` is who the buyer would name, and
+            -- `sales_agent` is the AutoCount code every row has - so a row that carries only
+            -- the code still says something rather than nothing.
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
+            -- The project this order was published for (R15's own book): at most one project
+            -- SO per core order (`uq_projects_so_core_order`), so the join cannot multiply a
+            -- line and cannot move the total the dialog foots. Company-matched by hand
+            -- because raw SQL sees no scoped loader. Blank for an adopted order, which
+            -- carries no registration at all.
+            LEFT JOIN projects.sales_orders pso
+                   ON pso.so_id = so.id AND pso.company_id = so.company_id
+            LEFT JOIN projects.projects pj ON pj.id = pso.project_id
             {_PLACED_ON_LINE_SQL}
             WHERE sol.product_id::text = ANY(:pids)
               AND so.status = 'open'
@@ -659,6 +697,12 @@ def _open_lines(
             "item_code": catalogue.get(r["product_id"], {}).get("item_code"),
             "so_number": r["so_number"],
             "customer_label": r["customer_label"],
+            # Who this is for, who sold it and at what price - the three columns AC-B2 asks
+            # of the Project / Retail lightbox beside the customer. All three are labels, so
+            # a row that has none of them still lists.
+            "project_title": r["project_title"],
+            "agent_label": r["agent_label"],
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             "demand_class": r["demand_class"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,
@@ -751,7 +795,12 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
-    where = ["np.product_id::text = ANY(:pids)"]
+    # ACTIVE locations only, the same cut `_pool_warehouses` and the On hand lightbox
+    # (`location_stock_service.location_stock_for_product`) already make. Without it the cell
+    # counted the eleven closed warehouses the lightbox does not list, so the figure the
+    # buyer clicked and the total she landed on disagreed - and worse, stock in a closed
+    # location silently cancelled part of the ask (AC-B3: the total IS the cell).
+    where = ["np.product_id::text = ANY(:pids)", "w.is_active"]
     if prod_scope:
         where.append(prod_scope)
     if wh_scope:
@@ -846,9 +895,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
     if not product_ids:
         return {}
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
-    remaining = (
-        "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
-    )
+    remaining = PL_REMAINING_SQL
     sql = f"""
         SELECT l.product_id::text AS product_id,
                s.id::text AS shipment_id,
@@ -858,8 +905,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         WHERE l.product_id::text = ANY(:pids)
-          AND s.actual_arrival_date IS NULL
-          AND s.shipment_status NOT IN ('fully_received', 'closed')
+          AND {PL_NOT_ARRIVED_SQL}
           AND {remaining} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY l.product_id, s.id, s.shipment_number, s.estimated_arrival_date
@@ -902,9 +948,7 @@ def _outstanding_po_lines(db: Session, product_ids: list[str]) -> dict[str, list
         FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
-          AND po.status IN ('active', 'received', 'partial', 'closed')
-          AND pol.line_status = 'open'
-          AND pol.qty_ordered > pol.qty_received
+          AND {OPEN_PO_SQL}
           {("AND " + scope) if scope else ""}
         GROUP BY pol.product_id, po.po_number, pol.expected_date
         ORDER BY pol.expected_date NULLS LAST, po.po_number
@@ -1011,6 +1055,79 @@ def _sources(
         ),
         "proforma_pi_number": proforma["pi_number"] if proforma else None,
     }
+
+
+def _plan_or_404(db: Session, plan_id: str):
+    """The plan row this build belongs to (R2). `ValueError` when it is not this caller's.
+
+    A malformed id takes the same branch as an unknown one: the column is a uuid, so letting
+    the value reach the query turns a typo in a URL into a 500.
+    """
+    from app.models.scm import LoadingPlan
+
+    try:
+        uuid.UUID(str(plan_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("Loading plan not found")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
+    if plan is None:
+        raise ValueError("Loading plan not found")
+    return plan
+
+
+def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) -> dict:
+    """The same read, scoped to a plan (R2).
+
+    Supplier and cut-off are read off the ROW rather than the request, the plan's saved
+    quantities are applied to `suggested_qty` before the payload leaves, and the engine's own
+    answer rides along as `engine_qty` so the formula tooltip and `Save (N)` still have it.
+
+    The supplier stock snapshot stays per supplier and is replaced whole (the S7 rule), so a
+    newer stock list changes an older open plan's numbers. That is the correct reading - the
+    plan asks for what the supplier holds NOW - and it is why a plan somebody is done with is
+    cancelled rather than left open.
+
+    The totals are stamped back onto the row for the list's "To request" column: it is a cache
+    of a derived figure, because re-deriving it per listed row is one full suggestion run per
+    row of the grid.
+    """
+    from app.services.scm import loading_plan_service
+
+    plan = _plan_or_404(db, plan_id)
+    out = build(
+        db,
+        supplier_id=str(plan.supplier_id),
+        include_lines=include_lines,
+        plan_horizon_date=plan.plan_horizon_date,
+    )
+    edits = plan.line_edits or {}
+    total_qty = 0.0
+    total_cbm = 0.0
+    for row in out["rows"]:
+        row["engine_qty"] = row["suggested_qty"]
+        if row["row_key"] in edits:
+            row["suggested_qty"] = float(edits[row["row_key"]])
+        total_qty += row["suggested_qty"]
+        if row.get("cbm_per_unit") is not None:
+            total_cbm += row["suggested_qty"] * float(row["cbm_per_unit"])
+    # Best-effort, and never on a cancelled plan. This route is behind the READ permission
+    # because it computes a suggestion, and the stamp is only a cache of a figure the list
+    # would otherwise re-derive per row - so a write that cannot go through must not turn a
+    # read into a 500, and a plan that has been called off is a record, not a form (AC-A8).
+    if plan.status != "cancelled":
+        try:
+            loading_plan_service.stamp_request_totals(db, plan, qty=total_qty, cbm=total_cbm)
+            db.commit()
+        except Exception:  # noqa: BLE001 - the suggestion is the answer; the cache is not
+            db.rollback()
+            logger.warning(
+                "container request build: could not cache the totals on plan %s; the "
+                "suggestion is unaffected",
+                plan_id,
+                exc_info=True,
+            )
+    out["plan"] = loading_plan_service.record_dict(db, plan)
+    return out
 
 
 def build(
@@ -1371,18 +1488,58 @@ def history(
     return result
 
 
-def send(db: Session, *, supplier_id: str, lines: list[dict], actor: Optional[str] = None) -> dict:
-    """Send the reviewed request. Thin wrapper - the S8 notice machinery lives in
+def send(
+    db: Session,
+    *,
+    plan_id: str,
+    lines: list[dict],
+    actor: Optional[str] = None,
+    channel: str = "email",
+    recipients: Optional[list] = None,
+    chat_contact_id: Optional[str] = None,
+    note: Optional[str] = None,
+) -> dict:
+    """Send the reviewed request for one plan. Thin wrapper - the S8 notice machinery lives in
     `supplier_notice_service.request_and_notify`, so a request and a Loading Plan approval
     cannot drift into two different ways of talking to a supplier.
 
-    The supplier is re-checked here too (company-scoped, same as `build`), even though
-    `request_and_notify` checks it again internally: a caller that skipped `build` (or whose
-    supplier moved company between the two calls) still gets a clean 404 before anything is
-    rendered or queued, rather than reaching the notice machinery on a value this stage never
-    validated.
+    The plan is what is sent, not a supplier (R2): its notices carry `loading_plan_id`, so the
+    list can say when and on which channel the ask went out, and the row flips to `sent`. The
+    supplier is re-checked here too (company-scoped, same as `build`), so a plan whose supplier
+    moved company between the two calls fails cleanly before anything is rendered or queued.
+
+    It flips ONLY when the notice says the ask went out. A refused send (the outbox would not
+    take the mail, Respond.io refused the message) writes a `failed` notice and the plan stays
+    `planning`: it was never sent, so it is still the planner's to fix and resend, or to
+    delete. The 201 still carries the notice, because the reason is on it and the dialog
+    prints it.
     """
+    from datetime import datetime as _datetime
+
+    from app.services.scm import loading_plan_service
+
+    plan = _plan_or_404(db, plan_id)
+    supplier_id = str(plan.supplier_id)
     _supplier(db, supplier_id)
-    return supplier_notice_service.request_and_notify(
-        db, supplier_id=supplier_id, lines=lines, actor=actor
+    out = supplier_notice_service.request_and_notify(
+        db,
+        supplier_id=supplier_id,
+        lines=lines,
+        actor=actor,
+        loading_plan_id=plan_id,
+        channel=channel,
+        recipients=recipients,
+        chat_contact_id=chat_contact_id,
+        note=note,
     )
+    # After the notices, never before: a send that failed to render must not leave a plan
+    # claiming it went out - and neither must one the outbox refused.
+    if any(
+        (n.get("status") or "") in supplier_notice_service.WENT_OUT_STATUSES
+        for n in (out.get("notices") or [])
+    ):
+        plan.status = "sent"
+        plan.sent_at = _datetime.utcnow()
+    db.commit()
+    out["plan"] = loading_plan_service.record_dict(db, plan)
+    return out

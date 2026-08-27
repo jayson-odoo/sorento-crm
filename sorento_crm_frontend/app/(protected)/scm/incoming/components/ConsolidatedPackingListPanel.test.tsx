@@ -1,10 +1,12 @@
 /**
  * S10 - the container as one list.
  *
- * What is asserted is what Ms Tee would be misled by: a factory shown without its subtotal, a
- * split that prints one company and leaves the other to be inferred, a line that differs from
- * the loading plan without saying so, and a planned line that never arrived being silently
- * absent rather than named.
+ * What is asserted is what Ms Tee would be misled by: a factory shown without its subtotal and
+ * a split that prints one company and leaves the other to be inferred.
+ *
+ * The panel prints the shipment and nothing else since R20 - the comparison against the
+ * loading plan (derived remarks, the not-packed list, the "vs plan of" chip) was removed, and
+ * so were the tests that asserted it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -69,7 +71,6 @@ const KAILU_LINE = {
   cartons: 86,
   cbm: 2.10528,
   remarks: 'Packed on two pallets',
-  discrepancies: ['Loading plan asked 500, packed 490 (short 10)'],
 };
 
 const MOCHA_LINE = {
@@ -83,7 +84,6 @@ const MOCHA_LINE = {
   cartons: 55,
   cbm: 7.307,
   remarks: null,
-  discrepancies: [],
 };
 
 const CAIZHOU_LINE = {
@@ -97,7 +97,6 @@ const CAIZHOU_LINE = {
   cartons: 30,
   cbm: null,
   remarks: null,
-  discrepancies: ['Not on the loading plan'],
 };
 
 function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedPackingList {
@@ -112,33 +111,14 @@ function packingList(over: Partial<ConsolidatedPackingList> = {}): ConsolidatedP
         supplier_id: 'sup-a',
         supplier_code: '400-K029',
         supplier_name: 'KAILU HARDWARE FACTORY',
-        loading_plan_id: 'lp-1',
-        notice_id: 'n-1',
-        has_pack_plan: true,
-        notice_created_at: '2026-07-28T09:00:00',
-        notice_sent_at: '2026-07-30T11:20:00',
         lines: [KAILU_LINE, MOCHA_LINE],
-        not_packed: [
-          {
-            product_id: 'p-9',
-            product_code: 'SRTWT7301-BL',
-            product_name: 'Kitchen Sink',
-            planned_qty: 100,
-          },
-        ],
         subtotal: { lines: 2, qty: 1390, cartons: 141, cbm: 9.4123 },
       },
       {
         supplier_id: 'sup-b',
         supplier_code: '400-C011',
         supplier_name: 'CAIZHOU SANITARY',
-        loading_plan_id: null,
-        notice_id: null,
-        has_pack_plan: false,
-        notice_created_at: null,
-        notice_sent_at: null,
         lines: [CAIZHOU_LINE],
-        not_packed: [],
         subtotal: { lines: 1, qty: 120, cartons: 30, cbm: 0 },
       },
     ],
@@ -230,59 +210,17 @@ describe('ConsolidatedPackingListPanel', () => {
     expect(screen.getByText('Basin Mixer Tall')).toBeInTheDocument();
   });
 
-  it("keeps the supplier's own remark and our derived difference apart", async () => {
+  it("prints the supplier's own remark, and nothing derived beside it", async () => {
     renderPanel();
 
     expect(await screen.findByText('Packed on two pallets')).toBeInTheDocument();
-    const discrepancy = screen.getByText('Loading plan asked 500, packed 490 (short 10)');
-    expect(discrepancy.className).toContain('text-amber-600');
-    expect(screen.getByText('Not on the loading plan').className).toContain('text-amber-600');
+    // R20: the document prints the shipment. Our comparison against the loading plan is
+    // not a remark the factory wrote, and it is no longer printed at all.
+    expect(screen.queryByText(/Loading plan asked/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not on the loading plan')).not.toBeInTheDocument();
+    expect(screen.queryByText(/not packed/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/plan/i)).not.toBeInTheDocument();
   });
-
-  it('names a planned line the factory never packed', async () => {
-    renderPanel();
-
-    const item = await screen.findByRole('listitem');
-    expect(item).toHaveTextContent('SRTWT7301-BL - not packed - loading plan asked 100');
-  });
-
-  it('says which loading plan a factory is being compared against', async () => {
-    renderPanel();
-
-    // The RAISED date, because that is the date the server picked the plan by. The sent
-    // date can fall after the container, and the chip would then name a plan the
-    // comparison was not made against.
-    expect(await screen.findByText('vs plan of 28/07/2026')).toBeInTheDocument();
-  });
-
-  it('falls back to when the plan was sent if it carries no raised date', async () => {
-    const list = packingList();
-    list.factories[0].notice_created_at = null;
-    state.getList = vi.fn().mockResolvedValue(list);
-    renderPanel();
-
-    expect(await screen.findByText('vs plan of 30/07/2026')).toBeInTheDocument();
-  });
-
-  it('does not claim a comparison against a plan that only asked for production', async () => {
-    // The notice exists, so "no plan sent" would be wrong; it holds no packing quantity,
-    // so "vs plan of ..." would claim a comparison that was never made.
-    const list = packingList();
-    list.factories[0].has_pack_plan = false;
-    state.getList = vi.fn().mockResolvedValue(list);
-    renderPanel();
-
-    expect(await screen.findByText('plan asked for production only')).toBeInTheDocument();
-    expect(screen.queryByText(/vs plan of/)).not.toBeInTheDocument();
-  });
-
-  it('says a factory was never sent a plan, rather than leaving its remarks unexplained',
-    async () => {
-      // An empty remarks column means one of two different things, and this is which.
-      renderPanel();
-
-      expect(await screen.findByText('no plan sent')).toBeInTheDocument();
-    });
 
   it('prints the grand total and both company rows of the split', async () => {
     renderPanel();
@@ -333,13 +271,7 @@ describe('ConsolidatedPackingListPanel', () => {
             supplier_id: 'sup-a',
             supplier_code: '400-K029',
             supplier_name: 'KAILU HARDWARE FACTORY',
-            loading_plan_id: 'lp-1',
-            notice_id: 'n-1',
-            has_pack_plan: true,
-            notice_created_at: '2026-07-28T09:00:00',
-            notice_sent_at: '2026-07-30T11:20:00',
             lines: [KAILU_LINE, MOCHA_LINE],
-            not_packed: [],
             subtotal: { lines: 2, qty: 1390, cartons: 141, cbm: 9.4123, cbm_known_lines: 2 },
           },
         ],

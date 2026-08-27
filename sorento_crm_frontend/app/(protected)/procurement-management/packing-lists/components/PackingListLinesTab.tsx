@@ -584,9 +584,14 @@ export function PackingListLinesTab() {
                             <span className="text-muted-foreground">-</span>
                           ) : (
                             <div className="flex flex-col gap-0.5">
-                              {invoicesByLine[line.id].map((src) => (
+                              {invoicesByLine[line.id].map((src, i) => (
                                 <Link
-                                  key={`${src.proforma_invoice_id}-${line.id}`}
+                                  // The position too: ONE invoice can charge the same
+                                  // shipment line twice (two PI lines of the same PI
+                                  // consolidated into one container line), and the pair
+                                  // (invoice, line) then repeats - a duplicate React key,
+                                  // which drops the second link from the render.
+                                  key={`${src.proforma_invoice_id}-${line.id}-${i}`}
                                   href={`/scm/proforma-invoices/${src.proforma_invoice_id}`}
                                   className="text-primary hover:underline"
                                 >

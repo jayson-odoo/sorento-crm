@@ -11,7 +11,17 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
-import { LoaderCircle, Search, Upload, X } from 'lucide-react';
+import {
+  Boxes,
+  ChevronDown,
+  Download,
+  LoaderCircle,
+  Search,
+  Settings,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -28,6 +38,12 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -45,10 +61,8 @@ import type {
   ProformaPlacement,
 } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
-import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
-import { buildProformaBulkActions } from '../lib/proformaBulkActions';
 
 /**
  * What is on file per supplier: the priced document the loading plan and the eventual
@@ -65,10 +79,17 @@ import { buildProformaBulkActions } from '../lib/proformaBulkActions';
  * book, so the destructive control is not sitting under the cursor of somebody who meant to
  * open a row.
  *
- * Two bulk actions share ONE selection: "Convert N to draft shipment" drafts one inbound
- * shipment from every selected invoice, any suppliers - a container is routinely several
- * factories' PIs. "Delete N" hard-deletes, refusing (named, not silently skipped) any
- * invoice already converted.
+ * The right cluster is [gear] [Start ▾] (R14). Start is what this screen is FOR: upload a
+ * proforma invoice, or turn the ticked ones into a packing list. The gear beside it holds
+ * the two things that act on a selection somebody has already made - Export and Delete -
+ * so the destructive one is never the button nearest the cursor. The selection strip is
+ * left with "N selected · Clear" and nothing else.
+ *
+ * Convert takes the whole selection, any suppliers - a container is routinely several
+ * factories' PIs - and runs AT ONCE (R15): every ticked invoice places what it has left
+ * into ONE NEW draft packing list. The only interruption is the container being over its
+ * volume, which is a question (`OverCapacityDialog`), not a failure. Placing PART of an
+ * invoice is a deliberate act made on ONE document, so it lives on the PI detail page.
  */
 
 const UPLOAD_PERMISSION = 'scm.proforma_invoice.upload';
@@ -76,6 +97,18 @@ const CONVERT_PERMISSION = 'scm.reorder.run';
 
 /** Keyed off the read permission plus a stable id, never the record's own path - so the
  *  column choice survives the visit and cannot collide with another SCM listing. */
+/** `proforma-invoices-20260828.xlsx`. A file called `export.xlsx` is unfindable an hour later,
+ *  and the same stem the container-request documents use. */
+function exportFilename(): string {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('');
+  return `proforma-invoices-${stamp}.xlsx`;
+}
+
 const LISTING_KEY = 'scm.dashboard.view::proforma-invoices';
 
 /** The filter's own vocabulary, in the words the column uses. */
@@ -126,13 +159,6 @@ export function ProformaInvoicesView() {
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
-  const [convertOpen, setConvertOpen] = useState(false);
-  // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
-  // the operator to re-type the split they already chose.
-  const [convertArgs, setConvertArgs] = useState<{
-    lineQuantities: Record<string, number>;
-    targetShipmentId: string | null;
-  } | null>(null);
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -387,22 +413,20 @@ export function ProformaInvoicesView() {
     return parts.length ? { label: parts.join(' - '), onClear: clearFilters } : undefined;
   }, [placement, supplierId, suppliers.data]);
 
-  const runConvert = async (
-    args: { lineQuantities: Record<string, number>; targetShipmentId: string | null } | null,
-    reason?: string,
-  ) => {
+  /**
+   * The convert, in one press (R15). No dialog stands between the tick and the container:
+   * every ticked invoice places what it has LEFT, which is what the backend does anyway,
+   * so a dialog asking to confirm it was a screen that only ever said yes.
+   */
+  const runConvert = async (reason?: string) => {
     if (!selectedIds.length) return;
-    setConvertArgs(args);
     try {
       const result = await convertToDraftShipment.mutateAsync({
         invoiceIds: selectedIds,
         overrideReason: reason,
-        lineQuantities: args?.lineQuantities,
-        targetShipmentId: args?.targetShipmentId,
       });
       setOverCapacity(null);
       setOverrideReason('');
-      setConvertOpen(false);
       table.resetRowSelection();
       const skippedMsg =
         result.lines_skipped > 0
@@ -417,8 +441,10 @@ export function ProformaInvoicesView() {
             .join('; ')}`,
         );
       }
+      // "Packing list", in the words the rest of the product uses for this document. The
+      // container's own number is what the operator will look for next (R14).
       toast.success(
-        `Draft shipment ${result.shipment_number ?? ''} created with ${result.lines_created} line${
+        `Packing list ${result.shipment_number ?? ''} created with ${result.lines_created} line${
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
@@ -430,7 +456,7 @@ export function ProformaInvoicesView() {
       // An over-capacity refusal is a question, not a failure: it names the volume and the
       // capacity and asks whether to load the box anyway (AC-E5).
       const code = (e as { code?: string | null })?.code ?? null;
-      const message = e instanceof Error ? e.message : 'Failed to draft a shipment';
+      const message = e instanceof Error ? e.message : 'Failed to create the packing list';
       if (code === 'over_capacity') {
         setOverCapacity(message);
         return;
@@ -459,14 +485,9 @@ export function ProformaInvoicesView() {
     }
   };
 
-  const bulkActions = buildProformaBulkActions(
-    { selectedCount: selectedIds.length },
-    { onConvert: () => setConvertOpen(true), onDelete: () => setBulkDeleteIds(selectedIds) },
-  ).filter((a) => {
-    if (a.key === 'bulk-convert') return canConvert;
-    if (a.key === 'bulk-delete') return canUpload;
-    return true;
-  });
+  const hasSelection = selectedIds.length > 0;
+  /** Why a menu item refuses, in the words the plan gave it (AC-E1 / AC-E2). */
+  const NO_SELECTION = 'Select invoices first';
 
   // An empty book and an over-filtered one look identical in the grid, so they say different
   // things. The default filter IS a filter, so it counts - otherwise a book where everything
@@ -571,15 +592,84 @@ export function ProformaInvoicesView() {
                   </div>
                 ),
               }}
-              bulkActions={bulkActions}
-              primaryAction={
-                canUpload ? (
-                  <Button onClick={() => setUploadOpen(true)}>
-                    <Upload className="size-4" />
-                    Upload proforma invoice
-                  </Button>
-                ) : null
-              }
+              // "N selected · Clear" and nothing else (AC-E2): both bulk actions moved
+              // into the right cluster, where they sit in one place whether or not a row
+              // is ticked.
+              bulkActions={[]}
+              // The toolbar renders no Export button of its own here - the gear owns it,
+              // and `openExport` below opens the SAME selected-rows export dialog. The
+              // config still travels, so the file is named for what is in it: with
+              // `exportConfig={false}` every export downloaded as `export.xlsx`.
+              showExport={false}
+              exportConfig={{ filename: exportFilename() }}
+              primaryAction={({ openExport }) => (
+                <>
+                  {/* Gear LEFT of the CTA, the same split-button shape the PI detail page
+                      uses: the things done TO a selection, out of the way of the thing
+                      this screen is for. */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="icon" aria-label="More actions">
+                        <Settings className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        disabled={!hasSelection}
+                        title={hasSelection ? undefined : NO_SELECTION}
+                        onClick={hasSelection ? openExport : undefined}
+                      >
+                        <Download className="size-4" />
+                        Export
+                      </DropdownMenuItem>
+                      {canUpload ? (
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          disabled={!hasSelection}
+                          // A disabled item's reason travels as a native `title` - Radix
+                          // leaves no room for a Tooltip wrapper inside a menu.
+                          title={hasSelection ? undefined : NO_SELECTION}
+                          onClick={hasSelection ? () => setBulkDeleteIds(selectedIds) : undefined}
+                        >
+                          <Trash2 className="size-4" />
+                          {hasSelection ? `Delete ${fmtInt(selectedIds.length)}` : 'Delete'}
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  {canUpload || canConvert ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button>
+                          Start
+                          <ChevronDown className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {canUpload ? (
+                          <DropdownMenuItem onClick={() => setUploadOpen(true)}>
+                            <Upload className="size-4" />
+                            Upload proforma invoice
+                          </DropdownMenuItem>
+                        ) : null}
+                        {canConvert ? (
+                          <DropdownMenuItem
+                            disabled={!hasSelection}
+                            title={hasSelection ? undefined : NO_SELECTION}
+                            onClick={hasSelection ? () => void runConvert() : undefined}
+                          >
+                            <Boxes className="size-4" />
+                            {hasSelection
+                              ? `Convert ${fmtInt(selectedIds.length)} to packing list`
+                              : 'Convert to packing list'}
+                          </DropdownMenuItem>
+                        ) : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
+                </>
+              )}
             />
           </CardHeader>
           <CardTable>
@@ -605,23 +695,13 @@ export function ProformaInvoicesView() {
         reason={overrideReason}
         onReasonChange={setOverrideReason}
         onCancel={() => setOverCapacity(null)}
-        onConfirm={() => void runConvert(convertArgs, overrideReason.trim())}
+        onConfirm={() => void runConvert(overrideReason.trim())}
         pending={convertToDraftShipment.isPending}
-      />
-
-      {/* How much goes where, before anything is written (AC-F10). */}
-      <ConvertToPackingListDialog
-        open={convertOpen}
-        onOpenChange={setConvertOpen}
-        invoiceIds={selectedIds}
-        supplierId={supplierId}
-        pending={convertToDraftShipment.isPending}
-        onConvert={(args) => void runConvert(args)}
       />
 
       {/* Bulk delete - AlertDialog + destructive button per ADR-PRODUCT-STANDARDS, same
           shape as the PO book's bulk delete. Reports which invoices were BLOCKED (already
-          converted to a draft shipment) rather than silently deleting only some. */}
+          already in a packing list) rather than silently deleting only some. */}
       <AlertDialog open={!!bulkDeleteIds} onOpenChange={(o) => !o && setBulkDeleteIds(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

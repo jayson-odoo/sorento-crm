@@ -23,10 +23,8 @@
  *       question being asked when somebody opens that screen.
  *       Fixed `created_at DESC` sort, NO page/sort/query params - offset paging only.
  *  GET  /api/v1/scm/proforma-invoices/{id}     -> 200 ProformaInvoiceDetail
- *  GET  /api/v1/scm/proforma-invoices/draft-shipments?supplier_id -> 200 { data: DraftShipmentRef[] }
- *       The draft packing lists a convert can be ADDED to (AC-F10).
  *  DELETE /api/v1/scm/proforma-invoices/{id}   -> 204, hard delete. 409 when this invoice
- *       has already been converted to a draft shipment.
+ *       is already in a packing list.
  *  POST /api/v1/scm/proforma-invoices/bulk-delete -> 200 { deleted, blocked }. Same shape as
  *       the PO book's bulk delete. `blocked` names every invoice skipped because it was
  *       already converted (id, pi_number, shipment_number) - never a silent partial delete.
@@ -64,7 +62,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { codedError, extractApiError, type CodedError } from '@/lib/api-client';
 import {
   filenameFromContentDisposition,
   saveBlobAs,
@@ -217,15 +215,6 @@ export interface PackingListPlacement {
   shipment_status?: string | null;
   /** How many of the invoice's lines landed in this one. Absent on a per-line placement. */
   lines?: number;
-}
-
-/** A draft packing list a convert can be added to instead of creating a new one. */
-export interface DraftShipmentRef {
-  shipment_id: string;
-  shipment_number: string | null;
-  shipment_date: string | null;
-  supplier_names: string[];
-  lines: number;
 }
 
 export interface ProformaInvoiceListResponse {
@@ -387,34 +376,10 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** An API refusal the caller has to BRANCH on, not just show. */
-export interface CodedError extends Error {
-  /** `AppException`'s own `code` - e.g. `over_capacity`. Null when the body carries none. */
-  code: string | null;
-}
-
-/**
- * The same message `extractApiError` produces, carrying the backend's machine-readable
- * `code` alongside it.
- *
- * Used only where the caller must tell one refusal from another (an over-capacity convert
- * asks a question; every other refusal is just reported). The response is cloned so the
- * shared extractor still gets an unread body - this reads the code, it does not re-implement
- * the message.
- */
-async function codedError(res: Response, fallback: string): Promise<CodedError> {
-  const clone = res.clone();
-  const message = await extractApiError(res, fallback);
-  const error = new Error(message) as CodedError;
-  error.code = null;
-  try {
-    const body = (await clone.json()) as { code?: unknown };
-    if (typeof body?.code === 'string') error.code = body.code;
-  } catch {
-    // A refusal with no JSON body carries no code. The message above still stands.
-  }
-  return error;
-}
+/** Re-exported: `CodedError` and its reader moved to `lib/api-client`, beside
+ *  `extractApiError`, when the supplier-request send needed the same branch (S3, AC-C5).
+ *  One owner, one implementation; the callers already importing it from here keep working. */
+export type { CodedError };
 
 /** `{ "<document index>": "<invoice id>" }` - which blocks of THIS file revise which
  *  invoice already on file. One file holds several documents, so the answer is per
@@ -514,14 +479,12 @@ export async function deleteProformaInvoice(id: string): Promise<void> {
 export interface ConvertOptions {
   /** Per PI line, how much to place. Omitted lines place their remaining quantity. */
   lineQuantities?: Record<string, number>;
-  /** An existing DRAFT packing list to add to, instead of creating one (AC-F10). */
-  targetShipmentId?: string | null;
   /** The operator's answer to an over-capacity refusal, with their reason (AC-E5). */
   override?: { reason: string };
 }
 
 /**
- * Several invoices, one draft shipment - any suppliers, one container.
+ * Several invoices, one NEW draft packing list - any suppliers, one container.
  *
  * `override` carries the operator's "convert anyway" answer to an over-capacity refusal
  * (AC-E5): the reason travels with it, because a container knowingly loaded past its
@@ -540,7 +503,6 @@ export async function convertProformaInvoicesToDraftShipment(
       ...(options?.lineQuantities && Object.keys(options.lineQuantities).length > 0
         ? { line_quantities: options.lineQuantities }
         : {}),
-      ...(options?.targetShipmentId ? { target_shipment_id: options.targetShipmentId } : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
     }),
   });
@@ -577,22 +539,6 @@ export interface ProformaInvoiceWrite {
   pi_number?: string;
   container_size_id?: string | null;
   lines?: ProformaInvoiceLineWrite[];
-}
-
-/** The draft packing lists this convert could be added to instead of making a new one. */
-export async function listDraftShipments(
-  supplierId?: string | null,
-): Promise<DraftShipmentRef[]> {
-  const params = new URLSearchParams();
-  if (supplierId) params.set('supplier_id', supplierId);
-  const res = await apiFetch(
-    `/api/v1/scm/proforma-invoices/draft-shipments?${params.toString()}`,
-  );
-  const body = await readJson<{ data: DraftShipmentRef[] }>(
-    res,
-    'Failed to load the draft packing lists',
-  );
-  return body.data ?? [];
 }
 
 /**

@@ -1,10 +1,13 @@
 /**
- * F8 - what the supplier sees when they open the link (AC-C6, AC-C7).
+ * F8 / S4 - what the supplier sees when they open the link (AC-C6, AC-C7, AC-D5).
  *
- * Two properties worth a test, and they are both about what is NOT on the page: a stranger
- * holding the URL must not read a price, and a dead link must not say WHY it is dead. The
- * rest is that the bilingual labels are actually bilingual - the reader acting on this page
- * reads Chinese, and an English-only header is a page they cannot use.
+ * The page is THEIR sheet now, not a listing of ours: their ten columns in their own
+ * spellings, their merged families as `rowSpan`, their yellow fields and red figures, and
+ * their `合计` row, with our English labels as a second header line and column K appended.
+ *
+ * The properties worth a test are still the ones about what is NOT on the page - a stranger
+ * holding the URL must not read a price, and a dead link must not say WHY it is dead - plus
+ * the ones that make the sheet theirs rather than ours.
  *
  * The service is mocked at the module boundary; nothing hits the network.
  */
@@ -13,7 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 
 import PublicSupplierRequestPage from './page';
-import type { SupplierRequest } from '../../../lib/publicSupplierRequestService';
+import type {
+  SupplierRequest,
+  SupplierRequestSheetCell,
+} from '../../../lib/publicSupplierRequestService';
 
 const readSupplierRequest = vi.fn();
 const readSupplierRequestDocument = vi.fn();
@@ -26,10 +32,71 @@ vi.mock('../../../lib/publicSupplierRequestService', () => ({
   SupplierRequestUnavailableError: class extends Error {},
 }));
 
+function cell(
+  value: string | number | null,
+  extra: Partial<SupplierRequestSheetCell> = {},
+): SupplierRequestSheetCell {
+  return { value, rowspan: 1, colspan: 1, covered: false, fill: null, red: false, ...extra };
+}
+
 const REQUEST: SupplierRequest = {
   supplier_name: 'CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD',
   requested_at: '2026-07-31T02:00:00',
   line_count: 2,
+  sheet: {
+    title: '金百川库存表 2026年7月27日',
+    columns: [
+      { label: '序号', label_en: 'No.' },
+      { label: '型号', label_en: 'Model' },
+      { label: '品名', label_en: 'Description' },
+      { label: '包装好库存', label_en: 'Packed' },
+      { label: '空瓷', label_en: 'Unfinished' },
+      { label: '总体积(cbm)', label_en: 'Total CBM' },
+      { label: '需装数量', label_en: 'Qty to load' },
+    ],
+    rows: [
+      {
+        // One 序号 and one volume over two rows, exactly as their file merges them.
+        cells: [
+          cell(1, { rowspan: 2 }),
+          cell('SRTWB241', { fill: 'yellow' }),
+          cell('Basin 600mm', { fill: 'yellow' }),
+          cell(0, { fill: 'yellow', red: true }),
+          cell(340, { fill: 'yellow' }),
+          cell(12.5, { rowspan: 2 }),
+          cell(500),
+        ],
+        family_span: 2,
+        appended: false,
+      },
+      {
+        cells: [
+          cell(null, { covered: true }),
+          cell('SRTWB243', { fill: 'yellow' }),
+          cell('Basin 800mm', { fill: 'yellow' }),
+          cell(120, { fill: 'yellow' }),
+          cell(null, { fill: 'yellow' }),
+          cell(null, { covered: true }),
+          cell(80),
+        ],
+        family_span: 0,
+        appended: false,
+      },
+    ],
+    totals: {
+      cells: [
+        cell('合计：', { colspan: 3 }),
+        cell(null, { covered: true }),
+        cell(null, { covered: true }),
+        cell(120),
+        cell(340),
+        cell(12.5),
+        cell(580),
+      ],
+      family_span: 0,
+      appended: false,
+    },
+  },
   lines: [
     {
       item_code: 'SRTWB241',
@@ -83,24 +150,61 @@ describe('the supplier request page', () => {
     expect(screen.getByText('SRTWB241')).toBeInTheDocument();
     expect(screen.getByText('SRTWB243')).toBeInTheDocument();
     expect(screen.getByText('500')).toBeInTheDocument();
+    expect(screen.getByText('80')).toBeInTheDocument();
   });
 
-  it('writes every label in Chinese and English', async () => {
+  it('writes their heading with ours as a second line', async () => {
+    // AC-D5. Their spellings stay theirs; the English sits under them so our own people can
+    // check what went out without renaming a single column of the supplier's.
     await renderPage();
 
     await waitFor(() => expect(screen.getByText(/配柜要求/)).toBeInTheDocument());
-    expect(screen.getByText(/型号 \/ Item/)).toBeInTheDocument();
-    expect(screen.getByText(/需装数量 \/ Qty to load/)).toBeInTheDocument();
-    expect(screen.getByText(/包装好库存 \/ Packed/)).toBeInTheDocument();
-    expect(screen.getByText(/空瓷 \/ Unfinished/)).toBeInTheDocument();
+    expect(screen.getByText('型号')).toBeInTheDocument();
+    expect(screen.getByText('Model')).toBeInTheDocument();
+    expect(screen.getByText('需装数量')).toBeInTheDocument();
+    expect(screen.getByText('Qty to load')).toBeInTheDocument();
+    expect(screen.getByText('金百川库存表 2026年7月27日')).toBeInTheDocument();
   });
 
-  it('shows their own figures, and a dash where they have never listed the item', async () => {
+  it('merges a family the way their sheet does', async () => {
+    // AC-D5. `rowSpan`, not a repeated value: printing the volume once per row would read as
+    // that many times the volume.
+    const { container } = await renderPage();
+
+    await waitFor(() => expect(screen.getByText('SRTWB241')).toBeInTheDocument());
+    const spanned = container.querySelectorAll('td[rowspan="2"]');
+    expect(spanned.length).toBe(2);
+    expect(container.querySelectorAll('tbody tr')[1]?.querySelectorAll('td').length).toBe(5);
+  });
+
+  it('keeps their yellow fields, their red figures and their total row', async () => {
+    const { container } = await renderPage();
+
+    await waitFor(() => expect(screen.getByText('SRTWB241')).toBeInTheDocument());
+    expect(container.querySelectorAll('td.bg-\\[\\#ffff00\\]').length).toBeGreaterThan(0);
+    expect(container.querySelector('td.text-red-600')).not.toBeNull();
+    expect(screen.getByText('合计：')).toBeInTheDocument();
+    expect(screen.getByText('580')).toBeInTheDocument();
+  });
+
+  it('shows their own figures, and leaves a cell they never filled empty', async () => {
+    const { container } = await renderPage();
+
+    await waitFor(() => expect(screen.getAllByText('340').length).toBe(2));
+    expect(screen.getAllByText('120').length).toBe(2);
+    const blanks = Array.from(container.querySelectorAll('tbody td')).filter(
+      (td) => td.textContent === '',
+    );
+    expect(blanks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('says the request is empty rather than drawing an empty sheet', async () => {
+    readSupplierRequest.mockResolvedValue({ ...REQUEST, sheet: null, lines: [] });
     await renderPage();
 
-    await waitFor(() => expect(screen.getByText('120')).toBeInTheDocument());
-    expect(screen.getByText('340')).toBeInTheDocument();
-    expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(2);
+    await waitFor(() =>
+      expect(screen.getByText(/This request has no items/)).toBeInTheDocument(),
+    );
   });
 
   it('offers both downloads', async () => {

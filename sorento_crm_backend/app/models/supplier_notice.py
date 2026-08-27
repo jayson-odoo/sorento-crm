@@ -20,7 +20,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -33,12 +33,16 @@ def _uuid_str() -> str:
 
 
 class SupplierNotice(Base, CompanyScopedMixin):
-    """One notice, on one channel, produced by approving one loading plan.
+    """One notice, on one channel, produced by one send.
 
     One row PER CHANNEL rather than one row with a list of channels: an email that sent and a
     chat that failed are two different facts about two different attempts, and AC-F6 asks the
     screen to state what was sent, to whom, on which channel and when. A single row would have
     to pick one answer.
+
+    A container request (R9, S3) writes ONE row, for the channel the sender chose - the send
+    dialog asks which. The older loading-plan approval still writes one row per channel,
+    because it sends on every channel it can reach.
     """
 
     __tablename__ = "supplier_notices"
@@ -55,6 +59,32 @@ class SupplierNotice(Base, CompanyScopedMixin):
 
     channel = Column(String(20), nullable=False, server_default=text("'email'"))
     recipient = Column(String(320), nullable=True)
+
+    #: Everybody this send named (R9, migration 442). A container request goes to the
+    #: addresses the sender typed, not only to `suppliers.email`, and `recipient` above can
+    #: hold exactly one of them - it keeps the first, for the screens and logs that were
+    #: written against it. Email rows hold `["a@x", "b@x"]`; a chat row holds
+    #: `[{"respond_contact_id", "name", "channel": "wechat"}]`, because the identity a chat
+    #: send reaches is a contact, not an address.
+    recipients = Column(JSONB, nullable=True)
+
+    #: Whether the supplier opened their link, and how often (R11, migration 442). An open
+    #: is an EVENT that repeats, so it is counted here rather than promoted to a status on
+    #: the plan: a status would have to flip back and forth or lie. `opened_at` is the first
+    #: one and never moves; `last_opened_at` is the most recent.
+    opened_at = Column(DateTime(timezone=False), nullable=True)
+    last_opened_at = Column(DateTime(timezone=False), nullable=True)
+    open_count = Column(Integer, nullable=False, server_default=text("0"))
+
+    #: The document AS SENT (`SheetModel.to_dict()`, migration 442). The public page rebuilt
+    #: it from the supplier's CURRENT stock list on every GET, so a newer list from them made
+    #: the link disagree with the xlsx in their own inbox - two documents for one ask. Frozen
+    #: here at send time, beside the lines that are already frozen on `supplier_notice_lines`.
+    #: Nullable, and the page falls back to the rebuild: links issued before this column are
+    #: open in somebody's inbox (AC-H2). Deliberately NOT on `serialize` - it is a whole
+    #: workbook, read server-side by the public page, and a 50-row notice listing carrying 50
+    #: of them would be megabytes nothing on that screen reads.
+    sheet_json = Column(JSONB, nullable=True)
 
     #: `skipped` is an outcome, not a failure: a supplier with no address on file still gets a
     #: notice and a document Ms Tee can send by hand (AC-F3).

@@ -1,16 +1,17 @@
 /**
- * The one popup that starts a loading plan (captain, 27 Aug).
+ * "Plan a container" - the ONE popup that starts a loading plan (part 4, R4 / AC-A4, A5, A6).
  *
- * Two steps, and the split is the whole point: step 1 asks the two things the plan cannot
- * derive (whose container, how far ahead) plus which document is being sent, and step 2 is
- * the SAME upload dialog used everywhere else, in fixed-supplier mode. So what is asserted
- * here is the wiring - nothing acts without a supplier, "Plan without a file" is a real
- * third answer for a supplier already on file, and Continue lands on the document that was
- * chosen with the supplier already fixed to it.
+ * ONE dialog, not two: the dropzone and the existing two-step Test / Confirm run INSIDE it,
+ * so what is asserted here is that nothing acts without a supplier, that choosing a document
+ * reveals the dropzone in place (and "No file" hides it), and that Confirm does the three
+ * things in the order the record depends on - apply the file, find the sheet it was retained
+ * as, create the plan and open it.
+ *
+ * The reads themselves belong to the upload channels' own suites; they are stubbed here.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -31,6 +32,13 @@ if (!window.ResizeObserver) {
   };
 }
 
+const push = vi.fn();
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/loading-plan',
+  useRouter: () => ({ push, replace: vi.fn() }),
+  useSearchParams: () => ({ get: () => null }),
+}));
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -39,75 +47,44 @@ const getFulfilmentSuppliers = vi.fn(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async (_query?: string) => [{ value: 'sup-1', label: 'Foshan Ceramics' }],
 );
+const applyStockList = vi.fn();
+const previewStockList = vi.fn();
+const testStockList = vi.fn();
+const getSupplierStockListFile = vi.fn();
+const createLoadingPlanRecord = vi.fn();
+
 vi.mock('../../services/fulfilmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
   return {
     ...actual,
     getFulfilmentSuppliers: (query?: string) => getFulfilmentSuppliers(query),
+    applyStockList: (...a: unknown[]) => applyStockList(...a),
+    previewStockList: (...a: unknown[]) => previewStockList(...a),
+    testStockList: (...a: unknown[]) => testStockList(...a),
+    getSupplierStockListFile: (...a: unknown[]) => getSupplierStockListFile(...a),
+    createLoadingPlanRecord: (...a: unknown[]) => createLoadingPlanRecord(...a),
   };
 });
 
-vi.mock('../../proforma-invoices/components/ProformaUploadDialog', () => ({
-  ProformaUploadDialog: ({
-    open,
-    supplierId,
-    supplierOption,
-  }: {
-    open: boolean;
-    supplierId?: string | null;
-    supplierOption?: { value: string; label: string } | null;
-  }) =>
-    open ? (
-      <div data-testid="proforma-upload-dialog">
-        Proforma upload for {supplierOption?.label ?? supplierId}
-      </div>
-    ) : null,
+// The upload config the shared two-step hook reads on open (server-owned accept list).
+vi.mock('../../reorder/services/outstandingImportService', () => ({
+  getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
 
-/** The stub's own `onApplied`, so the "an upload landed" path can be fired from a test
- *  without reimplementing the upload dialog. */
-const captured: { onApplied?: () => void } = {};
-vi.mock('./StockListUploadDialog', () => ({
-  StockListUploadDialog: ({
-    open,
-    supplierName,
-    onApplied,
-  }: {
-    open: boolean;
-    supplierName: string;
-    onApplied?: () => void;
-  }) => {
-    captured.onApplied = onApplied;
-    return open ? (
-      <div data-testid="stock-upload-dialog">Stock list upload for {supplierName}</div>
-    ) : null;
-  },
-}));
+import { PlanContainerDialog } from './PlanContainerDialog';
 
-import { PlanContainerDialog, type PlanDocumentKind } from './PlanContainerDialog';
-
-function renderDialog(
-  props: Partial<React.ComponentProps<typeof PlanContainerDialog>> = {},
-) {
-  const onApply = vi.fn();
+function renderDialog() {
   const onOpenChange = vi.fn();
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
-      <PlanContainerDialog
-        open
-        onOpenChange={onOpenChange}
-        supplierId=""
-        supplierOption={null}
-        planHorizonDate=""
-        onApply={onApply}
-        {...props}
-      />
+      <PlanContainerDialog open onOpenChange={onOpenChange} />
     </QueryClientProvider>,
   );
-  return { ...view, onApply, onOpenChange };
+  return { ...view, onOpenChange };
 }
 
+/** The supplier select is a combobox; pick the only option it offers. */
 async function chooseSupplier() {
   const trigger = screen.getByRole('combobox', { name: /Supplier/i });
   fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
@@ -115,126 +92,122 @@ async function chooseSupplier() {
   fireEvent.click(await screen.findByText('Foshan Ceramics'));
 }
 
-beforeEach(() => {
-  getFulfilmentSuppliers.mockClear();
-});
-
-describe('PlanContainerDialog - step 1', () => {
-  it('asks for the supplier, the horizon and the document, in that order', () => {
-    renderDialog();
-
-    expect(screen.getByText('Plan a container')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeInTheDocument();
-    expect(screen.getByLabelText('Plan until')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Stock list' })).toBeChecked();
-    expect(screen.getByRole('radio', { name: 'Proforma invoice' })).toBeInTheDocument();
+describe('PlanContainerDialog', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    applyStockList.mockResolvedValue({ rows_written: 3, rows_replaced: 0 });
+    previewStockList.mockResolvedValue({ ok: true, readable: true, summary: {} });
+    testStockList.mockResolvedValue({ valid: true, errors: [], warnings: [] });
+    getSupplierStockListFile.mockResolvedValue({ attachment_id: 'att-9', filename: 's.xlsx' });
+    createLoadingPlanRecord.mockResolvedValue({ id: 'plan-9' });
   });
 
-  it('acts on nothing until a supplier is chosen', () => {
+  it('asks for the supplier, the sales order cut-off and the document, and nothing else', async () => {
     renderDialog();
 
-    // Both routes forward need somebody to plan FOR - a stock list applied to the wrong
-    // supplier deletes one snapshot and invents another.
-    expect(screen.getByTestId('plan-container-continue')).toBeDisabled();
-    expect(screen.getByTestId('plan-without-file')).toBeDisabled();
+    expect(screen.getByRole('heading', { name: 'Plan a container' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: /Supplier/i })).toBeTruthy();
+    expect(screen.getByLabelText('Sales order cut-off')).toBeTruthy();
+    expect(screen.getByText('Empty = every open order counts.')).toBeTruthy();
+    for (const kind of ['Stock list', 'Proforma invoice', 'No file']) {
+      expect(screen.getByLabelText(kind)).toBeTruthy();
+    }
+    // The words "Plan until" are gone from the app (AC-A4).
+    expect(screen.queryByText(/Plan until/i)).toBeNull();
   });
 
-  it('enables both routes forward once a supplier is chosen', async () => {
+  it('shows the dropzone INSIDE this dialog, and hides it for "No file"', () => {
     renderDialog();
+
+    expect(screen.getByLabelText('Supplier stock list file')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('No file'));
+
+    expect(screen.queryByLabelText('Supplier stock list file')).toBeNull();
+    expect(screen.getByRole('button', { name: /Start plan/ })).toBeTruthy();
+  });
+
+  it('does nothing until a supplier is chosen, and says why', () => {
+    renderDialog();
+
+    const confirm = screen.getByTestId('plan-container-confirm') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.getAttribute('title')).toBe('Choose a supplier first');
+  });
+
+  it('"No file" starts the plan and opens it (AC-A6)', async () => {
+    renderDialog();
+    fireEvent.click(screen.getByLabelText('No file'));
     await chooseSupplier();
 
-    expect(screen.getByTestId('plan-container-continue')).toBeEnabled();
-    expect(screen.getByTestId('plan-without-file')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('plan-container-confirm'));
+
+    await waitFor(() =>
+      expect(createLoadingPlanRecord).toHaveBeenCalledWith({
+        supplier_id: 'sup-1',
+        plan_horizon_date: null,
+        document_kind: 'none',
+        source_attachment_id: null,
+      }),
+    );
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-9'));
+    // No file means no upload at all.
+    expect(applyStockList).not.toHaveBeenCalled();
   });
 
-  it('plans without a file for a supplier whose document is already on file', async () => {
-    const { onApply, onOpenChange } = renderDialog();
+  it('carries the chosen cut-off onto the plan it creates', async () => {
+    renderDialog();
+    fireEvent.click(screen.getByLabelText('No file'));
     await chooseSupplier();
-    fireEvent.change(screen.getByLabelText('Plan until'), {
+    fireEvent.change(screen.getByLabelText('Sales order cut-off'), {
       target: { value: '2026-09-30' },
     });
 
-    fireEvent.click(screen.getByTestId('plan-without-file'));
+    fireEvent.click(screen.getByTestId('plan-container-confirm'));
 
-    expect(onApply).toHaveBeenCalledWith({
-      supplierId: 'sup-1',
-      supplierOption: expect.objectContaining({ value: 'sup-1', label: 'Foshan Ceramics' }),
-      planHorizonDate: '2026-09-30',
-    });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it('lets the horizon be unset again', async () => {
-    renderDialog();
-    await chooseSupplier();
-    fireEvent.change(screen.getByLabelText('Plan until'), {
-      target: { value: '2026-09-30' },
-    });
-
-    fireEvent.click(screen.getByTestId('clear-plan-horizon'));
-
-    expect(screen.getByLabelText('Plan until')).toHaveValue('');
-  });
-});
-
-describe('PlanContainerDialog - step 2', () => {
-  it('continues to the stock-list upload with the supplier already fixed', async () => {
-    renderDialog();
-    await chooseSupplier();
-
-    fireEvent.click(screen.getByTestId('plan-container-continue'));
-
-    expect(await screen.findByTestId('stock-upload-dialog')).toHaveTextContent(
-      'Stock list upload for Foshan Ceramics',
-    );
-    // Step 1 is gone, not stacked underneath.
-    expect(screen.queryByText('Plan a container')).not.toBeInTheDocument();
-  });
-
-  it('continues to the proforma upload when that is the document being sent', async () => {
-    renderDialog();
-    await chooseSupplier();
-    fireEvent.click(screen.getByRole('radio', { name: 'Proforma invoice' }));
-
-    fireEvent.click(screen.getByTestId('plan-container-continue'));
-
-    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
-      'Proforma upload for Foshan Ceramics',
+    await waitFor(() =>
+      expect(createLoadingPlanRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_horizon_date: '2026-09-30' }),
+      ),
     );
   });
 
-  it('skips step 1 when the caller already knows the supplier and the document', async () => {
-    renderDialog({
-      supplierId: 'sup-9',
-      supplierOption: { value: 'sup-9', label: 'Guangdong Tiles' },
-      planHorizonDate: '2026-10-15',
-      openTo: 'proforma' as PlanDocumentKind,
+  it('applies the stock list FIRST, then names the sheet the plan was started from', async () => {
+    renderDialog();
+    await chooseSupplier();
+    const file = new File(['x'], 'stock.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
+    const dropzone = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(dropzone, { target: { files: [file] } });
 
-    expect(await screen.findByTestId('proforma-upload-dialog')).toHaveTextContent(
-      'Proforma upload for Guangdong Tiles',
+    fireEvent.click(await screen.findByTestId('plan-container-confirm'));
+
+    await waitFor(() => expect(applyStockList).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(createLoadingPlanRecord).toHaveBeenCalledWith({
+        supplier_id: 'sup-1',
+        plan_horizon_date: null,
+        document_kind: 'stock_list',
+        source_attachment_id: 'att-9',
+      }),
     );
-    expect(screen.queryByText('Plan a container')).not.toBeInTheDocument();
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-9'));
   });
 
-  it('hands the page its picks once the upload applies', async () => {
-    // The upload dialogs are stubbed here, so the apply is exercised through the same
-    // callback they fire: what matters is that the page ends up planning for the supplier
-    // that was just uploaded for, without a second confirmation.
-    const { onApply } = renderDialog({
-      supplierId: 'sup-9',
-      supplierOption: { value: 'sup-9', label: 'Guangdong Tiles' },
-      planHorizonDate: '2026-10-15',
-      openTo: 'stock-list' as PlanDocumentKind,
-    });
+  it('a plan is still started when the retained sheet cannot be found', async () => {
+    getSupplierStockListFile.mockRejectedValue(new Error('gone'));
+    renderDialog();
+    await chooseSupplier();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'stock.xlsx')] } });
 
-    await screen.findByTestId('stock-upload-dialog');
-    captured.onApplied?.();
+    fireEvent.click(await screen.findByTestId('plan-container-confirm'));
 
-    expect(onApply).toHaveBeenCalledWith({
-      supplierId: 'sup-9',
-      supplierOption: { value: 'sup-9', label: 'Guangdong Tiles' },
-      planHorizonDate: '2026-10-15',
-    });
+    await waitFor(() =>
+      expect(createLoadingPlanRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ source_attachment_id: null }),
+      ),
+    );
   });
 });

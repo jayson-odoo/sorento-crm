@@ -36,9 +36,21 @@ def _no_pdf(monkeypatch):
     )
 
 
-def _body(w: World, qty: float = 42) -> dict:
+def _body(db, w: World, qty: float = 42) -> dict:
+    """The download is scoped to a PLAN since part 4 (R2), like the build and the send."""
+    from app.models.scm import LoadingPlan
+
+    plan = LoadingPlan(
+        id=str(uuid.uuid4()),
+        supplier_id=str(w.supplier.id),
+        status="planning",
+        document_kind="stock_list",
+        line_edits={},
+    )
+    db.add(plan)
+    db.flush()
     return {
-        "supplier_id": str(w.supplier.id),
+        "plan_id": str(plan.id),
         "lines": [{"product_id": str(w.product("A").id), "qty": qty}],
     }
 
@@ -56,7 +68,7 @@ def test_the_xlsx_opens_and_carries_the_lines_on_screen(scm_app):
     w = World(db)
     w.stock("A", packed=120, unfinished=340)
 
-    r = TestClient(app).post(f"{URL}?format=xlsx", json=_body(w, 500))
+    r = TestClient(app).post(f"{URL}?format=xlsx", json=_body(db, w, 500))
 
     assert r.status_code == 200, r.text
     rows = _rows(r.content)
@@ -72,7 +84,7 @@ def test_the_xlsx_is_named_for_the_supplier_and_the_day(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
 
-    r = TestClient(app).post(f"{URL}?format=xlsx", json=_body(w))
+    r = TestClient(app).post(f"{URL}?format=xlsx", json=_body(db, w))
 
     disposition = r.headers["content-disposition"]
     assert disposition.startswith("attachment; ")
@@ -86,7 +98,7 @@ def test_the_pdf_is_a_pdf(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
 
-    r = TestClient(app).post(f"{URL}?format=pdf", json=_body(w))
+    r = TestClient(app).post(f"{URL}?format=pdf", json=_body(db, w))
 
     assert r.status_code == 200, r.text
     assert r.content.startswith(b"%PDF")
@@ -99,7 +111,7 @@ def test_the_format_defaults_to_the_sheet(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
 
-    r = TestClient(app).post(URL, json=_body(w))
+    r = TestClient(app).post(URL, json=_body(db, w))
 
     assert r.status_code == 200, r.text
     assert ".xlsx" in r.headers["content-disposition"]
@@ -112,8 +124,8 @@ def test_downloading_tells_the_supplier_nothing(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
 
-    TestClient(app).post(f"{URL}?format=xlsx", json=_body(w))
-    TestClient(app).post(f"{URL}?format=pdf", json=_body(w))
+    TestClient(app).post(f"{URL}?format=xlsx", json=_body(db, w))
+    TestClient(app).post(f"{URL}?format=pdf", json=_body(db, w))
 
     assert (
         db.query(SupplierNotice)
@@ -128,7 +140,7 @@ def test_an_unknown_format_is_refused(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
 
-    r = TestClient(app).post(f"{URL}?format=exe", json=_body(w))
+    r = TestClient(app).post(f"{URL}?format=exe", json=_body(db, w))
 
     assert r.status_code == 422, r.text
 
@@ -141,7 +153,7 @@ def test_a_product_that_is_not_ours_is_a_422_not_a_500(scm_app):
     r = TestClient(app).post(
         f"{URL}?format=xlsx",
         json={
-            "supplier_id": str(w.supplier.id),
+            **_body(db, w),
             "lines": [{"product_id": str(uuid.uuid4()), "qty": 1}],
         },
     )
@@ -156,7 +168,7 @@ def test_the_document_requires_the_read_permission(scm_app):
     r = TestClient(app).post(
         f"{URL}?format=xlsx",
         json={
-            "supplier_id": str(uuid.uuid4()),
+            "plan_id": str(uuid.uuid4()),
             "lines": [{"product_id": str(uuid.uuid4()), "qty": 1}],
         },
     )

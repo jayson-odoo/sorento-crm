@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CellContext,
   ColumnDef,
@@ -11,32 +11,20 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { useRouter } from 'next/navigation';
 import {
   Check,
   Download,
-  FileText,
-  Info,
   LayoutGrid,
   Link2,
   LoaderCircle,
+  Mail,
+  MessageCircle,
   PackageSearch,
   RefreshCw,
-  Send,
-  Settings,
   Table2,
-  Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,12 +32,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -58,29 +40,39 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtOpens } from '../../lib/format';
 import {
   useContainerRequestBuild,
   useContainerRequestHistory,
-  useDownloadContainerRequestDocument,
-  useSendContainerRequest,
   useSupplierNotices,
 } from '../../hooks/useFulfilment';
 import {
   getNoticeDocumentUrl,
   type ContainerRequestHistoryProduct,
-  type ContainerRequestLine,
   type ContainerRequestRow,
   type ContainerRequestSoLine,
+  type NoticeChatRecipient,
   type SupplierNotice,
 } from '../../services/fulfilmentService';
-import { ContainerRequestHistoryPeakCell } from './ContainerRequestHistory';
+import {
+  IncomingPlTable,
+  OnHandTable,
+  PlanRowDialog,
+  PoTabs,
+  ProjectRetailTabs,
+  SpoTabs,
+  monthLabel,
+  type PlanDemandLineRow,
+  type PlanHistoryPoint,
+  type PlanRowDialogKind,
+} from '../../components/PlanRowDialog';
+import { PlanNumberButton } from '../../components/PlanNumberButton';
+import { copyPublicLink } from './copyPublicLink';
 import { FormulaTip } from './FormulaTip';
 import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
 import { ContainerRequestStatCards } from './ContainerRequestStatCards';
 import { summariseContainerRequest } from './containerRequestSummary';
 import { RankFactorsPopover } from './RankFactorsPopover';
-import { SoLinesDrillPopover } from './SoLinesDrillPopover';
 import { ContainerRequestScheduleMatrix } from './ContainerRequestScheduleMatrix';
 import {
   buildContainerRequestMatrix,
@@ -127,8 +119,37 @@ const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
 
 const NOTICE_CHANNEL_LABEL: Record<SupplierNotice['channel'], string> = {
   email: 'Email',
-  chat: 'Chat',
+  // A chat send is a WeChat send (R10) - the factories are in China. The column says the
+  // channel it actually went out on, not the internal name of the column it is stored in.
+  chat: 'WeChat',
 };
+
+const NOTICE_CHANNEL_ICON: Record<SupplierNotice['channel'], typeof Mail> = {
+  email: Mail,
+  chat: MessageCircle,
+};
+
+/**
+ * Everybody this send named, in one line (AC-C2).
+ *
+ * An email notice holds addresses; a chat notice holds the one WeChat contact, by name -
+ * "who read it" is a person on a phone, not a `respond_contacts` id (no UUIDs in the UI).
+ * `recipient` is the pre-442 single-address column, kept as the fallback so a notice sent
+ * before the send dialog existed still says where it went.
+ */
+function noticeRecipients(notice: SupplierNotice): string {
+  const named = notice.recipients;
+  if (Array.isArray(named) && named.length > 0) {
+    return named
+      .map((r) =>
+        typeof r === 'string'
+          ? r
+          : (r as NoticeChatRecipient).name || 'Unnamed contact',
+      )
+      .join(', ');
+  }
+  return notice.recipient ?? '';
+}
 
 const MATRIX_AXIS_OPTIONS = [
   { value: 'product', label: 'Product' },
@@ -179,68 +200,123 @@ function HoldingCell({ row }: { row: ContainerRequestRow }) {
   return <span className="tabular-nums">{fmtInt(row.qty_packed)}</span>;
 }
 
-/**
- * A channel's open quantity with its SO lines one click away.
- *
- * The figure alone when there is nothing behind it (zero, or no lines loaded): an info icon
- * that opens an empty list teaches the eye to stop clicking.
- */
-function ChannelQtyCell({
-  row,
-  qty,
-  lines,
-  channel,
-}: {
+/** What the grid holds while a lightbox is open: which figure was clicked, and on which row. */
+interface OpenPlanRowDialog {
+  kind: PlanRowDialogKind;
   row: ContainerRequestRow;
-  qty: number;
-  lines: ContainerRequestSoLine[];
-  channel: 'project' | 'retail';
+  /** Set by the two peak cells, which open the channel dialog on its 12-month tab (AC-B6). */
+  onHistory?: boolean;
+}
+
+/**
+ * A channel's biggest month in the last twelve, and a click into that series (AC-B6).
+ *
+ * Peak, not total, because the question the column answers is "how big does this product get
+ * in a month". The dialog it opens is the channel's OWN - the same one the Project / Retail
+ * figure opens - landed on its history tab, so the twelve months and the open orders behind
+ * them are never two different lightboxes.
+ */
+function PeakCell({
+  history,
+  loading,
+  kind,
+  onOpen,
+}: {
+  history: ContainerRequestHistoryProduct | undefined;
+  loading: boolean;
+  kind: 'project' | 'retail';
+  onOpen: () => void;
 }) {
-  if (!qty || lines.length === 0) return <span className="tabular-nums">{fmtInt(qty)}</span>;
+  if (loading && !history) {
+    return <span className="text-2xs text-muted-foreground">Loading</span>;
+  }
+  const series = history?.[kind];
+  if (!series || series.total === 0 || !series.peak_month) {
+    return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
+  }
   return (
-    <SoLinesDrillPopover
-      title={`${row.item_code ?? row.product_name ?? 'This product'} - ${channel} SOs`}
-      lines={lines}
-      trigger={
-        <button
-          type="button"
-          title={`View ${channel} SO lines`}
-          className="inline-flex items-center gap-1 rounded-sm tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
-          {fmtInt(qty)}
-          <Info className="size-3.5 text-muted-foreground" aria-hidden />
-        </button>
-      }
+    <PlanNumberButton
+      value={`${fmtInt(series.peak_qty)} ${monthLabel(series.peak_month)}`}
+      label={`${kind === 'project' ? 'Project' : 'Retail'} ordered, last 12 months`}
+      onClick={onOpen}
     />
   );
 }
 
+/** The build's SO lines in the shape the shared lightbox lists them (AC-B2). */
+function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
+  return lines.map((l) => ({
+    so_number: l.so_number,
+    customer: l.customer_label,
+    project: l.project_title,
+    agent: l.agent_label,
+    price: l.unit_price,
+    qty: l.qty,
+    required_date: l.required_date,
+  }));
+}
+
+/**
+ * The figure the rows are supposed to add up to, said beside the title - so the reader can
+ * see the total they came to check without adding the table up themselves.
+ */
+function dialogContext(dialog: OpenPlanRowDialog, horizon: string | null): string {
+  const { kind, row } = dialog;
+  if (kind === 'project' || kind === 'retail') {
+    const qty = kind === 'project' ? row.project_qty : row.retail_qty;
+    const cutoff = horizon ? ` before cut-off ${formatDateInMalaysia(horizon)}` : '';
+    return `${fmtInt(qty)} open${cutoff}`;
+  }
+  if (kind === 'on_hand') return `${fmtInt(row.on_hand)} at site pools`;
+  if (kind === 'spo') return `${fmtInt(row.incoming_spo)} arriving at site pools`;
+  if (kind === 'incoming_pl') return `${fmtInt(row.incoming_pl)} on packing lists`;
+  return `${fmtInt(row.outstanding_po)} still to come`;
+}
+
+/**
+ * The two 12-month series, zipped per month - the dialog reads one row per month with both
+ * channels on it, the sidecar answers one series per channel.
+ *
+ * Keyed off the project series' buckets because both are zero-filled over the SAME twelve
+ * months by `_series`, so there is no month on one and not the other.
+ */
+function toHistoryPoints(history: ContainerRequestHistoryProduct | undefined): PlanHistoryPoint[] {
+  if (!history) return [];
+  const retail = new Map(history.retail.months.map((m) => [m.month, m.qty]));
+  return history.project.months.map((m) => ({
+    month: m.month,
+    project_qty: m.qty,
+    retail_qty: retail.get(m.month) ?? 0,
+  }));
+}
+
 export function ContainerRequestSection({
+  planId,
   supplierId,
   supplierName,
-  planHorizonDate = null,
-  onUploadStockList,
-  onUploadProforma,
+  qtyFor,
+  onQtyChange,
+  readOnly = false,
 }: {
+  /** The plan this section belongs to (R2). Supplier and cut-off are the plan row's, so the
+   *  build is asked for by plan id and nothing on this screen can disagree with it. */
+  planId: string;
   supplierId: string;
   supplierName: string;
-  /** "Plan until" (captain, 20 Aug) - picked next to the supplier, above this section. Null
-   *  means no cutoff, today's behaviour. */
-  planHorizonDate?: string | null;
-  onUploadStockList: () => void;
-  /** The other document that answers "what do they hold" (Q2). Optional so a caller with no
-   *  proforma dialog behind it keeps the single CTA. */
-  onUploadProforma?: () => void;
+  /** The quantity to show and send for a row: the record page owns the typed edits, because
+   *  Save and Send live on ITS toolbar (R5) and both have to act on what the grid shows. */
+  qtyFor: (row: ContainerRequestRow) => number;
+  onQtyChange: (rowKey: string, qty: number) => void;
+  /** A cancelled plan is a record of what was asked, not a form (AC-A8). */
+  readOnly?: boolean;
 }) {
-  const build = useContainerRequestBuild(supplierId, planHorizonDate);
-  const send = useSendContainerRequest();
-  const notices = useSupplierNotices(supplierId);
-  const download = useDownloadContainerRequestDocument(supplierId);
+  const router = useRouter();
+  const build = useContainerRequestBuild(planId);
+  // This plan's sends only (R3/R11) - the supplier's other open plan keeps its own history.
+  const notices = useSupplierNotices(supplierId, planId);
 
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [confirming, setConfirming] = useState(false);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
@@ -250,6 +326,9 @@ export function ContainerRequestSection({
   // The row whose breakdown is open. Held as its KEY, not the row object, so a refresh
   // behind an open dialog shows the NEW numbers rather than the ones it opened on.
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
+  // The figure whose documents are open (R7). ONE state for all eight columns: two of them
+  // could never be open at once, and a state per column is eight ways to leave one behind.
+  const [dialog, setDialog] = useState<OpenPlanRowDialog | null>(null);
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
@@ -281,59 +360,37 @@ export function ContainerRequestSection({
     [soLines, matrixAxis, matrixGranularity, rankByProductId],
   );
 
-  // A fresh suggestion replaces whatever she had edited into the previous one - "refresh" is
-  // asking the system to look again, not "keep my edits and re-rank around them".
-  useEffect(() => {
-    const seed: Record<string, number> = {};
-    // Keyed on `row_key`, not the product id: a set row's figures are its DRIVER member's,
-    // so two set rows sharing a driver would otherwise share one editable quantity.
-    for (const r of rows) seed[r.row_key] = r.suggested_qty;
-    setOverrides(seed);
-  }, [rows]);
-
-  const overridesRef = useRef(overrides);
-  overridesRef.current = overrides;
-
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
   const historyLoadingRef = useRef(false);
 
-  const qtyFor = (row: ContainerRequestRow) => overrides[row.row_key] ?? row.suggested_qty;
-
-  const lines = useMemo(
-    () =>
-      rows
-        .map((r): ContainerRequestLine => {
-          const qty = qtyFor(r);
-          // A set line names the SET and no product: the ask is the whole WC under the code
-          // the supplier wrote, and naming one member would make the document disagree with
-          // the row it came from (R19).
-          return r.row_kind === 'set' && r.product_set_id
-            ? { product_set_id: r.product_set_id, qty }
-            : { product_id: r.product_id, qty };
-        })
-        .filter((l) => l.qty > 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, overrides],
-  );
-  const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
+  // Read through refs for the same reason the history sidecar is: a column definition that
+  // depended on the record page's edit state would rebuild the whole grid on every keystroke.
+  // Cell functions run on every render, so the typed figure still paints.
+  const qtyForRef = useRef(qtyFor);
+  qtyForRef.current = qtyFor;
+  const onQtyChangeRef = useRef(onQtyChange);
+  onQtyChangeRef.current = onQtyChange;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   // A row edited to 0 leaves the request without being deleted from the grid - she can still
   // see and change her mind about it, it just does not go on the document.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
-    const qty = overridesRef.current[original.row_key] ?? original.suggested_qty;
     return (
       <Input
         type="number"
         min={0}
         className="h-8 w-24 tabular-nums"
-        value={qty}
+        value={qtyForRef.current(original)}
+        disabled={readOnlyRef.current}
         // The netting rule with this row's own numbers in it (F2): what the figure IS, on
         // the figure, so nobody has to remember whether the packing list was subtracted.
-        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.suggested_qty)}`}
+        // `engine_qty`, never the edited figure: it is the formula's own answer.
+        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.engine_qty)}`}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
-          setOverrides((prev) => ({ ...prev, [original.row_key]: next }));
+          onQtyChangeRef.current(original.row_key, next);
         }}
       />
     );
@@ -486,13 +543,18 @@ export function ContainerRequestSection({
         // The SO drill sits on the channel figure it explains (captain, 27 Aug): the "Open
         // SOs" count column is gone, and each channel opens its own lines.
         cell: ({ row }) => (
-          <ChannelQtyCell
-            row={row.original}
-            qty={row.original.project_qty}
-            lines={(linesByProduct.get(row.original.product_id) ?? []).filter(
-              (l) => l.demand_class === 'project',
-            )}
-            channel="project"
+          <PlanNumberButton
+            value={fmtInt(row.original.project_qty)}
+            label="Open project sales orders"
+            // Nothing to open is not a link: a figure of zero with no line behind it would
+            // open an empty table, which teaches the eye to stop clicking every one of them.
+            disabled={
+              !row.original.project_qty ||
+              (linesByProduct.get(row.original.product_id) ?? []).every(
+                (l) => l.demand_class !== 'project',
+              )
+            }
+            onClick={() => setDialog({ kind: 'project', row: row.original })}
           />
         ),
         size: 140,
@@ -505,13 +567,16 @@ export function ContainerRequestSection({
         // Retail carries the unclassified lines too: the column already counts them (no
         // Unclassified column, AC-A2.2), so the drill lists what the figure counts.
         cell: ({ row }) => (
-          <ChannelQtyCell
-            row={row.original}
-            qty={row.original.retail_qty}
-            lines={(linesByProduct.get(row.original.product_id) ?? []).filter(
-              (l) => l.demand_class !== 'project',
-            )}
-            channel="retail"
+          <PlanNumberButton
+            value={fmtInt(row.original.retail_qty)}
+            label="Open retail sales orders"
+            disabled={
+              !row.original.retail_qty ||
+              (linesByProduct.get(row.original.product_id) ?? []).every(
+                (l) => l.demand_class === 'project',
+              )
+            }
+            onClick={() => setDialog({ kind: 'retail', row: row.original })}
           />
         ),
         size: 140,
@@ -521,10 +586,14 @@ export function ContainerRequestSection({
       {
         accessorKey: 'on_hand',
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
+        // Openable at zero too, unlike the demand cells: "nothing in any of the six pools" is
+        // the answer the location table gives, and it is the one the buyer came for.
         cell: ({ row }) => (
-          <span className="tabular-nums" title="On hand">
-            {fmtInt(row.original.on_hand)}
-          </span>
+          <PlanNumberButton
+            value={fmtInt(row.original.on_hand)}
+            label="Stock by location"
+            onClick={() => setDialog({ kind: 'on_hand', row: row.original })}
+          />
         ),
         size: 90,
         enableSorting: false,
@@ -534,9 +603,11 @@ export function ContainerRequestSection({
         accessorKey: 'incoming_spo',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums" title="SPO">
-            {fmtInt(row.original.incoming_spo)}
-          </span>
+          <PlanNumberButton
+            value={fmtInt(row.original.incoming_spo)}
+            label="Shipping orders on their way to a site pool"
+            onClick={() => setDialog({ kind: 'spo', row: row.original })}
+          />
         ),
         size: 80,
         enableSorting: false,
@@ -545,12 +616,14 @@ export function ContainerRequestSection({
       {
         accessorKey: 'incoming_pl',
         header: ({ column }) => <DataGridColumnHeader title="Incoming PL" column={column} />,
-        // Muted because it is a reference: a packing list names no destination, so it can be
-        // read beside the ask but never subtracted from it (Q1).
+        // A reference: a packing list names no destination, so it can be read beside the ask
+        // but never subtracted from it (Q1). The lightbox says which lists they are.
         cell: ({ row }) => (
-          <span className="tabular-nums text-muted-foreground" title="Incoming PL - reference only">
-            {fmtInt(row.original.incoming_pl)}
-          </span>
+          <PlanNumberButton
+            value={fmtInt(row.original.incoming_pl)}
+            label="Packing lists on their way, reference only"
+            onClick={() => setDialog({ kind: 'incoming_pl', row: row.original })}
+          />
         ),
         size: 100,
         enableSorting: false,
@@ -560,9 +633,11 @@ export function ContainerRequestSection({
         accessorKey: 'outstanding_po',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
         cell: ({ row }) => (
-          <span className="tabular-nums" title="Outstanding PO - reference only">
-            {fmtInt(row.original.outstanding_po)}
-          </span>
+          <PlanNumberButton
+            value={fmtInt(row.original.outstanding_po)}
+            label="Purchase orders still to come, reference only"
+            onClick={() => setDialog({ kind: 'po', row: row.original })}
+          />
         ),
         size: 80,
         enableSorting: false,
@@ -601,10 +676,11 @@ export function ContainerRequestSection({
         id: 'project_peak',
         header: ({ column }) => <DataGridColumnHeader title="Project peak" column={column} />,
         cell: ({ row }) => (
-          <ContainerRequestHistoryPeakCell
+          <PeakCell
             history={historyRef.current.get(row.original.product_id)}
             loading={historyLoadingRef.current}
             kind="project"
+            onOpen={() => setDialog({ kind: 'project', row: row.original, onHistory: true })}
           />
         ),
         size: 120,
@@ -615,10 +691,11 @@ export function ContainerRequestSection({
         id: 'retail_peak',
         header: ({ column }) => <DataGridColumnHeader title="Retail peak" column={column} />,
         cell: ({ row }) => (
-          <ContainerRequestHistoryPeakCell
+          <PeakCell
             history={historyRef.current.get(row.original.product_id)}
             loading={historyLoadingRef.current}
             kind="retail"
+            onOpen={() => setDialog({ kind: 'retail', row: row.original, onHistory: true })}
           />
         ),
         size: 120,
@@ -659,13 +736,9 @@ export function ContainerRequestSection({
   }, [history.data]);
   historyLoadingRef.current = history.isFetching;
 
-  const summary = useMemo(
-    () => summariseContainerRequest(rows, qtyFor),
-    // `qtyFor` reads `overrides`, so the cards follow her edits - which is the whole point of
-    // putting them above the grid.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, overrides],
-  );
+  // `qtyFor` follows the record page's edits, so the cards move as she types - which is the
+  // whole point of putting them above the grid.
+  const summary = summariseContainerRequest(rows, qtyFor);
 
   const openRow = openRowKey
     ? (rows.find((r) => r.row_key === openRowKey) ?? null)
@@ -674,20 +747,6 @@ export function ContainerRequestSection({
   const requestNotices = (notices.data ?? []).filter(
     (n) => n.notice_type === 'container_request',
   );
-
-  // The one link this supplier can still open. Notices come back newest first and only one
-  // send's token is ever live (each send retires the last), so the first match IS the current
-  // ask - and with none, the gear's Copy link says why rather than copying nothing.
-  const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
-
-  const canSend = lines.length > 0 && totalQty > 0 && !send.isPending;
-
-  function confirmSend() {
-    send.mutate(
-      { supplierId, supplierName, lines },
-      { onSuccess: () => setConfirming(false) },
-    );
-  }
 
   // Duplicated from `SupplierNoticePanel.openDocument` rather than generalizing that panel to
   // take an arbitrary notices list: its header couples the document list to ONE action
@@ -710,15 +769,9 @@ export function ContainerRequestSection({
   // The link the supplier already has in their inbox, copied so Ms Tee can paste it into
   // WeChat herself - which is how she reaches the factories that never open email.
   async function copyLink(notice: SupplierNotice) {
-    if (!notice.public_url) return;
-    try {
-      await navigator.clipboard.writeText(notice.public_url);
-      setCopiedNoticeId(notice.id);
-      toast.success('Link copied');
-      window.setTimeout(() => setCopiedNoticeId(null), 2000);
-    } catch {
-      toast.error('Could not copy the link. Copy it from the address bar instead.');
-    }
+    if (!(await copyPublicLink(notice.public_url))) return;
+    setCopiedNoticeId(notice.id);
+    window.setTimeout(() => setCopiedNoticeId(null), 2000);
   }
 
   // SF-4 (reviewer): what has already been sent to this supplier does not disappear just
@@ -740,16 +793,20 @@ export function ContainerRequestSection({
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
+                  {(() => {
+                    const ChannelIcon = NOTICE_CHANNEL_ICON[n.channel];
+                    return <ChannelIcon className="size-3.5 text-muted-foreground" />;
+                  })()}
                   <span className="text-xs font-medium">{NOTICE_CHANNEL_LABEL[n.channel]}</span>
                   <span className={cn(STATUS_PILL_BASE, statusPillClass(n.status))}>
                     {NOTICE_STATUS_LABEL[n.status]}
                   </span>
-                  {n.recipient ? (
+                  {noticeRecipients(n) ? (
                     <span
                       className="truncate text-2xs text-muted-foreground"
-                      title={n.recipient}
+                      title={noticeRecipients(n)}
                     >
-                      {n.recipient}
+                      {noticeRecipients(n)}
                     </span>
                   ) : null}
                 </div>
@@ -757,6 +814,12 @@ export function ContainerRequestSection({
                   {n.last_error ||
                     n.status_reason ||
                     (n.sent_at ? `Sent ${formatDateInMalaysia(n.sent_at)}` : EM_DASH)}
+                </p>
+                {/* Whether the supplier has actually looked at it (AC-C8). Its own line,
+                    beside the send, because "sent" and "read" are two different facts and
+                    the second one is the one that decides whether to chase. */}
+                <p className="mt-0.5 text-2xs text-muted-foreground" data-testid="notice-opens">
+                  {fmtOpens(n.open_count, n.last_opened_at)}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -863,20 +926,9 @@ export function ContainerRequestSection({
             Nothing to ask {supplierName} for right now.
           </p>
           <p className="text-2xs text-muted-foreground">
-            No open customer demand on what they supply, and nothing of theirs on file.
+            No open customer demand on what they supply, and nothing of theirs on file. Start a
+            new plan from the loading plans list to hand over a newer stock list or proforma.
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button size="sm" variant="outline" onClick={onUploadStockList}>
-              <Upload className="size-4" />
-              Upload stock list
-            </Button>
-            {onUploadProforma ? (
-              <Button size="sm" variant="outline" onClick={onUploadProforma}>
-                <FileText className="size-4" />
-                Upload proforma invoice
-              </Button>
-            ) : null}
-          </div>
         </Card>
         {noticesCard}
       </div>
@@ -903,71 +955,15 @@ export function ContainerRequestSection({
         emptyMessage="No open customer demand for what this supplier supplies."
       >
         <Card>
-          <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold">
-                What to ask {supplierName}
-                {build.data.plan_horizon_date
-                  ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
-                  : ' for'}
-              </h3>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>
-                {send.isPending ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <Send className="size-4" />
-                )}
-                Send to supplier
-              </Button>
-              {/* Everything that is not the errand (R23): looking again, copying the link she
-                  already sent, and taking either file away to read. Same gear the toolbar
-                  above carries, for the same reason. */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label="Plan actions"
-                    data-testid="request-actions"
-                  >
-                    <Settings className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem
-                    disabled={build.isFetching}
-                    onSelect={() => void build.refetch()}
-                  >
-                    <RefreshCw className="size-4" />
-                    Refresh suggestion
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!liveLinkNotice}
-                    title={liveLinkNotice ? undefined : 'No link sent yet'}
-                    onSelect={() => liveLinkNotice && void copyLink(liveLinkNotice)}
-                  >
-                    <Link2 className="size-4" />
-                    Copy link
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={lines.length === 0 || download.isPending}
-                    onSelect={() => download.mutate({ lines, format: 'xlsx' })}
-                  >
-                    <Download className="size-4" />
-                    Download XLSX
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={lines.length === 0 || download.isPending}
-                    onSelect={() => download.mutate({ lines, format: 'pdf' })}
-                  >
-                    <FileText className="size-4" />
-                    Download PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+          {/* The heading, and nothing else (R5): Send and the gear moved to the record's own
+              toolbar, where the rest of the plan's actions already sit. */}
+          <CardHeader className="py-3">
+            <h3 className="text-sm font-semibold">
+              What to ask {supplierName}
+              {build.data.plan_horizon_date
+                ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
+                : ' for'}
+            </h3>
           </CardHeader>
 
           <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -1081,36 +1077,59 @@ export function ContainerRequestSection({
         />
       ) : null}
 
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Send this request to {supplierName}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {lines.length} product{lines.length === 1 ? '' : 's'}, {fmtInt(totalQty)} units in
-              total. The supplier receives the request document by email when an address is on
-              file; the document is available either way.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {send.isError ? (
-            <p className="text-xs text-destructive">{send.error.message}</p>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                // Radix closes an Action on click by default; the send is async and can fail,
-                // so closing is deferred to the mutation's own onSuccess instead - a failure
-                // then leaves the dialog open with the error on it, per the CRUD standard.
-                e.preventDefault();
-                confirmSend();
-              }}
-              disabled={send.isPending}
-            >
-              Send
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* The documents behind one figure (R7). Every column's lightbox is this one dialog, so
+          the eight of them cannot drift apart; only the body inside it changes. */}
+      {dialog ? (
+        <PlanRowDialog
+          kind={dialog.kind}
+          productCode={dialog.row.item_code ?? dialog.row.product_name ?? 'This product'}
+          productName={
+            dialog.row.row_kind === 'set'
+              ? // A set row's figures are the driver member's (R19), and so are its documents:
+                // the dialog says whose rather than leaving the reader to guess.
+                `${dialog.row.set_name ?? dialog.row.product_name ?? ''} · figures from ${dialog.row.driver_item_code ?? 'its driver member'}`
+              : dialog.row.product_name
+          }
+          context={dialogContext(dialog, build.data?.plan_horizon_date ?? null)}
+          onOpenChange={(open) => {
+            if (!open) setDialog(null);
+          }}
+        >
+          {dialog.kind === 'project' || dialog.kind === 'retail' ? (
+            <ProjectRetailTabs
+              channel={dialog.kind}
+              lines={toDemandLines(
+                (linesByProduct.get(dialog.row.product_id) ?? []).filter((l) =>
+                  dialog.kind === 'project'
+                    ? l.demand_class === 'project'
+                    : l.demand_class !== 'project',
+                ),
+              )}
+              history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
+              initialTab={dialog.onHistory ? 'history' : 'open'}
+              focus={dialog.kind}
+              loading={build.isFetching || (dialog.onHistory && history.isFetching)}
+            />
+          ) : dialog.kind === 'on_hand' ? (
+            <OnHandTable
+              productId={dialog.row.product_id}
+              itemCode={dialog.row.driver_item_code ?? dialog.row.item_code ?? ''}
+            />
+          ) : dialog.kind === 'spo' ? (
+            <SpoTabs supplierId={supplierId} productId={dialog.row.product_id} />
+          ) : dialog.kind === 'incoming_pl' ? (
+            <IncomingPlTable
+              supplierId={supplierId}
+              productId={dialog.row.product_id}
+              onOpenShipment={(shipmentId) =>
+                router.push(`/procurement-management/packing-lists/${shipmentId}`)
+              }
+            />
+          ) : (
+            <PoTabs supplierId={supplierId} productId={dialog.row.product_id} />
+          )}
+        </PlanRowDialog>
+      ) : null}
     </div>
   );
 }

@@ -94,11 +94,16 @@ class World:
             self.products[key] = p
         return self.products[key]
 
-    def warehouse(self, key: str = "WH") -> Warehouse:
+    def warehouse(
+        self, key: str = "WH", *, segment: str | None = None, is_active: bool = True
+    ) -> Warehouse:
+        """A location. `segment='project'` is a GROUP bin (stock there is spoken for) and
+        `is_active=False` is a CLOSED location - eleven of those exist on the live book.
+        Neither is a site pool, so neither belongs in the planner's context figures."""
         if key not in self.warehouses:
             w = Warehouse(
                 id=_u(), warehouse_code=f"{MARKER}-{key}-{self.tag}"[:50],
-                warehouse_name=key, is_active=True,
+                warehouse_name=key, is_active=is_active, segment=segment,
             )
             self.db.add(w)
             self.db.flush()
@@ -333,6 +338,34 @@ def test_on_hand_and_incoming_spo_are_context_only_and_do_not_net_the_suggested_
         assert line["incoming_spo"] == 15
         assert line["po_covered_qty"] == 60
         assert line["suggested_qty"] == 60, "on_hand/incoming_spo must not reduce this"
+
+
+def test_context_figures_count_active_site_pools_only():
+    """AC-G3, sum = cell. Both context cells open a dialog that lists ACTIVE POOL rows only
+    (`location_stock_service.location_stock_for_product` for On hand, `container_request_
+    drill`'s own `w.is_active AND _POOL` for Incoming SPO), so a cell counting a closed
+    location or a project bin sends the reader to a total that does not match what she
+    clicked. 50 at the pool is the whole of both figures; the 30 in a project bin and the 40
+    in a closed location are not in either."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        pool = w.warehouse("POOL")
+        bin_ = w.warehouse("BIN", segment="project")
+        closed = w.warehouse("CLOSED", is_active=False)
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        w.stock("A", pool, 50)
+        w.stock("A", bin_, 30)
+        w.stock("A", closed, 40)
+        w.spo_allocation("A", shipment, pool, 50)
+        w.spo_allocation("A", shipment, bin_, 30)
+        w.spo_allocation("A", shipment, closed, 40)
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["on_hand"] == 50
+        assert line["incoming_spo"] == 50
 
 
 def test_an_ample_po_caps_the_suggested_qty_at_packed_not_beyond_it():

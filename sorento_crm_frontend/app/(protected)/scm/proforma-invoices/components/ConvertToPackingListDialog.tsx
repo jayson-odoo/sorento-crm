@@ -14,54 +14,41 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useDraftShipments, useProformaInvoice } from '../../hooks/useProformaInvoices';
-import { EM_DASH, fmtDate, fmtQty } from '../../lib/format';
+import { useProformaInvoice } from '../../hooks/useProformaInvoices';
+import { EM_DASH, fmtQty } from '../../lib/format';
 
 /**
- * How much of these invoices goes into which packing list (AC-F10).
+ * How much of THIS invoice goes onto a container (AC-F10, Q9).
  *
- * Two questions, in the order they are asked. WHERE: a new draft, or one of this supplier's
- * drafts that is still open - a container is loaded over several days and the second
- * factory's invoice belongs in the box the first one is already in. HOW MUCH: each line's
- * REMAINING quantity, pre-filled, because the normal case is "all of what is left" and the
- * split is the exception that has to be typed.
+ * One question: each line's REMAINING quantity, pre-filled, because the normal case is
+ * "all of what is left" and the split is the exception that has to be typed. A convert
+ * always opens a NEW draft packing list - "add to an existing draft" was dropped
+ * everywhere (captain, Q6), so there is nothing to choose before the quantities.
  *
- * Per-line editing is offered for ONE invoice at a time. On a multi-invoice convert the
- * lines of five documents in one dialog is a worse surface than the rule the backend
- * already applies - every line places what it has left - so the dialog says that instead.
+ * This is the PI DETAIL's surface only: placing part of an invoice is a deliberate act
+ * made on one document. The list converts the whole selection at once, no dialog (R15).
  */
 export function ConvertToPackingListDialog({
   open,
   onOpenChange,
   invoiceIds,
-  supplierId,
   pending,
   onConvert,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   invoiceIds: string[];
-  /** Whose drafts to offer. Null on a mixed selection - then every draft is offered. */
-  supplierId?: string | null;
   pending?: boolean;
-  onConvert: (args: {
-    lineQuantities: Record<string, number>;
-    targetShipmentId: string | null;
-  }) => void;
+  onConvert: (args: { lineQuantities: Record<string, number> }) => void;
 }) {
   const single = invoiceIds.length === 1 ? invoiceIds[0] : null;
   const { data: invoice, isLoading } = useProformaInvoice(open ? single : null);
-  const drafts = useDraftShipments(supplierId ?? null, open);
-  const [targetShipmentId, setTargetShipmentId] = useState<string | null>(null);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
 
   // Re-read on every open: a remainder typed last time describes an invoice that has since
   // moved, and a stale figure here places the wrong quantity silently.
   useEffect(() => {
     if (!open) return;
-    setTargetShipmentId(null);
     setQuantities({});
   }, [open]);
 
@@ -93,16 +80,6 @@ export function ConvertToPackingListDialog({
     [invoice],
   );
 
-  const draftOptions = useMemo(
-    () =>
-      (drafts.data ?? []).map((d) => ({
-        value: d.shipment_id,
-        label: `${d.shipment_number ?? 'Draft'} - ${fmtDate(d.shipment_date)} - ${d.lines} lines`,
-        description: d.supplier_names.join(', ') || undefined,
-      })),
-    [drafts.data],
-  );
-
   const submit = () => {
     const lineQuantities: Record<string, number> = {};
     for (const line of placeable) {
@@ -112,7 +89,7 @@ export function ConvertToPackingListDialog({
       if (Number.isNaN(parsed)) continue;
       lineQuantities[line.id] = parsed;
     }
-    onConvert({ lineQuantities, targetShipmentId });
+    onConvert({ lineQuantities });
   };
 
   const invalid = placeable.some((line) => {
@@ -135,24 +112,6 @@ export function ConvertToPackingListDialog({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          <div>
-            <Label htmlFor="convert-target" className="mb-1 block text-xs">
-              Packing list
-            </Label>
-            <SearchableSelect
-              id="convert-target"
-              value={targetShipmentId ?? ''}
-              onChange={(v: string) => setTargetShipmentId(v || null)}
-              options={draftOptions}
-              placeholder="Create a new draft packing list"
-              emptyMessage="No draft packing list open for this supplier."
-              clearable
-            />
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Leave empty to start a new one.
-            </p>
-          </div>
-
           {single && isLoading ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <LoaderCircle className="size-3.5 animate-spin" /> Reading the invoice...

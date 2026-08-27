@@ -8,7 +8,6 @@ import {
   convertProformaInvoicesToDraftShipment,
   deleteProformaInvoice,
   getProformaInvoice,
-  listDraftShipments,
   listProformaInvoices,
   markProformaInvoiceAsRevisionOf,
   saveProformaInvoice,
@@ -43,16 +42,6 @@ export function useProformaInvoices(
       opts.offset ?? 0,
     ],
     queryFn: () => listProformaInvoices(options),
-    refetchOnWindowFocus: false,
-  });
-}
-
-/** The draft packing lists a convert can be added to instead of creating a new one. */
-export function useDraftShipments(supplierId: string | null, enabled = true) {
-  return useQuery({
-    queryKey: [...KEY, 'draft-shipments', supplierId],
-    queryFn: () => listDraftShipments(supplierId),
-    enabled,
     refetchOnWindowFocus: false,
   });
 }
@@ -150,7 +139,7 @@ export function useSaveProformaInvoice(invoiceId: string) {
   );
 }
 
-/** Draft a shipment from one or more selected invoices. Invalidates both the proforma list
+/** Turn one or more selected invoices into ONE NEW draft packing list. Invalidates both the proforma list
  *  (their trail now shows where they went) and the invoice detail (converted_shipments +
  *  per-line shipment_number) for every invoice just converted. The caller navigates to
  *  `/scm/incoming` on success - this hook only owns the write + cache invalidation. */
@@ -161,11 +150,9 @@ export function useConvertProformaInvoicesToDraftShipment() {
       invoiceIds: string[];
       overrideReason?: string;
       lineQuantities?: Record<string, number>;
-      targetShipmentId?: string | null;
     }) =>
       convertProformaInvoicesToDraftShipment(args.invoiceIds, {
         lineQuantities: args.lineQuantities,
-        targetShipmentId: args.targetShipmentId,
         override: args.overrideReason ? { reason: args.overrideReason } : undefined,
       } as ConvertOptions),
     onSuccess: (result) => {

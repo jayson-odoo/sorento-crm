@@ -1,4 +1,32 @@
-import type { ContainerRequestRow } from '../../services/fulfilmentService';
+import type {
+  ContainerRequestLine,
+  ContainerRequestRow,
+} from '../../services/fulfilmentService';
+
+/**
+ * The reviewed lines the document and the send are built from.
+ *
+ * Lives beside the summary rather than inside the grid because Send and the two downloads
+ * moved to the record's toolbar (R5) while the quantities are typed in the grid: one function
+ * turns "what is on screen" into "what goes out", so the two can never disagree.
+ *
+ * A set line names the SET and no product (R19): the supplier sells the whole WC under a code
+ * our catalogue does not hold, and naming one member would make the document disagree with
+ * the row it came from. A row typed down to 0 stays on the grid and leaves the request.
+ */
+export function requestLinesFrom(
+  rows: ContainerRequestRow[],
+  qtyFor: (row: ContainerRequestRow) => number,
+): ContainerRequestLine[] {
+  return rows
+    .map((r): ContainerRequestLine => {
+      const qty = qtyFor(r);
+      return r.row_kind === 'set' && r.product_set_id
+        ? { product_set_id: r.product_set_id, qty }
+        : { product_id: r.product_id, qty };
+    })
+    .filter((l) => l.qty > 0);
+}
 
 /**
  * The five figures above the loading-plan grid (PLAN section 2b, AC-A2.1).

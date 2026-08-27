@@ -6,6 +6,8 @@
  * Phase 1 hard-codes "RM"; Phase 2 will thread the system currency format
  * (`useCurrencyFormat`) through instead.
  */
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+
 // A plain hyphen, deliberately. Em-dashes are banned in this codebase's writing and the
 // user does not want to see them in the UI either.
 export const EM_DASH = '-';
@@ -236,4 +238,24 @@ export function fmtQty(value: number | null | undefined, dp = 0): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.min(Math.max(dp, 0), 4),
   }).format(value);
+}
+
+/**
+ * How often the supplier has opened the link this send carried, and when they last did
+ * (AC-C8).
+ *
+ * One sentence, written once, because two screens print it: the loading-plan list's Opened
+ * column and the Requests sent card behind it. A plan whose supplier has never opened the
+ * link says so in words - a blank there reads as "we did not look", which is the opposite of
+ * what the tracking now knows.
+ */
+export function fmtOpens(
+  openCount: number | null | undefined,
+  lastOpenedAt: string | null | undefined,
+): string {
+  const count = openCount ?? 0;
+  if (count <= 0) return 'Not opened yet';
+  const when = lastOpenedAt ? formatDateTimeInMalaysia(lastOpenedAt) : '';
+  const times = `Opened ${fmtInt(count)} ${count === 1 ? 'time' : 'times'}`;
+  return when ? `${times}, last ${when}` : times;
 }

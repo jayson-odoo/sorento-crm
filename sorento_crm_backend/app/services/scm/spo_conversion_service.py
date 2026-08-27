@@ -219,6 +219,7 @@ from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, Shi
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -549,8 +550,17 @@ def _match_takes_for_line(
     return matched_by, takes
 
 
+#: The site-pool test, from the one module that spells it (`pool_predicate`). It was copied
+#: here, and into two other files, on the reasoning `_stock_context` below gives for copying
+#: its whole query - but this one line is not that: both cells this module prints open a
+#: dialog counting ACTIVE POOL rows only (`location_stock_service.location_stock_for_product`
+#: for On hand, `container_request_drill` for Incoming SPO), so the cells count the same
+#: locations or they cannot foot, and a rule that must be identical is one rule.
+_ACTIVE_POOL = ACTIVE_SITE_POOL_SQL
+
+
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """On hand + incoming SPO, company-wide, per product - COPIED from
+    """On hand + incoming SPO, per product, at ACTIVE SITE POOLS - COPIED from
     `container_request_service._stock_context` rather than imported (same reasoning that
     module gives for copying `loading_plan_service._catalogue_cbm`: two lanes touching the
     same file is a worse cost than a few duplicated lines). Same figures, same views, so this
@@ -558,12 +568,19 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
     CONTEXT ONLY since the doctrine correction (module docstring, fifth amendment) - neither
     figure feeds `suggested_qty` any more. Kept because it is cheap (one query, already paid
-    for by every earlier version of this module) and still useful to see beside the ask."""
+    for by every earlier version of this module) and still useful to see beside the ask.
+
+    Context still has to foot to the dialog it opens (AC-G3: "sum = cell"). Both figures used
+    to sum every warehouse the net-position view names, while the On hand lightbox lists
+    active pool locations only and the Incoming SPO dialog filters `w.is_active AND _POOL` -
+    so the planner printed one number and the reader who clicked it landed on another. Closed
+    locations and project bins leave the cells here for the same reason they left the
+    container request's (`_ACTIVE_POOL` above)."""
     if not product_ids:
         return {}
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
-    where = ["np.product_id::text = ANY(:pids)"]
+    where = ["np.product_id::text = ANY(:pids)", _ACTIVE_POOL]
     if prod_scope:
         where.append(prod_scope)
     if wh_scope:
