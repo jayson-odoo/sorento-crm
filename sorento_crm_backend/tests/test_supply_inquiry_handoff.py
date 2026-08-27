@@ -555,17 +555,23 @@ def test_confirmed_unplaced_buy_rows_reader_counts_raised_order_rows_directly(ap
 
 
 def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an_active_decision(api):
-    """PLAN section 4: the sheet leg keeps counting a sheet-named project SO until it is
-    confirmed, then the confirmed Buy replaces it -- never both.
+    """"Never both", and since P3 it is structural rather than timed.
 
-    The CLAIM is unchanged; the LEVEL it is answered at moved, and this test moved with it.
-    `is_plan_demand_order()` alone used to say it, because a confirmation had to cover
-    every line of its order. Since partial confirmation
-    (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4) it takes both halves of the
-    rule: the order half says the sheet speaks for this order, the LINE half says which of
-    its lines CS has already decided. Deciding it per order again would take an order's
-    undecided lines out of the plan with its decided one, which is the defect 13.4 exists
-    to prevent (`tests/test_partial_decision_demand_invariants.py`).
+    The CLAIM this test was written for is unchanged: a sheet-named project SO and the
+    confirmed Buy that replaces it must never be counted at the same time. What answers it
+    moved twice. `is_plan_demand_order()` alone used to, because a confirmation had to
+    cover every line of its order; partial confirmation
+    (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4) split the rule in two. P3
+    (`PLAN-scm-purchasing-uat-journey.md`, 26 Aug 2026) then deleted the first half
+    outright: project demand has ONE source, the un-linked Order Inquiry row, so the ORDER
+    half excludes project class whatever its origin stamp says and there is no sheet
+    quantity left for a confirmation to displace. Counted BEFORE the confirmation is now
+    the failure, not counted after.
+
+    The LINE half outlived it and is checked here beside it, because it is what the
+    fulfilment board reads as "covered": which of an order's lines an active decision
+    already accounts for, per LINE, so a partly confirmed order says which of its lines are
+    done (`project_fulfilment_board_service`).
     """
     from app.models.order import SalesOrder, SalesOrderLine
     from app.services.scm.demand import is_plan_demand_line, is_plan_demand_order
@@ -592,7 +598,22 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
             .all()
         )
 
-    assert counted_lines(), "unconfirmed, the sheet leg must still count"
+    def undecided_lines():
+        """The LINE half on its own: the lines no active decision covers yet."""
+        return (
+            db.query(SalesOrderLine.id)
+            .filter(
+                SalesOrderLine.sales_order_id == core_so.id,
+                is_plan_demand_line(),
+            )
+            .all()
+        )
+
+    assert not counted_lines(), (
+        "unconfirmed, a project-class book line is still not demand: the Order Inquiry "
+        "row is the one source of project demand (P3)"
+    )
+    assert undecided_lines(), "nothing has decided this line yet"
 
     response = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -602,7 +623,10 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
 
     db.expire_all()
     assert not counted_lines(), (
-        "confirmed, the sheet leg must stop counting a second time"
+        "confirmed, the book still does not count it - the confirmed Buy is the only leg"
+    )
+    assert not undecided_lines(), (
+        "the active decision covers this line, which is what the board reads as covered"
     )
 
 
