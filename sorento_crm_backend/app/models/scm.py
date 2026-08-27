@@ -1013,6 +1013,8 @@ class PlanException(Base, CompanyScopedMixin):
         # The queue query: this batch's open rows. Status leads because "what is left to
         # decide" is the question the screen opens on.
         Index("ix_scm_plan_exception_batch_status", "batch_id", "status"),
+        # The FK check when a purchase order is deleted (migration 420 deletes 3,983 at once).
+        Index("ix_scm_plan_exception_purchase_order", "purchase_order_id"),
         CheckConstraint(
             "exception_type IN ('shortfall_earlier', 'supply_early', 'supply_surplus', "
             "'supply_wrong_location')",
@@ -1088,6 +1090,9 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         Index("ix_scm_order_link_claim_so", "so_number"),
         Index("ix_scm_order_link_claim_po", "po_number"),
         Index("ix_scm_order_link_claim_spo_allocation", "spo_allocation_id"),
+        # The FK check when a purchase order line is deleted: without it every deleted line
+        # costs a sequential scan of this table (migration 420 deleted 80k lines).
+        Index("ix_scm_order_link_claim_po_line", "po_line_id"),
         CheckConstraint(
             "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', 'manual')",
             name="ck_scm_order_link_claim_source",
@@ -1390,6 +1395,8 @@ class LoadingPlanLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_loading_plan_line_plan", "plan_id"),
         Index("uq_scm_loading_plan_line_identity", "plan_id", "po_line_id", unique=True),
+        # The FK check when a purchase order line is deleted (see OrderLinkClaim).
+        Index("ix_scm_loading_plan_line_po_line", "po_line_id"),
         CheckConstraint(
             "status IN ('allocated', 'partial', 'deferred', 'unmeasured')",
             name="ck_scm_loading_plan_line_status",
@@ -1724,6 +1731,8 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_shipment_spo_link_shipment", "inbound_shipment_id"),
         Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
+        # The FK check when a purchase order line is deleted (see OrderLinkClaim).
+        Index("ix_scm_shipment_spo_link_po_line", "purchase_order_line_id"),
         # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
         # attempt on an already-converted shipment detectable rather than a silent duplicate.
         Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),
