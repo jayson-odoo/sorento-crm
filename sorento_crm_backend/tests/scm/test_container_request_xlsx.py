@@ -348,3 +348,20 @@ def test_the_filename_names_the_supplier_and_the_day():
 
     assert name.startswith("container-request-JBC-")
     assert name.endswith(".xlsx")
+
+
+# --------------------------------------------------------------------------- #
+# widening their 合计 formulas
+# --------------------------------------------------------------------------- #
+
+
+def test_a_range_that_did_not_stop_at_their_last_row_comes_back_verbatim():
+    # A 合计 cell of theirs is very often more than one SUM, and only the range that stopped
+    # at their last data row is ours to move. Every other range has to come back CHARACTER
+    # for character: `=SUM(F3::F100)` is not a formula Excel will open, so one stray colon
+    # turns their totals row into a file that will not load.
+    assert svc._widen("=SUM(F3:F100)", 119, 123) == "=SUM(F3:F100)"
+    assert (
+        svc._widen("=SUM(F3:F119)+SUM(G3:G50)", 119, 123) == "=SUM(F3:F123)+SUM(G3:G50)"
+    )
+    assert svc._widen("=SUM($F$3:$F$119)", 119, 123) == "=SUM($F$3:$F$123)"

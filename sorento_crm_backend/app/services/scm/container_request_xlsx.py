@@ -204,16 +204,19 @@ def _widen(formula: str, old_last: int, new_last: int) -> str:
     Only the END of a range that stopped at their last data row moves: a total that stopped
     short of the rows we added would understate the ask, and a total we re-anchored anywhere
     else would stop being their formula.
+
+    Every other range comes back CHARACTER for character. The match carries its own leading
+    colon, so the replacement has to carry it too rather than the caller prepending one - a
+    second colon (`=SUM(F3::F100)`) is not a formula Excel will open, and their 合计 row very
+    often adds two ranges, only one of which is ours to move.
     """
 
     def bump(match: re.Match) -> str:
-        return (
-            f"{match.group(1)}{new_last}"
-            if int(match.group(2)) == old_last
-            else match.group(0)
-        )
+        if int(match.group(2)) == old_last:
+            return f":{match.group(1)}{new_last}"
+        return match.group(0)
 
-    return re.sub(r":(\$?[A-Z]{1,3}\$?)(\d+)", lambda m: ":" + bump(m), formula)
+    return re.sub(r":(\$?[A-Z]{1,3}\$?)(\d+)", bump, formula)
 
 
 # --------------------------------------------------------------------------- our workbook
