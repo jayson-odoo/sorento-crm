@@ -22,6 +22,24 @@ A LADDER, first unique hit wins, and an ambiguous rung binds NOTHING:
      size. Without that question the rung finds 28 and 16 of them are wrong: `CWC7606-SH-180`
      is not `CWC7606-SH`, which is the 250. Silence counts as a no.
 
+Then three more rungs, against our product SETS (R19, R20), because a supplier sells the
+whole WC: `CWC605-RL` names our SET - pedestal `CWCX605-RL` plus cistern `CWCY605` - and no
+product carries that code, so every rung above misses it by construction.
+
+  5. exact `product_sets.set_code`;
+  6. separator-normalised equality;
+  7. token-set reorder.
+
+There is deliberately NO size rung for sets. `CWC605-RL-180` stays unmatched: a set carries
+no description, so nothing can confirm whether 180 is a real variant of ours or the
+supplier's own trap size, and rung 4 only earned its size drop by asking the base product
+whether it IS that size. A person answers those from the picker instead.
+
+The set rungs run LAST, so a code our catalogue holds verbatim is that product whatever else
+happens to be spelled the same way. They are also scoped STRICTLY to the supplier's own
+company: a Sorento supplier's list naming a Mocha set code binds nothing, because the stock
+rows, the invoice lines and the alias about to be written all belong to Sorento.
+
 Ambiguity is not a bind. Two products answering one code cannot both be what the supplier
 meant, and picking one puts a container's stock against the wrong item where nothing on
 screen disagrees. Two products means two CODES, though: our companies hold the same
@@ -44,6 +62,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
+from app.models.product_set import ProductSet
 from app.models.scm import SupplierProductCodeAlias
 from app.services.entity_resolver import _norm_sql
 
@@ -61,6 +80,9 @@ _RUNG_EXACT = "exact"
 _RUNG_SEPARATOR = "separator"
 _RUNG_TOKEN_SET = "token_set"
 _RUNG_SIZE_DROP = "size_drop"
+_RUNG_SET_EXACT = "set_exact"
+_RUNG_SET_SEPARATOR = "set_separator"
+_RUNG_SET_TOKEN_SET = "set_token_set"
 
 #: The rungs whose answer is a DERIVATION rather than an agreement, so it is remembered.
 _REMEMBERED = (_RUNG_SEPARATOR, _RUNG_TOKEN_SET, _RUNG_SIZE_DROP)
@@ -68,10 +90,16 @@ _REMEMBERED = (_RUNG_SEPARATOR, _RUNG_TOKEN_SET, _RUNG_SIZE_DROP)
 
 @dataclass(frozen=True)
 class Match:
-    """One bound code: which product, and which rung found it."""
+    """One bound code: what it names, and which rung found it.
 
-    product_id: str
+    Exactly one of `product_id` / `product_set_id` is set - a code means one thing, and a
+    caller choosing between two would be choosing which of them to write on a stock row that
+    has one column for each.
+    """
+
+    product_id: Optional[str]
     rung: str
+    product_set_id: Optional[str] = None
 
 
 def _norm(value: str) -> str:
@@ -188,7 +216,7 @@ def resolve(
     out: dict[str, Match] = {}
 
     # -- rung 0: what somebody already decided ---------------------------------------
-    aliases: dict[str, Optional[str]] = {}
+    aliases: dict[str, tuple[Optional[str], Optional[str]]] = {}
     for row in (
         db.query(SupplierProductCodeAlias)
         .filter(
@@ -198,25 +226,27 @@ def resolve(
         .all()
     ):
         aliases[str(row.supplier_code).strip().upper()] = (
-            str(row.product_id) if row.product_id else None
+            str(row.product_id) if row.product_id else None,
+            str(row.product_set_id) if row.product_set_id else None,
         )
     unresolved: list[str] = []
     for code in wanted:
         key = code.strip().upper()
         if key in aliases:
-            product_id = aliases[key]
-            # A row with no product is a DISMISSAL (R17): somebody has said this code names
+            product_id, set_id = aliases[key]
+            # A row naming NOTHING is a DISMISSAL (R17): somebody has said this code names
             # nothing we hold, and that is an answer, so the ladder stops here. Falling
             # through to the worked-out rungs would bind it on the next upload and the
             # dismissal would read as if it had never been made.
-            if product_id:
-                out[code] = Match(product_id, _RUNG_ALIAS)
+            if product_id or set_id:
+                out[code] = Match(product_id, _RUNG_ALIAS, product_set_id=set_id)
             continue
         unresolved.append(code)
     if not unresolved:
         return out
 
-    candidates = _candidates(db, unresolved, home=_supplier_company(db, supplier_id))
+    home = _supplier_company(db, supplier_id)
+    candidates = _candidates(db, unresolved, home=home)
     by_exact: dict[str, set[str]] = {}
     by_norm: dict[str, set[str]] = {}
     by_tokens: dict[tuple[str, ...], set[str]] = {}
@@ -231,81 +261,154 @@ def resolve(
             tuple(sorted(t.upper() for t in _tokens(code))), set()
         ).add(pid)
 
-    written: list[tuple[str, str, str]] = []
-    for code in unresolved:
-        trimmed = code.strip()
-        tokens = [t.upper() for t in _tokens(trimmed)]
+    sets = _set_index(db, home=home)
 
+    def _product_ladder(trimmed: str, tokens: list[str]):
+        """Rungs 1-4. `(product_id, rung)` on a bind, `("", "")` on a refusal (this code IS
+        ours and we cannot say which one), `None` when nothing here answers it at all."""
         # -- rung 1: exact -----------------------------------------------------------
         hit = _only(by_exact.get(trimmed.upper(), set()))
         if hit:
-            out[code] = Match(hit, _RUNG_EXACT)
-            continue
+            return hit, _RUNG_EXACT
         if by_exact.get(trimmed.upper()):
-            continue  # two products carry this very code: not ours to choose between
+            return "", ""  # two products carry this very code: not ours to choose between
 
         # -- rung 2: their separators, not ours ---------------------------------------
         pool = by_norm.get(_norm(trimmed), set())
         if pool:
             hit = _only(pool)
-            if hit:
-                out[code] = Match(hit, _RUNG_SEPARATOR)
-                written.append((code, hit, _RUNG_SEPARATOR))
-            continue
+            return (hit, _RUNG_SEPARATOR) if hit else ("", "")
 
         # -- rung 3: the same tokens, another order -----------------------------------
         pool = by_tokens.get(tuple(sorted(tokens)), set())
         if pool:
             hit = _only(pool)
-            if hit:
-                out[code] = Match(hit, _RUNG_TOKEN_SET)
-                written.append((code, hit, _RUNG_TOKEN_SET))
-            continue
+            return (hit, _RUNG_TOKEN_SET) if hit else ("", "")
 
         # -- rung 4: the trap size ours omits, if the product says it is that size ----
         if not tokens:
-            continue
+            return None
         size = _size_of(tokens[-1])
         if size is None:
-            continue
+            return None
         pool = by_tokens.get(tuple(sorted(tokens[:-1])), set())
         confirmed = {
-            pid
-            for pid in pool
-            if f"{size}MM" in (described.get(pid) or "").upper()
+            pid for pid in pool if f"{size}MM" in (described.get(pid) or "").upper()
         }
         hit = _only(confirmed)
-        if hit:
-            out[code] = Match(hit, _RUNG_SIZE_DROP)
-            written.append((code, hit, _RUNG_SIZE_DROP))
+        return (hit, _RUNG_SIZE_DROP) if hit else None
+
+    written: list[tuple[str, str, str, bool]] = []
+    for code in unresolved:
+        trimmed = code.strip()
+        tokens = [t.upper() for t in _tokens(trimmed)]
+
+        answer = _product_ladder(trimmed, tokens)
+        if answer is not None:
+            product_id, rung = answer
+            if product_id:
+                out[code] = Match(product_id, rung)
+                if rung in _REMEMBERED:
+                    written.append((code, product_id, rung, False))
+            # A refusal is an ANSWER: the code is one of ours and we cannot say which one.
+            # Falling through to the set rungs would answer a question about products with
+            # a set, which is a different claim, not a weaker one.
+            continue
+
+        # -- rungs 5-7: our SET codes (R19, R20) -------------------------------------
+        # No size rung here on purpose - a set carries no description to confirm a size
+        # against, so `CWC605-RL-180` stays for a person to answer.
+        set_id, rung = _set_ladder(sets, trimmed, tokens)
+        if set_id:
+            out[code] = Match(None, rung, product_set_id=set_id)
+            # ALWAYS written down, exact included - unlike a product exact match, nothing in
+            # the catalogue carries this code, so the binding is invisible unless it is
+            # recorded, and every screen that says what a code means reads the alias table.
+            written.append((code, set_id, rung, True))
 
     if remember and written:
         _remember(db, supplier_id, written, actor=actor)
     return out
 
 
+def _set_index(db: Session, *, home: Optional[str]) -> dict[str, dict[str, set[str]]]:
+    """Our ACTIVE set codes, indexed the three ways the set rungs ask about them.
+
+    Every active set is read rather than probed for: there are two orders of magnitude fewer
+    sets than products (88 on the dev copy), so a token probe would be machinery bought for
+    nothing.
+
+    Scoped STRICTLY to the supplier's own company, which is stronger than the product side's
+    "prefer home" rule and deliberately so (AC-F12.8). Our companies hold the same PRODUCT
+    codes twice over, so one spelling seen once per company is one product wearing one name;
+    set codes carry no such twinning, and a Sorento supplier's list naming a Mocha set code
+    is naming something that is not ours to bind.
+    """
+    query = db.query(ProductSet).filter(ProductSet.is_active.is_(True))
+    if home:
+        query = query.filter(ProductSet.company_id == str(home))
+    index: dict[str, dict[str, set[str]]] = {"exact": {}, "norm": {}, "tokens": {}}
+    for row in query.all():
+        sid = str(row.id)
+        code = (row.set_code or "").strip()
+        if not code:
+            continue
+        index["exact"].setdefault(code.upper(), set()).add(sid)
+        index["norm"].setdefault(_norm(code), set()).add(sid)
+        index["tokens"].setdefault(
+            tuple(sorted(t.upper() for t in _tokens(code))), set()
+        ).add(sid)
+    return index
+
+
+def _set_ladder(
+    sets: dict[str, dict], trimmed: str, tokens: list[str]
+) -> tuple[Optional[str], str]:
+    """Rungs 5-7, the product rungs' three questions asked of `product_sets.set_code`."""
+    for key, rung in (
+        (trimmed.upper(), _RUNG_SET_EXACT),
+        (_norm(trimmed), _RUNG_SET_SEPARATOR),
+        (tuple(sorted(tokens)), _RUNG_SET_TOKEN_SET),
+    ):
+        bucket = "exact" if rung == _RUNG_SET_EXACT else (
+            "norm" if rung == _RUNG_SET_SEPARATOR else "tokens"
+        )
+        pool = sets[bucket].get(key, set())
+        if pool:
+            # Two sets answering one code cannot both be what the supplier meant, and the
+            # rungs below would answer the same ambiguity a looser way.
+            return _only(pool), rung
+    return None, ""
+
+
 def _remember(
     db: Session,
     supplier_id: str,
-    binds: list[tuple[str, str, str]],
+    binds: list[tuple[str, str, str, bool]],
     *,
     actor: Optional[str],
 ) -> None:
     """Write the worked-out binds down as `auto` aliases. Does not commit.
 
+    `(code, target id, rung, is_set)`. The company is read off the thing being bound - a
+    product or a set - so the memory is filed where the people who will read it can see it.
+
     `ON CONFLICT DO NOTHING` against the identity index: two uploads racing on the same code
     is a duplicate, not a failure, and the second one's answer is the same as the first's.
     """
-    for code, product_id, rung in binds:
+    for code, target_id, rung, is_set in binds:
+        column, table = (
+            ("product_set_id", "product_sets") if is_set else ("product_id", "products")
+        )
         db.execute(
             text(
-                """
+                f"""
                 INSERT INTO scm.supplier_product_code_alias
-                    (id, company_id, supplier_id, supplier_code, product_id, source,
+                    (id, company_id, supplier_id, supplier_code, {column}, source,
                      matched_by, created_by, created_at)
-                SELECT :id, p.company_id, :supplier_id, :code, :product_id, 'auto',
+                SELECT :id, t.company_id, :supplier_id, :code, :target_id, 'auto',
                        :rung, :actor, now()
-                FROM products p WHERE p.id = :product_id
+                FROM {table} t WHERE t.id = :target_id
                 ON CONFLICT DO NOTHING
                 """
             ),
@@ -313,7 +416,7 @@ def _remember(
                 "id": str(uuid.uuid4()),
                 "supplier_id": str(supplier_id),
                 "code": code.strip(),
-                "product_id": str(product_id),
+                "target_id": str(target_id),
                 "rung": rung,
                 "actor": actor,
             },

@@ -204,7 +204,11 @@ class SupplierCodeAliasWrite(BaseModel):
     supplier_id: str
     #: The supplier's spelling, verbatim - it is what their file says.
     supplier_code: str = Field(..., min_length=1, max_length=120)
-    product_id: str
+    #: Exactly one of the two (R19, R20). A supplier who sells the whole WC writes our SET
+    #: code, and no product carries it, so a picker that could only answer with a product
+    #: had no way to say what the code means. The service refuses both and neither.
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
 
 
 @router.get("/supplier-code-aliases")
@@ -235,14 +239,15 @@ def create_supplier_code_alias(
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """"This code is that product." Replaces any earlier ruling and RE-BINDS the rows already
-    uploaded under it, so the loading plan and the PI convert show the answer today rather
-    than after the next upload."""
+    """"This code is that product" - or that SET. Replaces any earlier ruling and RE-BINDS
+    the rows already uploaded under it, so the loading plan and the PI convert show the
+    answer today rather than after the next upload."""
     out = supplier_code_alias_service.create(
         db,
         supplier_id=body.supplier_id,
         supplier_code=body.supplier_code,
         product_id=body.product_id,
+        product_set_id=body.product_set_id,
         actor=_actor(current_user),
     )
     db.commit()

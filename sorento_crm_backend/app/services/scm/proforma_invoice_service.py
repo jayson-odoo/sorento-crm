@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product
+from app.models.product_set import ProductSet
 from app.models.scm import (
     ContainerSize,
     ProformaInvoice,
@@ -169,15 +170,36 @@ def _with_supplier_codes(
         return known
     rows = (
         db.query(Product.id, Product.product_code)
-        .filter(Product.id.in_([m.product_id for m in found.values()]))
+        .filter(Product.id.in_([m.product_id for m in found.values() if m.product_id]))
         .all()
     )
-    by_id = {str(pid): {"id": str(pid), "product_code": code} for pid, code in rows}
+    by_id = {
+        str(pid): {"id": str(pid), "product_code": code, "product_set_id": None}
+        for pid, code in rows
+    }
+    # A code can name one of our SETS (R19). It carries no product id at all, so the entry
+    # holds the set instead - `product_code` is the set's own code, because that is what
+    # every screen showing "what this line matched" has to print.
+    set_rows = (
+        db.query(ProductSet.id, ProductSet.set_code)
+        .filter(
+            ProductSet.id.in_([m.product_set_id for m in found.values() if m.product_set_id])
+        )
+        .all()
+    )
+    by_set = {
+        str(sid): {"id": None, "product_code": code, "product_set_id": str(sid)}
+        for sid, code in set_rows
+    }
     out = dict(known)
     for code, match in found.items():
-        product = by_id.get(match.product_id)
-        if product:
-            out[code.upper()] = product
+        target = (
+            by_set.get(str(match.product_set_id))
+            if match.product_set_id
+            else by_id.get(str(match.product_id))
+        )
+        if target:
+            out[code.upper()] = target
     return out
 
 
@@ -908,6 +930,7 @@ def apply(
                     supplier_qty=ln.qty,
                     supplier_unit_price=ln.unit_price,
                     product_id=product["id"] if product else None,
+                    product_set_id=product.get("product_set_id") if product else None,
                 )
             )
         db.flush()

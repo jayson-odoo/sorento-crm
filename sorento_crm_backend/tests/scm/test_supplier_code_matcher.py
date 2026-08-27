@@ -22,6 +22,7 @@ import pytest
 from app.models.company import Company
 from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product_set import ProductSet
 from app.models.scm import SupplierProductCodeAlias
 from app.services.company_scope import company_scope
 from tests._pg_fixture import pg_session
@@ -72,6 +73,39 @@ class World:
     def supplier_code(self, code: str) -> str:
         """The same marker prefix, so a supplier code lines up with our catalogue."""
         return f"{MARKER}{self.tag}-{code}"
+
+    def product_set(
+        self, code: str, members: list, *, company_id: str | None = None
+    ) -> "ProductSet":
+        """One of OUR sets, marker-prefixed like a product code (F12, R19).
+
+        `members` are `(product, quantity, sort_order)`, in the order a person authored
+        them - `sort_order` is one of the driver's tie-breaks, so the tests hand it in
+        rather than letting the enumeration invent one.
+        """
+        from app.models.product_set import ProductSet, ProductSetMember
+
+        product_set = ProductSet(
+            id=_u(),
+            set_code=f"{MARKER}{self.tag}-{code}",
+            name=code,
+            is_active=True,
+            **({"company_id": company_id} if company_id else {}),
+        )
+        self.db.add(product_set)
+        self.db.flush()
+        for product, quantity, sort_order in members:
+            self.db.add(
+                ProductSetMember(
+                    id=_u(),
+                    product_set_id=product_set.id,
+                    product_id=product.id,
+                    quantity=quantity,
+                    sort_order=sort_order,
+                )
+            )
+        self.db.flush()
+        return product_set
 
 
 def _resolve(db, w: World, *codes: str):

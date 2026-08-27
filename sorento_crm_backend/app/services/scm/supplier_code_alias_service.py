@@ -18,6 +18,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
+from app.models.product_set import ProductSet
 from app.models.scm import (
     ProformaInvoice,
     ProformaInvoiceLine,
@@ -48,17 +49,34 @@ def _product_or_404(db: Session, product_id: str) -> Product:
     return product
 
 
+def _set_or_404(db: Session, product_set_id: str) -> ProductSet:
+    """One of OUR sets, through the ORM so the company filter applies: a code cannot be
+    bound to another company's set any more than to another company's product."""
+    if not _is_uuid(product_set_id):
+        raise AppException(404, "That product set does not exist.", detail="product_set_id")
+    row = db.query(ProductSet).filter(ProductSet.id == str(product_set_id)).first()
+    if row is None:
+        raise AppException(404, "That product set does not exist.", detail="product_set_id")
+    return row
+
+
 def create(
     db: Session,
     *,
     supplier_id: str,
     supplier_code: str,
-    product_id: str,
+    product_id: Optional[str] = None,
+    product_set_id: Optional[str] = None,
     actor: Optional[str] = None,
 ) -> dict:
-    """"This code is that product." Replaces whatever was recorded before, and re-binds.
+    """"This code is that product" - or that SET. Replaces what was recorded, and re-binds.
 
-    Replaces rather than adds: one supplier code means one product, and two rows saying
+    Exactly one of the two (R19, R20). A supplier who sells the whole WC writes the set
+    code, and no product carries it, so "none of ours" would be the wrong answer and a
+    member would be the wrong half. Two targets at once is refused here rather than at the
+    database's CHECK, so the operator is told what to do about it.
+
+    Replaces rather than adds: one supplier code means one thing, and two rows saying
     different things is the state the identity index exists to forbid. A manual pick landing
     on top of an automatic one is the normal path - it is how a guess gets corrected.
 
@@ -69,15 +87,41 @@ def create(
         raise AppException(422, "Name the code the supplier wrote.", detail="supplier_code")
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
-    product = _product_or_404(db, product_id)
+    if bool(product_id) == bool(product_set_id):
+        raise AppException(
+            422,
+            "Name either a product or a product set for this code, not both and not neither.",
+            detail="product_id",
+        )
 
-    written = _record(db, supplier_id, code, str(product.id), _MANUAL, actor)
-    rebound = _rebind(db, supplier_id, code, str(product.id))
+    if product_set_id:
+        product_set = _set_or_404(db, product_set_id)
+        written = _record(db, supplier_id, code, None, str(product_set.id), _MANUAL, actor)
+        rebound = _rebind(db, supplier_id, code, None, str(product_set.id))
+        return {
+            "id": str(written.id),
+            "supplier_code": written.supplier_code,
+            "product_id": None,
+            "product_code": None,
+            "product_set_id": str(product_set.id),
+            "set_code": product_set.set_code,
+            "set_name": product_set.name,
+            "source": written.source,
+            "matched_by": written.matched_by,
+            **rebound,
+        }
+
+    product = _product_or_404(db, str(product_id))
+    written = _record(db, supplier_id, code, str(product.id), None, _MANUAL, actor)
+    rebound = _rebind(db, supplier_id, code, str(product.id), None)
     return {
         "id": str(written.id),
         "supplier_code": written.supplier_code,
         "product_id": str(product.id),
         "product_code": product.product_code,
+        "product_set_id": None,
+        "set_code": None,
+        "set_name": None,
         "source": written.source,
         "matched_by": written.matched_by,
         **rebound,
@@ -112,13 +156,16 @@ def dismiss(
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
-    written = _record(db, supplier_id, code, None, _DISMISSED, actor)
-    rebound = _rebind(db, supplier_id, code, None)
+    written = _record(db, supplier_id, code, None, None, _DISMISSED, actor)
+    rebound = _rebind(db, supplier_id, code, None, None)
     return {
         "id": str(written.id),
         "supplier_code": written.supplier_code,
         "product_id": None,
         "product_code": None,
+        "product_set_id": None,
+        "set_code": None,
+        "set_name": None,
         "source": written.source,
         "matched_by": written.matched_by,
         **rebound,
@@ -130,6 +177,7 @@ def _record(
     supplier_id: str,
     code: str,
     product_id: Optional[str],
+    product_set_id: Optional[str],
     source: str,
     actor: Optional[str],
 ) -> SupplierProductCodeAlias:
@@ -153,13 +201,18 @@ def _record(
             supplier_id=str(supplier_id),
             supplier_code=code,
             product_id=product_id,
+            product_set_id=product_set_id,
             source=source,
             matched_by=source,
             created_by=actor,
         )
         db.add(existing)
     else:
+        # Both columns, every time. A ruling that named a set and now names a product must
+        # not leave the set id behind it: the CHECK refuses a row naming two things, and a
+        # reader that saw both could not say which one the code means.
         existing.product_id = product_id
+        existing.product_set_id = product_set_id
         existing.source = source
         existing.matched_by = source
         existing.created_by = actor
@@ -192,7 +245,13 @@ def delete(db: Session, alias_id: str, *, actor: Optional[str] = None) -> dict:
 
     found = resolve(db, supplier_id, [code], remember=False, actor=actor)
     match = found.get(code)
-    rebound = _rebind(db, supplier_id, code, match.product_id if match else None)
+    rebound = _rebind(
+        db,
+        supplier_id,
+        code,
+        match.product_id if match else None,
+        match.product_set_id if match else None,
+    )
     return {"deleted": 1, **rebound}
 
 
@@ -220,6 +279,7 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
         .filter(
             SupplierInventory.supplier_id == str(supplier_id),
             SupplierInventory.product_id.is_(None),
+            SupplierInventory.product_set_id.is_(None),
         )
         .all()
     )
@@ -239,6 +299,7 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
             )
             .exists(),
             ProformaInvoiceLine.product_id.is_(None),
+            ProformaInvoiceLine.product_set_id.is_(None),
         )
         .all()
     )
@@ -260,20 +321,26 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
 
     found = resolve(db, supplier_id, codes, remember=True, actor=actor)
     # Keyed the way the rows are read back: two rows can spell one code in two cases, and the
-    # ladder answers under the spelling it was handed.
-    by_code = {code.strip().upper(): match.product_id for code, match in found.items()}
+    # ladder answers under the spelling it was handed. Both halves of the answer travel,
+    # because since R19 a code can name a set as readily as a product.
+    by_code = {
+        code.strip().upper(): (match.product_id, match.product_set_id)
+        for code, match in found.items()
+    }
 
     bound_stock = 0
     for row in stock:
-        product_id = by_code.get((row.item_code or "").strip().upper())
-        if product_id:
+        product_id, set_id = by_code.get((row.item_code or "").strip().upper(), (None, None))
+        if product_id or set_id:
             row.product_id = product_id
+            row.product_set_id = set_id
             bound_stock += 1
     bound_lines = 0
     for line in lines:
-        product_id = by_code.get((line.item_code or "").strip().upper())
-        if product_id:
+        product_id, set_id = by_code.get((line.item_code or "").strip().upper(), (None, None))
+        if product_id or set_id:
             line.product_id = product_id
+            line.product_set_id = set_id
             bound_lines += 1
     db.flush()
 
@@ -291,11 +358,13 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
     rows = (
-        # OUTER, because a dismissal has no product and is still a ruling somebody has to be
-        # able to see and undo. An inner join would hide exactly the rows whose only route
-        # back into the queue is the Forget button beside them.
-        db.query(SupplierProductCodeAlias, Product)
+        # OUTER on BOTH, because a ruling names a product, a set, or - when it is a
+        # dismissal - neither, and all three are rulings somebody has to be able to see and
+        # undo. An inner join would hide exactly the rows whose only route back into the
+        # queue is the Forget button beside them.
+        db.query(SupplierProductCodeAlias, Product, ProductSet)
         .outerjoin(Product, Product.id == SupplierProductCodeAlias.product_id)
+        .outerjoin(ProductSet, ProductSet.id == SupplierProductCodeAlias.product_set_id)
         .filter(SupplierProductCodeAlias.supplier_id == str(supplier_id))
         .order_by(SupplierProductCodeAlias.supplier_code)
         .all()
@@ -306,12 +375,14 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
             "supplier_code": alias.supplier_code,
             "product_code": product.product_code if product else None,
             "product_name": product.product_name if product else None,
+            "set_code": product_set.set_code if product_set else None,
+            "set_name": product_set.name if product_set else None,
             "source": alias.source,
             "matched_by": alias.matched_by,
             "created_by": alias.created_by,
             "created_at": alias.created_at.isoformat() if alias.created_at else None,
         }
-        for alias, product in rows
+        for alias, product, product_set in rows
     ]
 
 
@@ -341,7 +412,10 @@ def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         db.query(SupplierInventory)
         .filter(
             SupplierInventory.supplier_id == str(supplier_id),
+            # Unbound means bound to NEITHER: a row naming a set is answered, and the queue
+            # is a to-do list (R19).
             SupplierInventory.product_id.is_(None),
+            SupplierInventory.product_set_id.is_(None),
             func.upper(SupplierInventory.item_code).notin_(dismissed),
         )
         .order_by(SupplierInventory.item_code)
@@ -362,13 +436,21 @@ def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
 
 
 def _rebind(
-    db: Session, supplier_id: str, code: str, product_id: Optional[str]
+    db: Session,
+    supplier_id: str,
+    code: str,
+    product_id: Optional[str],
+    product_set_id: Optional[str] = None,
 ) -> dict:
-    """Point every row already uploaded under this code at the product it now means.
+    """Point every row already uploaded under this code at whatever it now means.
 
     Both readers, in the same transaction: the stock list feeds the loading plan and the
     invoice lines feed the convert, and a decision that reached one of them and not the
     other would have the two screens disagreeing about the same code.
+
+    BOTH columns are written on every row, never just the one being set. A row that used to
+    name a set and now names a product has to stop naming the set, or the plan goes on
+    offering the whole WC under a code somebody has just said is the pedestal.
     """
     stock = (
         db.query(SupplierInventory)
@@ -380,6 +462,7 @@ def _rebind(
     )
     for row in stock:
         row.product_id = product_id
+        row.product_set_id = product_set_id
 
     lines = (
         db.query(ProformaInvoiceLine)
@@ -392,6 +475,7 @@ def _rebind(
     )
     for line in lines:
         line.product_id = product_id
+        line.product_set_id = product_set_id
     db.flush()
     return {
         "rebound_stock_rows": len(stock),

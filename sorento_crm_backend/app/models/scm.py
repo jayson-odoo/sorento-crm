@@ -1152,6 +1152,14 @@ class SupplierProductCodeAlias(Base, CompanyScopedMixin):
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
     )
+    #: The other thing a supplier code can name (R19, R20, migration 433): a product SET.
+    #: `CWC605-RL` is the whole WC - pedestal plus cistern - and no product carries that
+    #: code, so a code spelled as one of our set codes could never bind before this column.
+    #: Exactly one of `product_id` / `product_set_id` is set, unless the row is a dismissal
+    #: and neither is.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="CASCADE"), nullable=True
+    )
     source = Column(String(10), nullable=False, server_default=text("'auto'"))
     matched_by = Column(Text, nullable=True)
     created_by = Column(String(200), nullable=True)
@@ -1162,14 +1170,23 @@ class SupplierProductCodeAlias(Base, CompanyScopedMixin):
             "source IN ('auto', 'manual', 'dismissed')",
             name="ck_scm_supplier_code_alias_source",
         ),
-        # `source` and `product_id` are one fact, so the database says so: dismissed means
-        # exactly "no product", and a row claiming both is unreadable by every screen.
+        # `source` and what the row names are one fact, so the database says so: dismissed
+        # means exactly "nothing of ours", and a row claiming both is unreadable by every
+        # screen that renders it.
         CheckConstraint(
-            "(source = 'dismissed') = (product_id IS NULL)",
+            "(source = 'dismissed') = (product_id IS NULL AND product_set_id IS NULL)",
             name="ck_scm_supplier_code_alias_dismissed",
+        ),
+        # One code means ONE thing. A row naming a product and a set at once cannot be
+        # re-bound - the stock row and the invoice line each carry one of the two - so the
+        # database refuses it rather than leaving every reader to choose.
+        CheckConstraint(
+            "NOT (product_id IS NOT NULL AND product_set_id IS NOT NULL)",
+            name="ck_scm_supplier_code_alias_one_target",
         ),
         Index("ix_scm_supplier_code_alias_supplier", "supplier_id"),
         Index("ix_scm_supplier_code_alias_product", "product_id"),
+        Index("ix_scm_supplier_code_alias_set", "product_set_id"),
         # Declared on the MODEL as well as in migration 431: a CI database is built with
         # `create_all` and never runs a migration body, so without it the guard against one
         # supplier code meaning two products exists in production and nowhere else.
@@ -1216,6 +1233,13 @@ class SupplierInventory(Base, CompanyScopedMixin):
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
+    #: The row's other possible binding (R19, migration 433): the supplier's code names a
+    #: product SET, not a product. `CWC605-RL` is a whole WC and no product carries that
+    #: code, so before this column the row could only sit unmatched. Never both - the
+    #: matcher answers one code with one thing.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
 
     qty_packed = Column(Numeric, nullable=False, server_default=text("0"))
     qty_unfinished = Column(Numeric, nullable=False, server_default=text("0"))
@@ -1238,6 +1262,7 @@ class SupplierInventory(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_supplier_inventory_supplier", "supplier_id"),
         Index("ix_scm_supplier_inventory_product", "product_id"),
+        Index("ix_scm_supplier_inventory_set", "product_set_id"),
         # Declared on the MODEL as well as in migration 336, because a CI database is built
         # with `create_all` and never runs a migration body: without it the guard against a
         # doubled packed quantity exists in production and nowhere else.
@@ -1564,6 +1589,13 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
+    #: The line's other possible binding (R19/R21, migration 433): the supplier priced a
+    #: SET. Stock lives on the members, so `convert_to_draft_shipment` explodes such a line
+    #: into one shipment line per member - the invoice itself keeps the set code, because
+    #: that is what the supplier reads.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
@@ -1572,6 +1604,7 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
         Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
+        Index("ix_scm_proforma_invoice_line_set", "product_set_id"),
         {"schema": "scm"},
     )
 

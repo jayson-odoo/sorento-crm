@@ -53,8 +53,13 @@ def _parse(db: Session, data: bytes) -> InventoryReadResult:
 def _products_by_code(
     db: Session, codes: set[str], *, supplier_id: Optional[str] = None,
     remember: bool = True, actor: Optional[str] = None,
-) -> dict[str, str]:
-    """Which of OUR products each supplier code means (R16).
+) -> dict[str, dict]:
+    """What each supplier code means - a product, or since R19 a product SET.
+
+    `{code: {"product_id": ..., "product_set_id": ...}}`, exactly one of the two set. A dict
+    rather than a bare id because the supplier sells the whole WC: `CWC605-RL` is our SET,
+    no product carries that code, and a mapping that could only hold a product id had
+    nowhere to put the answer.
 
     Through the shared ladder rather than an exact match: the supplier writes their own
     spelling - reordered tokens, a trap size ours omits - and 79 codes on the uploaded
@@ -71,12 +76,15 @@ def _products_by_code(
             .filter(Product.product_code.in_(list(codes)))
             .all()
         )
-        return {str(code): str(pid) for code, pid in rows}
+        return {
+            str(code): {"product_id": str(pid), "product_set_id": None}
+            for code, pid in rows
+        }
 
     from app.services.scm.supplier_code_matcher import resolve
 
     return {
-        code: match.product_id
+        code: {"product_id": match.product_id, "product_set_id": match.product_set_id}
         for code, match in resolve(
             db, supplier_id, codes, remember=remember, actor=actor
         ).items()
@@ -268,7 +276,8 @@ def apply(
                 id=_uuid(),
                 supplier_id=supplier_id,
                 item_code=code,
-                product_id=known.get(code),
+                product_id=(known.get(code) or {}).get("product_id"),
+                product_set_id=(known.get(code) or {}).get("product_set_id"),
                 qty_packed=v["qty_packed"],
                 qty_unfinished=v["qty_unfinished"],
                 cbm_per_unit=v["cbm_per_unit"],
