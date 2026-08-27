@@ -2,7 +2,12 @@
 
 import * as React from 'react';
 import { ListChecks } from 'lucide-react';
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
 import type {
@@ -34,7 +39,11 @@ import { PileQueueDialog } from './PileQueueDialog';
  * A real `<table>` and not the shared DataGrid on purpose: five fixed rows inside a popover,
  * with no sorting, paging or column preferences to speak of.
  */
-export function BoardTrailPopover({ contribution }: { contribution: BoardContribution }) {
+export function BoardTrailPopover({
+  contribution,
+}: {
+  contribution: BoardContribution;
+}) {
   const trail = contribution.trail ?? [];
   /**
    * The whole queue, over the popover.
@@ -71,7 +80,10 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
           >
             {/* Scrolls in BOTH directions: at 375px the row is wider than the phone, and
                 clipping it silently drops Took and From. */}
-            <div data-testid={`trail-${contribution.key}`} className="max-h-[60vh] overflow-auto">
+            <div
+              data-testid={`trail-${contribution.key}`}
+              className="max-h-[60vh] overflow-auto"
+            >
               <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2 text-xs font-semibold">
                 <span>How this decision was reached</span>
                 <ItemFlagChips contribution={contribution} />
@@ -85,10 +97,16 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                   <thead>
                     <tr className="border-b text-2xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-1.5 text-start font-medium">#</th>
-                      <th className="px-2 py-1.5 text-start font-medium">Question</th>
-                      <th className="px-2 py-1.5 text-start font-medium">Answer</th>
+                      <th className="px-2 py-1.5 text-start font-medium">
+                        Question
+                      </th>
+                      <th className="px-2 py-1.5 text-start font-medium">
+                        Answer
+                      </th>
                       <th className="px-2 py-1.5 text-end font-medium">Took</th>
-                      <th className="px-3 py-1.5 text-start font-medium">From</th>
+                      <th className="px-3 py-1.5 text-start font-medium">
+                        From
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -97,9 +115,13 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                         <tr
                           data-step={step.step}
                           data-testid={`trail-step-${contribution.key}-${step.kind}`}
-                          className={hasFooter(step) ? '' : 'border-b last:border-b-0'}
+                          className={
+                            hasFooter(step) ? '' : 'border-b last:border-b-0'
+                          }
                         >
-                          <td className="px-3 py-1.5 tabular-nums">{step.step}</td>
+                          <td className="px-3 py-1.5 tabular-nums">
+                            {step.step}
+                          </td>
                           <td className="px-2 py-1.5">
                             <span className="block" title={step.question}>
                               {step.question}
@@ -109,7 +131,8 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                             <span
                               data-testid={`trail-answer-${contribution.key}-${step.kind}`}
                               className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${
-                                ANSWER_CLASS[step.answer] ?? 'bg-muted text-muted-foreground'
+                                ANSWER_CLASS[step.answer] ??
+                                'bg-muted text-muted-foreground'
                               }`}
                             >
                               {ANSWER_LABEL[step.answer] ?? step.answer}
@@ -142,17 +165,23 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                                 </p>
                               )}
                               {step.note && (
-                                <p className="text-2xs text-muted-foreground">{step.note}</p>
+                                <p className="text-2xs text-muted-foreground">
+                                  {step.note}
+                                </p>
                               )}
                               {step.kind === 'pool' && step.pool && (
-                                <PoolPile pool={step.pool} contributionKey={contribution.key} />
+                                <PoolPile
+                                  pool={step.pool}
+                                  contributionKey={contribution.key}
+                                />
                               )}
                               {(step.ahead?.length ?? 0) > 0 && (
                                 <QueueLink
                                   step={step}
                                   contributionKey={contribution.key}
                                   onOpenQueue={
-                                    contribution.product_id && contribution.fulfilment_warehouse_id
+                                    contribution.product_id &&
+                                    contribution.fulfilment_warehouse_id
                                       ? () => setQueueOpen(true)
                                       : undefined
                                   }
@@ -170,22 +199,26 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
           </PopoverContent>
         </PopoverPortal>
       </Popover>
-      {queueOpen && contribution.product_id && contribution.fulfilment_warehouse_id && (
-        <PileQueueDialog
-          productId={contribution.product_id}
-          warehouseId={contribution.fulfilment_warehouse_id}
-          lineId={contribution.line_id}
-          itemCode={contribution.item_code}
-          onClose={() => setQueueOpen(false)}
-        />
-      )}
+      {queueOpen &&
+        contribution.product_id &&
+        contribution.fulfilment_warehouse_id && (
+          <PileQueueDialog
+            productId={contribution.product_id}
+            warehouseId={contribution.fulfilment_warehouse_id}
+            lineId={contribution.line_id}
+            itemCode={contribution.item_code}
+            onClose={() => setQueueOpen(false)}
+          />
+        )}
     </>
   );
 }
 
 /** A rung says something under itself when it has a sentence, a hint, a pile or a queue to name. */
 function hasFooter(step: BoardTrailStep): boolean {
-  return Boolean(step.why || step.note || step.pool || (step.ahead?.length ?? 0) > 0);
+  return Boolean(
+    step.why || step.note || step.pool || (step.ahead?.length ?? 0) > 0,
+  );
 }
 
 /**
@@ -206,10 +239,22 @@ function hasFooter(step: BoardTrailStep): boolean {
  * cold chip for the same class), and "Not classified" when the item has no evidence at all.
  * The Proof button beside the chips is where the ranked number behind any of these lives.
  */
-function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
+export function ItemFlagChips({
+  contribution,
+  idKey = contribution.key,
+}: {
+  contribution: BoardContribution;
+  /** Test-id key. The cell dialog's header renders the same chips under its own key. */
+  idKey?: string;
+}) {
   const flags = contribution.item_flags;
   if (!flags) return null;
-  const chips: Array<{ key: string; label: string; title: string; tone: string }> = [];
+  const chips: Array<{
+    key: string;
+    label: string;
+    title: string;
+    tone: string;
+  }> = [];
   if (flags.dealer_hot_selling) {
     const where = flags.dealer_hot_selling_where.join(', ');
     chips.push({
@@ -224,7 +269,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'dealer-cold',
       label: 'Cold at retail',
-      title: 'Cold at retail: the shared pool is offered as it is for any ordinary item.',
+      title:
+        'Cold at retail: the shared pool is offered as it is for any ordinary item.',
       tone: 'draft',
     });
   }
@@ -242,7 +288,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'project-cold',
       label: 'Cold at project',
-      title: 'Cold at project: the shared pool is offered as it is for any ordinary item.',
+      title:
+        'Cold at project: the shared pool is offered as it is for any ordinary item.',
       tone: 'draft',
     });
   }
@@ -258,7 +305,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'not-classified',
       label: 'Not classified',
-      title: 'No retail or project deliveries of this item in the last 12 months, so hot-selling cannot be judged.',
+      title:
+        'No retail or project deliveries of this item in the last 12 months, so hot-selling cannot be judged.',
       tone: 'unknown',
     });
   }
@@ -266,13 +314,13 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     <span className="inline-flex flex-wrap items-center gap-1">
       {chips.length > 0 && (
         <span
-          data-testid={`trail-flags-${contribution.key}`}
+          data-testid={`trail-flags-${idKey}`}
           className="inline-flex flex-wrap gap-1"
         >
           {chips.map((chip) => (
             <span
               key={chip.key}
-              data-testid={`trail-flag-${contribution.key}-${chip.key}`}
+              data-testid={`trail-flag-${idKey}-${chip.key}`}
               title={chip.title}
               className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${statusPillClass(chip.tone)}`}
             >
@@ -281,7 +329,10 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
           ))}
         </span>
       )}
-      <ClassificationProofPopover productId={contribution.product_id} testId={contribution.key} />
+      <ClassificationProofPopover
+        productId={contribution.product_id}
+        testId={idKey}
+      />
     </span>
   );
 }
@@ -294,13 +345,35 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
  * whole position. Both are here, with the subtraction between them, so the rung can be checked
  * against the stock screen. Seven fixed cells of arithmetic, so a plain table.
  */
-function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributionKey: string }) {
+function PoolPile({
+  pool,
+  contributionKey,
+}: {
+  pool: BoardTrailPool;
+  contributionKey: string;
+}) {
   const cells: Array<{ label: string; value: string; title?: string }> = [
     { label: 'On hand', value: pool.on_hand },
-    { label: 'SO qty', value: pool.so_qty, title: 'Outstanding on every open sales order at this location' },
-    { label: 'SPO qty', value: pool.spo_qty, title: 'On the water to this location' },
-    { label: 'Available', value: pool.available, title: 'On hand - SO qty + SPO qty' },
-    { label: 'Free', value: pool.free, title: 'On hand less reserved less confirmed holds' },
+    {
+      label: 'SO qty',
+      value: pool.so_qty,
+      title: 'Outstanding on every open sales order at this location',
+    },
+    {
+      label: 'SPO qty',
+      value: pool.spo_qty,
+      title: 'On the water to this location',
+    },
+    {
+      label: 'Available',
+      value: pool.available,
+      title: 'On hand - SO qty + SPO qty',
+    },
+    {
+      label: 'Free',
+      value: pool.free,
+      title: 'On hand less reserved less confirmed holds',
+    },
     {
       label: 'Claimed ahead',
       value: `${pool.claimed_ahead_qty} (${pool.claimed_ahead_lines} line${
@@ -308,7 +381,11 @@ function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributio
       })`,
       title: "By this location's own orders ranked ahead of this line",
     },
-    { label: 'Left', value: pool.left, title: 'For this line, when the rung was reached' },
+    {
+      label: 'Left',
+      value: pool.left,
+      title: 'For this line, when the rung was reached',
+    },
   ];
   return (
     <table
@@ -412,7 +489,9 @@ function trailAbsence(contribution: BoardContribution): string {
 
 /** Why there is no ladder to show: the server's own sentence, never one invented here. */
 function noPlanReason(contribution: BoardContribution): string {
-  const stated = contribution.sources.find((source) => source.kind === 'unplannable');
+  const stated = contribution.sources.find(
+    (source) => source.kind === 'unplannable',
+  );
   return (
     stated?.reason ??
     'No fulfilment location on the sales order line, so nothing can be sourced for it.'

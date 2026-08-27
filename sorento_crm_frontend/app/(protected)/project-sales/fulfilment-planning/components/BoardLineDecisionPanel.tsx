@@ -95,7 +95,9 @@ export function BoardLineDecisionPanel({
    * screen is what the database holds, and an editable form over it invites a planner to
    * change something they have not decided to change yet.
    */
-  const [locked, setLocked] = React.useState(() => Boolean(contribution.covered) && !decision);
+  const [locked, setLocked] = React.useState(
+    () => Boolean(contribution.covered) && !decision,
+  );
   const [adding, setAdding] = React.useState(false);
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
@@ -116,11 +118,13 @@ export function BoardLineDecisionPanel({
   const balance = lineBalance(draft);
   const blockers = lineBlockers(draft);
   const needsReason = amendNeedsReason(contribution, draft);
-  const canSave = blockers.length === 0 && (!needsReason || reason.trim().length > 0);
+  const canSave =
+    blockers.length === 0 && (!needsReason || reason.trim().length > 0);
   // WHOLLY bought, which is what the switch means. A composition carrying stock AND a Buy is
   // a revision frozen before the whole-line rule; it renders in full and `lineBlockers` says
   // it cannot be saved that way.
-  const fromStockMinor = balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
+  const fromStockMinor =
+    balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
   const buying = toMinor(draft.buy_qty) > 0 && fromStockMinor === 0;
 
   /**
@@ -228,24 +232,18 @@ export function BoardLineDecisionPanel({
         data-testid={`line-decision-${contribution.key}`}
         className="border-t bg-muted/30 px-4 py-3 sm:px-5"
       >
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
-          <dl className="space-y-2">
-            <Figure label="Ordered" value={contribution.qty_ordered ?? 'Not stated'} />
-            <Figure label="Delivered" value={contribution.qty_delivered ?? 'Not stated'} />
-            <Figure
-              label="Outstanding"
-              value={contribution.qty_outstanding ?? contribution.qty}
-              strong
-            />
-          </dl>
+        <div>
           <div className="space-y-1">
-            <p className="text-2xs uppercase tracking-wide text-muted-foreground">Decision</p>
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">
+              Decision
+            </p>
             <p
               data-testid={`line-decision-blocked-${contribution.key}`}
               className="break-words text-sm text-destructive"
             >
-              This sales order states no fulfilment location, so this line cannot be decided
-              here. Set the location on the sales order, then plan it again.
+              This sales order states no fulfilment location, so this line
+              cannot be decided here. Set the location on the sales order, then
+              plan it again.
             </p>
           </div>
         </div>
@@ -258,23 +256,11 @@ export function BoardLineDecisionPanel({
       data-testid={`line-decision-${contribution.key}`}
       className="border-t bg-muted/30 px-4 py-3 sm:px-5"
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,10rem)_minmax(0,1.4fr)_minmax(0,1fr)]">
-        {/* WHAT THE LINE IS, read-only. The row above shows the outstanding quantity alone,
-            and a planner deciding how to cover it wants the other three beside it. */}
-        <dl className="space-y-2">
-          <Figure label="Ordered" value={contribution.qty_ordered ?? 'Not stated'} />
-          <Figure label="Delivered" value={contribution.qty_delivered ?? 'Not stated'} />
-          <Figure
-            label="Outstanding"
-            value={contribution.qty_outstanding ?? contribution.qty}
-            strong
-          />
-          <Figure label="Incoming by the delivery date" value={draft.timely_spo_qty} />
-        </dl>
-
-        {/* THE COMPOSITION. Every section renders whatever the answer is: a line with no
-            warehouse says so where its Reserve rows would be, and a section that disappears
-            reads as a screen that has not finished loading. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        {/* THE COMPOSITION. The row above already states the outstanding quantity, so the
+            editor carries only what the planner decides. Every section renders whatever the
+            answer is: a line with no warehouse says so where its Reserve rows would be, and a
+            section that disappears reads as a screen that has not finished loading. */}
         <div className="space-y-3">
           <Block label="Reserve">
             {buying ? (
@@ -284,7 +270,10 @@ export function BoardLineDecisionPanel({
             ) : (
               <div className="space-y-2">
                 {draft.reserve.map((row, index) => (
-                  <div key={row.key} className="flex flex-wrap items-center gap-2">
+                  <div
+                    key={row.key}
+                    className="flex flex-wrap items-center gap-2"
+                  >
                     <Input
                       type="number"
                       min="0"
@@ -299,9 +288,12 @@ export function BoardLineDecisionPanel({
                       }}
                       className="h-8 w-24 tabular-nums"
                     />
-                    <span className="text-sm">{row.location ?? 'Location not set'}</span>
+                    <span className="text-sm">
+                      {row.location ?? 'Location not set'}
+                    </span>
                     {/* The SERVER's figure for this location, beside the box it bounds. */}
-                    {availableAt(locations, row.warehouse_id, row.location) !== null && (
+                    {availableAt(locations, row.warehouse_id, row.location) !==
+                      null && (
                       <span className="text-sm text-muted-foreground tabular-nums">
                         {`${availableAt(locations, row.warehouse_id, row.location)} available`}
                       </span>
@@ -348,7 +340,11 @@ export function BoardLineDecisionPanel({
                           variant="dim"
                           aria-label={`Remove the borrow from ${row.donor_project_ref ?? row.warehouse_code}`}
                           onClick={() =>
-                            setBorrow(draft.borrow.filter((entry) => entry.key !== row.key))
+                            setBorrow(
+                              draft.borrow.filter(
+                                (entry) => entry.key !== row.key,
+                              ),
+                            )
                           }
                         >
                           <Trash2 />
@@ -380,9 +376,16 @@ export function BoardLineDecisionPanel({
               )}
 
               {buying || locked ? null : candidates.length === 0 ? (
-                <Muted>No other location or project holds free stock of this item.</Muted>
+                <Muted>
+                  No other location or project holds free stock of this item.
+                </Muted>
               ) : (
-                <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAdding(true)}
+                >
                   <Plus className="size-4" aria-hidden />
                   Add a borrow
                 </Button>
@@ -404,7 +407,9 @@ export function BoardLineDecisionPanel({
                   htmlFor={`line-buy-switch-${contribution.key}`}
                   className="text-sm text-muted-foreground"
                 >
-                  {buying ? `Buy the whole ${draft.open_qty}` : 'Buy the whole line'}
+                  {buying
+                    ? `Buy the whole ${draft.open_qty}`
+                    : 'Buy the whole line'}
                 </label>
               </div>
               {/* An order back is a Buy whose supply is ALREADY on order or already shipped,
@@ -468,7 +473,9 @@ export function BoardLineDecisionPanel({
                     value={draft.buy_reason}
                     disabled={locked}
                     placeholder="In your own words"
-                    onChange={(event) => edit({ ...draft, buy_reason: event.target.value })}
+                    onChange={(event) =>
+                      edit({ ...draft, buy_reason: event.target.value })
+                    }
                   />
                 </div>
               )}
@@ -479,7 +486,9 @@ export function BoardLineDecisionPanel({
         {/* WHAT WOULD BE CONFIRMED, and the three verbs. */}
         <div className="space-y-3">
           <div>
-            <p className="text-2xs uppercase tracking-wide text-muted-foreground">Decision</p>
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">
+              Decision
+            </p>
             <p
               data-testid={`line-decision-summary-${contribution.key}`}
               className="break-words text-sm tabular-nums"
@@ -500,7 +509,10 @@ export function BoardLineDecisionPanel({
             {otherBlockers.length > 0 && (
               <ul className="mt-1 space-y-0.5">
                 {otherBlockers.map((blocker) => (
-                  <li key={blocker} className="break-words text-sm text-destructive">
+                  <li
+                    key={blocker}
+                    className="break-words text-sm text-destructive"
+                  >
                     {blocker}
                   </li>
                 ))}
@@ -514,7 +526,9 @@ export function BoardLineDecisionPanel({
               htmlFor={`line-reason-${contribution.key}`}
             >
               Why this differs
-              {needsReason ? <span className="text-destructive"> *</span> : null}
+              {needsReason ? (
+                <span className="text-destructive"> *</span>
+              ) : null}
             </label>
             <Textarea
               id={`line-reason-${contribution.key}`}
@@ -545,11 +559,18 @@ export function BoardLineDecisionPanel({
               }}
               className="mt-0.5"
             />
-            <span>This might be a system problem, flag it for investigation</span>
+            <span>
+              This might be a system problem, flag it for investigation
+            </span>
           </label>
 
           {locked ? (
-            <Button type="button" size="sm" variant="outline" onClick={() => setLocked(false)}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setLocked(false)}
+            >
               <Pencil className="size-4" aria-hidden />
               Amend
             </Button>
@@ -635,15 +656,19 @@ function draftFor(
   decision: BoardDecision | null,
 ): DraftLine {
   const base = amendDraftFrom(contribution);
-  if (!decision || decision.verdict !== 'amended' || !decision.reserve) return base;
+  if (!decision || decision.verdict !== 'amended' || !decision.reserve)
+    return base;
 
-  const byWarehouse = new Map(decision.reserve.map((row) => [row.warehouse_id, row.qty]));
+  const byWarehouse = new Map(
+    decision.reserve.map((row) => [row.warehouse_id, row.qty]),
+  );
   const reserve = base.reserve.map((row) => ({
     ...row,
     qty: byWarehouse.get(row.warehouse_id) ?? '0',
   }));
   for (const row of decision.reserve) {
-    if (reserve.some((seeded) => seeded.warehouse_id === row.warehouse_id)) continue;
+    if (reserve.some((seeded) => seeded.warehouse_id === row.warehouse_id))
+      continue;
     reserve.push({
       key: `reserve-${row.location ?? row.warehouse_id}`,
       location: row.location ?? null,
@@ -667,7 +692,11 @@ function draftFor(
       reason: row.reason,
       // A donor's position is a fact about NOW; an amendment held in the draft does not
       // carry one, and printing zeroes as "0 free" would say the donor is empty.
-      donor_impact: { free_before: '0', free_after_full_borrow: '0', committed_qty: '0' },
+      donor_impact: {
+        free_before: '0',
+        free_after_full_borrow: '0',
+        committed_qty: '0',
+      },
       donor_core_line_id: row.donor_core_line_id ?? null,
       donor_so_number: row.donor_so_number ?? null,
       donor_line_no: row.donor_line_no ?? null,
@@ -693,34 +722,25 @@ function availableAt(
   code?: string | null,
 ): string | null {
   const found =
-    locations.find((row) => row.warehouse_id && row.warehouse_id === warehouseId) ??
-    (code ? locations.find((row) => row.location === code) : undefined);
+    locations.find(
+      (row) => row.warehouse_id && row.warehouse_id === warehouseId,
+    ) ?? (code ? locations.find((row) => row.location === code) : undefined);
   return found?.available_qty ?? null;
 }
 
-/** One read-only figure of the left-hand strip. */
-function Figure({
+/** One editable section, labelled the way the sheet labels it, so the two read the same. */
+function Block({
   label,
-  value,
-  strong,
+  children,
 }: {
   label: string;
-  value: string;
-  strong?: boolean;
+  children: React.ReactNode;
 }) {
   return (
-    <div>
-      <dt className="text-2xs uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`text-sm tabular-nums${strong ? ' font-medium' : ''}`}>{value}</dd>
-    </div>
-  );
-}
-
-/** One editable section, labelled the way the sheet labels it, so the two read the same. */
-function Block({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
     <section>
-      <p className="mb-1 text-2xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mb-1 text-2xs uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
       <div className="min-w-0">{children}</div>
     </section>
   );
@@ -728,5 +748,7 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 
 /** Block, not inline: two stated absences in one section must not run into one sentence. */
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="block text-sm text-muted-foreground">{children}</span>;
+  return (
+    <span className="block text-sm text-muted-foreground">{children}</span>
+  );
 }
