@@ -233,3 +233,38 @@ def test_the_run_list_carries_the_price_mode_and_supplier(scm_app):
     assert entry["price_mode"] == "ask_new"
     assert entry["supplier_code"] == w["other_code"]
     assert entry["unit_cost"] is None
+
+
+# ===========================================================================
+# the route forwards what the buyer chose (found in the browser, 27 Aug: the POST
+# carried price_mode / supplier_code and returned 200, the row kept the defaults)
+# ===========================================================================
+
+def test_the_route_forwards_price_mode_supplier_and_unit_cost(scm_app):
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_plan_row_decision import _client
+
+    app, db = _client(scm_app, "purchasing")
+    w = _two_supplier_buy(db, "R14W-ROUTE", "R14P-ROUTE")
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/scm/recommendations/{w['rec_id']}/decision",
+            json={
+                "kind": "buy",
+                "buy_qty": 120,
+                "price_mode": "ask_new",
+                "supplier_code": w["other_code"],
+            },
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["price_mode"] == "ask_new"
+        assert body["supplier_code"] == w["other_code"]
+
+    db.expire_all()
+    row = _decision_row(db, w["rec_id"])
+    assert row["price_mode"] == "ask_new"
+    assert row["supplier_id"] == w["other_id"]
