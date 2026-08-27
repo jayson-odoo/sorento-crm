@@ -139,11 +139,21 @@ def create_views() -> None:
     # placed, not stock incoming) and adds po_ordered_v under the old body's honest name.
     _m337 = _load("337_scm_on_order_from_spo.py")
     ordered.extend([_m337.ON_ORDER_FROM_SPO, _m337.PO_ORDERED_V])
+    # 420 moved every SPO document into `spo_allocations` and redefines on_order_v to match:
+    # a LEFT JOIN to the shipment (a shipping order with no container booked yet is still
+    # stock on its way, and 337's inner join dropped every one of them) plus
+    # `warehouse_id IS NOT NULL`. Its body is a function of the bind rather than a constant,
+    # so it is emitted inside the connection below instead of joining `ordered`. Without this
+    # replay a bootstrapped database keeps 337's body while every migrated database holds
+    # 420's, and the two disagree by the whole unshipped book - which is how CI read 90 units
+    # on order where the dev database read 115.
+    _m420 = _load("420_spo_docs_in_allocations.py")
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.
             conn.execute(text(ddl.replace("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)))
-    log.info("scm views created (%d)", len(ordered))
+        conn.execute(text(_m420.on_order_from_spo_documents(conn)))
+    log.info("scm views created (%d)", len(ordered) + 1)
     _fix_committed_v()
 
 
