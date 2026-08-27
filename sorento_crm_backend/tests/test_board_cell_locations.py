@@ -447,13 +447,15 @@ def test_a_location_outside_the_fetched_read_set_keeps_its_nulls():
         board = FulfilmentBoardService(db)
         board._counted_warehouses = {str(bins["BRW"].id)}
 
+        # `own_demand` is the ASKING LINE's own quantity, netted out of SO qty (R1). Empty
+        # here: this row belongs to no line, so nothing of its demand is its own.
         counted = board._location(
             "BRW-BB", (), product_id=str(product.id),
-            warehouse_id=str(bins["BRW"].id), where="own",
+            warehouse_id=str(bins["BRW"].id), where="own", own_demand={},
         )
         cited = board._location(
             "BRW-IR", (), product_id=str(product.id),
-            warehouse_id=str(outside.id), where="other_group",
+            warehouse_id=str(outside.id), where="other_group", own_demand={},
         )
 
         # Counted, and the answer is zero.
@@ -499,9 +501,12 @@ def test_a_cell_holding_two_products_lists_no_pool_rows():
         two = SimpleNamespace(product_id=str(other.id), warehouse_id=str(bins["BRW"].id))
 
         # One product behind the cell: the pool is listed.
-        assert [entry["location"] for entry in board._pool_locations([one], [])] == ["BRW"]
+        assert [
+            entry["location"]
+            for entry in board._pool_locations([one], [], own_demand={})
+        ] == ["BRW"]
         # Two: nothing extra, because no row could say which product it counts.
-        assert board._pool_locations([one, two], []) == []
+        assert board._pool_locations([one, two], [], own_demand={}) == []
 
 
 def test_a_cell_whose_lines_sit_at_two_sites_leads_with_both_own_pools():
@@ -556,10 +561,12 @@ def test_the_group_and_pool_nets_reach_the_wire():
         on_wire = {entry["location"]: entry for entry in cell.model_dump()["locations"]}
 
     # Every location of one ownership group carries that GROUP's net, so the table can
-    # print it once on their shared subtotal: 40 + 10 on hand less the 5 this line owes.
+    # print it once on their shared subtotal: 40 + 10 on hand, and the asking line's own 5
+    # is NOT counted against it (R1) - the subtotal IS the offer the ladder made this line,
+    # `max(group net + its own quantity, 0)`.
     assert on_wire["BRW-BB"]["net_of"] == "BB"
     assert on_wire["MWH-BB"]["net_of"] == "BB"
-    assert on_wire["BRW-BB"]["net"] == on_wire["MWH-BB"]["net"] == "45"
+    assert on_wire["BRW-BB"]["net"] == on_wire["MWH-BB"]["net"] == "50"
 
     # And every site pool carries the five pools' own net, under its own name.
     assert on_wire["BRW"]["net_of"] == "pools"

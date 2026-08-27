@@ -3,11 +3,14 @@
 import * as React from 'react';
 import {
   ColumnDef,
+  ExpandedState,
+  OnChangeFn,
   PaginationState,
   Row,
   RowSelectionState,
   SortingState,
   getCoreRowModel,
+  getExpandedRowModel,
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
@@ -58,6 +61,8 @@ export function PanelDataGrid<TRow extends object>({
   rowSelection,
   onRowSelectionChange,
   enableRowSelection,
+  expanded,
+  onExpandedChange,
   pageSize = 10,
 }: {
   /** A plain heading, or a heading with an embedded link (e.g. the record's own number). */
@@ -112,6 +117,20 @@ export function PanelDataGrid<TRow extends object>({
   onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
   /** Which rows may be ticked. TanStack reads this from the TABLE, never from the column. */
   enableRowSelection?: (row: Row<TRow>) => boolean;
+  /**
+   * Which row is open in place, and the setter for it.
+   *
+   * The STATE is the caller's for the same reason the selection is: what the drawer holds
+   * belongs to the screen that opened it, and a panel that owned the expansion but not the
+   * editor inside it could only hand the row back. Pair it with `meta.expandedContent` on
+   * one column - the shared `DataGridTable` renders that full-width under any expanded row -
+   * and toggle it from `onRowClick`, the way reorder planning's `PlanLinesGrid` does.
+   *
+   * Opt-in: without it the expanded row model is never built, so fifteen existing panels
+   * keep the exact table they have today.
+   */
+  expanded?: ExpandedState;
+  onExpandedChange?: OnChangeFn<ExpandedState>;
   pageSize?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -136,6 +155,7 @@ export function PanelDataGrid<TRow extends object>({
       pagination,
       ...(sortable ? { sorting } : {}),
       ...(rowSelection ? { rowSelection } : {}),
+      ...(expanded === undefined ? {} : { expanded }),
     },
     ...(rowSelection
       ? {
@@ -147,6 +167,9 @@ export function PanelDataGrid<TRow extends object>({
     ...(sortable
       ? { onSortingChange: setSorting, getSortedRowModel: getSortedRowModel() }
       : { enableSorting: false }),
+    ...(expanded === undefined
+      ? {}
+      : { onExpandedChange, getExpandedRowModel: getExpandedRowModel() }),
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',

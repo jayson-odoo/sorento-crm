@@ -681,6 +681,81 @@ def test_a_second_confirm_on_the_same_batch_is_refused_with_a_message(api):
     ) == 2, "no duplicate revision"
 
 
+def _apply_from_the_one_confirm(fixture, *, qty="25"):
+    """The board's SINGLE Confirm (`PLAN-scm-planning-inline-decisions.md` D2).
+
+    Since the Commit section went, the board has ONE button and it posts every order at
+    once through `confirm-all`. A board opened at `?batch=<id>` has to carry that batch
+    here exactly as the per-order Confirm did, or pressing Confirm on a planning change
+    writes an ordinary revision and leaves the batch pending forever.
+    """
+    client = fixture["client"]
+    order = fixture["order"]
+    line_1 = fixture["lines"][0]
+    return client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                {
+                    "pso_id": str(order.id),
+                    "lines": [_line_payload(line_1.id, buy_qty=qty)],
+                }
+            ],
+            "batch_id": str(fixture["batch"].id),
+        },
+    )
+
+
+def test_the_boards_one_confirm_carries_the_batch_and_applies_it(api):
+    fixture = _form_three(api)
+    world = fixture["world"]
+
+    response = _apply_from_the_one_confirm(fixture)
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    assert result["ok"] is True, result
+    world.db.commit()
+
+    world.db.refresh(fixture["batch"])
+    assert fixture["batch"].applied_at is not None, (
+        "the batch is APPLIED by the press, not left pending beside a plain revision"
+    )
+
+    from app.models.project_so import SOSupplyDecision
+
+    assert (
+        world.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == fixture["order"].id)
+        .count()
+    ) == 2, "the first confirmation, then exactly one more"
+
+
+def test_a_second_one_confirm_on_the_same_batch_is_refused_per_order(api):
+    """The batch path's own refusal, reported the way `confirm-all` reports every other
+    one: on the order's result, so the other orders of the press still land."""
+    fixture = _form_three(api)
+    world = fixture["world"]
+    order_id = str(fixture["order"].id)
+
+    assert _apply_from_the_one_confirm(fixture).status_code == 200
+    world.db.commit()
+
+    again = _apply_from_the_one_confirm(fixture)
+    assert again.status_code == 200, again.text
+    result = again.json()["results"][0]
+    assert result["ok"] is False
+    assert "already" in (result["error"] or "").lower()
+    world.db.rollback()
+
+    from app.models.project_so import SOSupplyDecision
+
+    assert (
+        world.db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order_id)
+        .count()
+    ) == 2, "no duplicate revision"
+
+
 # ---------------------------------------------------------------------------
 # AC-P3-11: what the plan then counts
 # ---------------------------------------------------------------------------

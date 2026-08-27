@@ -17,6 +17,7 @@ import {
   amendSummary,
   borrowCandidatesOf,
   decisionFromAmendDraft,
+  suggestionDraftFrom,
 } from './boardAmend';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
 import type { BoardContribution } from '../types/fulfilmentPlanning.types';
@@ -246,6 +247,127 @@ describe('amendDraftFrom on a covered line', () => {
         donor_required_date: '2026-09-10',
       }),
     );
+  });
+});
+
+/**
+ * THE ENGINE'S SUGGESTION, on a line an active decision already covers (C9 / C11).
+ *
+ * The fixture is the plan's own canonical example: SO404352 line 22, SRTWB7518, confirmed at
+ * Reserve 8 from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend
+ * opens on the 8 and the 16 - the planner edits their OWN composition - and Approve suggestion
+ * has to put the 9 and the 15 back, which is the whole reason this seeder exists beside
+ * `amendDraftFrom`.
+ */
+describe('suggestionDraftFrom on a covered line', () => {
+  const frozen = {
+    revision_no: 4,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '9',
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '15',
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      reason: 'The shared pool at BRW covers this much within its cap.',
+    },
+  ];
+
+  /** The covered contribution as the board sends one, with the suggestion beside it. */
+  function coveredContribution(overrides: Partial<BoardContribution> = {}): BoardContribution {
+    const base = contributionOf(
+      {},
+      { qty: '24', fulfilment_location: 'BRW-AM', decision: frozen },
+    );
+    return { ...base, sources: suggestion, ...overrides };
+  }
+
+  it('opens on the engine’s numbers, not on the composition the revision froze', () => {
+    const draft = suggestionDraftFrom(coveredContribution());
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '9'],
+      ['wh-BRW', '15'],
+    ]);
+    expect(draft.buy_qty).toBe('0');
+  });
+
+  it('takes the proposal FROZEN beside the decision when the revision recorded one', () => {
+    // `sources` states the decision on a covered line (the server's `_apply_frozen`); the
+    // suggestion of the day it was confirmed is in `proposed`, and that is the one the
+    // Suggestion card shows, so the reset has to agree with it.
+    const draft = suggestionDraftFrom(
+      coveredContribution({
+        sources: [
+          {
+            kind: 'reserve',
+            qty: '8',
+            location: 'BRW-AM',
+            warehouse_id: 'wh-BRW-AM',
+            reason: 'Reserved at BRW-AM in revision 4.',
+          },
+          {
+            kind: 'reserve',
+            qty: '16',
+            location: 'BRW',
+            warehouse_id: 'wh-BRW',
+            reason: 'Reserved at BRW in revision 4.',
+          },
+        ],
+        proposed: { components: suggestion },
+      }),
+    );
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '9'],
+      ['wh-BRW', '15'],
+    ]);
+  });
+
+  it('leaves Amend itself on the frozen composition', () => {
+    // Two different questions: Amend edits what was decided, Approve suggestion asks for the
+    // engine's. Seeding both from the same place is the defect, not the fix.
+    const draft = amendDraftFrom(coveredContribution());
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '8'],
+      ['wh-BRW', '16'],
+    ]);
+  });
+
+  it('shows the frozen composition when the revision recorded no proposal at all', () => {
+    // Written before the proposal was frozen: `sources` is the decision and there is nothing
+    // else the board holds for the line, so the reset states that rather than an empty form.
+    const base = contributionOf(
+      {},
+      { qty: '24', fulfilment_location: 'BRW-AM', decision: frozen },
+    );
+    const draft = suggestionDraftFrom(base);
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '8'],
+      ['wh-BRW', '16'],
+    ]);
+  });
+
+  it('is the same draft as Amend on an UNCOVERED line', () => {
+    const uncovered = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    expect(suggestionDraftFrom(uncovered)).toEqual(amendDraftFrom(uncovered));
   });
 });
 
