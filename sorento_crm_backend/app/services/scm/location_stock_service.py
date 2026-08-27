@@ -27,6 +27,7 @@ from app.models.order import SalesOrder, SalesOrderLine
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, _dec
 from app.services.scm.demand import demand_qty, is_open_demand
+from app.services.scm.pool_predicate import is_site_pool
 from app.services.scm.supplier_scope import is_uuid
 
 _ZERO = Decimal("0")
@@ -56,16 +57,15 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
     )
     warehouse_ids = [str(w.id) for w in warehouses]
     code_by_id = {str(w.id): w.warehouse_code for w in warehouses}
-    # `segment` is the test ('project' on a bin, everything else - 'dealer' or unset -
-    # counts) - never the code's naming convention (project_supply_service.
-    # _site_pool_warehouses warns the same about the hyphen suffix). This mirrors the
-    # reorder engine's own test (reorder_run_service._planning_rows) so this panel's
+    # `segment` is the test, through the one module that spells it (`pool_predicate`) - it
+    # was written out by hand here, which is how this panel could come to disagree with the
+    # cell that opens it. This is the same rule the reorder engine reads, so this panel's
     # `on_hand` and the engine's counted `on_hand` for the SAME location can never
     # disagree about which side of the dealer/project line it sits on (captain, 20 Aug:
     # pool-only counted supply). NOT `pool_warehouse_id`: that FK also drives the
     # unrelated fulfilment-pool netting opt-in, whose members are not necessarily
     # project-segment locations.
-    is_pool_by_id = {str(w.id): (w.segment != "project") for w in warehouses}
+    is_pool_by_id = {str(w.id): is_site_pool(w.segment) for w in warehouses}
 
     levels = supply.stock_levels_by_location([product_id])
     held = supply.held_stock_by_location([product_id])

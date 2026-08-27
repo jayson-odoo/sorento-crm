@@ -56,6 +56,12 @@ from sqlalchemy.orm import Session
 
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.scm.container_request_service import (
+    OPEN_PO_SQL,
+    PL_NOT_ARRIVED_SQL,
+    PL_REMAINING_SQL,
+)
+from app.services.scm.pool_predicate import SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 
 #: What a caller may ask for. `on_hand` is NOT here - it is served by
@@ -67,9 +73,9 @@ KINDS = ("spo", "incoming_pl", "po")
 #: what "recently" means.
 _HISTORY_MONTHS = 12
 
-#: The site-pool test, character for character `container_request_service._pool_predicate`.
-#: The SPO cell nets POOL supply only, so the dialog behind it counts pool rows only.
-_POOL = "(COALESCE(w.segment, 'dealer') <> 'project')"
+#: The site-pool test, from the one module that spells it (`pool_predicate`). The SPO cell
+#: nets POOL supply only, so the dialog behind it counts pool rows only.
+_POOL = SITE_POOL_SQL
 
 #: Shipment states that mean the goods have landed - verbatim from migration 337, whose
 #: `scm.on_order_v` body the SPO reader below mirrors.
@@ -111,12 +117,9 @@ def _assert_product(db: Session, product_id: str) -> None:
 # PO - `_stock_context.outstanding_po` / `_outstanding_po_lines`, line by line
 # ---------------------------------------------------------------------------
 
-#: The open-PO predicate, identical to `container_request_service._outstanding_po_lines`
-#: (which is `scm.po_ordered_v`'s own). `still to come` is what the cell counts.
-_PO_OPEN = (
-    "po.status IN ('active', 'received', 'partial', 'closed') "
-    "AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
-)
+#: The open-PO predicate, IMPORTED from the service whose cell this lightbox opens rather
+#: than restated here: the cell and its own list of documents have to count the same rows.
+_PO_OPEN = OPEN_PO_SQL
 
 
 def _po_row(r) -> dict:
@@ -181,15 +184,13 @@ def _po_lines(db: Session, product_id: str, *, open_lines: bool) -> list[dict]:
 
 
 def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
-    """Unreceived packing-list quantity, by shipment. Predicate verbatim from
-    `container_request_service._incoming_packing_lists`: "not arrived" is BOTH a null
-    `actual_arrival_date` AND a status that is not a finished one, or stock that has landed
-    would be counted here as well as in On hand.
+    """Unreceived packing-list quantity, by shipment. Predicate IMPORTED from
+    `container_request_service._incoming_packing_lists`, whose cell this opens: "not arrived"
+    is BOTH a null `actual_arrival_date` AND a status that is not a finished one, or stock
+    that has landed would be counted here as well as in On hand.
     """
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="dipl")
-    remaining = (
-        "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
-    )
+    remaining = PL_REMAINING_SQL
     sql = f"""
         SELECT s.id::text AS shipment_id,
                s.shipment_number,
@@ -202,8 +203,7 @@ def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
         JOIN inbound_shipments s ON s.id = l.shipment_id
         LEFT JOIN suppliers sup ON sup.id = s.supplier_id
         WHERE l.product_id = CAST(:pid AS uuid)
-          AND s.actual_arrival_date IS NULL
-          AND s.shipment_status NOT IN ('fully_received', 'closed')
+          AND {PL_NOT_ARRIVED_SQL}
           AND {remaining} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY s.id, s.shipment_number, s.shipping_container_number, sup.supplier_name,

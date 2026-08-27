@@ -73,21 +73,40 @@ from app.services.scm.demand import (
     is_plan_demand_order,
 )
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
+from app.services.scm.pool_predicate import site_pool_sql
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 from app.services.scm.trajectory import month_shift
 
 logger = logging.getLogger(__name__)
 
 
-def _pool_predicate(alias: str = "w") -> str:
-    """The site-pool test, character for character the reorder engine's own
-    (`reorder_run_service._positions_for_run`): a location with no segment stated IS a site
-    pool, because a warehouse nobody has classified is not assumed to be a project bin.
+#: The site-pool test, from the one module that spells it (`pool_predicate`). It used to be
+#: written here and re-written in three more files, each with a comment saying it was
+#: "character for character" one of the others - a rule that only holds while four files
+#: agree, feeding the very cells AC-G3 requires to foot with their own lightboxes.
+_pool_predicate = site_pool_sql
 
-    Takes its alias so the one rule can be written into any of this module's queries without
-    a second spelling of it existing anywhere.
-    """
-    return f"(COALESCE({alias}.segment, 'dealer') <> 'project')"
+#: The open-PO predicate - `scm.po_ordered_v`'s own, and what the "Outstanding PO" cell
+#: counts. Exposed rather than left inline because the lightbox behind that cell
+#: (`container_request_drill`) has to read the same rows or the cell and its own list of
+#: documents disagree, which is the AC-G3 failure this file already fixed for On hand.
+OPEN_PO_SQL = (
+    "po.status IN ('active', 'received', 'partial', 'closed') "
+    "AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
+)
+
+#: What is still to land on one packing-list line, floored at zero.
+PL_REMAINING_SQL = (
+    "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
+)
+
+#: "Has not arrived" - BOTH halves. A shipment that has landed is already counted in
+#: `on_hand`, and counting it here too would show the same units twice on one row. Exposed
+#: for the same reason as `OPEN_PO_SQL`.
+PL_NOT_ARRIVED_SQL = (
+    "s.actual_arrival_date IS NULL "
+    "AND s.shipment_status NOT IN ('fully_received', 'closed')"
+)
 
 
 def _supplier(db: Session, supplier_id: str) -> dict:
@@ -876,9 +895,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
     if not product_ids:
         return {}
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
-    remaining = (
-        "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
-    )
+    remaining = PL_REMAINING_SQL
     sql = f"""
         SELECT l.product_id::text AS product_id,
                s.id::text AS shipment_id,
@@ -888,8 +905,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         WHERE l.product_id::text = ANY(:pids)
-          AND s.actual_arrival_date IS NULL
-          AND s.shipment_status NOT IN ('fully_received', 'closed')
+          AND {PL_NOT_ARRIVED_SQL}
           AND {remaining} > 0
           {("AND " + scope) if scope else ""}
         GROUP BY l.product_id, s.id, s.shipment_number, s.estimated_arrival_date
@@ -932,9 +948,7 @@ def _outstanding_po_lines(db: Session, product_ids: list[str]) -> dict[str, list
         FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
-          AND po.status IN ('active', 'received', 'partial', 'closed')
-          AND pol.line_status = 'open'
-          AND pol.qty_ordered > pol.qty_received
+          AND {OPEN_PO_SQL}
           {("AND " + scope) if scope else ""}
         GROUP BY pol.product_id, po.po_number, pol.expected_date
         ORDER BY pol.expected_date NULLS LAST, po.po_number

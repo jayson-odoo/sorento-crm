@@ -48,6 +48,7 @@ from app.services.scm.money import (
     to_base,
 )
 from app.services.scm import plan_grain
+from app.services.scm.pool_predicate import SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
@@ -579,7 +580,8 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # expression (never two readings of one fact that could drift apart) - the coupling
     # the diagnosis flagged. Stock sitting in a project bin is not silently dropped:
     # `project_on_hand` carries it, visible, on every row.
-    is_dealer_expr = "(COALESCE(w.segment, 'dealer') <> 'project')"
+    # The site-pool test, from the one module that spells it (`pool_predicate`).
+    is_dealer_expr = SITE_POOL_SQL
     on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN np.quantity_on_hand ELSE 0 END)"
     project_on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN 0 ELSE np.quantity_on_hand END)"
     net_position_col = f"({on_hand_expr} + np.on_order - {committed_expr}) AS net_position"

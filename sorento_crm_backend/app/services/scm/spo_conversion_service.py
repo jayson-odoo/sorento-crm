@@ -219,6 +219,7 @@ from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, Shi
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -549,13 +550,13 @@ def _match_takes_for_line(
     return matched_by, takes
 
 
-#: The site-pool test, character for character `container_request_service._pool_predicate`
-#: (and its second copy, `container_request_drill._POOL`) - copied rather than imported for
-#: the reason `_stock_context` below already gives for its whole query. Both cells this
-#: module prints open a dialog that counts ACTIVE POOL rows only (`location_stock_service.
-#: location_stock_for_product` for On hand, `container_request_drill`'s `w.is_active AND
-#: _POOL` for Incoming SPO), so the cells count the same locations or they cannot foot.
-_ACTIVE_POOL = "(w.is_active AND COALESCE(w.segment, 'dealer') <> 'project')"
+#: The site-pool test, from the one module that spells it (`pool_predicate`). It was copied
+#: here, and into two other files, on the reasoning `_stock_context` below gives for copying
+#: its whole query - but this one line is not that: both cells this module prints open a
+#: dialog counting ACTIVE POOL rows only (`location_stock_service.location_stock_for_product`
+#: for On hand, `container_request_drill` for Incoming SPO), so the cells count the same
+#: locations or they cannot foot, and a rule that must be identical is one rule.
+_ACTIVE_POOL = ACTIVE_SITE_POOL_SQL
 
 
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
