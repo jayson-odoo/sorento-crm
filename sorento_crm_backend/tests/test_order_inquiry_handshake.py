@@ -168,7 +168,7 @@ def world():
             company_id=company_id,
             actor_user_id=cs_user,
             developer_party_id=None,
-            title=f"{MARKER} Yotu Builder {_uid()[:8]}",
+            title=f"{MARKER} Yotu Builder {_uid()[:12]}",
         )
         product = _product(db)
         warehouse = _warehouse(db, f"ZZT-IB-{_uid()[:4]}", segment="project")

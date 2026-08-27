@@ -136,7 +136,7 @@ def world():
         actor = _user(db, f"{MARKER} Cyndi")
         project = register_project(
             db, company_id=company_id, actor_user_id=actor, developer_party_id=None,
-            title=f"{MARKER} Yotu Builder {_uid()[:8]}",
+            title=f"{MARKER} Yotu Builder {_uid()[:12]}",
         )
         product = _product(db)
         pool_wh = _warehouse(db, f"ZZT-BRW-{_uid()[:4]}", segment="dealer")

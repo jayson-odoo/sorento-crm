@@ -482,7 +482,7 @@ def test_the_ack_facet_drops_its_own_filter_but_honours_a_project_filter(api):
         company_id=world.company_id,
         actor_user_id=world.cs_user,
         developer_party_id=None,
-        title=f"{MARKER} Other Pursuit {_uid()[:8]}",
+        title=f"{MARKER} Other Pursuit {_uid()[:12]}",
     )
     world.db.commit()
 
