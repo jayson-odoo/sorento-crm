@@ -893,6 +893,15 @@ def apply(
                     cbm_total=ln.cbm_total,
                     net_weight=ln.net_weight,
                     gross_weight=ln.gross_weight,
+                    # What it is made of and how it is boxed. The container workbook derives
+                    # its carton count and its volume from these, and the conversion carries
+                    # them onto the packing-list line so nobody re-types the supplier's own
+                    # measurements (AC-F3.5).
+                    material=ln.material[:255] if ln.material else None,
+                    pcs_per_carton=ln.pcs_per_carton,
+                    carton_length_cm=ln.carton_length_cm,
+                    carton_width_cm=ln.carton_width_cm,
+                    carton_height_cm=ln.carton_height_cm,
                     # The supplier's own figures, frozen here and never written again: `qty`
                     # and `unit_price` above are ours to trim to fit the container, and the
                     # whole journey rests on the two never being confused (AC-E2).
@@ -1586,6 +1595,11 @@ def convert_to_draft_shipment(
                 # a container that takes no room (AC-F1).
                 "cbm": None,
                 "cartons": None,
+                # How the goods are made and boxed. These do NOT add across merged lines -
+                # a carton is the size it is however many lines name it - so the first
+                # line that states one wins and the rest are ignored, the same rule the
+                # unit price follows two blocks below (AC-F3.5).
+                "measurements": {},
                 "remarks": [],
                 "source_lines": [],
             }
@@ -1603,6 +1617,21 @@ def convert_to_draft_shipment(
             group["cartons"] = (group["cartons"] or 0) + int(
                 (_dec(ln.cartons) * share).to_integral_value(rounding=ROUND_HALF_UP)
             )
+        # The supplier's own measurements, carried across so the container workbook can be
+        # printed without anyone re-typing them. `net_weight` / `gross_weight` are PER
+        # CARTON on both documents, which is why they land on the per-carton columns.
+        for source, target in (
+            ("material", "material"),
+            ("pcs_per_carton", "pcs_per_carton"),
+            ("carton_length_cm", "carton_length_cm"),
+            ("carton_width_cm", "carton_width_cm"),
+            ("carton_height_cm", "carton_height_cm"),
+            ("net_weight", "net_weight_per_carton"),
+            ("gross_weight", "gross_weight_per_carton"),
+        ):
+            value = getattr(ln, source, None)
+            if value is not None and group["measurements"].get(target) is None:
+                group["measurements"][target] = value
         group["placed"] = group.get("placed", {})
         group["placed"][str(ln.id)] = group["placed"].get(str(ln.id), 0) + qty
         placing_cbm = _placing_volume(ln, float(qty))
@@ -1693,6 +1722,12 @@ def convert_to_draft_shipment(
                 line.cbm = (Decimal(str(line.cbm)) if line.cbm is not None else Decimal("0")) + group["cbm"]
             if group["cartons"] is not None:
                 line.cartons_count = (line.cartons_count or 0) + group["cartons"]
+            # A measurement already on the container's line stands: it may have been
+            # corrected by hand since, and a second invoice for the same model must not
+            # quietly put the supplier's original figure back.
+            for field, value in group["measurements"].items():
+                if getattr(line, field, None) is None:
+                    setattr(line, field, value)
         else:
             line = InboundShipmentLine(
                 id=_uuid(),
@@ -1711,6 +1746,7 @@ def convert_to_draft_shipment(
                 # count keeps that default rather than being written as 0 - which would read
                 # as a line that shipped in no box at all.
                 **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
+                **group["measurements"],
                 remarks="; ".join(group["remarks"]) if group["remarks"] else None,
             )
             db.add(line)

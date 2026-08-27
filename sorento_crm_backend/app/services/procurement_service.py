@@ -1337,6 +1337,16 @@ class InboundShipmentService:
             shipment_dict.get("shipment_status")
         )
         shipment_dict["created_by"] = created_by
+        if not (shipment_dict.get("shipment_number") or "").strip():
+            # The create form no longer asks for one: a shipment number is ours to issue,
+            # and asking somebody to invent a unique string before they have typed anything
+            # about the container is a decision the system can make for them. Numbered from
+            # the same rule the proforma-to-packing-list convert uses, so a container drafted
+            # either way is named the same. AFTER the match attempts above, which key off the
+            # number the CALLER stated - numbering first would make every upload a new row.
+            from app.services.scm.proforma_invoice_service import _draft_shipment_number
+
+            shipment_dict["shipment_number"] = _draft_shipment_number(self.db)
         shipment = InboundShipment(**shipment_dict)
         self.db.add(shipment)
         self.db.flush()  # Get the ID

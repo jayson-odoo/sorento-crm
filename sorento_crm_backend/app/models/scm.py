@@ -1544,6 +1544,17 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     net_weight = Column(Numeric(15, 4), nullable=True)
     gross_weight = Column(Numeric(15, 4), nullable=True)
 
+    #: What it is made of and how it is boxed, as the supplier printed it (材质 / 装箱数 /
+    #: 外箱尺寸). The container workbook derives the carton count and the volume from these,
+    #: and `convert_to_draft_shipment` copies them onto the packing-list line so the sheet
+    #: is printable without anybody re-typing the supplier's own measurements.
+    #: Centimetres, as the documents state them.
+    material = Column(String(255), nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+
     #: What the supplier said, frozen at import and never written again. `qty` and
     #: `unit_price` above are OURS to adjust to fit the container; these two are theirs, and
     #: the whole fulfilment journey rests on the two never being confused (AC-E2).

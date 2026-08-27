@@ -165,6 +165,22 @@ class InboundShipment(Base, CompanyScopedMixin):
     # derive status (A2).
     source_sheet = Column(String(100), nullable=True)
 
+    # ---- The container workbook's own header and costs ---------------------
+    # `FSCU8103365.xlsx` prints a twelve-line header block above the lines, and three of
+    # its lines had nowhere to live: SEAL NO, SHIPPER, and the forwarder's `SO :` booking
+    # reference (`forwarder_order_ref` - "SO" in this codebase is a sales order).
+    seal_number = Column(String(50), nullable=True)
+    shipper = Column(String(255), nullable=True)
+    forwarder_order_ref = Column(String(100), nullable=True)
+
+    # Typed per container, never per line (the captain's ruling, 27 Aug): the sheet's
+    # footer apportions clearance and China freight by each company's share of the VOLUME
+    # and insurance by its share of the AMOUNT, so one figure covers the whole container.
+    # `insurance_rate` is a rate the share is multiplied by, not a cost.
+    clearance_cost = Column(Numeric(15, 2), nullable=True)
+    china_freight_cost = Column(Numeric(15, 2), nullable=True)
+    insurance_rate = Column(Numeric(15, 4), nullable=True)
+
     # Every ETA revision writes an `audit_logs` row with old_values/new_values,
     # which is what replaces a revisions table (D5).
     __audit_track__ = True
@@ -315,6 +331,25 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # The supplier's own note on the line (`备注`). Kept separate from the discrepancies the
     # system derives, which are computed at read time and never stored.
     remarks = Column(Text, nullable=True)
+
+    # ---- What the container workbook measures the line by -------------------
+    # Read off the supplier's proforma / packing list, editable on the packing list
+    # afterwards. The sheet derives CTN QTY from `quantity_shipped / pcs_per_carton`,
+    # CBM / CTN from the carton's L x W x H, and TOTAL NW / TOTAL GW from the per-carton
+    # weights times the carton count - so none of those five is stored, only its inputs.
+    #
+    # Centimetres, as the sheet's `SIZE (CM)` block states them: converting on the way in
+    # would make the stored number disagree with the paper the supplier sent.
+    material = Column(String(255), nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+    # `weight_per_carton` above stays and is READ AS GROSS when this pair is null: it is
+    # the only weight the line has ever had, and rewriting the rows that carry it would
+    # lose the one figure some containers hold.
+    net_weight_per_carton = Column(Numeric(10, 3), nullable=True)
+    gross_weight_per_carton = Column(Numeric(10, 3), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)

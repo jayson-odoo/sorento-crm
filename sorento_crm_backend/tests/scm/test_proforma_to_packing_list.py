@@ -121,6 +121,63 @@ def test_two_invoice_lines_of_one_product_add_their_volumes_up():
         assert line.cartons_count == expected_cartons
 
 
+def test_converting_carries_the_material_carton_and_weights_onto_the_shipment_line():
+    """AC-F3.5 - the container workbook is printable without anybody re-typing the supplier.
+
+    The weights are PER CARTON on both documents, which is why they land on the packing
+    list's per-carton columns rather than on a line total.
+    """
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        svc.apply(db, kailu_proforma_workbook({"SRTWT7443": w.code("A")}),
+                  supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
+        pi_line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        pi_line.material = "铜"
+        pi_line.pcs_per_carton = Decimal("10")
+        pi_line.carton_length_cm = Decimal("34")
+        pi_line.carton_width_cm = Decimal("24")
+        pi_line.carton_height_cm = Decimal("30")
+        pi_line.net_weight = Decimal("7")
+        pi_line.gross_weight = Decimal("8.3")
+        db.flush()
+
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        line = next(
+            ln for ln in _shipment_lines(db, out["shipment_id"])
+            if str(ln.product_id) == str(pi_line.product_id)
+        )
+        assert line.material == "铜"
+        assert float(line.pcs_per_carton) == pytest.approx(10)
+        assert float(line.carton_length_cm) == pytest.approx(34)
+        assert float(line.carton_width_cm) == pytest.approx(24)
+        assert float(line.carton_height_cm) == pytest.approx(30)
+        assert float(line.net_weight_per_carton) == pytest.approx(7)
+        assert float(line.gross_weight_per_carton) == pytest.approx(8.3)
+
+
+def test_an_invoice_that_measures_nothing_leaves_the_measurements_null():
+    # Same rule as the volume: an unstated carton and a carton of no size are different
+    # answers, and only one of them can be printed on a document a factory reads back.
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        svc.apply(db, kailu_proforma_workbook({"SRTWT7443": w.code("A")}),
+                  supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
+
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        for line in _shipment_lines(db, out["shipment_id"]):
+            assert line.material is None
+            assert line.pcs_per_carton is None
+            assert line.carton_length_cm is None
+            assert line.net_weight_per_carton is None
+            assert line.gross_weight_per_carton is None
+
+
 # --------------------------------------------------------------------------------- #
 # AC-F6 / AC-F8 - the invoice says where its goods went
 # --------------------------------------------------------------------------------- #
