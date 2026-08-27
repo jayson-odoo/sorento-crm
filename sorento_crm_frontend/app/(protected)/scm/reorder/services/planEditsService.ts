@@ -1,33 +1,29 @@
 /**
  * ============================================================================
- * Reorder revamp - the three reads/writes the revamp ADDS (Phase 1: mocks)
+ * Reorder revamp - the three reads/writes the revamp ADDS
  * ============================================================================
- * Layering: hooks (usePlanEdits / usePlanSupplyHistory) -> THIS service ->
+ * Layering: hooks (usePlanEdits / the dialogs' own queries) -> THIS service ->
  * lib/api-client -> backend.
  *
  * Everything else the plan page needs already has an endpoint and is called through
- * `reorderRunService.ts`. These three do not exist yet; Phase 1 builds the UI against a
- * deterministic local mock so the interaction can be settled before any backend code is
- * written (PRINCIPLES.md, phase order). Each mock is marked `PHASE 2` at its call site and
- * the real contract is written out above it, so swapping it is a one-function change.
- *
- * Contracts to build in Phase 2 (PLAN-scm-reorder-revamp.md section 5):
+ * `reorderRunService.ts`. These three are the revamp's own:
  *
  *  1) PUT /api/v1/scm/reorder-runs/{run_id}/plan-edits
- *     body: { rows: [{ rec_id, decision?, moq?, level?, reorder_qty?, lifecycle? }] }
- *     One transaction over the existing service functions (`record_plan_row_decision`,
- *     `set_moq_override`, the level amend, `record_lifecycle_decision`). 404 for a rec
- *     outside the run, 409 on a legacy run. Returns the refreshed rows.
+ *     Save (N) - every drafted edit in one request, one transaction. Each field is
+ *     applied by the service that already owned it (`record_plan_row_decision`,
+ *     `set_moq_override`, the level amendment, the reorder quantity, the lifecycle
+ *     answer), so this and the per-row endpoints can never disagree.
  *
  *  2) GET /api/v1/scm/reorder-runs/{run_id}/spo-history?product_id=<uuid>
- *     Shipping orders bound for the BRW POOL location only (R15), open first then
- *     received. -> { open: SpoShipment[], history: SpoShipment[] }
+ *     Shipping orders bound for the site POOL only (R15), open first then received.
  *
  *  3) GET /api/v1/scm/reorder-runs/{run_id}/purchase-trend?warehouse=<code>
- *     The existing purchase-trend read, filtered to one destination (R15). Lines with no
- *     destination, or bound for a project location, are left out.
+ *     The existing purchase-trend read, narrowed to one destination (R15). Lines with
+ *     no destination, or bound for a project bin, are left out.
  * ============================================================================
  */
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { PlanRowPriceMode } from '../types/decisions.types';
 
 /** One row of the bulk save. `rec_id` is a RECOMMENDATION id - a grouped product row is
@@ -90,55 +86,93 @@ export interface PoHistoryResponse {
 /**
  * Save every drafted edit on a run in one request.
  *
- * PHASE 2: replace with `PUT /api/v1/scm/reorder-runs/{run_id}/plan-edits` (contract 1
- * above). The mock resolves after a tick so the toolbar's pending state is real, and
- * reports the same two counts the endpoint will.
+ * One transaction on the backend: a failing row rolls the whole batch back, so the pills
+ * never read Saved for an edit that did not land.
  */
 export async function savePlanEdits(
   runId: string,
   rows: PlanEditRow[],
 ): Promise<PlanEditsResult> {
-  // PHASE 2: replace with the real call.
-  await new Promise((resolve) => setTimeout(resolve, 0));
   if (!runId) throw new Error('No plan to save against.');
-  return {
-    saved_rows: rows.length,
-    saved_products: new Set(rows.map((r) => r.rec_id)).size,
-  };
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/plan-edits`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the plan'));
+  return res.json();
 }
 
-/**
- * The shipping orders behind the SPO cell.
- *
- * PHASE 2: replace with `GET /api/v1/scm/reorder-runs/{run_id}/spo-history?product_id=`
- * (contract 2 above). The mock returns an empty book, which is what most products have and
- * is the state the dialog's own empty message is written for.
- */
+/** The shipping orders behind the SPO cell, for the site pool only (R15). */
 export async function getSpoHistory(
   runId: string,
   productId: string,
 ): Promise<SpoHistoryResponse> {
-  // PHASE 2: replace with the real call.
-  await new Promise((resolve) => setTimeout(resolve, 0));
   if (!runId || !productId) return { open: [], history: [] };
-  return { open: [], history: [] };
+  const qs = new URLSearchParams({ product_id: productId });
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/spo-history?${qs.toString()}`,
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load the shipping orders'));
+  }
+  const body = (await res.json()) as Partial<SpoHistoryResponse>;
+  return { open: body.open ?? [], history: body.history ?? [] };
 }
 
 /**
  * The purchase orders behind the PO cell's History tab, destination-filtered (R15).
  *
- * PHASE 2: replace with `GET /api/v1/scm/reorder-runs/{run_id}/purchase-trend?warehouse=`
- * (contract 3 above). The imported history names no destination on 12,928 of 12,940 lines,
- * so this tab holds the purchase orders raised in the CRM rather than the old export - the
- * dialog says so where the reader can see it.
+ * Reads `purchase-trend`, which is keyed by product and carries the recent purchase lines
+ * for every product in the plan; `warehouse` narrows those lines to the row's own pool.
+ * The imported history names no destination on 12,928 of 12,940 lines, so this tab holds
+ * the purchase orders raised in the CRM rather than the old export - the dialog says so
+ * where the reader can see it.
  */
 export async function getPoHistoryToPool(
   runId: string,
   productId: string,
   warehouseCode: string | null,
 ): Promise<PoHistoryResponse> {
-  // PHASE 2: replace with the real call.
-  await new Promise((resolve) => setTimeout(resolve, 0));
   if (!runId || !productId || !warehouseCode) return { history: [] };
-  return { history: [] };
+  const qs = new URLSearchParams({ warehouse: warehouseCode });
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/purchase-trend?${qs.toString()}`,
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load the purchase history'));
+  }
+  const body = (await res.json()) as {
+    products?: Record<
+      string,
+      {
+        lines?: {
+          po_number: string;
+          supplier_name: string | null;
+          qty: number;
+          unit_cost: number | null;
+          currency: string | null;
+          order_date: string | null;
+          expected_date: string | null;
+          status: string | null;
+        }[];
+      }
+    >;
+  };
+  const lines = body.products?.[productId]?.lines ?? [];
+  return {
+    history: lines.map((l) => ({
+      po_number: l.po_number,
+      supplier_name: l.supplier_name,
+      qty: l.qty,
+      unit_cost: l.unit_cost,
+      currency: l.currency,
+      issued_at: l.order_date,
+      eta: l.expected_date,
+      status: l.status ?? '',
+    })),
+  };
 }

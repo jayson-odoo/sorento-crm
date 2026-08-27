@@ -223,7 +223,11 @@ def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
     inp = next(r for r in _recs(db, created["run_id"], pid)
                if r["rec_type"] == "buy")["inputs"]
     assert float(inp["last_purchase"]["cost"]) == 33.0
-    assert inp["last_purchase_basis"] == "own_segment"
+    # `pool`, not `own_segment`, since R15 (`PLAN-scm-reorder-revamp.md`): the purchase was
+    # bound for THIS row's own location, which is its own site pool, and a purchase made
+    # for the pool is a stronger attribution than one made anywhere on the dealer side.
+    # Same price, a more precise reason for it.
+    assert inp["last_purchase_basis"] == "pool"
 
 
 def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
@@ -249,7 +253,9 @@ def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
     svc.run_reorder(created["run_id"], db=db)
     rows = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
     by_segment = {r["inputs"]["segment"]: r["inputs"] for r in rows}
-    assert by_segment["dealer"]["last_purchase_basis"] == "own_segment"
+    # The dealer bin IS the pool the purchase was made for (R15), so its basis is the
+    # strongest one rather than the segment-wide fallback it used to report.
+    assert by_segment["dealer"]["last_purchase_basis"] == "pool"
     # The project row has no purchase of its own, so it falls back and SAYS it fell back.
     assert by_segment["project"]["last_purchase_basis"] == "unattributed"
 

@@ -146,6 +146,9 @@ export interface ReorderRecommendation {
    *  (`COALESCE(pool_warehouse_id, id)`), so a cover source can be scoped to the row's own
    *  site. Null on a network row. */
   pool_warehouse_id?: string | null;
+  /** The pool's CODE, so the SPO and PO dialogs can say "to BRW" on a GROUPED row - which
+   *  holds the pool's id but has no member sitting at the pool to read a code off. */
+  pool_warehouse_code?: string | null;
   is_network: boolean;
   /** Populated on network buy rows - the suggested per-warehouse split. */
   allocation: AllocationLine[] | null;
@@ -431,7 +434,7 @@ export interface ReorderRun {
   front_planning_contract_version?: number | null;
   /** The "Sales order cut-off" this run was launched with (`YYYY-MM-DD`), or null. */
   plan_horizon_date?: string | null;
-  /** When the engine started. PHASE 2: `get_reorder_run` has to select it. */
+  /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
   started_at?: string | null;
 }
 

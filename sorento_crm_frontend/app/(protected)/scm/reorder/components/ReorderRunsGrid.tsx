@@ -147,7 +147,16 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         cell: ({ row }) => {
           const codes = row.original.warehouse_codes ?? [];
           const full = codes.join(', ');
-          if (!codes.length) return <span className="text-muted-foreground">All</span>;
+          // A plan launched with no warehouse scope stores EVERY active warehouse, so the
+          // cell read "60 warehouses" for what the buyer asked for as "all". The backend
+          // says which it is - only it knows how many active warehouses there are.
+          if (!codes.length || row.original.is_all_warehouses) {
+            return (
+              <span className="text-muted-foreground" title={full || undefined}>
+                All
+              </span>
+            );
+          }
           const shown = codes.length > 3 ? `${codes.length} warehouses` : full;
           return (
             <span className="block truncate" title={full}>
@@ -198,7 +207,9 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         // Products, never locations (R14): a product across three bins is one decision.
         cell: ({ row }) => {
           const decided = row.original.decided_product_count;
-          const total = row.original.product_count;
+          // The products the plan actually wrote rows for. `product_count` is the SCOPE and
+          // is null on the daily run, which would leave the commonest plan reading "12 / -".
+          const total = row.original.planned_product_count ?? row.original.product_count;
           if (decided === null || decided === undefined) {
             return <span className="text-muted-foreground">{EM_DASH}</span>;
           }

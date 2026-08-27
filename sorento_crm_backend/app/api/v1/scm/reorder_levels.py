@@ -83,12 +83,18 @@ def set_level(payload: dict = Body(...), db: Session = Depends(get_db),
     if not product_id:
         raise AppException(status_code=422, message="product_id is required.")
     level = payload.get("level")
+    # R5: the reorder QUANTITY is editable beside the level now, and the two travel in one
+    # save because the panel shows them side by side. An ABSENT key leaves whatever the
+    # AutoCount level upload last stated exactly where it is; an explicit null clears it.
+    qty = payload.get("reorder_qty", svc.UNCHANGED)
     row = svc.upsert_level(
         db, product_id=str(product_id),
         warehouse_id=None,
         level=(float(level) if level is not None else None),
         source=str(payload.get("source") or svc.SOURCE_MANUAL),
         notes=payload.get("notes"),
+        reorder_qty=(qty if qty is svc.UNCHANGED
+                     else (None if qty is None else float(qty))),
         company_id=_company_id(db))
     return _row(row)
 
@@ -217,6 +223,9 @@ def _row(r: Any) -> dict[str, Any]:
         "warehouse_code": d.get("warehouse_code"),
         "segment": d.get("segment"),
         "level": _f(d.get("level")),
+        # The lot AutoCount orders when the level fires (R5) - editable beside the level
+        # and reported back beside it, so the level-changes export can carry both.
+        "reorder_qty": _f(d.get("reorder_qty")),
         "source": d.get("source"),
         "suggested_level": _f(d.get("suggested_level")),
         "suggested_at": d.get("suggested_at").isoformat() if d.get("suggested_at") else None,

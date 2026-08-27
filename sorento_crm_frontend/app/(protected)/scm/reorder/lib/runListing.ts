@@ -19,13 +19,16 @@ export interface RunStatusReading {
 /**
  * Running / Planning / Confirmed / Failed (plan 4.1).
  *
- * Confirmed needs BOTH counts: without them (a backend that has not shipped plan 5.4 yet) a
- * completed run reads Planning, which is the honest answer - nobody has told us every
- * product is confirmed.
+ * Confirmed needs BOTH counts, and the denominator is the products the plan actually WROTE
+ * ROWS for (`planned_product_count`) rather than the scope it was launched with - the daily
+ * run narrows to nothing, so its scope is null and every daily plan would read Planning
+ * forever. Counts absent altogether still read Planning, which stays the honest answer:
+ * nobody has told us every product is confirmed.
  */
 export function runStatusReading(run: {
   status: ReorderRunHistoryItem['status'];
   product_count?: number | null;
+  planned_product_count?: number | null;
   confirmed_product_count?: number | null;
 }): RunStatusReading {
   if (run.status === 'failed') {
@@ -34,7 +37,7 @@ export function runStatusReading(run: {
   if (run.status !== 'completed') {
     return { status: 'running', label: 'Running', variant: 'info' };
   }
-  const total = run.product_count;
+  const total = run.planned_product_count ?? run.product_count;
   const confirmed = run.confirmed_product_count;
   if (
     total !== null && total !== undefined && total > 0 &&

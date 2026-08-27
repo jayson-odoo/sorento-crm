@@ -131,7 +131,8 @@ def _lead_time_for(pair: dict, constraint: dict) -> tuple[Optional[float], Optio
 
 
 def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str],
-                     amended_level: Optional[float], amended_by: Optional[str]) -> dict:
+                     amended_level: Optional[float], amended_by: Optional[str],
+                     commit: bool = True) -> dict:
     """Record the buyer's own figure BESIDE the engine's suggestion (S14).
 
     Never touches `suggested_level` (the engine's number stays arguable-with) and never
@@ -165,7 +166,12 @@ def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
                updated_at = :now
          WHERE id = :id
     """), {"id": row["id"], "al": amended_level, "by": amended_by, "now": now})
-    db.commit()
+    # `commit=False` is the plan's bulk save, which owns the transaction across every
+    # edited row and must roll the whole batch back on any one failure.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     fresh = db.execute(text(
         "SELECT suggested_level, amended_level, amended_at, amended_by "
@@ -221,6 +227,12 @@ def suggestions_for_run(db: Session, run_id: str) -> dict[str, Any]:
             "master_reorder_quantity": (
                 float(pair["master_reorder_quantity"])
                 if pair.get("master_reorder_quantity") is not None else None),
+            # The figure the BUYER set (R5), which the level upload also writes. Null when
+            # neither has said anything, and never merged into `master_reorder_quantity`
+            # above - the panel shows the buyer's number and the master's beside it, the
+            # same way `amended_level` sits beside `suggested_level`.
+            "reorder_qty": (float(row["reorder_qty"])
+                            if row.get("reorder_qty") is not None else None),
             "suggested_at": (row["suggested_at"].isoformat()
                              if row.get("suggested_at") else None),
             # The buyer's own figure, beside the engine's - never instead of it (S14).

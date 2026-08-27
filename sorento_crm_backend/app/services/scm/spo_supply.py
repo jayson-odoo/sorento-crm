@@ -79,3 +79,101 @@ def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> 
         return 0
     reference = as_of or date.today()
     return max((reference - arrival_date).days, 0)
+
+
+def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
+    """The SPO book behind a plan row's SPO cell: open first, then what has landed.
+
+    Scoped to the row's SITE POOL and nothing else (R15). A run writes recommendations for
+    the locations that carry demand, which on live data is usually a project BIN rather
+    than the pool itself, so the pool is resolved the same way every other reader resolves
+    it - ``COALESCE(warehouses.pool_warehouse_id, warehouses.id)`` off the run's own rows
+    for this product. A shipment bound for a project bin, or for another site entirely, is
+    absent: the cell it explains deliberately excludes both.
+
+    `open` uses the one rule in this module (`open_incoming_clauses` plus "something is
+    still to come"); everything else the pool has ever been promised is history. Both are
+    newest-promise-first, so a buyer reads the next arrival at the top.
+    """
+    from sqlalchemy import text as _text
+
+    # BOTH ways a run states where a row's demand sits. A location-grain row names its
+    # warehouse on the column; a PRODUCT-grain row names NONE - it is one buy for the whole
+    # product, and the locations it was netted over live in the frozen
+    # `inputs.plan_basis.locations` (`_emit_product`). Reading only the column returned an
+    # empty book for every row on the live plan, which is the shape the rollout default
+    # produces.
+    pool_ids = [
+        r[0] for r in db.execute(_text("""
+            SELECT DISTINCT COALESCE(w.pool_warehouse_id, w.id)::text
+              FROM scm.reorder_recommendation rr
+              JOIN warehouses w ON w.id = rr.warehouse_id
+             WHERE rr.run_id = CAST(:run AS uuid)
+               AND rr.product_id = CAST(:pid AS uuid)
+            UNION
+            SELECT DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)::text
+              FROM scm.reorder_recommendation rr
+              CROSS JOIN LATERAL jsonb_array_elements(
+                  COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
+              JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
+             WHERE rr.run_id = CAST(:run AS uuid)
+               AND rr.product_id = CAST(:pid AS uuid)
+        """), {"run": run_id, "pid": product_id}).all()
+    ]
+    if not pool_ids:
+        return {"open": [], "history": []}
+
+    rows = db.execute(_text("""
+        SELECT sa.spo_number, s.supplier_name,
+               sa.allocated_quantity, sa.quantity_received,
+               sa.expected_date, sa.line_status, sa.receipt_status,
+               ish.actual_arrival_date
+          FROM spo_allocations sa
+          LEFT JOIN suppliers s ON s.id = sa.supplier_id
+          LEFT JOIN inbound_shipments ish ON ish.id = sa.inbound_shipment_id
+         WHERE sa.product_id = CAST(:pid AS uuid)
+           AND sa.warehouse_id = ANY(CAST(:pools AS uuid[]))
+         ORDER BY sa.expected_date DESC NULLS LAST, sa.spo_number
+    """), {"pid": product_id, "pools": pool_ids}).mappings().all()
+
+    open_rows: list[dict] = []
+    history: list[dict] = []
+    for r in rows:
+        allocated = float(r["allocated_quantity"] or 0)
+        received = float(r["quantity_received"] or 0)
+        arrived = r["actual_arrival_date"]
+        still_open = (
+            (r["line_status"] is None or r["line_status"] == "open")
+            and (r["receipt_status"] is None
+                 or r["receipt_status"] not in RECEIVED_RECEIPT_STATUSES)
+            and arrived is None
+            and allocated > received
+        )
+        entry = {
+            "spo_number": r["spo_number"],
+            "supplier_name": r["supplier_name"],
+            "qty": allocated,
+            "received_qty": received,
+            "eta": r["expected_date"].isoformat() if r["expected_date"] else None,
+            "arrived_at": arrived.isoformat() if arrived else None,
+            "status": _shipment_status(still_open, allocated, received, arrived),
+        }
+        (open_rows if still_open else history).append(entry)
+    return {"open": open_rows, "history": history}
+
+
+def _shipment_status(still_open: bool, allocated: float, received: float, arrived) -> str:
+    """What the row IS, in the reader's words - never the raw column value.
+
+    Two different columns say a shipment has landed (`receipt_status` and the shipment's
+    own arrival date), and the book carries both spellings of "received"
+    (`RECEIVED_RECEIPT_STATUSES`), so printing either one raw would show the same state
+    under three different names in one table.
+    """
+    if still_open:
+        return "Partly received" if received > 0 else "On the water"
+    if arrived is not None and received <= 0:
+        return "Arrived"
+    if 0 < received < allocated:
+        return "Partly received"
+    return "Received"

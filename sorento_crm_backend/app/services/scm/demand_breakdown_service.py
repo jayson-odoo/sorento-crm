@@ -75,6 +75,19 @@ from app.services.scm.demand import (
 from app.services.scm.trajectory import month_shift
 from app.services.scm.trajectory_service import demand_context_for_product
 
+#: The job a core sales-order line is for. The core book carries no project at all - the
+#: PROJECT sales order that mirrors the line does - so the title is read back through the
+#: mirror. A lateral rather than a join: the mirror is optional (a retail order has none)
+#: and a join would either drop the line or multiply it if a line were mirrored twice.
+_PROJECT_TITLE_SQL = """(
+    SELECT pj.title
+      FROM projects.sales_order_lines tpsl
+      JOIN projects.sales_orders tpso ON tpso.id = tpsl.project_sales_order_id
+      JOIN projects.projects pj ON pj.id = tpso.project_id
+     WHERE tpsl.core_sales_order_line_id = sol.id
+     LIMIT 1
+)"""
+
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
 DEFAULT_LIMIT = 200
@@ -356,6 +369,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    sol.required_date, w.warehouse_code, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
+                   {_PROJECT_TITLE_SQL} AS project_title,
                    {qty} AS qty, {has_inquiry_pred} AS has_inquiry_row
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
@@ -429,6 +443,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
             # than 0.
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
+            # The job the units are for - what a buyer recognises a project order by, and
+            # the one thing the row never carried. Null on an order with no project behind
+            # it, which is a fact about the order rather than missing data.
+            "project_title": r["project_title"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             # "for project is order inquiry, for retail is sales order directly" - which
             # feed wrote the order this line belongs to. `order_inquiry` here means the
@@ -468,6 +486,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
+                   cpj.title AS project_title,
                    GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty,
                    -- How much of the instruction is already on a purchase or shipping
                    -- order. `qty` above is what is LEFT, so without this the reader
@@ -483,6 +502,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 WHERE l.row_id = oir.id
             ) lk ON TRUE
             JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+            -- The job the instruction belongs to. Reached through the row's OWN project
+            -- sales order rather than the lateral the book query uses: this leg already
+            -- holds the mirror line, so there is nothing to look up.
+            LEFT JOIN projects.sales_orders cpso ON cpso.id = psl.project_sales_order_id
+            LEFT JOIN projects.projects cpj ON cpj.id = cpso.project_id
             JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN warehouses w ON w.id = sol.warehouse_id
@@ -532,6 +556,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "qty": float(r["qty"] or 0),
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
+            "project_title": r["project_title"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             "linked_qty": float(r["linked_qty"] or 0),
             "source": "order_inquiry_confirmed",
@@ -580,7 +605,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
             SELECT so.id::text AS so_id, so.so_number, so.order_date, so.demand_class,
                    sol.qty_ordered AS qty, sol.qty_delivered, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
-                   {AGENT_LABEL_SQL} AS agent_label
+                   {AGENT_LABEL_SQL} AS agent_label,
+                   {_PROJECT_TITLE_SQL} AS project_title
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
@@ -616,6 +642,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 ),
                 "customer_label": r["customer_label"],
                 "agent_label": r["agent_label"],
+                "project_title": r["project_title"],
                 "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             }
             for r in hist_rows

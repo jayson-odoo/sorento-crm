@@ -47,26 +47,31 @@ export interface PlanDialogRequest {
  * The SITE POOL location this row's supply is counted at (R15): the pool warehouse itself,
  * never its project bins (BRW-BB, BRW-AM).
  *
- * Null when it cannot be named. A grouped product row carries the pool's ID but not its
- * CODE, so the code has to be read off a member sitting at that pool - and a run only writes
- * recommendations for locations with demand, so on real data (32MM TAIL PIECE COUPLING) there
- * often is no such member. Naming the first member instead printed "to BRW-BB", a project bin,
- * beside a count that deliberately excludes it. The dialogs drop the location from their
- * wording rather than name the wrong one.
+ * `pool_warehouse_code` is the answer (plan 5.11): the row's own pool, named by the backend.
+ * A grouped product row carries the pool's ID but has no member sitting AT the pool to read
+ * a code off - a run only writes recommendations for locations with demand, so on real data
+ * (32MM TAIL PIECE COUPLING) there often is none, and naming the first member instead printed
+ * "to BRW-BB", a project bin, beside a count that deliberately excludes it.
  *
- * PHASE 2: `pool_warehouse_code` joins the recommendation payload beside `pool_warehouse_id`,
- * and this falls back to it (plan 5.11).
+ * The member scan below stays as the fallback for a run frozen before the field existed.
+ * Null when it cannot be named at all, and the dialogs then drop the location from their
+ * wording rather than name the wrong one.
  */
 export function poolLocationLabel(line: PlanLine): string | null {
+  if (line.rec.pool_warehouse_code) return line.rec.pool_warehouse_code;
   if (!isGroupedLine(line)) return line.rec.warehouse_code ?? null;
   const poolId = line.rec.pool_warehouse_id ?? null;
   const members = line.__group.members;
   // The member that IS the pool: by id, then by the rule that names one - a pool location's
   // own `pool_warehouse_id` points at itself.
   const atPool =
-    (poolId ? members.find((m) => m.warehouse_id === poolId) : undefined) ??
-    members.find((m) => m.warehouse_id && m.rec.pool_warehouse_id === m.warehouse_id);
-  return atPool?.rec.warehouse_code ?? null;
+    (poolId ? members.find((m) => m.rec.pool_warehouse_code) : undefined)?.rec
+      .pool_warehouse_code ??
+    (poolId ? members.find((m) => m.warehouse_id === poolId) : undefined)?.rec
+      .warehouse_code ??
+    members.find((m) => m.warehouse_id && m.rec.pool_warehouse_id === m.warehouse_id)?.rec
+      .warehouse_code;
+  return atPool ?? null;
 }
 
 /** " to BRW", or nothing at all when the pool cannot be named. */
@@ -231,9 +236,11 @@ function DemandTabs({
                   <Td title={l.customer_label}>
                     <span className="block max-w-56 truncate">{l.customer_label}</span>
                   </Td>
-                  {/* PHASE 2: `project_title` joins the demand row (plan 5.9); a dash until
-                      then, never the customer's name standing in for a project. */}
-                  <Td>{textCell(null)}</Td>
+                  <Td title={l.project_title ?? undefined}>
+                    <span className="block max-w-56 truncate">
+                      {textCell(l.project_title ?? null)}
+                    </span>
+                  </Td>
                   <Td>{textCell(l.agent_label)}</Td>
                   <Td right>{priceCell(l.unit_price)}</Td>
                   <Td right>{fmtInt(l.qty)}</Td>
@@ -270,8 +277,11 @@ function DemandTabs({
                   <Td title={l.customer_label}>
                     <span className="block max-w-56 truncate">{l.customer_label}</span>
                   </Td>
-                  {/* PHASE 2: see the open tab above. */}
-                  <Td>{textCell(null)}</Td>
+                  <Td title={l.project_title ?? undefined}>
+                    <span className="block max-w-56 truncate">
+                      {textCell(l.project_title ?? null)}
+                    </span>
+                  </Td>
                   <Td>{textCell(l.agent_label)}</Td>
                   <Td right>{priceCell(l.unit_price)}</Td>
                   <Td right>{fmtInt(l.qty)}</Td>
@@ -299,9 +309,8 @@ function OnHandTable({ line }: { line: PlanLine }) {
    * The SITE POOL rows only (R12/R15) - never a project bin, which holds stock already
    * spoken for by an Order Inquiry and would double-count against the plan's own netting.
    *
-   * PHASE 2: `location-stock` has to emit `is_pool` per location. Until it does, every
-   * location it returns is shown, which is what the previous expanded-row table already did -
-   * an honest superset rather than a guess at which code is a pool.
+   * A response with no pool row at all falls back to everything it was given, rather than
+   * showing an empty table for a product that plainly has stock somewhere.
    */
   const rows = useMemo(() => {
     const locations = stock.data?.locations ?? [];
@@ -359,7 +368,6 @@ function OnHandTable({ line }: { line: PlanLine }) {
                         {fmtInt(loc.available)}
                       </span>
                     </Td>
-                    {/* PHASE 2: `po_qty` joins the location-stock row (plan 4.6). */}
                     <Td right>
                       {loc.po_qty === null || loc.po_qty === undefined ? (
                         <span className="text-muted-foreground">{EM_DASH}</span>
@@ -386,9 +394,8 @@ function OnHandTable({ line }: { line: PlanLine }) {
           )}
         </tbody>
       </DocTable>
-      {/* PHASE 2 (R7): `as_of` becomes the newest `stock.updated_at` for the product rather
-          than the moment this dialog asked. The label already says the right thing; the
-          figure behind it is what changes. */}
+      {/* R7: the newest `stock.updated_at` for the product (or the last stock upload),
+          never the moment this dialog asked. */}
       {stock.data?.as_of ? (
         <p className="text-2xs text-muted-foreground">
           Stock as of {formatDateTimeInMalaysia(stock.data.as_of)}

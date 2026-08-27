@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { ApexOptions } from 'apexcharts';
 import { TrendingDown } from 'lucide-react';
@@ -191,10 +191,16 @@ export function PlanRowPanel({
       : level
         ? effectiveLevel(level)
         : (line.rec.reorder_level ?? line.rec.master_reorder_level ?? null);
+  // The draft, then what the buyer last SAVED (R5), then AutoCount's own master figure.
+  // Without the middle term a saved quantity vanished on the next refetch, because the
+  // master column is only rewritten by an AutoCount upload.
   const reorderQtyValue =
     edit?.reorderQty !== undefined
       ? edit.reorderQty
-      : (level?.master_reorder_quantity ?? line.rec.master_reorder_quantity ?? null);
+      : (level?.reorder_qty ??
+         level?.master_reorder_quantity ??
+         line.rec.master_reorder_quantity ??
+         null);
 
   const health = healthVerdict(economics, healthWindows);
   const lifecycle =
@@ -202,8 +208,19 @@ export function PlanRowPanel({
 
   const months = level?.basis.months ?? [];
 
+  const pin = useVisibleWidth();
+
   return (
-    <div className="border-t bg-muted px-5 py-4">
+    // The expanded cell spans the whole TABLE, which is wider than the viewport whenever
+    // the grid scrolls - so the fourth zone (Product health) sat past the right edge and
+    // reading it meant scrolling the grid sideways and losing the row it belongs to.
+    // Pinning the panel to the scroll container's own visible width puts all four zones on
+    // screen at once at 1280 and gives 375 a panel that stays put while the columns move.
+    <div
+      ref={pin.ref}
+      className="sticky left-0 border-t bg-muted px-5 py-4"
+      style={pin.width ? { width: pin.width } : undefined}
+    >
       {lockReason ? (
         <p className="mb-3 text-xs font-medium text-muted-foreground">{lockReason}</p>
       ) : null}
@@ -591,4 +608,48 @@ function NumberField({
       />
     </label>
   );
+}
+
+
+/**
+ * The width of the nearest horizontally-scrolling ancestor, so a full-width row can be
+ * pinned to what the reader can actually SEE rather than to the table's own width.
+ *
+ * A `colSpan` cell is as wide as every column together, and this grid is `width: fixed`
+ * with eleven of them - so at any viewport narrower than the table, content at the right
+ * of the panel is simply off screen. `position: sticky; left: 0` keeps it in place while
+ * the columns scroll under it, and the measured width is what stops it stretching to the
+ * table's width again.
+ *
+ * Measured rather than assumed: the sidebar collapses, the window resizes, and a hard-coded
+ * breakpoint would be wrong in exactly the cases this exists for.
+ */
+function useVisibleWidth(): { ref: (node: HTMLDivElement | null) => void; width: number | null } {
+  const [width, setWidth] = useState<number | null>(null);
+  const observed = useRef<ResizeObserver | null>(null);
+
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    observed.current?.disconnect();
+    observed.current = null;
+    if (!node) return;
+    let parent: HTMLElement | null = node.parentElement;
+    while (parent) {
+      const overflow = getComputedStyle(parent).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') break;
+      parent = parent.parentElement;
+    }
+    if (!parent) return;
+    const measure = () => setWidth(parent.clientWidth || null);
+    measure();
+    // jsdom has no ResizeObserver; the measurement above still runs, which is all a
+    // component test needs.
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    observed.current = observer;
+  }, []);
+
+  useEffect(() => () => observed.current?.disconnect(), []);
+
+  return { ref, width };
 }

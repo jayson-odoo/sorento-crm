@@ -759,7 +759,31 @@ def _confirm_product_grain(
         ).all()
     }
 
-    product_ids = set(grid_repr_for_product) | set(summary_rows)
+    # 3) the products NOBODY touched (R3, revamp plan 4.5). Confirm is the buyer saying
+    # "make this plan", so a product they left alone is bought at exactly what the engine
+    # sized - before this they had to open and re-record every row they already agreed
+    # with in order to buy any of it. Only a BUY the engine sized counts: a `covered` row
+    # is the engine saying the stock is already there, and a rounded quantity of zero is it
+    # saying do not buy this, so neither becomes a purchase for want of a decision. A
+    # SKIPPED product is excluded by construction - it HAS a decision, which is the grid
+    # path above, and that path drafts nothing for it.
+    untouched: dict[str, list] = {}
+    for rec in (
+        db.query(ReorderRecommendation)
+        .filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.rec_type == "buy",
+        )
+        .all()
+    ):
+        pid = str(rec.product_id)
+        if pid in grid_repr_for_product or pid in summary_rows:
+            continue
+        if float(rec.rounded_qty or 0) <= 0:
+            continue
+        untouched.setdefault(pid, []).append(rec)
+
+    product_ids = set(grid_repr_for_product) | set(summary_rows) | set(untouched)
     if ids:
         wanted = set(ids)
 
@@ -770,7 +794,9 @@ def _confirm_product_grain(
             if row is not None and row.id in wanted:
                 return True
             gd = grid_repr_for_product.get(pid)
-            return gd is not None and gd[0].id in wanted
+            if gd is not None and gd[0].id in wanted:
+                return True
+            return any(rec.id in wanted for rec in untouched.get(pid, []))
 
         product_ids = {pid for pid in product_ids if _matches(pid)}
 
@@ -814,6 +840,35 @@ def _confirm_product_grain(
                     warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
                     qty=share_qty, unit_cost=unit_cost,
                     lead_days=lead_days, source_system=_SRC_PRODUCT,
+                )
+                touched.add(po.id)
+            confirmed += 1
+            continue
+
+        members = untouched.get(pid)
+        if members:
+            # The engine's own suggestion, drafted the SAME way a decided product is: one
+            # draft PO per chosen supplier, the quantity split back across the group's real
+            # member warehouses so every line names one.
+            qty = float(sum(float(m.rounded_qty or 0) for m in members))
+            if qty <= 0:
+                continue
+            anchor = members[0]
+            choice = _resolve_choice(db, anchor, None)
+            po = _draft_po_for_supplier(db, choice["supplier_id"], anchor.currency)
+            split = _grid_member_split(members, qty)
+            members_by_wh = {str(m.warehouse_id): m for m in members}
+            for wid, share_qty in split.items():
+                if share_qty <= 0:
+                    continue
+                member_rec = members_by_wh.get(wid)
+                if member_rec is None:
+                    continue  # defensive - every split key comes from `members` itself
+                _upsert_line(
+                    db, po, product_id=member_rec.product_id,
+                    warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
+                    qty=share_qty, unit_cost=choice["unit_cost"],
+                    lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
                 )
                 touched.add(po.id)
             confirmed += 1
@@ -983,13 +1038,20 @@ def list_decisions(db: Session, run_id: str) -> list[dict]:
 
 def _po_for_rec(db: Session, rec_id: str) -> Optional[PurchaseOrder]:
     """The (draft or now-active) PO a rec's line lives in - resolved via the line's
-    ``source_ref`` (= rec id), which survives a confirm renumber."""
+    ``source_ref`` (= rec id), which survives a confirm renumber.
+
+    BOTH source systems, not just the location-grain one. `_confirm_product_grain` keys its
+    lines by the SAME member recommendation id but stamps `scm_order_summary_row`, so a
+    `_SRC`-only lookup answered "no PO" for every product-grain run - and the Decision pill,
+    which reads Confirmed off exactly this field, stayed on Saved after a confirm that had
+    plainly drafted the purchase order. Verified on the plan screen, 28 Aug 2026.
+    """
     line = (
         db.query(PurchaseOrderLine)
         .options(joinedload(PurchaseOrderLine.purchase_order))
         .filter(
             PurchaseOrderLine.source_ref == rec_id,
-            PurchaseOrderLine.source_system == _SRC,
+            PurchaseOrderLine.source_system.in_((_SRC, _SRC_PRODUCT)),
         )
         .order_by(PurchaseOrderLine.created_at.desc())
         .first()
@@ -1250,27 +1312,38 @@ def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> d
 
 def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     """Every persisted row decision on a run, across every decidable rec_type, plus the
-    counts the results-grid header ("N of Total made") counts against - computed off
-    what is actually persisted, never off a client's own session state."""
+    counts the header ("N of Total made") counts against - computed off what is actually
+    persisted, never off a client's own session state.
+
+    **The counts are by DISTINCT PRODUCT (R14), the rows are per recommendation.** The
+    plan decides one product at a time: a product-grain row is several recommendations
+    underneath and the screen fans the SAME decision onto every one of them, so counting
+    recommendations read a product held in three bins as three decisions out of three rows
+    when the buyer had made one (plan fact F2 - `decided_count = len(data)`). The rows
+    stay per recommendation because that is what each pill reads.
+    """
     total = (
-        db.query(ReorderRecommendation)
+        db.query(ReorderRecommendation.product_id)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
+        .distinct()
         .count()
     )
-    pairs = (
-        db.query(PlanRowDecision, ReorderRecommendation.id)
+    triples = (
+        db.query(PlanRowDecision, ReorderRecommendation.id,
+                 ReorderRecommendation.product_id)
         .join(ReorderRecommendation, ReorderRecommendation.id == PlanRowDecision.recommendation_id)
         .filter(ReorderRecommendation.run_id == run_id)
         .all()
     )
     data = [
         _plan_row_decision_dict(db, decision, _po_for_rec(db, rec_id))
-        for decision, rec_id in pairs
+        for decision, rec_id, _pid in triples
     ]
-    return {"data": data, "decided_count": len(data), "total_count": total}
+    decided = {str(pid) for _d, _rid, pid in triples}
+    return {"data": data, "decided_count": len(decided), "total_count": total}
 
 
 def _plan_row_decision_dict(

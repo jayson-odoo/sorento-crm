@@ -592,6 +592,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                p.reorder_level AS master_reorder_level,
                p.reorder_quantity AS master_reorder_quantity,
                w.warehouse_code, w.warehouse_name, w.segment,
+               -- The site pool this location draws on (its own id when it heads one).
+               -- R15: the last purchase, the SPO book and the PO book are all read at the
+               -- POOL, never at a project bin, so the pool has to travel with the row that
+               -- freezes them.
+               COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
                {on_hand_expr} AS quantity_on_hand,
                {project_on_hand_expr} AS project_on_hand,
                np.on_order, {committed_col}, {net_position_col},
@@ -812,21 +817,31 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
     if not pids:
         return {}
     co, co_params = company_sql_predicate(db, "po.company_id", param_prefix="clc")
+    # Newest priced line per (product, DESTINATION). The segment buckets are folded out of
+    # these in Python rather than asked for separately: one query answers both "what did we
+    # last pay for BRW" (R15, the pool bucket) and "what did we last pay into the dealer
+    # side at all" (the pre-existing segment bucket), and they can never disagree.
     rows = db.execute(text(f"""
-        SELECT DISTINCT ON (pol.product_id, COALESCE(w.segment, 'unattributed'))
+        SELECT DISTINCT ON (pol.product_id, COALESCE(pol.warehouse_id::text, 'none'))
                pol.product_id::text AS product_id,
+               pol.warehouse_id::text AS warehouse_id,
                COALESCE(w.segment, 'unattributed') AS segment,
                pol.unit_cost, COALESCE(pol.currency, po.currency) AS currency,
-               po.po_number, po.issue_date
+               po.po_number, po.issue_date,
+               po.supplier_id::text AS supplier_id, su.supplier_name
           FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id = pol.purchase_order_id
           LEFT JOIN warehouses w ON w.id = pol.warehouse_id
+          LEFT JOIN suppliers su ON su.id = po.supplier_id
          WHERE pol.product_id::text = ANY(:pids)
            AND pol.unit_cost IS NOT NULL
            {("AND " + co) if co else ""}
-         ORDER BY pol.product_id, COALESCE(w.segment, 'unattributed'),
+         ORDER BY pol.product_id, COALESCE(pol.warehouse_id::text, 'none'),
                   po.issue_date DESC NULLS LAST, pol.created_at DESC
     """), {"pids": pids, **co_params}).mappings().all()
+
+    def _newer(entry: dict, current: Optional[dict]) -> bool:
+        return current is None or (entry["at"] or "") > (current["at"] or "")
 
     out: dict[str, dict] = {}
     for r in rows:
@@ -835,25 +850,42 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
             "currency": r["currency"],
             "ref": r["po_number"],
             "at": r["issue_date"].isoformat() if r["issue_date"] else None,
+            # Who we paid. The panel says "last price from X" (revamp plan 4.4 zone 2) and
+            # before this the row carried the price with no name against it.
+            "supplier_id": r["supplier_id"],
+            "supplier_name": r["supplier_name"],
         }
         bucket = out.setdefault(r["product_id"], {})
-        bucket[r["segment"]] = entry
-        # "any" is the newest across every segment. The rows arrive newest-first within a
-        # segment but not across them, so it is chosen rather than assumed.
-        cur = bucket.get("any")
-        if cur is None or (entry["at"] or "") > (cur["at"] or ""):
+        if r["warehouse_id"]:
+            bucket[f"wh:{r['warehouse_id']}"] = entry
+        # Newest within the segment. The rows arrive newest-first per DESTINATION, and a
+        # segment holds several, so both of these are chosen rather than assumed.
+        if _newer(entry, bucket.get(r["segment"])):
+            bucket[r["segment"]] = entry
+        if _newer(entry, bucket.get("any")):
             bucket["any"] = entry
     return out
 
 
-def _last_purchase_for(costs: dict, product_id: str,
-                       segment: Optional[str]) -> tuple[Optional[dict], str]:
+def _last_purchase_for(costs: dict, product_id: str, segment: Optional[str],
+                       *, pool_warehouse_id: Optional[str] = None
+                       ) -> tuple[Optional[dict], str]:
     """The purchase to show on a row, and how it was attributed.
 
+    `pool` (R15) is the strongest answer: a purchase actually bound for THIS row's site
+    pool, which is the location every other figure on the row is counted at. It is tried
+    first and only when one exists - 12,928 of the 12,940 imported purchase-order lines on
+    the customer's book name no destination at all, so a pool-only rule would blank the
+    price on nearly every row (revamp plan, risk 7). The fallbacks below are unchanged.
+
     `own_segment` - a purchase that landed in this segment. `other_segment` is never
-    returned: a dealer price does not price a project order.
+    returned: a dealer price does not price a project order. The basis travels with the
+    entry so the panel can say which of the four it is showing rather than presenting an
+    unattributed price as the pool's.
     """
     bucket = (costs or {}).get(product_id) or {}
+    if pool_warehouse_id and bucket.get(f"wh:{pool_warehouse_id}"):
+        return bucket[f"wh:{pool_warehouse_id}"], "pool"
     if segment and bucket.get(segment):
         return bucket[segment], "own_segment"
     if bucket.get("unattributed"):
@@ -1616,7 +1648,9 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
     def _total(key: str) -> float:
         return float(sum(float(c.get(key) or 0.0) for c in cells))
 
-    lp, lp_basis = _last_purchase_for(last_cost or {}, str(prows[0]["product_id"]), None)
+    lp, lp_basis = _last_purchase_for(
+        last_cost or {}, str(prows[0]["product_id"]), None,
+        pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     cell.update({
         # The product's WHOLE stock, group bins included (AC-R1). `project_on_hand` stays
         # beside it saying how much of that total sits at a project-held bin.
@@ -1722,7 +1756,9 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # S10 - the buyer's own level, when the resolved policy selects that basis. The forecast
     # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
     # to SEE what the industry-standard basis would have said; they simply no longer decide.
-    lp, lp_basis = _last_purchase_for(last_cost or {}, pid, row.get("segment"))
+    lp, lp_basis = _last_purchase_for(
+        last_cost or {}, pid, row.get("segment"),
+        pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
     if policy_type == "reorder_level":
         # One level per PRODUCT (captain, 27 Aug) - see `_product_level`. Every location of
         # the product resolves the SAME number, which is what lets the product be netted
@@ -2869,7 +2905,8 @@ def recalc_rounded_qty(recommended_qty, moq: Optional[float],
     return eng.round_order_qty(float(recommended_qty), moq, order_multiple)
 
 
-def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
+def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
+                     *, commit: bool = True) -> dict:
     """Persist (or clear, on ``None``) the buyer's own MoQ for one recommendation row,
     and recalculate + PERSIST ``rounded_qty`` / ``cash_impact`` off it so the plan grid
     updates the row WITHOUT a full re-run - captain's 20 Aug live-test ask ("MoQ is
@@ -2934,7 +2971,12 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float]) -> dict:
         "UPDATE scm.reorder_recommendation "
         "SET moq_override = :m, rounded_qty = :rq, cash_impact = :ci WHERE id = :id"
     ), {"m": moq_value, "rq": rounded, "ci": cash_impact, "id": rec_id})
-    db.commit()
+    # `commit=False` is the plan's bulk save (`plan_edits_service`), which owns the
+    # transaction across every edited row.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     return {
         "recommendation_id": rec_id,
@@ -2976,6 +3018,12 @@ def _summarise(recs: list[ReorderRecommendation]) -> dict:
 
 def _fnum(v) -> Optional[float]:
     return float(v) if v is not None else None
+
+
+def _str_or_none(v) -> Optional[str]:
+    """A UUID column comes back as a `UUID` object here and as text in the cost map, and
+    a bucket keyed by one is never found with the other."""
+    return str(v) if v is not None else None
 
 
 def _r(v) -> Optional[float]:

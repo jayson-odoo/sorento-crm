@@ -220,6 +220,9 @@ JOIN suppliers s ON s.id = r.supplier_id
 WHERE r.run_id = CAST(:run_id AS uuid)
 """
 
+#: `{wh}` is R15's destination narrowing - the plan row's site pool and nothing else. It
+#: is a format slot rather than a fixed clause because it must vanish entirely when no
+#: warehouse is named, leaving the existing whole-product query byte-identical.
 _PURCHASES_SQL = """
 WITH pairs AS (
     SELECT DISTINCT r.product_id, r.supplier_id
@@ -247,6 +250,7 @@ purchases AS (
     -- They are counted separately instead of being folded into the price.
     WHERE pol.unit_cost > 0
       AND po.status NOT IN :not_a_purchase
+      {wh}
 )
 SELECT product_id::text, supplier_id::text, po_number, issue_date, unit_cost, currency, qty, rn
 FROM purchases
@@ -305,6 +309,7 @@ WITH ranked AS (
     WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
       AND pol.unit_cost > 0
       AND po.status NOT IN :not_a_purchase
+      {wh}
 )
 SELECT product_id::text AS product_id, po_number, issue_date, unit_cost, currency, qty,
        supplier_code, supplier_name
@@ -322,6 +327,7 @@ FROM purchase_order_lines pol
 JOIN purchase_orders po ON po.id = pol.purchase_order_id
 WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
   AND po.status NOT IN :not_a_purchase
+  {wh}
 GROUP BY pol.product_id
 """
 
@@ -336,18 +342,28 @@ WITH ranked AS (
     JOIN purchase_orders po ON po.id = pol.purchase_order_id
     WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
       AND po.status NOT IN :not_a_purchase
+      {wh}
 )
 SELECT product_id::text AS product_id, po_number, issue_date
 FROM ranked WHERE rn = 1
 """
 
 
+def _warehouse_clause(warehouse_id: Optional[str]) -> str:
+    """R15's destination test, or nothing at all. One copy, five queries."""
+    return "AND pol.warehouse_id = CAST(:warehouse_id AS uuid)" if warehouse_id else ""
+
+
 def _other_supplier_price(db: Session, product_ids: list[str],
-                          not_a_purchase: tuple[str, ...]) -> dict[str, dict]:
+                          not_a_purchase: tuple[str, ...],
+                          warehouse_id: Optional[str] = None) -> dict[str, dict]:
     if not product_ids:
         return {}
-    rows = db.execute(text(_OTHER_SUPPLIER_PRICE_SQL),
-                      {"pids": product_ids, "not_a_purchase": not_a_purchase}).mappings().all()
+    rows = db.execute(
+        text(_OTHER_SUPPLIER_PRICE_SQL.format(wh=_warehouse_clause(warehouse_id))),
+        {"pids": product_ids, "not_a_purchase": not_a_purchase,
+         **({"warehouse_id": warehouse_id} if warehouse_id else {})},
+    ).mappings().all()
     return {
         r["product_id"]: {
             "purchase": Purchase(
@@ -362,14 +378,19 @@ def _other_supplier_price(db: Session, product_ids: list[str],
 
 
 def _product_history(db: Session, product_ids: list[str],
-                     not_a_purchase: tuple[str, ...]) -> dict[str, dict]:
+                     not_a_purchase: tuple[str, ...],
+                     warehouse_id: Optional[str] = None) -> dict[str, dict]:
     if not product_ids:
         return {}
-    params = {"pids": product_ids, "not_a_purchase": not_a_purchase}
+    wh = _warehouse_clause(warehouse_id)
+    params = {"pids": product_ids, "not_a_purchase": not_a_purchase,
+              **({"warehouse_id": warehouse_id} if warehouse_id else {})}
     totals = {r["product_id"]: r for r in
-             db.execute(text(_PRODUCT_HISTORY_TOTALS_SQL), params).mappings().all()}
+             db.execute(text(_PRODUCT_HISTORY_TOTALS_SQL.format(wh=wh)),
+                        params).mappings().all()}
     last = {r["product_id"]: r for r in
-           db.execute(text(_PRODUCT_HISTORY_LAST_SQL), params).mappings().all()}
+           db.execute(text(_PRODUCT_HISTORY_LAST_SQL.format(wh=wh)),
+                      params).mappings().all()}
     out: dict[str, dict] = {}
     for pid, t in totals.items():
         l = last.get(pid)
@@ -383,7 +404,8 @@ def _product_history(db: Session, product_ids: list[str],
 
 
 def price_history_for_run(
-    db: Session, run_id: str, *, as_of: Optional[date] = None
+    db: Session, run_id: str, *, as_of: Optional[date] = None,
+    warehouse_id: Optional[str] = None,
 ) -> dict[str, PriceAdvice]:
     """Price facts for every (product, supplier) pair the run recommends.
 
@@ -391,6 +413,10 @@ def price_history_for_run(
     that pair. A cheaper price from a different supplier is a different negotiation and is
     never substituted in: the whole point of the number is that it is what THIS supplier
     charged us.
+
+    `warehouse_id` (R15) narrows every purchase read to one destination - the plan row's
+    site pool - so the price this states and the newest row in the PO dialog's history are
+    the SAME purchase (F7). Omitted, the whole-product read is unchanged.
     """
     as_of = as_of or date.today()
 
@@ -403,9 +429,11 @@ def price_history_for_run(
     stale_after = int(cfg[0]) if cfg and cfg[0] else STALE_AFTER_DAYS
     movement = float(cfg[1]) if cfg and cfg[1] else MOVEMENT_PCT
 
+    wh = _warehouse_clause(warehouse_id)
+    wh_params = {"warehouse_id": warehouse_id} if warehouse_id else {}
     rows = db.execute(
-        text(_PURCHASES_SQL),
-        {"run_id": run_id, "not_a_purchase": _NOT_A_PURCHASE},
+        text(_PURCHASES_SQL.format(wh=wh)),
+        {"run_id": run_id, "not_a_purchase": _NOT_A_PURCHASE, **wh_params},
     ).mappings().all()
 
     found: dict[str, dict[int, Purchase]] = {}
@@ -439,8 +467,8 @@ def price_history_for_run(
     # under a different supplier or with no price attached at all (the structured SPO
     # extract carries neither a supplier code nor a price - `purchase_history_reader.py`).
     product_ids = sorted({pair["product_id"] for pair in pairs})
-    other_supplier = _other_supplier_price(db, product_ids, _NOT_A_PURCHASE)
-    history = _product_history(db, product_ids, _NOT_A_PURCHASE)
+    other_supplier = _other_supplier_price(db, product_ids, _NOT_A_PURCHASE, warehouse_id)
+    history = _product_history(db, product_ids, _NOT_A_PURCHASE, warehouse_id)
 
     out: dict[str, PriceAdvice] = {}
     for pair in pairs:

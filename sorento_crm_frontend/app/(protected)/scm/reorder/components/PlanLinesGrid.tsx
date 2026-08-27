@@ -508,7 +508,7 @@ export function PlanLinesGrid({
           ) : (
             <span className="tabular-nums">{row.original.rankOrder}</span>
           ),
-        size: 64,
+        size: 36,
         enableSorting: true,
         meta: { headerTitle: 'Priority', skeleton: <Skeleton className="h-4 w-6" /> },
       },
@@ -563,7 +563,7 @@ export function PlanLinesGrid({
             </div>
           );
         },
-        size: 240,
+        size: 150,
         enableSorting: true,
         enableHiding: false,
         meta: {
@@ -617,7 +617,7 @@ export function PlanLinesGrid({
             {row.original.warehouse}
           </span>
         ),
-        size: 130,
+        size: 110,
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       } satisfies ColumnDef<PlanLine>] : []),
@@ -642,7 +642,7 @@ export function PlanLinesGrid({
             </Badge>
           );
         },
-        size: 100,
+        size: 90,
         enableSorting: true,
         meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
       } satisfies ColumnDef<PlanLine>] : []),
@@ -690,7 +690,7 @@ export function PlanLinesGrid({
             ) : null}
           </div>
         ),
-        size: 130,
+        size: 90,
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>,
@@ -711,7 +711,7 @@ export function PlanLinesGrid({
             onOpen={() => openDialog('project', row.original)}
           />
         ),
-        size: 90,
+        size: 74,
         enableSorting: true,
         meta: { headerTitle: 'Project need', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>,
@@ -728,7 +728,7 @@ export function PlanLinesGrid({
             onOpen={() => openDialog('retail', row.original)}
           />
         ),
-        size: 90,
+        size: 74,
         enableSorting: true,
         meta: { headerTitle: 'Retail need', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>] : []),
@@ -783,7 +783,7 @@ export function PlanLinesGrid({
                 />
               );
             },
-            size: 110,
+            size: 74,
             enableSorting: true,
             meta: {
               headerTitle: `${PLAN_CHANNEL_LABEL[channel]} (open demand)`,
@@ -809,7 +809,7 @@ export function PlanLinesGrid({
               disabled={!row.original.product_id}
             />
           ),
-        size: 90,
+        size: 74,
         enableSorting: true,
         meta: { headerTitle: 'On hand', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -831,7 +831,7 @@ export function PlanLinesGrid({
               disabled={!row.original.product_id}
             />
           ),
-        size: 80,
+        size: 56,
         enableSorting: true,
         meta: { headerTitle: 'SPO (incoming)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -853,7 +853,7 @@ export function PlanLinesGrid({
               disabled={!row.original.product_id}
             />
           ),
-        size: 80,
+        size: 56,
         enableSorting: true,
         meta: { headerTitle: 'PO (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -879,7 +879,7 @@ export function PlanLinesGrid({
             />
           );
         },
-        size: 120,
+        size: 84,
         enableSorting: true,
         meta: { headerTitle: 'Suggested qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -894,7 +894,7 @@ export function PlanLinesGrid({
             </ExplainNumber>
           </StopClick>
         ),
-        size: 110,
+        size: 96,
         enableSorting: true,
         meta: { headerTitle: 'Net', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -912,7 +912,7 @@ export function PlanLinesGrid({
             </ExplainNumber>
           </StopClick>
         ),
-        size: 110,
+        size: 96,
         enableSorting: true,
         meta: { headerTitle: 'Runway', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -949,7 +949,7 @@ export function PlanLinesGrid({
             <span className="tabular-nums">{fmtMoney(cost)}</span>
           );
         },
-        size: 120,
+        size: 104,
         enableSorting: true,
         meta: { headerTitle: 'Total cost', skeleton: <Skeleton className="h-4 w-16" /> },
       },
@@ -976,7 +976,7 @@ export function PlanLinesGrid({
             </span>
           );
         },
-        size: 110,
+        size: 82,
         enableSorting: true,
         meta: { headerTitle: 'Reorder level', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -994,7 +994,7 @@ export function PlanLinesGrid({
             {numCell(row.original.rec.master_reorder_quantity)}
           </span>
         ),
-        size: 100,
+        size: 82,
         enableSorting: true,
         meta: { headerTitle: 'Reorder qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -1023,7 +1023,7 @@ export function PlanLinesGrid({
           }
           return <PlanDecisionPill reading={readingFor(line)} />;
         },
-        size: 200,
+        size: 170,
         enableSorting: false,
         enableHiding: false,
         meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-5 w-32" /> },

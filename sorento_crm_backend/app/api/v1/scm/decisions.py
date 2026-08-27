@@ -27,12 +27,15 @@ from app.schemas.scm_decisions import (
     BulkRejectResult,
     ConfirmDecisionsRequest,
     ConfirmDecisionsResult,
+    PlanEditsRequest,
+    PlanEditsResult,
     PlanRowDecisionListResponse,
     RecDecisionListResponse,
     RecordPlanRowDecisionRequest,
     RejectRequest,
 )
 from app.schemas.scm_decisions import PlanRowDecision as PlanRowDecisionSchema
+from app.services.scm import plan_edits_service
 from app.services.scm import reorder_run_service
 from app.services.scm import decision_service as svc
 
@@ -125,6 +128,47 @@ def reject(
     _user: dict = Depends(_RUN),
 ):
     result = svc.reject_recommendation(db, rec_id, payload.reason_text, (_user or {}).get("id"))
+    db.commit()
+    return result
+
+
+@router.put("/reorder-runs/{run_id}/plan-edits", response_model=PlanEditsResult)
+def save_plan_edits(
+    run_id: str,
+    payload: PlanEditsRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Save (N) - every drafted edit on the plan, in ONE request (revamp plan 4.5).
+
+    Each field is applied by the service that already owned it; this route owns only the
+    transaction, so a failing row rolls the whole batch back rather than leaving the
+    screen's pills claiming edits that never landed. Same permission as the per-row
+    decision endpoint it batches (``scm.reorder.run``) - it writes the same rows.
+
+    An ABSENT key means "not edited"; an explicit ``null`` withdraws (the MoQ override
+    back to the master figure, the level amendment back to the engine's, the
+    keep-or-discontinue answer back to unanswered). `model_fields_set` is what keeps the
+    two apart on the way through.
+    """
+    rows = [
+        {
+            "rec_id": row.rec_id,
+            **(
+                {"decision": row.decision.model_dump()}
+                if row.decision is not None else {}
+            ),
+            **{
+                field: getattr(row, field)
+                for field in ("moq", "level", "reorder_qty", "lifecycle")
+                if field in row.model_fields_set
+            },
+        }
+        for row in payload.rows
+    ]
+    result = plan_edits_service.save_plan_edits(
+        db, run_id, rows, (_user or {}).get("id")
+    )
     db.commit()
     return result
 

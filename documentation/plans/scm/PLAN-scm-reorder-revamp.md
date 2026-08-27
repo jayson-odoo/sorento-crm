@@ -1,6 +1,6 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: Phase 1 (FE against mocks) BUILT 27 Aug 2026. Phase 2 (BE, test-first) next.
+Status: Phase 2 BUILT 28 Aug 2026 (backend test-first, FE off its mocks, three layout fixes). Phase 3 (`/code-review`, DoD gate, PR) next.
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
@@ -170,6 +170,11 @@ Every input writes to the draft map; the pill turns Unsaved. Leaving the page wi
 No migration expected. If one is needed, `alembic heads` against origin/main first (main had two
 heads on 27 Aug; the sibling lane's first migration is `438_merge_430_437`).
 
+**Built with NO migration** (28 Aug): every column written to already exists -
+`scm.reorder_level.reorder_qty`, `warehouses.pool_warehouse_id`, `spo_allocations.*`.
+`alembic heads` is the single `438_merge_price_supplier_sets` against `origin/main` at
+`741469185`.
+
 ## 6. Out of scope
 
 Engine numbers, the fulfilment board, the daily cron, order summary / exceptions / PO worklist
@@ -217,3 +222,42 @@ here changes a ruling.
 - **The leave-page prompt is two mechanisms**: `beforeunload` for a refresh, a close or a jump
   out of the app, and a confirm dialog on the plan header's own "Plans" link. Next's app router
   exposes no cancellable navigation event to hang a single guard on.
+
+## 10. Phase 2 deviations (28 Aug 2026, recorded as built)
+
+Everything below departs from section 5, with the reason. Nothing here changes a ruling.
+
+- **`planned_product_count` joined the plans list row** beside `product_count`. Section 5.4
+  named one count, but it is the SCOPE the plan was launched with and it is NULL on the
+  daily run (which narrows to nothing) - so the Decided column would read "12 of -" on the
+  commonest plan of all. `product_count` stays the scope (the Products column's "All");
+  `planned_product_count` is what the run actually wrote rows for, and it is the
+  denominator of Decided and of the Confirmed status.
+- **`is_all_warehouses` joined the same row** (fix c). A plan launched with no warehouse
+  scope stores every ACTIVE warehouse, so the column read "60 warehouses" for what the
+  buyer asked for as "all", and only the backend knows how many there are. It is measured
+  AS OF THE RUN (`warehouses.created_at <= started_at`): 60 existed on 27 Aug and 61 do
+  now, so a fixed comparison against today would call every older plan partial forever.
+- **`_po_for_rec` now matches BOTH source systems.** It looked only for
+  `scm_recommendation`, but `_confirm_product_grain` stamps `scm_order_summary_row` on the
+  same rec id - so on a product-grain run (the rollout default) the Decision pill stayed on
+  Saved after a confirm that had plainly drafted the purchase order. Found in the browser
+  run, fixed there.
+- **The pool is resolved from the frozen `plan_basis.locations` when a row names no
+  warehouse.** A product-grain buy carries `warehouse_id = NULL` (`_emit_product`), so
+  section 5.11's `pool_warehouse_code` and the new SPO/PO reads found no pool at all on the
+  live shape and returned an empty book. Both now read the locations the row was netted
+  over, and the CODE is emitted only when they share ONE pool - a row spanning two sites
+  still names none, which is Phase 1's own rule.
+- **`ImportJob.completed_at`, not `finished_at`** (R7's fallback). That is the column the
+  model actually carries.
+- **`price-history` gained the `warehouse` filter with no FE caller yet.** Section 5.3 names
+  it and F7 wants the panel's price and the PO dialog's newest row to be the same purchase,
+  but the FE reads price-history once per RUN and each row has its own pool, so a run-wide
+  parameter has no honest caller. What the panel actually prints comes from
+  `inputs.last_purchase`, which IS pool-filtered (`_last_purchase_cost_map`, basis `pool`).
+  The parameter is tested and unused; delete it if no caller arrives.
+- **Existing saved column layouts survive.** `DataGrid` persists column sizing per
+  `listingKey` (defaulting to the pathname), so the new collapsed widths only reach a user
+  who has never opened the page - everyone else keeps theirs until they use Columns ->
+  Reset columns. Not a defect, but it is why the widths look unchanged on a warm profile.

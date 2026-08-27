@@ -222,18 +222,26 @@ export interface ReorderRunHistoryItem {
    * The scheduled daily run rather than one a person started (`reorder_run.created_by IS
    * NULL` - `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge
    * on the plans list.
-   *
-   * PHASE 2: `list_reorder_runs` has to emit it; absent until then, and the badge simply
-   * does not render, which is honest - the list never claims a run was scheduled.
    */
   is_scheduled?: boolean;
   /**
-   * How many PRODUCTS this run planned, or null when it planned every product (the daily
-   * run's own scope). Distinct from `summary.recommendation_count`, which counts rows.
-   *
-   * PHASE 2 (plan 5.4), together with the two counts below.
+   * The run covers EVERY active warehouse. A plan launched with no warehouse scope stores
+   * them all, so without this the column reads "60 warehouses" for what the buyer asked
+   * for as "all" - and only the backend knows how many active ones there are.
+   */
+  is_all_warehouses?: boolean;
+  /**
+   * The product SCOPE this run was launched with, or null when it narrowed to nothing (the
+   * daily run plans every product). Distinct from `summary.recommendation_count`, which
+   * counts rows.
    */
   product_count?: number | null;
+  /**
+   * How many products the run actually wrote rows for - the denominator of the Decided
+   * column. `product_count` above is the scope and is null on the daily run, which would
+   * otherwise leave the most common plan reading "12 of -".
+   */
+  planned_product_count?: number | null;
   /** Products with a decision recorded against them - the "x" of the Decided column (R14). */
   decided_product_count?: number | null;
   /** Products already confirmed into a draft purchase order - drives the Confirmed status. */
@@ -328,9 +336,8 @@ interface ReorderRunStatusDto {
   decision_grain?: PlanGrain | null;
   front_planning_contract_version?: number | null;
   plan_horizon_date?: string | null;
-  /** PHASE 2: `get_reorder_run` has to select it too. The plan page's header reads
-   *  "Plan dd/mm/yyyy HH:mm" off it; until it ships the header says "Plan" and the
-   *  cut-off, never a fabricated time. */
+  /** When the engine started. The plan page's header reads "Plan dd/mm/yyyy HH:mm" off
+   *  it (C1) and this response is the only thing that page reads. */
   started_at?: string | null;
 }
 
@@ -596,11 +603,8 @@ export interface ReorderRunQuery {
  * One page of plans (`/scm/reorder`). The endpoint is the existing paginated runs list;
  * `sort`, `dir` and `query` travel through `buildDataGridParams` like every other listing.
  *
- * PHASE 2 (plan 5.4): `list_reorder_runs` has to HONOUR sort/dir/query and add
- * `is_scheduled`, `product_count`, `decided_product_count`, `confirmed_product_count` to
- * the row. Until it does it ignores the extra params (FastAPI drops unknown query
- * arguments) and the columns those fields feed render their own "not known yet" state
- * rather than a fabricated figure.
+ * `query` matches a WAREHOUSE CODE, which is what the search box says: a plan has no other
+ * human handle (no UUID surfaces, and a run is identified by its time and its scope).
  */
 export async function listReorderRuns(
   query: ReorderRunQuery,
@@ -724,6 +728,9 @@ export interface PlanDemandLine {
    *  order carries no agent at all - never invented (captain, 21 Aug: "who is the
    *  customer and agent"). Optional - absent on a cached response predating the field. */
   agent_label?: string | null;
+  /** The job the units are for - the Project column in both dialogs (F2/F3). Null on an
+   *  order with no project behind it, which is a fact about the order. */
+  project_title?: string | null;
   /** What they pay for it, when the order line carries a price. */
   unit_price: number | null;
   /**
@@ -829,6 +836,8 @@ export interface PlanDemandHistoryLine {
   delivered: boolean;
   customer_label: string;
   agent_label: string | null;
+  /** See `PlanDemandLine.project_title` - the same column on the history tab. */
+  project_title?: string | null;
   unit_price: number | null;
 }
 
@@ -853,18 +862,20 @@ export interface LocationStockLocation {
    * Whether this location is a SITE POOL rather than a project bin. The On hand lightbox
    * counts pool rows only (R15) - a project bin's stock is already spoken for by an Order
    * Inquiry, so counting it here would double it against the plan's own netting.
-   *
-   * PHASE 2: `location_stock_for_product` has to emit it. Absent until then, and the dialog
-   * falls back to every location it was given rather than guessing from a code.
    */
   is_pool?: boolean;
-  /** Open purchase-order quantity bound for this location. PHASE 2, same read as above. */
+  /** Open purchase-order quantity bound for this location. 0 when nothing is on order. */
   po_qty?: number | null;
 }
 
 export interface LocationStockResponse {
   product_id: string;
-  as_of: string;
+  /** When the stock shown here was last written (R7) - the newest `stock.updated_at` for
+   *  the product, NOT the moment the dialog asked. Null when neither that nor a stock
+   *  import has ever run. */
+  as_of: string | null;
+  /** `stock` | `import_job` | `none` - which of the two answers `as_of` is. */
+  as_of_source?: 'stock' | 'import_job' | 'none';
   locations: LocationStockLocation[];
 }
 
