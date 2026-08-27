@@ -5,9 +5,14 @@
  * >  to buy or use stock, if half half also need to suggest, and also need to suggest use
  * >  stock from where"
  *
- * Mirrors `app/services/scm/cover_service.py`. The rule it enforces is that a line's OWN
- * on-hand is never a source: it is already inside the net position, so offering it back would
- * count the same units twice. Cover means stock at ANOTHER location.
+ * Mirrors `app/services/scm/cover_service.py`. Two rules it enforces:
+ *
+ * - A line's OWN on-hand is never a source: it is already inside the net position, so
+ *   offering it back would count the same units twice. Cover means stock at ANOTHER
+ *   location.
+ * - Only a SITE POOL is a source (R18, captain 28 Aug). Stock in a project bin is already
+ *   claimed by an Order Inquiry, so a row covered from one would move units that cannot
+ *   move - the live tell was "Stock 34" proposed off BRW-IB while BRW held none.
  *
  * ## Why the allocation runs here and not on the server
  *
@@ -64,6 +69,11 @@ function poolOf(s: CoverSource): string {
 /**
  * The sources a row may actually draw on.
  *
+ * A PROJECT bin is dropped whatever the scope says (R18): it is not an option the policy
+ * widens or narrows, it is stock a reorder may never take. The endpoint already excludes
+ * it; stating it here too means a cached older payload cannot re-admit one. A location
+ * with no segment counts as pool, the same call the engine's own on-hand makes.
+ *
  * Under `own_pool` a source has to sit in the row's own pool. A row whose own pool is
  * unknown (a network row carries no warehouse) is NOT filtered to nothing: there is no pool
  * to compare against, so scoping it would silently delete every option rather than narrow
@@ -78,15 +88,13 @@ export function sourcesInScope(
   free: CoverSource[] | undefined,
   { scope, poolWarehouseId }: CoverScopeOptions = {},
 ): CoverSource[] {
-  const list = free ?? [];
+  const list = (free ?? []).filter((s) => (s.segment ?? 'dealer') !== 'project');
   if (scope === 'all_locations' || !poolWarehouseId) return list;
   return list.filter((s) => poolOf(s) === poolWarehouseId);
 }
 
-export interface CoverSourceUse extends CoverSource {
-  /** Dealer stock serving project demand, or the reverse. Offered, never silently mixed. */
-  cross_segment: boolean;
-}
+/** A source with a quantity this row is actually taking (or being offered). */
+export type CoverSourceUse = CoverSource;
 
 export interface CoverProposal {
   coverQty: number;
@@ -105,8 +113,8 @@ export interface CoverProposal {
    * The two are different questions and conflating them was a real bug: the ledger rendered
    * `sources` as if it were the offer, so a take of 10 out of 50 free was labelled "10 free",
    * a second in-scope location the proposal never reached was invisible, and the input
-   * clamped the buyer to the take. Ranked exactly like `sources` (same segment first, then
-   * biggest), and already net of what earlier decisions spent.
+   * clamped the buyer to the take. Ranked exactly like `sources` (biggest first), and
+   * already net of what earlier decisions spent.
    */
   offered: CoverSourceUse[];
   /** Neither whole answer is right: cover what exists and buy the rest. */
@@ -127,7 +135,6 @@ export type TakenByWarehouse = Readonly<Record<string, number>>;
 export function proposeCover(
   shortage: number,
   lineWarehouseId: string | null,
-  lineSegment: string | null,
   free: CoverSource[] | undefined,
   taken: TakenByWarehouse = {},
   scopeOptions: CoverScopeOptions = {},
@@ -140,20 +147,14 @@ export function proposeCover(
     if (lineWarehouseId && s.warehouse_id === lineWarehouseId) continue;
     const remaining = s.qty - (taken[s.warehouse_id] ?? 0);
     if (remaining <= 0) continue;
-    candidates.push({
-      ...s,
-      qty: remaining,
-      cross_segment: Boolean(lineSegment && s.segment && s.segment !== lineSegment),
-    });
+    candidates.push({ ...s, qty: remaining });
   }
 
-  // Same segment first, then biggest. Crossing the dealer/project boundary is a decision the
-  // business tracks, so it is the fallback rather than the first answer.
+  // Biggest pile first, the code breaking a tie so two renders cannot disagree. There is
+  // no segment ranking any more: after R18 a project bin is not a lower-ranked option, it
+  // is not an option at all.
   candidates.sort(
-    (a, b) =>
-      Number(a.cross_segment) - Number(b.cross_segment) ||
-      b.qty - a.qty ||
-      a.warehouse_code.localeCompare(b.warehouse_code),
+    (a, b) => b.qty - a.qty || a.warehouse_code.localeCompare(b.warehouse_code),
   );
 
   const used: CoverSourceUse[] = [];
@@ -232,7 +233,6 @@ export function coverForLine(
       warehouse_code: line.rec.warehouse_code ?? line.warehouse,
       segment: line.rec.segment ?? null,
       qty,
-      cross_segment: false,
     });
     // Offered is what the pool HOLDS available; the take is capped at the commitment. A
     // buyer may draw more of their own pool than the engine proposed, and never more than
@@ -247,14 +247,7 @@ export function coverForLine(
       isSplit: covered > 0 && buyQty > 0,
     };
   }
-  return proposeCover(
-    Math.ceil(line.order_qty),
-    line.warehouse_id,
-    line.rec.segment ?? null,
-    free,
-    taken,
-    scopeOptions,
-  );
+  return proposeCover(Math.ceil(line.order_qty), line.warehouse_id, free, taken, scopeOptions);
 }
 
 /**
@@ -342,7 +335,7 @@ export function maxSourceEdit(
 /**
  * Turn ONE total ("use 6 from stock") into per-source edits, taken from the front.
  *
- * The proposal already ranked its sources (same segment first, then biggest), so spending
+ * The proposal already ranked its sources (biggest first), so spending
  * down the front keeps the nearest bins and drops the ones the buyer would have argued about
  * anyway. Lets the Adjust popup, which asks for a single stock figure, go through
  * `applySourceEdits` rather than scaling the split itself.

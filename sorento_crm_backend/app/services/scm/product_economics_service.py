@@ -128,9 +128,18 @@ def economics_for_run(db: Session, run_id: str,
         "WHERE id = ANY(CAST(:pids AS uuid[]))"
     ), {"pids": pids}).mappings().all()}
 
+    # THE SITE POOL ONLY (R16, captain 28 Aug). "On hand" means one thing across reorder
+    # planning, and a project bin's stock is not it: those units are already claimed by an
+    # Order Inquiry, so counting them made the health chip say 154 while the row above it
+    # said 120 - and this figure is what the discontinue advice and the turnover months
+    # are read off. `segment` is the test, and a location nobody has classified counts,
+    # the same call `reorder_run_service._planning_rows` makes for the plan's own on-hand.
     on_hand = {r["product_id"]: float(r["qty"] or 0) for r in db.execute(text(
-        "SELECT product_id::text AS product_id, SUM(quantity_on_hand) AS qty "
-        "FROM stock WHERE product_id = ANY(CAST(:pids AS uuid[])) GROUP BY product_id"
+        "SELECT s.product_id::text AS product_id, SUM(s.quantity_on_hand) AS qty "
+        "FROM stock s JOIN warehouses w ON w.id = s.warehouse_id "
+        "WHERE s.product_id = ANY(CAST(:pids AS uuid[])) "
+        "  AND COALESCE(w.segment, 'dealer') <> 'project' "
+        "GROUP BY s.product_id"
     ), {"pids": pids}).mappings().all()}
 
     moved = {r["product_id"]: float(r["qty"] or 0) for r in db.execute(text(

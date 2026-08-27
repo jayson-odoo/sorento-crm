@@ -223,7 +223,8 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
     ]);
     getCoverSources.mockResolvedValue({
       sources: {
-        p1: [{ warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 }],
+        // A site pool: after R18 a project bin is never offered as a source.
+        p1: [{ warehouse_id: 'wh-MWH', warehouse_code: 'MWH', segment: 'dealer', qty: 50 }],
       },
       cover_scope: 'all_locations',
     });
@@ -233,7 +234,7 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
 
     const first = result.current.lines.find((l) => l.id === 'r1')!;
     // The buyer types 40 into a location holding 50, against a gap of 10.
-    const edited = applySourceEdits(result.current.coverFor(first), { 'wh-BRW-IB': 40 });
+    const edited = applySourceEdits(result.current.coverFor(first), { 'wh-MWH': 40 });
     expect(edited.coverQty).toBe(10);
     await act(async () => {
       await result.current.decide(first, {

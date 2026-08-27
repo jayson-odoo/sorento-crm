@@ -10,9 +10,11 @@
  * SUPERSEDES the first cut of this file (grouped to one row per (product, channel)): the
  * captain's refined ask is ONE row per PRODUCT, with channel as COLUMNS rather than row
  * identity - "instead of 1 column SO, 1 column project, 1 column retail, it should be 2
- * columns". The column SET is dynamic, derived from `channelOf` across the run's own rows
- * (today: Project and Retail) - never hardcoded, so a third would appear the day the read
- * model grew one.
+ * columns". The column SET is Project and Retail, always (`PLAN_CHANNEL_ORDER`). It was
+ * derived from the run's own warehouse segments once, and that made the Project column
+ * VANISH on a plan with no project demand, which reads as a missing column rather than as
+ * the zero it is. R17 (captain, 28 Aug) ends the derivation outright: a demand channel is
+ * `sales_orders.demand_class`, never a warehouse's segment.
  *
  * Each channel column is that channel's OPEN demand for the product - `committed_v`'s split
  * (`project_committed` / `retail_committed`), summed across the product's locations. The
@@ -62,34 +64,6 @@ export const PLAN_CHANNEL_LABEL: Record<PlanChannel, string> = {
  *  appear in the data. There is no third: "nothing should be unclassified" (captain, P4). */
 export const PLAN_CHANNEL_ORDER: PlanChannel[] = ['project', 'retail'];
 
-/**
- * Warehouse `segment` -> channel (5.2/5.4: channel is a warehouse fact for THIS mapping,
- * `dealer` for the bare site and `project` for a suffixed bin). A site with NO persisted
- * segment reads Retail, which is the same call the engine itself makes -
- * `reorder_run_service` nets on `COALESCE(w.segment, 'dealer') <> 'project'`, so a bin
- * nobody has tagged is already planned as dealer stock. It used to read Unclassified here
- * and nowhere else, which grew a third column for a warehouse merely missing a tag.
- *
- * Used only to derive WHICH channel columns the grid renders (`presentChannels` below) and
- * to keep the per-warehouse expand rows legible - never to decide a channel COLUMN's
- * quantity, which reads `committed_v`'s own product-location split instead (5.3).
- */
-export function channelOf(line: Pick<PlanLine, 'rec'>): PlanChannel {
-  return line.rec.segment === 'project' ? 'project' : 'retail';
-}
-
-/**
- * Which channel columns the grid renders, dynamically, off the rows actually present.
- * Computed once over the WHOLE list passed in (not per product), so every product row in a
- * grouped grid shares the same column set rather than a jagged table where one row grows a
- * column the others lack. Each channel is gated on a warehouse actually carrying that
- * segment (`channelOf`'s per-row read).
- */
-export function presentChannels(lines: Pick<PlanLine, 'rec'>[]): PlanChannel[] {
-  const present = new Set(lines.map(channelOf));
-  return PLAN_CHANNEL_ORDER.filter((c) => present.has(c));
-}
-
 /** The three product facts that can genuinely conflict across a group's members (see the
  *  file header). Price means `unit_cost` - the Suggested price cell does not yet branch on
  *  this (out of scope here), but the fact is computed uniformly with the other two so it is
@@ -108,8 +82,9 @@ export interface PlanChannelGroupMeta {
   /** Every member's warehouse label, always the FULL list (used for the Location cell's
    *  title even when the cell itself shows a shortened "N locations"). */
   locationCodes: string[];
-  /** The channel columns THIS GRID renders (shared across every product row - see
-   *  `presentChannels`), so a cell renderer never has to re-derive the column set itself. */
+  /** The channel columns THIS GRID renders - `PLAN_CHANNEL_ORDER`, the same set on every
+   *  row, so a cell renderer never has to derive one. Carried rather than imported so a
+   *  cell reads its row's own answer. */
   channels: PlanChannel[];
   /** This product's OPEN demand per channel - `committed_v`'s split, summed across the
    *  product's locations (5.3). NULL is UNAVAILABLE (a legacy run carries no split), a
@@ -390,7 +365,6 @@ export function productPlanRowOf(members: PlanLine[]): PlanLine | null {
 function buildProductGroupedLine(
   productLine: PlanLine,
   members: PlanLine[],
-  channels: PlanChannel[],
 ): GroupedPlanLine {
   const others = members.filter((m) => m.id !== productLine.id);
   const locationCodes = others.map((m) => m.warehouse);
@@ -406,7 +380,7 @@ function buildProductGroupedLine(
     __group: {
       members: ordered,
       locationCodes,
-      channels,
+      channels: PLAN_CHANNEL_ORDER,
       // The product row's own split - it already spans every location (AC-R1).
       channelQty: {
         project: productLine.rec.project_committed ?? null,
@@ -420,9 +394,9 @@ function buildProductGroupedLine(
   };
 }
 
-function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): GroupedPlanLine {
+function buildGroupedLine(members: PlanLine[]): GroupedPlanLine {
   const productLine = productPlanRowOf(members);
-  if (productLine) return buildProductGroupedLine(productLine, members, channels);
+  if (productLine) return buildProductGroupedLine(productLine, members);
   const first = members[0];
   const locationCodes = members.map((m) => m.warehouse);
   const rankOrder = minOrNull(members.map((m) => m.rankOrder));
@@ -513,7 +487,7 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
     __group: {
       members,
       locationCodes,
-      channels,
+      channels: PLAN_CHANNEL_ORDER,
       channelQty,
       projectConfirmedQty: sumOrNull(members.map((m) => m.rec.project_need)),
       conflicts,
@@ -531,7 +505,6 @@ function buildGroupedLine(members: PlanLine[], channels: PlanChannel[]): Grouped
  * only ever runs under; the caller decides whether to call this at all).
  */
 export function groupPlanLinesByChannel(lines: PlanLine[]): GroupedPlanLine[] {
-  const channels = presentChannels(lines);
   const order: string[] = [];
   const buckets = new Map<string, PlanLine[]>();
   for (const line of lines) {
@@ -544,5 +517,5 @@ export function groupPlanLinesByChannel(lines: PlanLine[]): GroupedPlanLine[] {
       order.push(key);
     }
   }
-  return order.map((key) => buildGroupedLine(buckets.get(key) as PlanLine[], channels));
+  return order.map((key) => buildGroupedLine(buckets.get(key) as PlanLine[]));
 }
