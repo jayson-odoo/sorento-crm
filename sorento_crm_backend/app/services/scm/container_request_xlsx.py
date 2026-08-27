@@ -1,54 +1,71 @@
-"""The container request as an `.xlsx`, in the supplier's own layout - F4.
+"""The container request as an `.xlsx`, in the supplier's own layout - R13.
 
-Ms Tee's ask, verbatim: send them the SAME sheet back with the quantity to load filled in.
-So this does not invent a form. It takes the stock list they uploaded, keeps their title
-line, their header spellings and their row order exactly as they wrote them, and appends ONE
-column - `需装数量 / Qty to load`. A product we are asking for that their sheet never named is
-appended below their last row rather than dropped, because it is still part of the ask.
+Ms Tee's ask, verbatim: send them the SAME sheet back with the quantity to load filled in. Not
+a sheet that carries the same data - the same sheet. So when their stock list was retained,
+this loads THEIR workbook and writes ONE column into it: their title row, their header
+spellings, their row order, their merged families, their yellow fields, their red figures,
+their column widths and their `合计` formulas are all still theirs, because nothing here
+rebuilds them.
 
-REBUILT, never edited in place. Their file may be an old `.xls` (OLE2), which openpyxl can
-read through `outstanding_reader.sheet_rows` and cannot write at all, so a "load it and save
-it" export would fail on exactly the suppliers who send the oldest files. Reading the values
-and writing a fresh workbook works for both containers, and what is being preserved is the
-data and its order, not their cell borders.
+That is the change from the first version, which replayed their VALUES into a workbook of ours
+and lost every merge and every fill on the way (a family's volume printed nine times reads as
+nine times the volume), and which fell back to five columns of our own naming when there was no
+file to answer in - so a supplier's document changed shape because of a file WE failed to keep.
+The five-column sheet is gone (AC-D6): with no retained file the SAME eleven columns are drawn
+fresh, in their styling, with no merges (we hold no family information and inventing one would
+be wrong on the first product with two sizes).
 
-THE ROUND TRIP IS THE CONTRACT (AC-C2). The supplier's next stock list is very often this
-file with the numbers changed, so whatever goes out has to come back in through
-`supplier_inventory_reader.read_workbook`. That is asserted in
-`tests/scm/test_container_request_xlsx.py` on both layouts below - it is the property that
-would otherwise break silently, months later, in the one place nobody looks.
+One model, three renderers (R12): `supplier_document_model.SheetModel` is built once by the
+send path and drawn by this module, by the PDF and by the public page. This module never reads
+the database.
 
-Two layouts, one entry point:
-
-* their sheet + our column, whenever the upload was retained (`supplier_stock_list`
-  attachment, `supplier_inventory_service.store_stock_list_attachment`);
-* our own five columns (AC-C5) when it was not, when the stored bytes will not open, or when
-  the sheet has no item-code column to write a quantity against. A fallback, never an error:
-  the request itself is the point, and a send must not die because a stored file is corrupt.
+THE ROUND TRIP IS THE CONTRACT (AC-C2 of part 3). The supplier's next stock list is very often
+this file with the numbers changed, so whatever goes out has to come back in through
+`supplier_inventory_reader.read_workbook` - asserted on both layouts in
+`tests/scm/test_container_request_xlsx.py`.
 """
 from __future__ import annotations
 
-import logging
+import re
+from copy import copy
 from datetime import datetime
 from io import BytesIO
-from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.import_alias_service import AliasResolver
-from app.services.scm.outstanding_reader import all_sheet_rows
-from app.services.scm.supplier_inventory_reader import DOC_TYPE
+from app.services.scm import supplier_document_model as sheet_model
+from app.services.scm.supplier_document_model import (  # re-exported: one spelling, one place
+    NO_FILE_TITLE,
+    QTY_TO_LOAD_HEADER,
+    SheetModel,
+)
 
-logger = logging.getLogger(__name__)
+#: Their own measurements, off the July file, for the document we draw ourselves. Column K
+#: repeats column J's width, which is also the rule the in-place path applies.
+NO_FILE_WIDTHS = [
+    6.0,
+    28.7109375,
+    10.140625,
+    12.7109375,
+    13.28515625,
+    13.42578125,
+    19.0,
+    13.7109375,
+    17.140625,
+    13.85546875,
+    13.85546875,
+]
+DEFAULT_WIDTH = 13.85546875
 
-#: The one column we add. Bilingual for the same reason the PDF is: their staff read the
-#: Chinese, ours have to be able to check what went out.
-QTY_TO_LOAD_HEADER = "需装数量 / Qty to load"
+TITLE_HEIGHT = 39.75
+HEADER_HEIGHT = 28.5
+DATA_HEIGHT = 18.75
+TOTALS_HEIGHT = 22.5
 
-#: What the file says when there is no sheet of theirs to answer in (AC-C5). Their own
-#: spellings still, because it is a document they read - and because the reader resolves
-#: these same aliases, which is what keeps the fallback round-trippable too.
-FALLBACK_HEADER = ["型号", "品名", "包装好库存", "空瓷", QTY_TO_LOAD_HEADER]
+DATA_FONT = "宋体"
+HEADER_FONT = "Calibri"
+YELLOW_RGB = "FFFFFF00"
+RED_RGB = "FFFF0000"
 
 
 def filename(supplier: dict) -> str:
@@ -69,210 +86,251 @@ def build(
     supplier_id: str,
     lines: list[dict],
 ) -> bytes:
-    """The request as a workbook. Never raises: a bad stored file falls back, it does not fail.
+    """Model then render, for a caller that holds no model yet (the download route, tests).
 
-    ``lines`` are the reviewed lines as `request_and_notify` already holds them:
-    `{item_code, product_name, qty}`.
+    The send path builds the model once and hands the SAME object here and to the PDF
+    (AC-D7), so this convenience must stay a two-line wrapper rather than a second path.
     """
-    raw = _uploaded_sheet(db, supplier_id)
-    if raw:
-        try:
-            return _with_qty_to_load(raw, db=db, lines=lines)
-        except Exception as exc:  # noqa: BLE001 - a stored file is not the caller's fault
-            logger.warning(
-                "container request xlsx: supplier %s has a retained stock list that could "
-                "not be answered in (%s); falling back to our own columns",
-                supplier_id,
-                exc,
-            )
-    return _fallback(db, supplier_id=supplier_id, lines=lines)
-
-
-# --------------------------------------------------------------------------- their sheet
-
-
-def _uploaded_sheet(db: Session, supplier_id: str) -> Optional[bytes]:
-    """The bytes of the stock list they last sent us, if it was retained.
-
-    Best-effort by construction: retention is itself best-effort
-    (`store_stock_list_attachment` logs and continues), so an absent or unreachable object is
-    an ordinary state here rather than an error.
-    """
-    try:
-        from app.services.resources_service import AttachmentService
-        from app.services.scm import supplier_inventory_service
-
-        held = supplier_inventory_service.latest_stock_list_attachment(
-            db, supplier_id=supplier_id
-        )
-        if not held:
-            return None
-        return AttachmentService(db).get_file_content(held["attachment_id"])
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "container request xlsx: could not read supplier %s's retained stock list (%s)",
-            supplier_id,
-            exc,
-        )
-        return None
-
-
-def _with_qty_to_load(data: bytes, *, db: Session, lines: list[dict]) -> bytes:
-    """Their rows, verbatim, plus one column. Raises when the sheet has no item-code column."""
-    rows = [list(r) for r in all_sheet_rows(data)]
-    resolver = AliasResolver.for_doc_type(db, DOC_TYPE)
-    header_idx, col_field = _header(rows, resolver)
-    if header_idx is None:
-        raise ValueError("no item_code column in the retained stock list")
-
-    code_col = next(pos for pos, f in col_field.items() if f == "item_code")
-    name_col = next((pos for pos, f in col_field.items() if f == "product_name"), None)
-    width = max(len(r) for r in rows)
-    qty_col = width
-
-    asked = {
-        str(ln.get("item_code")): _qty(ln.get("qty"))
-        for ln in lines
-        if ln.get("item_code") is not None
-    }
-
-    import openpyxl
-
-    wb = openpyxl.Workbook()
-    ws = wb.active or wb.create_sheet()
-    ws.title = "Container request"
-
-    placed: set[str] = set()
-    for idx, row in enumerate(rows):
-        out = list(row) + [None] * (width - len(row))
-        if idx == header_idx:
-            out.append(QTY_TO_LOAD_HEADER)
-        elif idx > header_idx:
-            code = _text(out[code_col]) if code_col < len(out) else None
-            qty = asked.get(code) if code else None
-            out.append(qty)
-            if code and code in asked:
-                placed.add(code)
-        else:
-            # A title line above the header keeps its own width: an empty cell under a
-            # header it sits above would read as a value nobody filled in.
-            out.append(None)
-        ws.append(out)
-
-    # Asked for and not on their list: appended under their rows, in the order we asked.
-    for ln in lines:
-        code = _text(ln.get("item_code"))
-        if not code or code in placed:
-            continue
-        out: list[Any] = [None] * (width + 1)
-        out[code_col] = code
-        if name_col is not None:
-            out[name_col] = ln.get("product_name")
-        out[qty_col] = asked.get(code)
-        ws.append(out)
-
-    return _bytes(wb)
-
-
-def _header(rows: list[list], resolver: AliasResolver) -> tuple[Optional[int], dict[int, str]]:
-    """The header row and its column map, by `supplier_inventory_reader`'s own rule.
-
-    Not row 1 by decree: these files carry a title line, and sometimes a blank one above it.
-    The header is the first row that resolves an item code - the same test the reader applies,
-    so a file it can read is a file this can answer in.
-    """
-    for idx, raw in enumerate(rows):
-        mapped: dict[int, str] = {}
-        for pos, cell in enumerate(raw):
-            field = resolver.field_for_header(cell)
-            if field:
-                mapped[pos] = field
-        if "item_code" in mapped.values():
-            return idx, mapped
-    return None, {}
-
-
-# --------------------------------------------------------------------------- our columns
-
-
-def _fallback(db: Session, *, supplier_id: str, lines: list[dict]) -> bytes:
-    """AC-C5: item code, name, what they told us they hold, and what to load.
-
-    Their holdings come off the snapshot rows rather than off the file, because on this branch
-    there is no file - and a row with no snapshot behind it (a product they have never listed)
-    still belongs on the sheet, with the holdings blank rather than zero.
-    """
-    held = _held(db, supplier_id)
-
-    import openpyxl
-
-    wb = openpyxl.Workbook()
-    ws = wb.active or wb.create_sheet()
-    ws.title = "Container request"
-    ws.append(list(FALLBACK_HEADER))
-    for ln in lines:
-        code = _text(ln.get("item_code"))
-        stock = held.get(code or "", {})
-        ws.append(
-            [
-                code,
-                ln.get("product_name"),
-                stock.get("qty_packed"),
-                stock.get("qty_unfinished"),
-                _qty(ln.get("qty")),
-            ]
-        )
-    return _bytes(wb)
-
-
-def _held(db: Session, supplier_id: str) -> dict[str, dict]:
-    from app.models.scm import SupplierInventory
-
-    rows = (
-        db.query(
-            SupplierInventory.item_code,
-            SupplierInventory.qty_packed,
-            SupplierInventory.qty_unfinished,
-        )
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .all()
+    return render(
+        sheet_model.build(db, supplier=supplier, supplier_id=supplier_id, lines=lines)
     )
-    return {
-        str(r.item_code): {
-            "qty_packed": float(r.qty_packed or 0),
-            "qty_unfinished": float(r.qty_unfinished or 0),
-        }
-        for r in rows
-    }
+
+
+def render(model: SheetModel) -> bytes:
+    """The document as bytes: their workbook when we have one, ours when we do not."""
+    if model.source is not None:
+        return _with_qty_to_load(model)
+    return _fresh(model)
+
+
+# --------------------------------------------------------------------------- their workbook
+
+
+def _with_qty_to_load(model: SheetModel) -> bytes:
+    """Their file, with column K written into it. Nothing else in the sheet is touched."""
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+
+    src = model.source
+    assert src is not None  # `render` guards it; this keeps the type checker honest
+    wb = openpyxl.load_workbook(BytesIO(src.data))
+    ws = wb[src.sheet_title] if src.sheet_title in wb.sheetnames else wb.active
+
+    qty_col = src.qty_col
+    like_col = qty_col - 1  # column J: the last column they styled themselves
+    qty_letter = get_column_letter(qty_col)
+    like_letter = get_column_letter(like_col)
+
+    appended = [row for row in model.rows if row.appended]
+    shift = len(appended)
+    new_last_data_row = src.last_data_row + shift
+
+    # The 合计 row moves down BEFORE the appended rows are written, because they are written
+    # over the rows it used to occupy.
+    if src.totals_row is not None and shift:
+        _move_row(ws, src.totals_row, src.totals_row + shift, last_col=qty_col)
+
+    header = ws.cell(row=src.header_row, column=qty_col)
+    _copy_style(ws.cell(row=src.header_row, column=like_col), header)
+    header.value = QTY_TO_LOAD_HEADER
+    ws.column_dimensions[qty_letter].width = (
+        ws.column_dimensions[like_letter].width or DEFAULT_WIDTH
+    )
+
+    for row in model.rows:
+        if row.source_row is None:
+            continue
+        cell = ws.cell(row=row.source_row, column=qty_col)
+        _copy_style(ws.cell(row=row.source_row, column=like_col), cell)
+        cell.value = row.cells[-1].value
+
+    for offset, row in enumerate(appended):
+        target = src.last_data_row + 1 + offset
+        for pos in range(1, qty_col + 1):
+            style_from = ws.cell(row=src.last_data_row, column=min(pos, like_col))
+            cell = ws.cell(row=target, column=pos)
+            _copy_style(style_from, cell)
+            cell.value = row.cells[pos - 1].value
+        ws.row_dimensions[target].height = ws.row_dimensions[src.last_data_row].height
+
+    if src.totals_row is not None:
+        totals_at = src.totals_row + shift
+        for pos in range(1, qty_col):
+            cell = ws.cell(row=totals_at, column=pos)
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                cell.value = _widen(cell.value, src.last_data_row, new_last_data_row)
+        total = ws.cell(row=totals_at, column=qty_col)
+        _copy_style(ws.cell(row=totals_at, column=like_col), total)
+        total.value = (
+            f"=SUM({qty_letter}{src.first_data_row}:{qty_letter}{new_last_data_row})"
+        )
+
+    return _bytes(wb)
+
+
+def _move_row(ws, source: int, target: int, *, last_col: int) -> None:
+    """Move one whole row down, merges included, and leave nothing behind.
+
+    `insert_rows` would be the obvious call and is the wrong one: openpyxl does not carry
+    merged ranges or row heights with it, and this row is the one whose merge (`A120:E120`)
+    and formulas are the point.
+    """
+    moved = []
+    for rng in list(ws.merged_cells.ranges):
+        if rng.min_row == source and rng.max_row == source:
+            moved.append((rng.min_col, rng.max_col))
+            ws.unmerge_cells(str(rng))
+
+    for pos in range(1, last_col + 1):
+        old = ws.cell(row=source, column=pos)
+        new = ws.cell(row=target, column=pos)
+        _copy_style(old, new)
+        new.value = old.value
+        old.value = None
+    ws.row_dimensions[target].height = ws.row_dimensions[source].height
+
+    for min_col, max_col in moved:
+        ws.merge_cells(
+            start_row=target, start_column=min_col, end_row=target, end_column=max_col
+        )
+
+
+def _copy_style(source, target) -> None:
+    target.font = copy(source.font)
+    target.fill = copy(source.fill)
+    target.border = copy(source.border)
+    target.alignment = copy(source.alignment)
+    target.protection = copy(source.protection)
+    target.number_format = source.number_format
+
+
+def _widen(formula: str, old_last: int, new_last: int) -> str:
+    """`=SUM(F3:F119)` covering four appended rows becomes `=SUM(F3:F123)`.
+
+    Only the END of a range that stopped at their last data row moves: a total that stopped
+    short of the rows we added would understate the ask, and a total we re-anchored anywhere
+    else would stop being their formula.
+    """
+
+    def bump(match: re.Match) -> str:
+        return (
+            f"{match.group(1)}{new_last}"
+            if int(match.group(2)) == old_last
+            else match.group(0)
+        )
+
+    return re.sub(r":(\$?[A-Z]{1,3}\$?)(\d+)", lambda m: ":" + bump(m), formula)
+
+
+# --------------------------------------------------------------------------- our workbook
+
+
+def _fresh(model: SheetModel) -> bytes:
+    """The same eleven columns, drawn in their styling, when there is no file to answer in."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active or wb.create_sheet()
+    ws.title = "Container request"
+
+    ncols = len(model.columns)
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    centre = Alignment(horizontal="center", vertical="center")
+    yellow = PatternFill(fill_type="solid", fgColor=YELLOW_RGB)
+
+    for pos in range(1, ncols + 1):
+        width = NO_FILE_WIDTHS[pos - 1] if pos <= len(NO_FILE_WIDTHS) else DEFAULT_WIDTH
+        ws.column_dimensions[get_column_letter(pos)].width = width
+
+    title = ws.cell(row=1, column=1)
+    title.value = model.title or NO_FILE_TITLE
+    title.font = Font(name=HEADER_FONT, sz=22, b=True)
+    title.alignment = centre
+    title.border = border
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    ws.row_dimensions[1].height = TITLE_HEIGHT
+
+    for pos, column in enumerate(model.columns, start=1):
+        cell = ws.cell(row=2, column=pos)
+        cell.value = QTY_TO_LOAD_HEADER if pos == ncols else column.label
+        cell.font = Font(name=HEADER_FONT, sz=14, b=True)
+        cell.alignment = centre
+        cell.border = border
+    ws.row_dimensions[2].height = HEADER_HEIGHT
+
+    first_data_row = 3
+    for offset, row in enumerate(model.rows):
+        r = first_data_row + offset
+        for pos, source in enumerate(row.cells[:ncols], start=1):
+            cell = ws.cell(row=r, column=pos)
+            cell.value = source.value
+            cell.font = Font(
+                name=DATA_FONT, sz=14, color=RED_RGB if source.red else None
+            )
+            cell.alignment = centre
+            cell.border = border
+            if source.fill:
+                cell.fill = yellow
+        ws.row_dimensions[r].height = DATA_HEIGHT
+
+    last_data_row = first_data_row + len(model.rows) - 1
+    _fresh_totals(
+        ws,
+        model,
+        row=max(last_data_row + 1, first_data_row + 1),
+        first_data_row=first_data_row,
+        last_data_row=last_data_row,
+        border=border,
+        centre=centre,
+    )
+    return _bytes(wb)
+
+
+def _fresh_totals(
+    ws, model: SheetModel, *, row: int, first_data_row: int, last_data_row: int, border, centre
+) -> None:
+    """Their `合计：` row: the label merged across the first columns, sums in red."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    totals = model.totals
+    if totals is None:
+        return
+
+    ncols = len(model.columns)
+    for pos in range(1, ncols + 1):
+        cell = ws.cell(row=row, column=pos)
+        cell.alignment = centre
+        cell.border = border
+        cell.font = Font(name=DATA_FONT, sz=18 if pos == 1 else 14, color=RED_RGB)
+
+    label = totals.cells[0]
+    ws.cell(row=row, column=1).value = label.value
+    if label.colspan > 1:
+        ws.merge_cells(
+            start_row=row, start_column=1, end_row=row, end_column=min(label.colspan, ncols)
+        )
+
+    for pos, source in enumerate(totals.cells[:ncols], start=1):
+        if pos == 1 or source.covered or source.value is None:
+            continue
+        letter = get_column_letter(pos)
+        ws.cell(row=row, column=pos).value = (
+            f"=SUM({letter}{first_data_row}:{letter}{max(last_data_row, first_data_row)})"
+        )
+    ws.row_dimensions[row].height = TOTALS_HEIGHT
 
 
 # --------------------------------------------------------------------------- shared
-
-
-def _qty(value) -> Optional[float]:
-    """What to write in the Qty to load cell, and `None` is a real answer (AC-C3).
-
-    A zero would read as "pack none of these", which is a different instruction from "we did
-    not ask about these" - and the supplier acts on the difference.
-    """
-    if value is None:
-        return None
-    number = float(value)
-    if number <= 0:
-        return None
-    return int(number) if number == int(number) else number
-
-
-def _text(value) -> Optional[str]:
-    if value is None:
-        return None
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    text = str(value).strip()
-    return text or None
 
 
 def _bytes(wb) -> bytes:
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+__all__ = ["NO_FILE_TITLE", "QTY_TO_LOAD_HEADER", "build", "filename", "render"]

@@ -1,53 +1,53 @@
-"""F4 - the container request goes back to the supplier as THEIR OWN sheet, with our column.
+"""R13 - with a retained stock list, the xlsx IS their file.
 
-`PLAN-scm-fulfilment-feedback.md` section 3 (F4), AC-C1 / C2 / C3 / C5. Ms Tee's ask, in her
-words: "send them the same sheet back with the quantity to load filled in". So the test that
-matters most is the ROUND TRIP - whatever we hand back has to be a file this system can read
-again, because the supplier's next stock list is very often the file we sent them with the
-numbers changed. If the export drifted out of the reader's shape, that loop would break in the
-one place nobody looks.
+`PLAN-scm-fulfilment-feedback-p4.md` section 4, AC-D1 / D2 / D3 / D6. Ms Tee's ask, in her
+words: "send them the same sheet back with the quantity to load filled in", and the captain's
+round-2 ruling (Q1): the asked quantity is an APPENDED column K, their ten columns untouched.
 
-The alias rows are reference data (migration 311 / `bootstrap_env`); `require_aliases` fails
-rather than skips when they are missing, for the reason stated there.
+So the golden test below is not a description of the July file, it is a comparison against it:
+their own `2026-7-27  库存明细.xlsx` goes in (committed under `documentation/plans/scm/
+fixtures/`), the export comes out, and every cell they wrote - value, font, fill, border,
+number format, merge, width, row height - has to still be there. The five-column sheet of our
+own is gone (AC-D6): a supplier must not receive a different document because of a file WE
+failed to keep.
+
+THE ROUND TRIP IS STILL THE CONTRACT (AC-C2 of part 3). The supplier's next stock list is very
+often this file with the numbers changed, so whatever goes out has to come back in through
+`supplier_inventory_reader.read_workbook` - asserted here on both layouts.
 """
 from __future__ import annotations
 
 import uuid
 from io import BytesIO
+from pathlib import Path
 
-import pytest
+import openpyxl
 
-from app.models.email_outbox import EmailOutbox
 from app.services.scm import container_request_xlsx as svc
-from app.services.scm import supplier_notice_service as notices
+from app.services.scm import supplier_document_model as model
 from app.services.scm.supplier_inventory_reader import read_workbook
 from tests._pg_fixture import pg_session
 from tests.scm._outstanding_workbooks import require_aliases
 from tests.scm.test_loading_plan import World
 
-MARKER = "ZZCX"
+FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "documentation"
+    / "plans"
+    / "scm"
+    / "fixtures"
+    / "jinbaichuan-stock-list-2026-07-27.xlsx"
+)
 
-#: The supplier's own header, as the July JINBAICHUAN file writes it (migration 311's seeds).
-HEADER = ["序号", "型号", "商标", "规格", "品名", "包装好库存", "空瓷", "体积(cbm)", "备注"]
+SUPPLIER = {"supplier_code": "JBC", "supplier_name": "JINBAICHUAN"}
 
-
-def workbook(rows: list[list]) -> bytes:
-    import openpyxl
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    for row in rows:
-        ws.append(list(row))
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def sheet(data: bytes) -> list[tuple]:
-    import openpyxl
-
-    wb = openpyxl.load_workbook(BytesIO(data), data_only=True)
-    return [tuple(r) for r in wb.active.iter_rows(values_only=True)]
+#: Where their sheet ends: header on row 2, data 3..119, `合计：` on 120, ten columns.
+HEADER_ROW = 2
+FIRST_DATA_ROW = 3
+LAST_DATA_ROW = 119
+TOTALS_ROW = 120
+THEIR_COLS = 10
+QTY_COL = 11
 
 
 def _world(db) -> World:
@@ -55,292 +55,298 @@ def _world(db) -> World:
     return World(db)
 
 
-def _uploaded(w: World, keys: list[str]) -> bytes:
-    """The supplier's file as they sent it: a title line, their header, their rows."""
-    rows: list[list] = [[f"{MARKER} 库存明细", None, None, None, None, None, None, None, None]]
-    rows.append(list(HEADER))
-    for i, key in enumerate(keys, start=1):
-        p = w.product(key)
-        rows.append([i, p.product_code, "SORENTO", "600mm", p.product_name, 120, 340, 0.21, ""])
-    return workbook(rows)
+def _sheet_model(
+    db, lines: list[dict], *, monkeypatch, retained: bytes | None = ..., supplier_id=None
+):
+    data = FIXTURE.read_bytes() if retained is ... else retained
+    monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: data)
+    return model.build(
+        db,
+        supplier=SUPPLIER,
+        supplier_id=str(supplier_id or uuid.uuid4()),
+        lines=lines,
+    )
 
 
-def _line(w: World, key: str, qty: float) -> dict:
-    p = w.product(key)
-    return {"item_code": p.product_code, "product_name": p.product_name, "qty": qty}
+def _line(item_code: str, qty: float, name: str = "Basin") -> dict:
+    return {"item_code": item_code, "product_name": name, "qty": qty, "product_id": None}
+
+
+def _open(data: bytes):
+    return openpyxl.load_workbook(BytesIO(data)).active
+
+
+def _style(cell) -> tuple:
+    color = getattr(cell.font.color, "rgb", None) if cell.font.color else None
+    fill = getattr(cell.fill.fgColor, "rgb", None) if cell.fill.fill_type else None
+    return (
+        cell.font.name,
+        cell.font.sz,
+        cell.font.b,
+        color if isinstance(color, str) else None,
+        cell.fill.fill_type,
+        fill if isinstance(fill, str) else None,
+        cell.border.left.style,
+        cell.border.right.style,
+        cell.border.top.style,
+        cell.border.bottom.style,
+        cell.alignment.horizontal,
+        cell.alignment.vertical,
+        cell.number_format,
+    )
 
 
 # --------------------------------------------------------------------------- #
-# their sheet, our column
+# their workbook, cell for cell
 # --------------------------------------------------------------------------- #
+
+
+def test_every_cell_they_wrote_survives_untouched(monkeypatch):
+    # AC-D1. The whole point of R13: this is THEIR file with one column written into it, not
+    # a copy of their data in a workbook of ours. Value, font, fill, border and number format,
+    # on every one of their 1,200 cells.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTWC8355-RL-250", 300)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+        theirs = _open(FIXTURE.read_bytes())
+
+        for r in range(1, TOTALS_ROW + 1):
+            for c in range(1, THEIR_COLS + 1):
+                mine, yours = out.cell(row=r, column=c), theirs.cell(row=r, column=c)
+                assert mine.value == yours.value, f"value at {mine.coordinate}"
+                assert _style(mine) == _style(yours), f"style at {mine.coordinate}"
+
+
+def test_their_merges_widths_and_row_heights_survive(monkeypatch):
+    # AC-D1. A family is one 序号 and one volume across nine rows (`A3:A11`, `I3:I11`);
+    # unmerging it would print the volume nine times, which reads as nine times the volume.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTWC8355-RL-250", 300)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+        theirs = _open(FIXTURE.read_bytes())
+
+        assert sorted(str(m) for m in out.merged_cells.ranges) == sorted(
+            str(m) for m in theirs.merged_cells.ranges
+        )
+        for letter in "ABCDEFGHIJ":
+            assert out.column_dimensions[letter].width == (
+                theirs.column_dimensions[letter].width
+            ), letter
+        for r in (1, 2, 3, 26, 119, 120):
+            assert out.row_dimensions[r].height == theirs.row_dimensions[r].height, r
+
+
+def test_column_k_carries_the_ask_and_is_styled_like_their_last_column(monkeypatch):
+    # Q1 / AC-D1. Appended, never inserted; and it has to LOOK like a column of theirs or the
+    # sheet reads as two documents stapled together.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(
+            db,
+            [_line("SRTWC8355-RL-250", 300), _line("SRTSP131", 12)],
+            monkeypatch=monkeypatch,
+        )
+
+        out = _open(svc.render(sheet))
+
+        assert out.cell(row=HEADER_ROW, column=QTY_COL).value == svc.QTY_TO_LOAD_HEADER
+        assert _style(out.cell(row=HEADER_ROW, column=QTY_COL)) == _style(
+            out.cell(row=HEADER_ROW, column=THEIR_COLS)
+        )
+        asked = {
+            out.cell(row=r, column=2).value: out.cell(row=r, column=QTY_COL).value
+            for r in range(FIRST_DATA_ROW, LAST_DATA_ROW + 1)
+        }
+        assert asked["SRTWC8355-RL-250"] == 300
+        assert asked["SRTSP131"] == 12
+        assert asked["SRTWC286-SH-150NEW"] is None
+        assert out.column_dimensions["K"].width == out.column_dimensions["J"].width
+
+
+def test_a_zero_ask_leaves_the_cell_empty(monkeypatch):
+    # AC-D3 (AC-C3 of part 3 stands). A zero reads as "pack none of these".
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTSP131", 0)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+
+        row = next(
+            r
+            for r in range(FIRST_DATA_ROW, LAST_DATA_ROW + 1)
+            if out.cell(row=r, column=2).value == "SRTSP131"
+        )
+        assert out.cell(row=row, column=QTY_COL).value is None
+
+
+def test_the_totals_row_sums_our_column_too(monkeypatch):
+    # AC-D1. Their three sums are their formulas, untouched; ours is one more of the same.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTSP131", 12)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+
+        assert out.cell(row=TOTALS_ROW, column=6).value == "=SUM(F3:F119)"
+        assert out.cell(row=TOTALS_ROW, column=9).value == "=SUM(I3:I119)"
+        assert out.cell(row=TOTALS_ROW, column=QTY_COL).value == "=SUM(K3:K119)"
+
+
+def test_a_product_they_never_listed_is_appended_and_the_totals_row_moves_down(monkeypatch):
+    # AC-D2. It is still part of the ask. Their 合计 row keeps its formulas and widens to
+    # cover the rows we added - a total that stopped short of them would understate the ask.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(
+            db,
+            [_line("SRTSP131", 12), _line("ZZT-NEW-1", 80, "New basin")],
+            monkeypatch=monkeypatch,
+        )
+
+        out = _open(svc.render(sheet))
+
+        assert out.cell(row=120, column=1).value == 39  # their last 序号 is 38
+        assert out.cell(row=120, column=2).value == "ZZT-NEW-1"
+        assert out.cell(row=120, column=10).value == model.NOT_ON_LIST_REMARK
+        assert out.cell(row=120, column=QTY_COL).value == 80
+        assert _style(out.cell(row=120, column=2)) == _style(
+            out.cell(row=LAST_DATA_ROW, column=2)
+        )
+        assert out.row_dimensions[120].height == out.row_dimensions[LAST_DATA_ROW].height
+
+        assert out.cell(row=121, column=1).value == "合计："
+        assert out.cell(row=121, column=6).value == "=SUM(F3:F120)"
+        assert out.cell(row=121, column=9).value == "=SUM(I3:I120)"
+        assert out.cell(row=121, column=QTY_COL).value == "=SUM(K3:K120)"
+        assert out.cell(row=120, column=1).value != "合计："
+        merges = {str(m) for m in out.merged_cells.ranges}
+        assert "A121:E121" in merges and "A120:E120" not in merges
 
 
 def test_the_export_reads_back_through_the_stock_list_reader(monkeypatch):
-    # AC-C2, and the point of the whole slice: the supplier answers with the file we sent
-    # them. An export the reader cannot parse breaks the loop silently.
+    # AC-C2 of part 3, and the point of the whole slice: the supplier answers with the file we
+    # sent them. An export the reader cannot parse breaks the loop silently.
     with pg_session() as db:
-        w = _world(db)
-        monkeypatch.setattr(svc, "_uploaded_sheet", lambda _db, _sid: _uploaded(w, ["A", "B"]))
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTSP131", 12)], monkeypatch=monkeypatch)
 
-        data = svc.build(db, supplier={"supplier_code": "JBC", "supplier_name": "JBC"},
-                         supplier_id=str(w.supplier.id), lines=[_line(w, "A", 500)])
+        out = read_workbook(svc.render(sheet), db=db)
 
-        out = read_workbook(data, db=db)
         assert out.ok, out.missing_columns
-        assert [r.item_code for r in out.rows] == [
-            w.product("A").product_code,
-            w.product("B").product_code,
+        assert [r.item_code for r in out.rows][:2] == [
+            "SRTWC286-SH-150NEW",
+            "SRTWC286-SH-180",
         ]
-        assert out.rows[0].qty_packed == 120
-        assert out.rows[0].qty_unfinished == 340
-        assert out.rows[0].cbm_per_unit == 0.21
-
-
-def test_their_header_row_is_kept_as_uploaded_with_our_column_appended():
-    # AC-C2. Their spellings, their order, their title line above it - plus one column at the
-    # end. Anything else and the file stops looking like the one they wrote.
-    with pg_session() as db:
-        w = _world(db)
-        rows = sheet(
-            svc._with_qty_to_load(_uploaded(w, ["A"]), db=db, lines=[_line(w, "A", 500)])
-        )
-
-        assert rows[0][0] == f"{MARKER} 库存明细"
-        assert list(rows[1][: len(HEADER)]) == HEADER
-        assert rows[1][len(HEADER)] == svc.QTY_TO_LOAD_HEADER
-        assert rows[2][len(HEADER)] == 500
-
-
-def test_a_requested_product_the_stock_list_never_named_is_appended_below():
-    # AC-C2. It is still something we are asking them to pack; dropping it because their own
-    # sheet has no line for it is how an ask goes out short.
-    with pg_session() as db:
-        w = _world(db)
-        rows = sheet(
-            svc._with_qty_to_load(
-                _uploaded(w, ["A"]),
-                db=db,
-                lines=[_line(w, "A", 500), _line(w, "NEW", 80)],
-            )
-        )
-
-        codes = [r[1] for r in rows]
-        assert codes.index(w.product("NEW").product_code) > codes.index(
-            w.product("A").product_code
-        )
-        appended = next(r for r in rows if r[1] == w.product("NEW").product_code)
-        assert appended[len(HEADER)] == 80
-
-
-def test_a_row_we_are_not_asking_for_has_an_empty_qty_cell():
-    # AC-C3. A zero reads as "pack none of these", which is a different instruction from
-    # "we did not ask about these" - and the supplier acts on the difference.
-    with pg_session() as db:
-        w = _world(db)
-        rows = sheet(
-            svc._with_qty_to_load(_uploaded(w, ["A", "B"]), db=db, lines=[_line(w, "A", 500)])
-        )
-
-        b = next(r for r in rows if r[1] == w.product("B").product_code)
-        assert b[len(HEADER)] is None
-
-
-def test_a_zero_quantity_line_is_an_empty_cell_too():
-    # AC-C3, the other half: the grid can send a reviewed line at zero.
-    with pg_session() as db:
-        w = _world(db)
-        rows = sheet(
-            svc._with_qty_to_load(_uploaded(w, ["A"]), db=db, lines=[_line(w, "A", 0)])
-        )
-
-        assert rows[2][len(HEADER)] is None
+        assert out.rows[0].qty_unfinished == 0
+        assert out.rows[1].qty_unfinished == 101
 
 
 # --------------------------------------------------------------------------- #
-# no stock list at all
+# no retained file
 # --------------------------------------------------------------------------- #
 
 
-def test_without_a_retained_sheet_the_export_falls_back_to_our_own_columns(monkeypatch):
-    # AC-C5. There is no sheet of theirs to answer in, so the file states what we know:
-    # the item, the name, what they told us they hold, and what to load.
+def test_without_a_retained_file_the_sheet_is_their_layout_in_our_hand(monkeypatch):
+    # AC-D6. Same eleven columns, same title line, same yellow fields, same 合计 row - what
+    # changes is only that we have no merges to draw, because we hold no family information.
+    with pg_session() as db:
+        w = _world(db)
+        w.stock("A", packed=120, unfinished=340, cbm=0.21)
+        sheet = _sheet_model(
+            db,
+            [_line(w.product("A").product_code, 500)],
+            monkeypatch=monkeypatch,
+            retained=None,
+            supplier_id=w.supplier.id,
+        )
+
+        out = _open(svc.render(sheet))
+
+        assert [out.cell(row=2, column=c).value for c in range(1, QTY_COL + 1)] == [
+            "序号",
+            "型号",
+            "商标",
+            "规格",
+            "品名",
+            "包装好库存",
+            "空瓷",
+            "体积(cbm)",
+            "总体积(cbm)",
+            "备注",
+            svc.QTY_TO_LOAD_HEADER,
+        ]
+        assert out.cell(row=1, column=1).value == model.NO_FILE_TITLE
+        assert out.cell(row=2, column=1).font.b is True
+        assert out.cell(row=3, column=2).fill.fgColor.rgb == "FFFFFF00"
+        assert out.cell(row=3, column=2).font.name == "宋体"
+        assert out.row_dimensions[3].height == 18.75
+        assert out.column_dimensions["B"].width == 28.7109375
+        assert out.cell(row=4, column=1).value == "合计："
+        assert out.cell(row=4, column=6).value == "=SUM(F3:F3)"
+        assert out.cell(row=4, column=QTY_COL).value == "=SUM(K3:K3)"
+
+
+def test_without_a_retained_file_the_export_still_reads_back(monkeypatch):
+    # The round trip again, on the branch that has no file to copy: the no-file layout is not
+    # allowed to be the one shape the reader cannot take back.
     with pg_session() as db:
         w = _world(db)
         w.stock("A", packed=120, unfinished=340)
-        monkeypatch.setattr(svc, "_uploaded_sheet", lambda _db, _sid: None)
+        sheet = _sheet_model(
+            db,
+            [_line(w.product("A").product_code, 500)],
+            monkeypatch=monkeypatch,
+            retained=None,
+            supplier_id=w.supplier.id,
+        )
 
-        data = svc.build(db, supplier={"supplier_code": "JBC", "supplier_name": "JBC"},
-                         supplier_id=str(w.supplier.id), lines=[_line(w, "A", 500)])
+        out = read_workbook(svc.render(sheet), db=db)
 
-        rows = sheet(data)
-        assert list(rows[0]) == svc.FALLBACK_HEADER
-        assert rows[1][0] == w.product("A").product_code
-        assert rows[1][2] == 120
-        assert rows[1][3] == 340
-        assert rows[1][4] == 500
-
-
-def test_the_fallback_export_reads_back_through_the_stock_list_reader(monkeypatch):
-    # AC-C2's round trip again, on the branch that has no file to copy: the fallback layout
-    # is not allowed to be the one shape the reader cannot take back.
-    with pg_session() as db:
-        w = _world(db)
-        w.stock("A", packed=120, unfinished=340)
-        monkeypatch.setattr(svc, "_uploaded_sheet", lambda _db, _sid: None)
-
-        data = svc.build(db, supplier={"supplier_code": "JBC", "supplier_name": "JBC"},
-                         supplier_id=str(w.supplier.id), lines=[_line(w, "A", 500)])
-
-        out = read_workbook(data, db=db)
         assert out.ok, out.missing_columns
         assert [r.item_code for r in out.rows] == [w.product("A").product_code]
         assert out.rows[0].qty_packed == 120
         assert out.rows[0].qty_unfinished == 340
 
 
-def test_an_unreadable_retained_sheet_falls_back_rather_than_failing_the_send(monkeypatch):
-    # The send must not die because a stored file is corrupt: the request itself is the point,
-    # and a fallback sheet still says what to pack.
+def test_a_stored_file_that_will_not_open_still_produces_a_sheet(monkeypatch):
+    # A send must never die because a stored file is corrupt: the ask is the point.
     with pg_session() as db:
         w = _world(db)
-        monkeypatch.setattr(svc, "_uploaded_sheet", lambda _db, _sid: b"not a workbook")
-
-        data = svc.build(db, supplier={"supplier_code": "JBC", "supplier_name": "JBC"},
-                         supplier_id=str(w.supplier.id), lines=[_line(w, "A", 500)])
-
-        assert list(sheet(data)[0]) == svc.FALLBACK_HEADER
-
-
-def test_a_sheet_whose_header_we_cannot_find_falls_back(monkeypatch):
-    # No item-code column means no row to write a quantity against, so their layout cannot
-    # carry our ask at all.
-    with pg_session() as db:
-        w = _world(db)
-        monkeypatch.setattr(
-            svc, "_uploaded_sheet", lambda _db, _sid: workbook([["a", "b"], [1, 2]])
+        sheet = _sheet_model(
+            db,
+            [_line(w.product("A").product_code, 500)],
+            monkeypatch=monkeypatch,
+            retained=b"not a workbook",
         )
 
-        data = svc.build(db, supplier={"supplier_code": "JBC", "supplier_name": "JBC"},
-                         supplier_id=str(w.supplier.id), lines=[_line(w, "A", 500)])
+        out = _open(svc.render(sheet))
 
-        assert list(sheet(data)[0]) == svc.FALLBACK_HEADER
+        assert out.cell(row=2, column=QTY_COL).value == svc.QTY_TO_LOAD_HEADER
 
 
-# --------------------------------------------------------------------------- #
-# filename
-# --------------------------------------------------------------------------- #
+def test_build_goes_from_the_database_straight_to_bytes(monkeypatch):
+    # `build` is what the send path and the download route call; `render` is what the model
+    # test drives. They must not be able to disagree.
+    with pg_session() as db:
+        w = _world(db)
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: None)
+
+        data = svc.build(
+            db,
+            supplier=SUPPLIER,
+            supplier_id=str(w.supplier.id),
+            lines=[_line(w.product("A").product_code, 500)],
+        )
+
+        assert _open(data).cell(row=2, column=QTY_COL).value == svc.QTY_TO_LOAD_HEADER
 
 
 def test_the_filename_names_the_supplier_and_the_day():
-    # AC-C1: `container-request-{supplier}-{stamp}.xlsx`, beside the PDF of the same stem.
-    name = svc.filename({"supplier_code": "JBC 01/A", "supplier_name": "x"})
-    assert name.startswith("container-request-JBC-01-A-")
+    name = svc.filename({"supplier_code": "JBC"})
+
+    assert name.startswith("container-request-JBC-")
     assert name.endswith(".xlsx")
-
-
-# --------------------------------------------------------------------------- #
-# what the send does with it
-# --------------------------------------------------------------------------- #
-
-
-@pytest.fixture
-def _no_pdf_no_storage(monkeypatch):
-    """Render and object store stubbed - the same stub S8's own suite uses."""
-    monkeypatch.setattr(notices, "render_document", lambda html: b"%PDF-1.4 stub")
-    monkeypatch.setattr(notices, "_store", lambda data, filename: ("s3", f"exports/t/{filename}"))
-
-
-def test_a_sent_request_keeps_the_sheet_beside_its_pdf(_no_pdf_no_storage):
-    # AC-C1. Two files, one act: the notice records where both of them went.
-    with pg_session() as db:
-        w = _world(db)
-        w.supplier.email = f"{MARKER}@example.test"
-        db.flush()
-
-        out = notices.request_and_notify(
-            db,
-            supplier_id=str(w.supplier.id),
-            lines=[{"product_id": str(w.product("A").id), "qty": 500}],
-        )
-
-        notice = out["notices"][0]
-        assert notice["has_document"] is True
-        assert notice["has_xlsx"] is True
-        assert notice["xlsx_filename"].endswith(".xlsx")
-
-
-def test_the_email_carries_both_files_not_two_emails(_no_pdf_no_storage):
-    # AC-C1: one email. The PDF rides the outbox row's own columns and the sheet rides the
-    # metadata the drainer reads, so the supplier gets one message with two attachments.
-    with pg_session() as db:
-        w = _world(db)
-        w.supplier.email = f"{MARKER}-{uuid.uuid4().hex[:6]}@example.test"
-        db.flush()
-
-        notices.request_and_notify(
-            db,
-            supplier_id=str(w.supplier.id),
-            lines=[{"product_id": str(w.product("A").id), "qty": 500}],
-        )
-
-        rows = (
-            db.query(EmailOutbox)
-            .filter(EmailOutbox.recipient_email == w.supplier.email)
-            .all()
-        )
-        assert len(rows) == 1
-        row = rows[0]
-        assert row.attachment_filename.endswith(".pdf")
-        extra = row.metadata_json["extra_attachments"]
-        assert len(extra) == 1
-        assert extra[0]["filename"].endswith(".xlsx")
-
-
-def test_the_drainer_reads_both_attachments_off_one_row(monkeypatch):
-    # The half of AC-C1 the outbox row alone cannot prove: what actually gets attached.
-    from app.tasks import email_outbox_tasks
-
-    class _Backend:
-        def download_file(self, key):
-            return f"bytes:{key}".encode()
-
-    monkeypatch.setattr(
-        "app.services.storage_router.get_backend", lambda provider: _Backend()
-    )
-    row = EmailOutbox(
-        event_key="supplier_loading_notice",
-        recipient_email="x@example.test",
-        subject="s",
-        body_text="b",
-        attachment_filename="request.pdf",
-        attachment_storage_provider="s3",
-        attachment_storage_key="exports/t/request.pdf",
-        metadata_json={
-            "extra_attachments": [
-                {
-                    "filename": "request.xlsx",
-                    "storage_provider": "s3",
-                    "storage_key": "exports/t/request.xlsx",
-                }
-            ]
-        },
-    )
-
-    out = email_outbox_tasks._attachments_for(row)
-
-    assert [a[0] for a in out] == ["request.pdf", "request.xlsx"]
-    assert out[1][1] == (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-
-def test_an_email_with_no_attachment_at_all_still_reads_as_none(monkeypatch):
-    # Guard: every other event in the system sends no file, and `None` (not `[]`) is what
-    # `send_mime_email` has always been handed for those.
-    from app.tasks import email_outbox_tasks
-
-    row = EmailOutbox(
-        event_key="x", recipient_email="x@example.test", subject="s", body_text="b"
-    )
-
-    assert email_outbox_tasks._attachments_for(row) is None
