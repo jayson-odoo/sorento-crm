@@ -36,6 +36,14 @@
  * past promise as a purchase nobody made.
  */
 
+import { fromMinor, toMinor } from './supplyComposition';
+import type {
+  BoardCell,
+  BoardContribution,
+  BoardDecision,
+  BoardLineDecision,
+} from '../types/fulfilmentPlanning.types';
+
 /**
  * The ladder writing today's proposals, mirroring
  * `app.services.project_supply_service.LADDER_VERSION`.
@@ -46,13 +54,6 @@
  * today's answer (AC-V8).
  */
 export const LADDER_VERSION = 'v5';
-import { fromMinor, toMinor } from './supplyComposition';
-import type {
-  BoardCell,
-  BoardContribution,
-  BoardDecision,
-  BoardLineDecision,
-} from '../types/fulfilmentPlanning.types';
 
 export type SupplyKind =
   | 'buy'

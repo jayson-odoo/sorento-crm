@@ -265,3 +265,83 @@ def test_the_latest_instruction_wins_when_a_line_carries_several():
         assert _contribution(board, product.product_code)["order_inquiry"]["state"] == (
             INQUIRY_RAISED
         )
+
+
+def test_two_answered_refusals_leave_the_LATEST_inquiry_number_on_the_cell():
+    """A refusal CS has already answered never outranks a live row - but against ANOTHER
+    answered refusal it is the later of the two that stands.
+
+    The scan reads oldest first, and it used to skip every answered refusal once the line
+    had an entry at all, so a line whose only rows were two answered refusals kept the
+    FIRST one's inquiry number: the cell named an instruction two refusals ago. It says
+    what it was last told about.
+    """
+    from datetime import datetime
+
+    from app.models.project_so import ACK_REJECTED, SOAmendment
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product = _product(db)
+        order = _order(db)
+        core_line = _line(db, order, product, _warehouse(db))
+        record = _adopted(db, company_id, order)
+        mirror = _mirror(db, company_id, record, core_line)
+
+        older = _inquiry(
+            db, company_id, record, mirror, state=INQUIRY_RAISED,
+            created_at=datetime(2026, 8, 1, 9, 0),
+        )
+        # The second inquiry belongs to an AMENDMENT, which is the only way one sales order
+        # carries two of them (`uq_project_order_inquiry_per_sales_order`) and exactly how
+        # this shape arises on the book: purchasing refuses, CS amends, purchasing refuses
+        # the amendment, CS decides again.
+        amendment = SOAmendment(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id,
+        )
+        db.add(amendment)
+        db.flush()
+        newer = OrderInquiry(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id,
+            amendment_id=amendment.id, inquiry_no="OI-000002", state=INQUIRY_RAISED,
+        )
+        db.add(newer)
+        db.flush()
+        db.add(OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=newer.id,
+            so_line_id=mirror.id, item_code=f"{MARKER}-ITEM", qty=Decimal("10"),
+            verb=IV_ORDER, state=INQUIRY_RAISED,
+            created_at=datetime(2026, 8, 12, 9, 0),
+        ))
+        db.flush()
+        rejected_at = {
+            str(older.id): datetime(2026, 8, 2, 9, 0),
+            str(newer.id): datetime(2026, 8, 13, 9, 0),
+        }
+        for row in (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == mirror.id)
+            .all()
+        ):
+            row.ack_state = ACK_REJECTED
+            row.rejected_at = rejected_at[str(row.order_inquiry_id)]
+            row.rejected_reason = "Factory closed"
+        db.flush()
+
+        # CS decided the line again AFTER both refusals, so both are answered.
+        cell = _service(db)._order_inquiries(
+            [str(core_line.id)],
+            decided_at={str(core_line.id): datetime(2026, 8, 14, 9, 0)},
+        )[str(core_line.id)]
+
+    assert cell["inquiry_no"] == newer.inquiry_no
+    assert cell["inquiry_no"] != older.inquiry_no
+    # Answered, so the objection itself is not repeated: no reason, no name.
+    assert cell["rejected_reason"] is None
+    assert cell["rejected_by_name"] is None
+    # PINNED, and NOT ruled: the seeded entry still carries the refused row's own
+    # `ack_state`, because it is the only row this line has and the entry is copied off it
+    # whole. Every other shape re-seeds from a live row, so this is the one case where the
+    # word survives its answer. Left for the captain, because suppressing it is a decision
+    # about what an answered refusal's cell should SAY, not a defect in this scan.
+    assert cell["ack_state"] == ACK_REJECTED

@@ -3387,10 +3387,15 @@ def test_the_cross_group_cap_is_measured_against_the_true_residual_not_the_whole
         # The whole-line rule fired: nothing partial survived, the whole 100 is bought.
         assert contribution["qty_proposed_buy"] == "100"
         step = _step(contribution, "cross_group_borrow")
+        why = step["why"] or ""
         # 70 (the true residual) is inside the 80 cap, so the donor is offered; the buggy
         # reading (100, the untouched whole line) would have excluded it and said no donor
-        # was within the limit at all.
-        assert elsewhere.warehouse_code in (step["why"] or "")
+        # was within the limit at all. Naming the donor is not enough to tell those apart -
+        # the CAP-refused sentence names it too - so the two discriminating phrases are
+        # what is pinned: the donor cleared the limit, and nothing "is still needed".
+        assert elsewhere.warehouse_code in why
+        assert "within the cross-group borrow limit" in why, why
+        assert "is still needed" not in why, why
 
 
 # --------------------------------------------------------------------------- #
@@ -4537,6 +4542,10 @@ def test_the_pool_rung_never_overstates_another_pools_offer_past_its_own_availab
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         step = _step(contribution, "pool")
         assert step["answer"] == "no", "pool2 is oversold, so it must offer nothing"
+        # The SENTENCE, not only the verdict: a No with no arithmetic in it is the trail
+        # this whole rewrite replaced. -50 at pool2 against 0 at pool1 is the pile's net,
+        # and that number is what refused the draw.
+        assert "the site pools net -50 between them" in step["why"], step["why"]
         assert pool2.warehouse_code in (step["note"] or ""), (
             "an oversold pool was still opened, and a pool nobody names looks like one "
             "nobody checked"

@@ -1234,14 +1234,23 @@ class FulfilmentBoardService:
         # when it is the only row the line has: the cell keeps the inquiry number it was
         # last told about rather than going blank.
         out: Dict[str, Dict[str, Any]] = {}
+        # When an entry was seeded by an ANSWERED refusal, the instant that refusal was
+        # written. `None` for an entry seeded by a live row, which no refusal outranks.
+        # Two answered refusals on one line used to leave the FIRST one's inquiry number
+        # standing, because the second was skipped wholesale; the cell should show the
+        # inquiry it was last told about.
+        answered_refusal_at: Dict[str, Optional[datetime]] = {}
         for core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name in rows:
             core_key = str(core_id)
-            if (
-                ack_state == ACK_REJECTED
-                and core_key in out
-                and _refusal_answered(core_key, rejected_at)
-            ):
-                continue
+            answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
+                core_key, rejected_at
+            )
+            if answered_refusal and core_key in out:
+                previous = answered_refusal_at.get(core_key)
+                # `rejected_at` is never None inside this branch: `_refusal_answered`
+                # answers False without one.
+                if previous is None or rejected_at <= previous:
+                    continue
             out[core_key] = {
                 "inquiry_no": inquiry_no,
                 "state": state,
@@ -1249,6 +1258,7 @@ class FulfilmentBoardService:
                 "rejected_reason": None,
                 "rejected_by_name": None,
             }
+            answered_refusal_at[core_key] = rejected_at if answered_refusal else None
         # The REFUSAL is read off the line rather than off its current row, and that is
         # the difference between the cell saying why it came back and saying nothing. A
         # line routinely carries several rows - an order back beside the order, an
@@ -2853,9 +2863,14 @@ class FulfilmentBoardService:
             )
             if outcome == "took":
                 return f"Free stock at {where}, within the cross-group borrow limit."
-            if outcome == "none_needed":
-                return _COVERED_BEFORE
-            return f"Free stock at {where}. {_WHOLE_LINE_RULE_DROPPED}"
+            # OFFERED and not taken. The limit is named here too, because it is the fact
+            # that tells this No from the one below it: the donor cleared the cap and the
+            # whole-line rule is what dropped it, which sends a planner somewhere else
+            # entirely from "the cap refused this".
+            return (
+                f"Free stock at {where}, within the cross-group borrow limit. "
+                f"{_WHOLE_LINE_RULE_DROPPED}"
+            )
         # Nothing offered. Was there stock outside the group at all, and did the CAP refuse
         # it? `borrow_candidates` carries every donor the walk saw, over-cap ones included,
         # which is exactly the distinction this sentence has to draw.
@@ -2909,9 +2924,9 @@ class FulfilmentBoardService:
         a reason. `is_discontinued` only ever forced a REASON on the buy; saying so here is
         cheaper than a refusal at confirm being the first anybody hears of it.
 
-        Beyond the reserve window "nothing left to take" is not what happened: two rungs were
-        never walked, and there may well be stock at a donor this line is simply not allowed
-        to take. The rule says so instead.
+        Beyond the reserve window "nothing left to take" is not what happened: none of the
+        four questions was asked at all, and there may well be stock at a donor this line is
+        simply not allowed to take. The rule says so instead.
         """
         if outcome != "took":
             return _COVERED_BEFORE
