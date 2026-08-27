@@ -56,7 +56,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import {
@@ -143,31 +143,6 @@ const MATRIX_GRANULARITY_OPTIONS = [
 
 /** A source older than this reads as "trust this less" rather than a hard error - the figures
  *  built off it are still real, just possibly overtaken by an upload nobody has run yet. */
-const STALE_AFTER_DAYS = 7;
-
-function isStaleSource(iso: string | null): boolean {
-  if (!iso) return false;
-  const ms = Date.now() - new Date(iso).getTime();
-  return ms > STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
-}
-
-/** The stamp's own date, +time when the source ISO actually carries one - `stock_list_as_of`
- *  is a bare date (`supplier_inventory.as_of`), the other three are timestamps. Naive-UTC
- *  timestamps must go through `formatDateTimeInMalaysia` (parses as UTC, renders MYT) - a bare
- *  `new Date(iso)` reads the naive string as local time and lands 8h early. */
-function formatSourceStamp(iso: string | null): string {
-  if (!iso) return EM_DASH;
-  return iso.includes('T') ? formatDateTimeInMalaysia(iso) : formatDateInMalaysia(iso);
-}
-
-function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
-  const stale = isStaleSource(iso);
-  return (
-    <span className={cn(stale && 'text-amber-600')} title={stale ? 'Consider re-uploading' : undefined}>
-      {label} {formatSourceStamp(iso)}
-    </span>
-  );
-}
 
 /**
  * What "Packed" sorts by: the one quantity the column shows (captain, 27 Aug: the unfinished
@@ -908,7 +883,6 @@ export function ContainerRequestSection({
     );
   }
 
-  const sources = build.data.sources;
 
   return (
     <div className="space-y-4">
@@ -937,21 +911,6 @@ export function ContainerRequestSection({
                   ? ` to cover until ${formatDateInMalaysia(build.data.plan_horizon_date)}`
                   : ' for'}
               </h3>
-              {/* The freshness strip (captain, "plan with trusted data"): a source older than
-                  a week reads in a warning tone rather than a hard block - the figures are
-                  still real, just possibly stale. */}
-              <p className="text-2xs text-muted-foreground">
-                <SourceStamp label="SO book" iso={sources.so_book_as_of} /> -{' '}
-                <SourceStamp label="PO book" iso={sources.po_book_as_of} /> -{' '}
-                <SourceStamp label="SPO" iso={sources.spo_as_of} /> -{' '}
-                {/* Whichever document the holdings actually came from - never both, because
-                    the proforma is not consulted while a stock list exists (AC-A2/A3). */}
-                {sources.stock_list_as_of || !sources.proforma_as_of ? (
-                  <SourceStamp label="Stock list" iso={sources.stock_list_as_of} />
-                ) : (
-                  <SourceStamp label="PI" iso={sources.proforma_as_of} />
-                )}
-              </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>

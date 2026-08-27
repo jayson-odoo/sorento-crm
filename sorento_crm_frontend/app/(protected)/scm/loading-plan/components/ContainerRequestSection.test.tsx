@@ -287,14 +287,12 @@ describe('ContainerRequestSection - the grid', () => {
     renderSection();
 
     expect(screen.getByText('300')).toBeInTheDocument();
-    // Twice: once in the freshness strip, once on the row - both name the stand-in.
-    expect(screen.getAllByText(/PI 31\/07\/2026/)).toHaveLength(2);
+    // Once, on the row: the freshness strip is gone (captain, 27 Aug).
+    expect(screen.getAllByText(/PI 31\/07\/2026/)).toHaveLength(1);
     // Not "0 packed": a proforma states one quantity per line and there is no unfinished
     // half of it to report, so reporting zeroes would be inventing the supplier's words.
     expect(screen.queryByText(/0 packed/)).not.toBeInTheDocument();
     expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
-    // The freshness strip names the document the holdings actually came from.
-    expect(screen.queryByText(/Stock list/)).not.toBeInTheDocument();
   });
 
   it('reads a dash when neither document names the product', () => {
@@ -518,63 +516,6 @@ describe('ContainerRequestSection - the grid', () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/1 product, 10 units in total/i)).toBeInTheDocument();
     expect(state.send.mutate).not.toHaveBeenCalled();
-  });
-});
-
-describe('ContainerRequestSection - the freshness strip (source staleness)', () => {
-  // "plan with trusted data": a source older than a week reads amber, not a hard block.
-  it('a source fetched moments ago reads in the ordinary tone, no warning title', () => {
-    const fresh = new Date().toISOString();
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: fresh },
-    };
-    renderSection();
-
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.className).not.toContain('text-amber-600');
-    expect(stamp).not.toHaveAttribute('title');
-  });
-
-  it('a source over 7 days old reads amber, with a re-upload hint', () => {
-    const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: stale },
-    };
-    renderSection();
-
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.className).toContain('text-amber-600');
-    expect(stamp).toHaveAttribute('title', 'Consider re-uploading');
-  });
-
-  it('a source with no ingest yet renders the em dash, never a fabricated date', () => {
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: EMPTY_SOURCES,
-    };
-    renderSection();
-
-    expect(screen.getByText(/PO book -/)).toBeInTheDocument();
-  });
-
-  // SF-3 (reviewer): the timestamp half must go through `formatDateTimeInMalaysia` (parses
-  // naive-UTC, renders MYT) rather than a bare `new Date(iso)`, which reads the naive string as
-  // local time and lands the displayed clock 8h early.
-  it('a naive-UTC timestamp source renders its time 8h ahead, in Malaysia time', () => {
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: '2026-08-18T00:00:00' },
-    };
-    renderSection();
-
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.textContent).toContain('8:00 am');
   });
 });
 
