@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('sonner', () => ({
@@ -25,6 +25,18 @@ const state = {
   worksheet: vi.fn(),
 };
 
+/** The two lightbox bodies that FETCH (On hand, Incoming SPO) - mocked at the hook, so these
+ *  tests are about what the planner opens, not about react-query's timing. */
+const useLocationStock = vi.fn();
+vi.mock('@/app/(protected)/scm/reorder/hooks/useReorderRun', () => ({
+  useLocationStock: (...a: unknown[]) => useLocationStock(...a),
+}));
+
+const useContainerRequestDrill = vi.fn();
+vi.mock('@/app/(protected)/scm/hooks/useContainerRequestDrill', () => ({
+  useContainerRequestDrill: (...a: unknown[]) => useContainerRequestDrill(...a),
+}));
+
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   getSpoSuggestion: (...args: unknown[]) => state.suggestionFn(...args),
   createSpo: (...args: unknown[]) => state.create(...args),
@@ -33,6 +45,7 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
 }));
 
 import { toast } from 'sonner';
+import { NO_SPO_TO_POOL } from '@/app/(protected)/scm/components/PlanRowDialog';
 import { SpoPlannerTable } from './SpoPlannerTable';
 
 function suggestion(over: Record<string, unknown> = {}) {
@@ -69,6 +82,11 @@ beforeEach(() => {
     deleted_allocation_count: 0,
   });
   state.worksheet = vi.fn().mockResolvedValue(undefined);
+  useLocationStock.mockReturnValue({ data: undefined, isLoading: false });
+  useContainerRequestDrill.mockReturnValue({
+    data: { kind: 'spo', rows: [], total: 0, history: [] },
+    isLoading: false,
+  });
 });
 
 const existingSpos = () => [
@@ -369,9 +387,11 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openSoDrill();
 
-    // 100 packed, 40 + 30 ticked - the remaining 30 is free stock. Said in the drill, and
-    // again on the location cell, because that is where it decides where goods land.
-    expect(screen.getAllByText(/30 unassigned/).length).toBeGreaterThanOrEqual(2);
+    // 100 packed, 40 + 30 ticked - the remaining 30 is free stock. Said in the lightbox's
+    // footer, and again on the location cell, because that is where it decides where goods
+    // land.
+    expect(screen.getByText('Unassigned 30')).toBeInTheDocument();
+    expect(screen.getByText(/30 unassigned/)).toBeInTheDocument();
   });
 
   it('the ticks drive the location split (AC-G4)', async () => {
@@ -528,8 +548,11 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
 
-    expect(await screen.findByText(/SO-2202/)).toBeInTheDocument();
-    expect(screen.getByText(/nothing left for it/)).toBeInTheDocument();
+    // Named on the banner - the lightbox lists SO-2202 as well, so the assertion is on the
+    // sentence that stops the send, not on the number appearing somewhere.
+    expect(
+      await screen.findByText(/SO-2202 - this container has nothing left/),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
   });
 
@@ -871,5 +894,186 @@ describe('R22 - the destinations expand under the row', () => {
 
     expect(await screen.findByText('No location')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'No location' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * R21 / AC-G1, AC-G2, AC-G3, AC-G6 - the four figures open the SHARED lightbox.
+ *
+ * PO covers and SO covered carry the ticks that used to live in a popover; On hand and
+ * Incoming SPO open the same bodies the loading plan and reorder planning already use. What
+ * the popovers could not do is what these assert: a table wide enough to name documents, a
+ * footer stating what the ticks add up to, and a surface that survives a tick.
+ */
+describe('R21 - the four figures open the shared lightbox', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine({ on_hand: 2, incoming_spo: 120 })] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  const openFigure = async (title: RegExp) => {
+    fireEvent.click(await screen.findByTitle(title));
+    return screen.getByRole('dialog');
+  };
+  const PO = /which po covers this/i;
+  const SO = /which demand this spo is for/i;
+  const ON_HAND = /where this product is on hand/i;
+  const INCOMING = /what is already on the water/i;
+
+  it('PO covers opens a dialog listing every take, pre-ticked, with the covers footer (AC-G1)', async () => {
+    renderTable();
+
+    const dialog = await openFigure(PO);
+
+    expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: 'Draw from 202605-S0060' })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: 'Draw from 202606-S0099' })).toBeChecked();
+    expect(
+      within(dialog).getByText('2 of 2 POs · covers 100 of packed 100'),
+    ).toBeInTheDocument();
+  });
+
+  it('unticking in the dialog lowers the cell and clamps the SPO qty (AC-G1)', async () => {
+    renderTable();
+    const dialog = await openFigure(PO);
+
+    // The 150-open line is the one that could cover the whole container; without it only
+    // the 60-open line is left, and the SPO cannot be worth more than that.
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
+
+    expect(screen.getByTitle(PO)).toHaveTextContent('60');
+    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
+    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
+    // The dialog stays open across the tick - it is a lightbox, not a hover surface.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('SO covered lists project first then retail, with the take per row and the unassigned footer (AC-G2, AC-G3)', async () => {
+    renderTable();
+
+    const dialog = await openFigure(SO);
+
+    const rows = within(dialog).getAllByRole('row');
+    expect(rows[1].textContent).toContain('SI26-0100');
+    expect(rows[2].textContent).toContain('SO-2201');
+    expect(rows[3].textContent).toContain('SO-2202');
+    // Open / Take per row, off the one walk: 40 and 30 are served in full, and the order
+    // nobody ticked gets nothing.
+    expect(rows[1].querySelectorAll('td')[6].textContent).toBe('40');
+    expect(rows[3].querySelectorAll('td')[5].textContent).toBe('90');
+    expect(rows[3].querySelectorAll('td')[6].textContent).toBe('0');
+    expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
+  });
+
+  it('ticking in the SO dialog re-walks the take without closing it (AC-G2)', async () => {
+    renderTable();
+    const dialog = await openFigure(SO);
+
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SI26-0100' }));
+
+    // 30 to the retail line that is still ticked, and the other 70 claimed by nobody.
+    expect(screen.getByTitle(SO)).toHaveTextContent('30');
+    expect(within(screen.getByRole('dialog')).getByText('Unassigned 70')).toBeInTheDocument();
+  });
+
+  it('On hand opens the location dialog for this product, with the stock timestamp (AC-G3)', async () => {
+    useLocationStock.mockReturnValue({
+      data: {
+        product_id: 'p-1',
+        as_of: '2026-08-27T06:05:00',
+        locations: [
+          {
+            warehouse_id: 'wh-1',
+            warehouse_code: 'BRW',
+            on_hand: 2,
+            reserved: 0,
+            held_by_decisions: 0,
+            free: 2,
+            so_qty: 60,
+            spo_qty: 0,
+            available: -58,
+            is_pool: true,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    renderTable();
+
+    const dialog = await openFigure(ON_HAND);
+
+    expect(within(dialog).getByText(/On hand · SRTWT7443/)).toBeInTheDocument();
+    expect(within(dialog).getByText('BRW')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Stock as of/)).toBeInTheDocument();
+    expect(useLocationStock).toHaveBeenCalledWith('p-1', true);
+  });
+
+  it('Incoming SPO opens the SPO dialog for this supplier and product (AC-G3)', async () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        kind: 'spo',
+        total: 120,
+        rows: [
+          {
+            spo_number: 'CRM-SPO-0007',
+            shipment_id: 'sh-9',
+            shipment_number: 'FSCU8092210',
+            warehouse_code: 'BRW',
+            qty: 120,
+            received: 0,
+            eta: '2026-09-14',
+            arrived_at: null,
+            status: 'In transit',
+          },
+        ],
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderTable();
+
+    const dialog = await openFigure(INCOMING);
+
+    expect(within(dialog).getByText(/SPO · SRTWT7443/)).toBeInTheDocument();
+    expect(within(dialog).getByText('CRM-SPO-0007')).toBeInTheDocument();
+    expect(useContainerRequestDrill).toHaveBeenCalledWith('sup-1', 'p-1', 'spo');
+  });
+
+  it('says nothing is on its way when the drill comes back empty', async () => {
+    renderTable();
+
+    const dialog = await openFigure(INCOMING);
+
+    expect(within(dialog).getByText(NO_SPO_TO_POOL)).toBeInTheDocument();
+  });
+
+  it('opens a dialog and no popover, and Escape closes it (AC-G6)', async () => {
+    renderTable();
+
+    const dialog = await openFigure(PO);
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toBeNull();
+
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // The figure is still there to be opened again.
+    expect(screen.getByTitle(PO)).toBeInTheDocument();
+  });
+
+  it('a line with no supplier cannot drill the water, and reads as plain text', async () => {
+    state.suggestion = suggestion({
+      lines: [plannerLine({ supplier_id: null, supplier_name: null, incoming_spo: 5 })],
+    });
+    renderTable();
+
+    await screen.findByTitle(PO);
+    expect(screen.queryByTitle(INCOMING)).not.toBeInTheDocument();
   });
 });
