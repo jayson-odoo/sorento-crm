@@ -252,3 +252,88 @@ def test_an_empty_batch_saves_nothing(db):
     assert svc.save_plan_edits(db, plan.id, [], actor=ACTOR) == {
         "saved_rows": 0, "saved_products": 0,
     }
+
+
+# ===========================================================================
+# route-level: auth denial, scope guard and rollback through the actual endpoint
+# (Phase 3 tester additions) - `svc.save_plan_edits` above pins the SERVICE; these pin
+# the route wrapping it (`PUT /reorder-runs/{run}/plan-edits`), which owns the
+# permission check and the request/response schema the service tests never exercise.
+# ===========================================================================
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from tests.scm.conftest import as_user, seed_user  # noqa: E402
+
+
+def _route_client(scm_app, role_slug):
+    app, db, gcu, gcuak = scm_app
+    uid = seed_user(db, role_slug)
+    as_user(app, gcu, gcuak, uid)
+    return app, db
+
+
+def _route_plan(db, *, members: int = 1):
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    sup = supplier(db, "revamp route supplier")
+    plan = run(db)
+    recs = [recommendation(db, plan, prod, warehouse(db), qty=50, sup=sup)
+            for _ in range(members)]
+    return plan, prod, recs
+
+
+def test_route_is_denied_without_the_decision_permission(scm_app):
+    app, db = _route_client(scm_app, None)  # a user with no role at all
+    plan, _prod, recs = _route_plan(db)
+
+    with TestClient(app) as c:
+        res = c.put(
+            f"/api/v1/scm/reorder-runs/{plan.id}/plan-edits",
+            json={"rows": [{"rec_id": str(recs[0].id), "moq": 25}]},
+        )
+
+    assert res.status_code == 403
+    assert _decision_rows(db, [recs[0].id]) == []
+
+
+def test_route_404s_a_rec_that_belongs_to_another_run(scm_app):
+    app, db = _route_client(scm_app, "purchasing")
+    plan, _prod, _recs = _route_plan(db)
+    _other_plan, _p2, other_recs = _route_plan(db)
+
+    with TestClient(app) as c:
+        res = c.put(
+            f"/api/v1/scm/reorder-runs/{plan.id}/plan-edits",
+            json={"rows": [{"rec_id": str(other_recs[0].id), "moq": 5}]},
+        )
+
+    assert res.status_code == 404
+    assert _decision_rows(db, [other_recs[0].id]) == []
+
+
+def test_route_rolls_back_the_earlier_row_when_a_later_one_in_the_same_batch_fails(scm_app):
+    """The FIRST row's decision is well-formed; the SECOND's is not (`skip` carrying a
+    quantity). Through the actual route - request parsing, permission check, commit -
+    the first row's write must still not survive."""
+    app, db = _route_client(scm_app, "purchasing")
+    plan, _prod, recs = _route_plan(db, members=2)
+
+    with TestClient(app) as c:
+        res = c.put(
+            f"/api/v1/scm/reorder-runs/{plan.id}/plan-edits",
+            json={"rows": [
+                {"rec_id": str(recs[0].id), "decision": {"kind": "buy", "buy_qty": 120}},
+                {"rec_id": str(recs[1].id), "decision": {"kind": "skip", "buy_qty": 5}},
+            ]},
+        )
+
+    assert res.status_code == 422, res.text
+    # The failed request never reached `db.commit()`, but the first row's write is still
+    # FLUSHED and pending on the shared test session, which (same as the service-level
+    # `test_a_failing_row_rolls_the_whole_batch_back` above) reads its own uncommitted
+    # write back. A real request gets this for free when `get_db()`'s `finally: db.close()`
+    # rolls the transaction back at teardown; the test fixture reuses one session across
+    # "requests", so it has to ask for that explicitly to see what the next request would.
+    db.rollback()
+    assert _decision_rows(db, [recs[0].id, recs[1].id]) == []

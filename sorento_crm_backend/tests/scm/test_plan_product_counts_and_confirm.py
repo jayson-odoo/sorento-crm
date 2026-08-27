@@ -149,6 +149,89 @@ def test_reconfirming_an_untouched_product_reconciles_its_line(db):
     assert len(_lines_for_product(db, prod.id)) == 1, "re-confirm reconciles, never duplicates"
 
 
+# ===========================================================================
+# Phase 3 tester additions - the LOCATION-grain half of the same rulings.
+# `list_plan_row_decisions` (E4/R14) reads `PlanRowDecision` joined to
+# `ReorderRecommendation` with no branch on `decision_grain` at all, so it should count
+# by product identically on either grain. `confirm_decisions` DOES branch
+# (`decision_grain_of(run) == PRODUCT_GRAIN` picks `_confirm_product_grain`, else
+# `_confirm_location_grain`) - R3's untouched-as-suggestion fallback (revamp plan 4.5)
+# lives ONLY in `_confirm_product_grain`'s "products NOBODY touched" block; a location
+# run has no analogous block at all.
+# ===========================================================================
+
+def test_list_plan_row_decisions_counts_by_product_on_a_location_grain_run_too(db):
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "location grain count supplier")
+    plan = run(db, grain="location")
+    a, b = product(db, cat, uom), product(db, cat, uom)
+    rec_a = recommendation(db, plan, a, warehouse(db), sup=sup)
+    recommendation(db, plan, b, warehouse(db), sup=sup)
+
+    dsvc.record_plan_row_decision(db, rec_a.id, "buy", 10, [], None, [], None, ACTOR)
+
+    out = dsvc.list_plan_row_decisions(db, plan.id)
+    assert (out["decided_count"], out["total_count"]) == (1, 2)
+
+
+def test_skip_excludes_on_a_location_grain_confirm(db):
+    """A skipped rec IS a decision (it counts as decided) but drafts nothing, on the
+    location grain exactly as the product-grain test above pins it."""
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "location grain skip supplier")
+    plan = run(db, grain="location")
+    wh = warehouse(db)
+    skipped = product(db, cat, uom)
+    rec_skipped = recommendation(db, plan, skipped, wh, qty=30, sup=sup)
+
+    dsvc.record_plan_row_decision(db, rec_skipped.id, "skip", None, [], None, [], None, ACTOR)
+
+    listed = dsvc.list_plan_row_decisions(db, plan.id)
+    assert listed["decided_count"] == 1, "a skip is still a decision, not an undecided row"
+
+    out = dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+    assert out["confirmed_count"] == 0, "a skip never drafts a purchase"
+
+    lines = db.execute(text(
+        "SELECT 1 FROM purchase_order_lines WHERE source_ref = :rid"
+    ), {"rid": rec_skipped.id}).fetchall()
+    assert lines == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "R3 defect: _confirm_location_grain has no untouched-as-suggestion fallback at "
+        "all. It only drafts a rec whose status is in "
+        "accepted/adjusted/dismissed (the legacy Accept/Adjust/Reject flow) or that "
+        "carries a PlanRowDecision (the S16 row-decision path) - an untouched rec "
+        "(status='proposed', no PlanRowDecision) matches neither loop and is silently "
+        "skipped. `_confirm_product_grain` has the matching 'products NOBODY touched' "
+        "block (decision_service.py ~L760); _confirm_location_grain has no equivalent. "
+        "Route to the captain: either port the same fallback into the location-grain "
+        "half, or the plan needs to record that R3 is product-grain-only."
+    ),
+)
+def test_untouched_confirms_as_the_suggestion_on_a_location_grain_run_too(db):
+    """R3's own wording carries no grain qualifier ("Confirm covers untouched rows as
+    the engine suggestion") - a location run's buyer who leaves a row alone expects the
+    same "make this plan" behaviour a product run already gives them."""
+    cat, uom = category_and_uom(db)
+    sup = supplier(db, "location grain untouched supplier")
+    plan = run(db, grain="location")
+    untouched = product(db, cat, uom)
+    recommendation(db, plan, untouched, warehouse(db), qty=70, sup=sup)
+
+    out = dsvc.confirm_decisions(db, plan.id, None, ACTOR)
+
+    assert out["confirmed_count"] == 1, "the untouched product confirms at the engine's own qty"
+    lines = db.execute(text(
+        "SELECT qty_ordered FROM purchase_order_lines WHERE product_id = :p"
+    ), {"p": untouched.id}).mappings().all()
+    assert len(lines) == 1
+    assert float(lines[0]["qty_ordered"]) == 70
+
+
 def test_a_covered_row_is_not_bought_just_because_nobody_touched_it(db):
     """Only a BUY the engine sized is confirmed untouched. A covered row is the engine
     saying the stock is already there, and R3 does not turn that into a purchase."""

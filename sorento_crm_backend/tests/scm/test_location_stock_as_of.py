@@ -18,6 +18,7 @@ import pytest
 
 from app.models.base import company_scope
 from app.models.inventory import Stock
+from app.models.job import ImportJob
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.services.scm import location_stock_service
 from tests._pg_fixture import pg_session
@@ -84,6 +85,55 @@ def test_a_product_with_no_stock_row_says_so_rather_than_stamping_now(db):
     assert out["as_of_source"] in ("import_job", "none")
     if out["as_of_source"] == "none":
         assert out["as_of"] is None
+
+
+def _import_job(db, *, job_type, completed_at):
+    job = ImportJob(
+        id=str(uuid.uuid4()), job_id=str(uuid.uuid4()), job_type=job_type,
+        status="finished", user_id=str(uuid.uuid4()), completed_at=completed_at,
+    )
+    db.add(job)
+    db.flush()
+    return job
+
+
+def test_as_of_falls_back_to_the_latest_completed_stock_import_when_no_stock_row_moved(db):
+    """No `stock` row for this product at all, so `_stock_as_of` cannot read
+    `stock.updated_at` - R7's own fallback: the last completed `stock_import` job,
+    whichever product it touched. Stamped far in the future so it is unambiguously the
+    MAX over whatever real `import_jobs` rows already sit in this (prod-copy) database."""
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    _import_job(db, job_type="stock_import", completed_at=datetime(2031, 1, 15, 9, 30))
+    # A job of a DIFFERENT type, even if newer, must never answer for stock.
+    _import_job(db, job_type="order_import", completed_at=datetime(2032, 6, 1, 0, 0))
+
+    out = location_stock_service.location_stock_for_product(db, str(prod.id))
+
+    assert out["as_of"] == "2031-01-15T09:30:00"
+    assert out["as_of_source"] == "import_job"
+
+
+def test_as_of_is_null_when_neither_a_stock_row_nor_a_completed_import_exists(db):
+    """Isolate `_stock_as_of` directly rather than the product-level read, which would
+    otherwise pick up whatever real `stock_import` rows already exist on this
+    (prod-copy) database and make the assertion depend on data this test never seeded -
+    the actual gap this pins is the SQL itself: with genuinely nothing to answer from,
+    it returns `(None, "none")`, never a fabricated timestamp."""
+    from sqlalchemy import text as _text
+
+    from app.services.scm.location_stock_service import _stock_as_of
+
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    # Deletes are scoped to a savepoint the fixture rolls back - never a real mutation of
+    # the shared database (see `LESSONS-LEARNT.md` "tests wiped real dev DB").
+    db.execute(_text("DELETE FROM import_jobs WHERE job_type = 'stock_import'"))
+    db.flush()
+
+    as_of, source = _stock_as_of(db, str(prod.id))
+
+    assert (as_of, source) == (None, "none")
 
 
 def test_each_location_carries_is_pool_and_its_open_po_quantity(db):

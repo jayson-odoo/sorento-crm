@@ -122,6 +122,103 @@ def test_an_unknown_sort_column_is_ignored_rather_than_500(scm_app):
     assert res.status_code == 200
 
 
+def _run_at(db, *, started_at, created_at):
+    """Same shape as `_run` above, but with an EXPLICIT (not `now()`) `started_at` /
+    `created_at`, so two rows can be made to tie on BOTH exactly - the shape a bulk
+    historical import or several runs queued in the same transaction produce, and the
+    one `now()` itself cannot reproduce (a whole transaction sees one `now()`, but
+    `_run`'s own two calls still land in two DIFFERENT statements/timestamps millis
+    apart in practice)."""
+    rid = str(uuid.uuid4())
+    db.execute(text("""
+        INSERT INTO scm.reorder_run
+            (id, status, buy_scope, decision_grain, front_planning_contract_version,
+             started_at, created_by, plan_horizon_date, warehouse_ids, product_ids,
+             run_log, source_system, source_ref, company_id, created_at)
+        VALUES (CAST(:id AS uuid), 'completed', 'warehouse', 'product', 1,
+                CAST(:sa AS timestamp), 'a-person', NULL, NULL, NULL,
+                CAST('{"recommendation_count": 1}' AS jsonb), 'scm', :ref,
+                CAST(:co AS uuid), CAST(:ca AS timestamp))
+    """), {"id": rid, "sa": started_at, "ca": created_at,
+           "ref": f"{MARKER}-{rid[:8]}",
+           "co": "00000000-0000-0000-0000-000000000001"})
+    db.flush()
+    return rid
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Gap, not yet a ruling either way: list_reorder_runs' own docstring and its "
+        "`query` WHERE clause (app/api/v1/scm/reorder_runs.py ~L126, ~L138) are explicit "
+        "that the search box matches a WAREHOUSE CODE ONLY - there is no join from "
+        "`product_ids` to `products.product_code` in the filter at all, so a product-code "
+        "query matches nothing. The plan's own toolbar (4.1) does not say the search box "
+        "covers products, so this may be an intentional scope rather than a bug - route to "
+        "the captain to rule one way, then either extend the WHERE clause or drop this test."
+    ),
+)
+def test_query_matches_a_product_code_too(scm_app):
+    """The search box is one field over the whole plan (plan 4.1's toolbar); a buyer
+    typing the product they are chasing has no reason to know it only matches a
+    warehouse."""
+    client, db = _client(scm_app)
+    sup = _mk_supplier(db, f"{MARKER} product-query supplier")
+    prod = _mk_product(db, f"{MARKER}-P-FINDME")
+    mine = _run(db)
+    _rec(db, mine, prod, _mk_warehouse(db, f"{MARKER}-W-PQ"), supplier_id=sup)
+    other = _run(db)
+
+    body = client.get(
+        f"/api/v1/scm/reorder-runs?page=1&limit=100&query={MARKER}-P-FINDME"
+    ).json()
+    ids = {r["run_id"] for r in body["data"]}
+
+    assert mine in ids
+    assert other not in ids
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Real defect: `order_by` (app/api/v1/scm/reorder_runs.py, just above the SELECT) "
+        "ends every ordering in `created_at DESC` and never in `id` - so three rows tied "
+        "on BOTH `started_at` AND `created_at` (a bulk historical import, or several runs "
+        "queued in one transaction, share exactly this: `now()` is one value for the whole "
+        "transaction) have no final unique tiebreak at all. Confirmed here: page 1/limit 2 "
+        "then page 2/limit 2 over the SAME 3 tied rows returns fewer than 3 distinct ids - "
+        "a row is skipped AND another repeats, the exact instability the project's own "
+        "'now() ties in a transaction, end orderings with id' lesson names. Fix: append "
+        "`, id ASC` (or `, id`, direction-matched) as the final key in the f-string building "
+        "`order_by`, both the explicit-sort branch and the default branch."
+    ),
+)
+def test_started_at_ties_break_deterministically_on_id(scm_app):
+    """`ORDER BY started_at ASC NULLS LAST, created_at DESC` alone still ties when
+    BOTH columns match, which several runs queued in one transaction (or a bulk
+    historical import) produce - Postgres gives no stability guarantee across
+    LIMIT/OFFSET pages without a final, always-unique key. Same defect class the
+    recommendations list was fixed for (route's own comment above `order_by`)."""
+    client, db = _client(scm_app)
+    same = "2020-01-01T00:00:00"
+    tied = sorted([
+        _run_at(db, started_at=same, created_at=same) for _ in range(3)
+    ])
+
+    page1 = client.get(
+        "/api/v1/scm/reorder-runs?page=1&limit=2&sort=started_at&dir=asc"
+    ).json()
+    page2 = client.get(
+        "/api/v1/scm/reorder-runs?page=2&limit=2&sort=started_at&dir=asc"
+    ).json()
+
+    seen = _rows_for(page1, tied) + _rows_for(page2, tied)
+    seen_ids = [r["run_id"] for r in seen]
+
+    assert sorted(seen_ids) == tied, "paging over a full tie must show each row exactly once"
+    assert seen_ids == tied, "the tie breaks on id, ascending, same as any other listing"
+
+
 # ===========================================================================
 # the columns the plans list shows
 # ===========================================================================

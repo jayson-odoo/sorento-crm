@@ -125,6 +125,23 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
     expect(screen.getByText('All')).toBeInTheDocument();
   });
 
+  it('Warehouses reads "All" when is_all_warehouses is set, even though codes are present (Phase 2 deviation c)', () => {
+    // A plan launched with no warehouse scope stores EVERY active warehouse - a non-empty
+    // codes list that would otherwise read as a specific short list of warehouses. Only the
+    // backend knows the count is "every one that existed", so the flag, not the list length,
+    // decides.
+    renderList([run({ warehouse_codes: ['BRW', 'PJ', 'DC1', 'KL'], is_all_warehouses: true })]);
+    const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
+    expect(within(row).getByText('All')).toBeInTheDocument();
+    expect(within(row).queryByText('4 warehouses')).not.toBeInTheDocument();
+  });
+
+  it('a genuinely partial scope with 4+ codes reads a count, not the full list', () => {
+    renderList([run({ warehouse_codes: ['BRW', 'PJ', 'DC1', 'KL'], is_all_warehouses: false })]);
+    const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
+    expect(within(row).getByText('4 warehouses')).toBeInTheDocument();
+  });
+
   it('says nothing about a cut-off the plan never carried', () => {
     renderList([run({ plan_horizon_date: null })]);
     const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
