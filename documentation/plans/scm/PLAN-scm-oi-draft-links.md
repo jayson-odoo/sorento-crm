@@ -1,6 +1,6 @@
 # PLAN - Order Inquiries: draft links up front, one Confirm, Outstanding PO/SPO
 
-Status: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
+Status: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
 
 ## 0. What the captain asked (27 Aug, screenshots 28 to 36)
 
@@ -121,10 +121,35 @@ Unchanged. The board keeps the Rejected badge; the plan keeps the awaiting chip 
 7. Outstanding book SPO intake (R4): `outstanding_reader` stops skipping `FAMILY_SPO`; `outstanding_import_service` writes them through a new `_write_spo_lines` (upsert on `(company, spo_number, spo_line_number)`, `line_status open`, `quantity_received` from the book, warehouse by code, `location_code` raw, `source_system scm_upload`), closes SPO lines of `scm_upload` docs absent from the book (same rule the PO side uses), and reports `spo_documents / spo_lines / unknown_locations` in the summary and the Test result. Link now's `product_ids` include them.
 8. Migration: none expected. `spo_allocations` already allows NULL shipment / warehouse and holds `location_code` (420). Re-check `alembic heads` anyway; main carries two heads until #348's merge rev is in.
 
+### 5.9 Judgements taken while building phase 2
+
+Three places where the plan's text did not decide the case, resolved in the code and stated
+here so a reviewer meets them once:
+
+- **The SPO closure runs only when the book carries shipping orders at all.** R4 says
+  "absent from the next book = closed". Read as a statement either way, a purchase-order-only
+  export - a shape the buyer really does upload - would settle every open SPO line in the
+  company (715 on the dev copy) without ever mentioning one. Silence is not a statement; a
+  book that states SOME shipping orders is the SPO book, and only then does what it leaves out
+  mean landed. The preview reports `spo_closed` either way, so the number is on screen before
+  Confirm upload.
+- **R11's pool rule applies to what is OFFERED, not to what a person may name by hand.** The
+  automatic walk and the Link dialog never take a non-pool SPO line; a deliberate call still
+  may, exactly as `manual` already reaches a purchase order that is not yet active and past a
+  group in deficit. The container planner depends on it: its ticks say "this row is served by
+  THIS container line", at the site the split just sent it to.
+- **The deficit exemption counts awaiting rows.** `_rows_awaiting_a_link` read `ACK_LINKABLE`,
+  so a group holding only unconfirmed rows was refused its own purchase order - which under R6
+  is every row at the moment it is raised, and the page would have read "Not found" for exactly
+  the rows the buy was sized from.
+
+Also, `AcknowledgeResult.linked_rows` now reports 0 on a Confirm whose rows were already
+drafted, because that is what the press linked. The row is covered; the raise covered it.
+
 ## 6. Order of work (one PR, three phases per PRINCIPLES.md)
 
 1. Phase 1 FE against mocks: toolbar (Actions / Start), column rename + draft icon + location + late days + Not found, Confirmed column, State column and filter removed, default To confirm chip, lightbox for PO and SPO, bulk reject dialog, Auto link all dialog with the date. Browser check at 1280 and 375 with mocked rows. **DONE.** Three fallbacks are tagged `PHASE2:` in the code and must go when their half of section 5 lands: (a) `orderInquiryService.worklistParams` rewrites `ack=to_confirm` to `awaiting` because the backend's filter is a closed set of the four stored states (section 5.2); (b) `orderInquiryWorklist.lateDaysOf` computes the day count from `expected_date` minus the row's date when `late_days` is absent (section 5.1); (c) `orderInquiryService.rejectOrderInquiryRows` loops the per-row endpoint until `POST /order-inquiries/reject` exists (section 5.6). Not fallbacks but not observable yet either: the draft icon (no unconfirmed row carries a link until the raise-time cascade of section 5.5), the lightbox's Allocated to panel (reads "No allocations yet" until section 5.1) and the SPO lightbox body (404s to a friendly empty state until section 5's new route). One shared-component fix was needed on the way: `DataGridListToolbar`'s left cluster had no `grow`, so it was sized at its own basis and wrapped Columns and Refresh onto a second row at 1280 with ~300px of empty toolbar beside them; AC-D13 cannot hold without it, and every other listing gets the same repair.
-2. Phase 2 BE test-first in this order: (a) `late_days` + SPO location fallback + `to_confirm`; (b) re-deal + raise-time cascade; (c) reject drops links + batch reject; (d) SPO intake from the outstanding book; (e) SPO detail + PO allocations on the detail. Then wire the FE.
+2. Phase 2 BE test-first in this order: (a) `late_days` + SPO location fallback + `to_confirm`; (b) re-deal + raise-time cascade; (c) reject drops links + batch reject; (d) SPO intake from the outstanding book; (e) SPO detail + PO allocations on the detail. Then wire the FE. **DONE.** `tests/test_order_inquiry_draft_links.py` is the new suite (32 tests); five existing suites carried rules this reverses on purpose and were rewritten with the reversal recorded beside them (`test_order_inquiry_handshake.py` board confirm and Link now, `..._edges.py` PO confirm and the two reject rules, `test_order_inquiry_place_on_po.py` decision confirm, `test_order_inquiry_links.py` R5/R11, `tests/scm/test_outstanding_po_skips_spo.py` R4). No migration was needed.
 3. Phase 3 `/code-review`, DoD gate, browser evidence on SO404352 (the captain's screenshots) and SO381895.
 
 ## 7. Tests
