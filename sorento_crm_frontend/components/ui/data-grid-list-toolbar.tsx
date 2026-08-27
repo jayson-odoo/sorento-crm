@@ -96,7 +96,7 @@ export type ListToolbarFilters =
       content: ReactNode;
     };
 
-export type ListToolbarExport<TData extends object> = {
+export type ListToolbarExport = {
   filename?: string;
   /**
    * All-records (server) export. Used when the user has chosen "select all N
@@ -159,7 +159,7 @@ export type DataGridListToolbarProps<TData extends object> = {
   filters?: ListToolbarFilters;
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
    *  pass a `{kind:'listQuery'}` config for server-side filtered-set export. */
-  exportConfig?: ListToolbarExport<TData> | ListToolbarListQueryExport | false;
+  exportConfig?: ListToolbarExport | ListToolbarListQueryExport | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
   /**

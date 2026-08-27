@@ -103,7 +103,7 @@ vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentSe
   getAttachmentPreviewUrl: vi.fn(),
 }));
 
-const downloadWorkbook = vi.fn(async (_id: string, _fallback?: string | null) => undefined);
+const downloadWorkbook = vi.fn<(id: string, fallback?: string | null) => Promise<void>>();
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   downloadPackingListExport: (id: string, fallback?: string | null) =>
     downloadWorkbook(id, fallback),

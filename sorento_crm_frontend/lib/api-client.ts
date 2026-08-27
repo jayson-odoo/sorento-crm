@@ -51,6 +51,10 @@ export async function extractApiError(
     if (response.status >= 500) return 'Server error. Try again or contact support.';
     return fallbackMessage;
   }
+  // This IS `extractApiError`. The rule below exists to send callers here rather than let
+  // them each parse an error body their own way; the one place that has to do the parsing
+  // is this line.
+  // eslint-disable-next-line no-restricted-syntax
   const error = await response.json().catch(() => ({}));
   const detail = error.detail;
   if (typeof detail === 'string' && detail) return detail;
