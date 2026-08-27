@@ -160,6 +160,9 @@ beforeEach(() => {
   });
   state.forget = vi.fn();
   state.rematch = vi.fn();
+  // The collapse choice is per viewer and persisted (R23), so it has to be cleared between
+  // tests or the first collapse leaks into every one after it.
+  window.localStorage.clear();
 });
 
 describe('UnmatchedSupplierCodesPanel', () => {
@@ -256,5 +259,67 @@ describe('UnmatchedSupplierCodesPanel', () => {
     render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
 
     expect(screen.getByText('1 dismissed')).toBeInTheDocument();
+  });
+});
+
+describe('UnmatchedSupplierCodesPanel - collapsing it (R23)', () => {
+  it('opens on a queue that has something in it', () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    expect(screen.getByText('SRTWC286-SH-250UF')).toBeInTheDocument();
+    expect(screen.getByTestId('unmatched-codes-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('the header hides the grid, and shows it again', () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    fireEvent.click(screen.getByTestId('unmatched-codes-toggle'));
+
+    // The header itself stays - the count is the reason to come back to it.
+    expect(screen.getByText('1 code matches nothing we hold')).toBeInTheDocument();
+    expect(screen.queryByText('SRTWC286-SH-250UF')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('unmatched-codes-toggle'));
+    expect(screen.getByText('SRTWC286-SH-250UF')).toBeInTheDocument();
+  });
+
+  it('collapsing hides the dismissed line too, and Refresh matching stays reachable', () => {
+    state.aliases = [dismissedAlias()];
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    fireEvent.click(screen.getByTestId('unmatched-codes-toggle'));
+
+    expect(screen.queryByText('1 dismissed')).not.toBeInTheDocument();
+    expect(screen.getByTestId('refresh-matching')).toBeInTheDocument();
+  });
+
+  it('remembers the choice for this viewer', () => {
+    window.localStorage.setItem('scm.loadingPlan.unmatchedCollapsed', '1');
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    expect(screen.queryByText('SRTWC286-SH-250UF')).not.toBeInTheDocument();
+  });
+
+  it('writes the choice down when it changes', () => {
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    fireEvent.click(screen.getByTestId('unmatched-codes-toggle'));
+
+    expect(window.localStorage.getItem('scm.loadingPlan.unmatchedCollapsed')).toBe('1');
+  });
+
+  it('a store that refuses to answer leaves the queue open rather than failing', () => {
+    const getItem = vi
+      .spyOn(Storage.prototype, 'getItem')
+      .mockImplementation(() => {
+        throw new Error('denied');
+      });
+    render(<UnmatchedSupplierCodesPanel supplierId="sup-1" />);
+
+    expect(screen.getByText('SRTWC286-SH-250UF')).toBeInTheDocument();
+    getItem.mockRestore();
   });
 });

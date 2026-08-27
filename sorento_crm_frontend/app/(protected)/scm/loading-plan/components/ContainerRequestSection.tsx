@@ -22,6 +22,7 @@ import {
   PackageSearch,
   RefreshCw,
   Send,
+  Settings,
   Table2,
   Upload,
 } from 'lucide-react';
@@ -43,6 +44,12 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -55,9 +62,9 @@ import { EM_DASH, fmtInt } from '../../lib/format';
 import {
   useContainerRequestBuild,
   useContainerRequestHistory,
+  useDownloadContainerRequestDocument,
   useSendContainerRequest,
   useSupplierNotices,
-  useUnfinishedStock,
 } from '../../hooks/useFulfilment';
 import {
   getNoticeDocumentUrl,
@@ -99,9 +106,14 @@ import {
  * Also folds in "waiting on production" (captain follow-up, same day): that used to be a
  * second list below this table. A supplier-held unfinished quantity is already on every
  * matched row here as the "They hold" cell (sortable, see the `holding` column), so the
- * second list is gone. The one case that column cannot cover - a stock-list item code that
- * never matched a product at all - is called out in its own small block below the table
- * rather than silently dropped (see `unmatchedUnfinished`).
+ * second list is gone. The stock-list item codes that matched no product at all had a small
+ * block of their own here until 27 Aug (R23); it went, because the unmatched-code queue above
+ * this section now lists exactly those codes and lets somebody answer them, and two lists of
+ * one thing is one list nobody works down.
+ *
+ * The header's occasional actions sit behind a gear (R23), for the reason the toolbar's own
+ * gear exists: Send is the errand, and a row of equally-weighted outline buttons made the
+ * rare things look as important as the routine one.
  */
 
 const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
@@ -157,9 +169,8 @@ function SourceStamp({ label, iso }: { label: string; iso: string | null }) {
 
 /**
  * What "Packed" sorts by: the one quantity the column shows (captain, 27 Aug: the unfinished
- * half left the grid; it still reads in the row dialog and the unmatched-unfinished list).
- * A row neither document names sorts below every row that carries a figure, rather than
- * tying with a real zero.
+ * half left the grid; it still reads in the row dialog). A row neither document names sorts
+ * below every row that carries a figure, rather than tying with a real zero.
  */
 export function holdingSortValue(row: ContainerRequestRow): number {
   return row.holding_qty ?? -1;
@@ -247,9 +258,7 @@ export function ContainerRequestSection({
   const build = useContainerRequestBuild(supplierId, planHorizonDate);
   const send = useSendContainerRequest();
   const notices = useSupplierNotices(supplierId);
-  // Same supplier-keyed query `useUnfinishedStock` already drives Stage 2's "Unfinished"
-  // tile hint - react-query dedupes on the shared key, so this is not a second network call.
-  const unfinished = useUnfinishedStock(supplierId);
+  const download = useDownloadContainerRequestDocument(supplierId);
 
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -267,15 +276,6 @@ export function ContainerRequestSection({
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
-
-  // What the table cannot show at all: a stock-list item code the supplier holds unfinished
-  // that never matched a product (`container_request_service._stock_list` only carries
-  // matched rows, `unfinished_at_supplier` does not filter on a match). Kept visible here
-  // rather than dropped - see the module docstring.
-  const unmatchedUnfinished = useMemo(() => {
-    const matchedCodes = new Set(rows.map((r) => r.item_code).filter((c): c is string => !!c));
-    return (unfinished.data ?? []).filter((r) => !matchedCodes.has(r.item_code));
-  }, [unfinished.data, rows]);
 
   const linesByProduct = useMemo(() => {
     const map = new Map<string, ContainerRequestSoLine[]>();
@@ -655,6 +655,11 @@ export function ContainerRequestSection({
     (n) => n.notice_type === 'container_request',
   );
 
+  // The one link this supplier can still open. Notices come back newest first and only one
+  // send's token is ever live (each send retires the last), so the first match IS the current
+  // ask - and with none, the gear's Copy link says why rather than copying nothing.
+  const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
+
   const canSend = lines.length > 0 && totalQty > 0 && !send.isPending;
 
   function confirmSend() {
@@ -700,7 +705,7 @@ export function ContainerRequestSection({
   // because the build is loading, errored, or has nothing to suggest right now - it is its own
   // fact, independent of the current suggestion. Rendered on every branch below.
   const noticesCard = (
-    <Card className="p-4">
+    <Card className="p-4" data-testid="requests-sent">
       <h3 className="text-sm font-semibold">Requests sent to {supplierName}</h3>
       {requestNotices.length === 0 ? (
         <p className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
@@ -767,6 +772,11 @@ export function ContainerRequestSection({
                     XLSX
                   </Button>
                 ) : null}
+                {/* On EVERY row of the current send (R23), because the link is one credential
+                    delivered two ways and the chat row is the one she copies from for WeChat.
+                    A row whose token has run out says so instead of falling silent: no button
+                    (a copied dead link is worse than none) but not the same blank as a row
+                    that never carried a link at all. */}
                 {n.public_url ? (
                   <Button size="sm" variant="outline" onClick={() => copyLink(n)}>
                     {copiedNoticeId === n.id ? (
@@ -776,6 +786,13 @@ export function ContainerRequestSection({
                     )}
                     Copy link
                   </Button>
+                ) : n.link_retired ? (
+                  <span
+                    className="text-2xs text-muted-foreground"
+                    title="A later request replaced this link, or it passed its 30 days."
+                  >
+                    Link retired
+                  </span>
                 ) : null}
               </div>
             </div>
@@ -784,34 +801,6 @@ export function ContainerRequestSection({
       )}
     </Card>
   );
-
-  // What the ranked table structurally cannot show: a stock-list item code held unfinished
-  // that never matched a product, so it has no `product_id` to be a row (see the module
-  // docstring). Rendered whenever there is at least one, on both branches that reach past the
-  // build (a supplier can have zero open demand and still hold unmatched unfinished stock).
-  const unmatchedCard =
-    unmatchedUnfinished.length > 0 ? (
-      <Card className="p-4">
-        <h3 className="text-sm font-semibold">Unfinished stock without a product match</h3>
-        <p className="text-2xs text-muted-foreground">
-          {supplierName}&apos;s stock list names these item codes as unfinished, but none
-          matches a product yet, so they cannot appear as a row above.
-        </p>
-        <ul className="mt-2 divide-y divide-border">
-          {unmatchedUnfinished.map((r) => (
-            <li key={r.item_code} className="flex items-center justify-between py-1.5">
-              <span className="truncate text-xs" title={r.item_code}>
-                {r.item_code}
-                {r.product_name ? (
-                  <span className="ms-2 text-muted-foreground">{r.product_name}</span>
-                ) : null}
-              </span>
-              <span className="tabular-nums text-xs">{fmtInt(r.qty_unfinished)} unfinished</span>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    ) : null;
 
   if (build.isLoading) {
     return (
@@ -869,7 +858,6 @@ export function ContainerRequestSection({
             ) : null}
           </div>
         </Card>
-        {unmatchedCard}
         {noticesCard}
       </div>
     );
@@ -925,19 +913,6 @@ export function ContainerRequestSection({
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => build.refetch()}
-                disabled={build.isFetching}
-              >
-                {build.isFetching ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                Refresh suggestion
-              </Button>
               <Button size="sm" onClick={() => setConfirming(true)} disabled={!canSend}>
                 {send.isPending ? (
                   <LoaderCircle className="size-4 animate-spin" />
@@ -946,6 +921,52 @@ export function ContainerRequestSection({
                 )}
                 Send to supplier
               </Button>
+              {/* Everything that is not the errand (R23): looking again, copying the link she
+                  already sent, and taking either file away to read. Same gear the toolbar
+                  above carries, for the same reason. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Plan actions"
+                    data-testid="request-actions"
+                  >
+                    <Settings className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    disabled={build.isFetching}
+                    onSelect={() => void build.refetch()}
+                  >
+                    <RefreshCw className="size-4" />
+                    Refresh suggestion
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!liveLinkNotice}
+                    title={liveLinkNotice ? undefined : 'No link sent yet'}
+                    onSelect={() => liveLinkNotice && void copyLink(liveLinkNotice)}
+                  >
+                    <Link2 className="size-4" />
+                    Copy link
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={lines.length === 0 || download.isPending}
+                    onSelect={() => download.mutate({ lines, format: 'xlsx' })}
+                  >
+                    <Download className="size-4" />
+                    Download XLSX
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={lines.length === 0 || download.isPending}
+                    onSelect={() => download.mutate({ lines, format: 'pdf' })}
+                  >
+                    <FileText className="size-4" />
+                    Download PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </CardHeader>
 
@@ -1043,8 +1064,6 @@ export function ContainerRequestSection({
           )}
         </Card>
       </DataGrid>
-
-      {unmatchedCard}
 
       {/* SF-4 (reviewer): always rendered, with an explicit empty state - "nothing sent yet" is
           a state she needs to see, not infer from an absent section. Shared with the early

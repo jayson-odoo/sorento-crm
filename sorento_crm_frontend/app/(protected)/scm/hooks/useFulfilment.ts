@@ -9,6 +9,7 @@ import {
   createSpo,
   deleteLoadingPlan,
   deleteSpo,
+  downloadContainerRequestDocument,
   downloadSpoWorksheet,
   getConsolidatedPackingList,
   getContainerRequestHistory,
@@ -21,7 +22,6 @@ import {
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
-  getUnfinishedStock,
   sendContainerRequest,
   updateLoadingPlan,
   type ContainerRequestLine,
@@ -54,15 +54,6 @@ export function useSupplierStock(supplierId: string | null) {
   return useQuery({
     queryKey: [...KEY, 'stock', supplierId],
     queryFn: () => getSupplierStock(supplierId as string),
-    enabled: !!supplierId,
-    refetchOnWindowFocus: false,
-  });
-}
-
-export function useUnfinishedStock(supplierId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'unfinished', supplierId],
-    queryFn: () => getUnfinishedStock(supplierId as string),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
   });
@@ -101,7 +92,6 @@ function useSupplierInvalidator() {
   const qc = useQueryClient();
   return (supplierId: string | null) => {
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock', supplierId] });
-    void qc.invalidateQueries({ queryKey: [...KEY, 'unfinished', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'plans', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock-list-file', supplierId] });
   };
@@ -243,6 +233,26 @@ export function useSendContainerRequest() {
       void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
       toast.success(`Request sent to ${supplierName}.`);
     },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * The gear menu's two downloads (R23): the same request, as a file, without sending it.
+ *
+ * A mutation rather than a query because it is an act she asks for and because the pending
+ * state disables the menu item - there is nothing to cache, the answer is a file that has
+ * already left for the disk.
+ */
+export function useDownloadContainerRequestDocument(supplierId: string | null) {
+  return useMutation({
+    mutationFn: ({
+      lines,
+      format,
+    }: {
+      lines: ContainerRequestLine[];
+      format: 'xlsx' | 'pdf';
+    }) => downloadContainerRequestDocument(supplierId as string, lines, format),
     onError: (e: Error) => toast.error(e.message),
   });
 }

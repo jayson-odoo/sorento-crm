@@ -34,6 +34,22 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The gear menu, flattened: Radix opens on pointerdown through a portal, and what this suite
+// asks of it is which items it offers, not how it animates. Same stub LoadingPlanView.test.tsx
+// uses on the toolbar's own gear.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: any) => <>{children}</>,
+  DropdownMenuContent: ({ children }: any) => <div data-testid="menu-content">{children}</div>,
+  DropdownMenuItem: ({ children, onSelect, disabled, ...rest }: any) => (
+    <button type="button" onClick={onSelect} disabled={disabled} {...rest}>
+      {children}
+    </button>
+  ),
+}));
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // B3 gap: the Document button on a sent-notice row calls the real service fn, not a bare fetch.
 const getNoticeDocumentUrlMock = vi.fn();
 vi.mock('../../services/fulfilmentService', async () => {
@@ -87,10 +103,7 @@ const state = {
     error: null as Error | null,
   },
   notices: [] as unknown[],
-  // What the supplier holds unfinished, per the feed the ranked table's "They hold" column
-  // now folds in (captain follow-up, 20 Aug). Empty by default - only the "unmatched" tests
-  // below populate it.
-  unfinished: [] as { item_code: string; product_name: string | null; qty_unfinished: number; qty_packed: number; as_of: string | null }[],
+  download: vi.fn(),
 };
 
 vi.mock('../../hooks/useFulfilment', () => ({
@@ -100,7 +113,10 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useContainerRequestHistory: () => ({ data: undefined, isFetching: false }),
   useSendContainerRequest: () => state.send,
   useSupplierNotices: () => ({ data: state.notices }),
-  useUnfinishedStock: () => ({ data: state.unfinished }),
+  useDownloadContainerRequestDocument: () => ({
+    mutate: state.download,
+    isPending: false,
+  }),
 }));
 
 import { ContainerRequestSection, holdingSortValue } from './ContainerRequestSection';
@@ -169,7 +185,7 @@ beforeEach(() => {
   };
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
   state.notices = [];
-  state.unfinished = [];
+  state.download = vi.fn();
   getNoticeDocumentUrlMock.mockReset();
   getNoticeDocumentUrlMock.mockResolvedValue({ url: 'https://cdn.test/doc.pdf', filename: 'doc.pdf' });
 });
@@ -513,6 +529,7 @@ describe('ContainerRequestSection - requests already sent', () => {
     document_filename: 'container-request.pdf', has_document: true,
     xlsx_filename: 'container-request.xlsx', has_xlsx: true,
     public_url: 'https://crm.test/c/SRT/supplier-request/tok-1',
+    link_retired: false,
     container_type: null, container_count: null, planned_cbm: null,
     line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
     created_by: 'Ms Tee',
@@ -523,7 +540,9 @@ describe('ContainerRequestSection - requests already sent', () => {
     state.notices = [sentRequest()];
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /^pdf$/i }));
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /^pdf$/i }),
+    );
 
     await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'pdf'));
     await waitFor(() =>
@@ -538,7 +557,9 @@ describe('ContainerRequestSection - requests already sent', () => {
     state.notices = [sentRequest()];
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /xlsx/i }));
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /xlsx/i }),
+    );
 
     await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'xlsx'));
     openSpy.mockRestore();
@@ -548,7 +569,9 @@ describe('ContainerRequestSection - requests already sent', () => {
     state.notices = [{ ...sentRequest(), has_xlsx: false, xlsx_filename: null }];
     renderSection();
 
-    expect(screen.queryByRole('button', { name: /xlsx/i })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('requests-sent')).queryByRole('button', { name: /xlsx/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('Copy link puts the supplier page on the clipboard', async () => {
@@ -557,20 +580,139 @@ describe('ContainerRequestSection - requests already sent', () => {
     state.notices = [sentRequest()];
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /copy link/i }));
+    // Scoped to the card: the gear on the header offers the same action for the CURRENT
+    // link, and this is about the row's own button.
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /copy link/i }),
+    );
 
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-1'),
     );
   });
 
-  it('a retired link offers no Copy link button', () => {
+  it('a retired link says so instead of offering a dead button (AC-C8)', () => {
     // A copied dead link is worse than no button: the supplier opens it, is told it is gone,
-    // and has no way to tell that a live one exists.
-    state.notices = [{ ...sentRequest(), public_url: null }];
+    // and has no way to tell that a live one exists. Silence is not right either - the row
+    // would read like one that never carried a link at all.
+    state.notices = [{ ...sentRequest(), public_url: null, link_retired: true }];
     renderSection();
 
-    expect(screen.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+    expect(card.getByText('Link retired')).toBeInTheDocument();
+  });
+
+  it('a notice that never carried a link says nothing about one', () => {
+    state.notices = [{ ...sentRequest(), public_url: null, link_retired: false }];
+    renderSection();
+
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+    expect(card.queryByText('Link retired')).not.toBeInTheDocument();
+  });
+
+  it('offers Copy link on BOTH rows of one send (AC-C8)', () => {
+    // R23: one credential, delivered two ways. The chat row is the one Ms Tee copies from
+    // for WeChat, so a link on the email row alone is a link she cannot reach where she
+    // looks for it.
+    state.notices = [
+      sentRequest(),
+      { ...sentRequest(), id: 'n-4', channel: 'chat', status: 'skipped' },
+    ];
+    renderSection();
+
+    expect(
+      within(screen.getByTestId('requests-sent')).getAllByRole('button', { name: /copy link/i }),
+    ).toHaveLength(2);
+  });
+});
+
+describe('ContainerRequestSection - the gear on the header (R23)', () => {
+  it('keeps Send as the only button, everything else behind the gear', () => {
+    renderSection();
+
+    expect(screen.getByRole('button', { name: /send to supplier/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Plan actions')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /refresh suggestion/i })).toBeInTheDocument();
+  });
+
+  it('Refresh suggestion re-runs the build', () => {
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /refresh suggestion/i }));
+
+    expect(state.build.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('Copy link is disabled, and says why, until something has been sent', () => {
+    renderSection();
+
+    const item = screen.getByRole('button', { name: /copy link/i });
+    expect(item).toBeDisabled();
+    expect(item).toHaveAttribute('title', 'No link sent yet');
+  });
+
+  it('Copy link copies the supplier s current live link', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    state.notices = [
+      {
+        id: 'n-5', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
+        loading_plan_id: null, notice_type: 'container_request', channel: 'email',
+        recipient: null, status: 'sent', status_reason: null,
+        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
+        document_filename: 'container-request.pdf', has_document: true,
+        xlsx_filename: null, has_xlsx: false,
+        public_url: 'https://crm.test/c/SRT/supplier-request/tok-live',
+        link_retired: false,
+        container_type: null, container_count: null, planned_cbm: null,
+        line_count: 1, production_line_count: 0, created_at: '2026-08-18T02:00:00',
+        created_by: 'Ms Tee',
+      },
+    ];
+    renderSection();
+
+    fireEvent.click(
+      within(screen.getByTestId('menu-content')).getByRole('button', { name: /copy link/i }),
+    );
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-live'),
+    );
+  });
+
+  it('downloads the sheet for the quantities on screen, without sending anything', () => {
+    renderSection();
+
+    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '25' } });
+    fireEvent.click(screen.getByRole('button', { name: /download xlsx/i }));
+
+    expect(state.download).toHaveBeenCalledWith({
+      lines: [{ product_id: 'p1', qty: 25 }],
+      format: 'xlsx',
+    });
+    expect(state.send.mutate).not.toHaveBeenCalled();
+  });
+
+  it('downloads the PDF off the same lines', () => {
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /download pdf/i }));
+
+    expect(state.download).toHaveBeenCalledWith({
+      lines: [{ product_id: 'p1', qty: 10 }],
+      format: 'pdf',
+    });
+  });
+
+  it('has nothing to download once every quantity is 0', () => {
+    renderSection();
+
+    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
+
+    expect(screen.getByRole('button', { name: /download xlsx/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /download pdf/i })).toBeDisabled();
   });
 });
 

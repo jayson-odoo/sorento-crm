@@ -378,8 +378,12 @@ export interface SupplierNotice {
   has_xlsx: boolean;
   /** The read-only page the supplier opens (F8). Built server-side because it has to match
    *  what went out in the email; null once it has expired, been retired by a resend, or when
-   *  no public base URL is configured. */
+   *  no public base URL is configured. Both channel rows of one send carry it (R23) - one
+   *  credential, delivered two ways. */
   public_url: string | null;
+  /** This send HAD a link and it has run out - which is not the same as never having had
+   *  one, and is why an older row reads "Link retired" rather than nothing at all. */
+  link_retired: boolean;
   container_type: string | null;
   container_count: number | null;
   planned_cbm: number | null;
@@ -669,6 +673,32 @@ export async function sendContainerRequest(
     body: JSON.stringify({ supplier_id: supplierId, lines }),
   });
   return readJson(res, 'Failed to send the request to the supplier');
+}
+
+/**
+ * The request as a file for the quantities currently on screen, WITHOUT sending it (R23).
+ *
+ * The gear menu's "Download XLSX" / "Download PDF". `POST` because the lines are the body -
+ * they are Ms Tee's edits, not a stored plan the server could re-derive - and because nothing
+ * is created it sits behind the same read permission the build does. The name comes off the
+ * server's `Content-Disposition` so the file and the sheet inside it agree on which supplier
+ * and which day this is.
+ */
+export async function downloadContainerRequestDocument(
+  supplierId: string,
+  lines: ContainerRequestLine[],
+  format: 'xlsx' | 'pdf',
+): Promise<void> {
+  const res = await apiFetch(`/api/v1/scm/container-requests/document?format=${format}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ supplier_id: supplierId, lines }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to build the document'));
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `container-request.${format}`;
+  saveBlobAs(await res.blob(), filename);
 }
 
 /** Every notice this supplier has ever been sent, across both stages - filtered client-side

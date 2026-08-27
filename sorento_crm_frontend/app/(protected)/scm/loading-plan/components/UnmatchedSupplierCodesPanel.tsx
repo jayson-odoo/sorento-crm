@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
@@ -40,7 +41,34 @@ import { EM_DASH, fmtInt } from '../../lib/format';
  * Hidden when there is nothing to answer and nothing dismissed - it is not a section of the
  * record, it is a queue, and an empty queue on screen every day is noise the eye learns to
  * skip.
+ *
+ * Collapsible (R23), because it sits ABOVE the plan and twenty codes push the table somebody
+ * came here to read off the screen. Open by default - a queue nobody is shown is a queue
+ * nobody works down - and the choice is remembered per viewer, since whether this is today's
+ * job or today's obstacle is a fact about the person, not about the supplier.
  */
+
+/** Where the open/closed choice lives. One preference, so a key, not a table. */
+const COLLAPSE_KEY = 'scm.loadingPlan.unmatchedCollapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSE_KEY) === '1';
+  } catch {
+    // Private mode, a disabled store, a quota: the panel opens. It is a preference, and
+    // losing it costs one click.
+    return false;
+  }
+}
+
+function writeCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+  } catch {
+    // Same: not being able to remember it is not a reason to fail the click.
+  }
+}
+
 export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string }) {
   const { data: rows = [] } = useUnmatchedSupplierCodes(supplierId || null);
   const { data: aliases = [] } = useSupplierCodeAliases(supplierId || null);
@@ -50,6 +78,18 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
   const [showDismissed, setShowDismissed] = React.useState(false);
   /** The code a write is in flight for, so only ITS row goes quiet. */
   const [busy, setBusy] = React.useState<string | null>(null);
+  // Read in an effect, not in the initial state: `localStorage` does not exist while the
+  // server renders this, and a first paint that disagrees with the browser is a hydration
+  // mismatch. So it opens, then honours what the viewer chose last time.
+  const [collapsed, setCollapsed] = React.useState(false);
+  React.useEffect(() => setCollapsed(readCollapsed()), []);
+
+  const toggleCollapsed = React.useCallback(() => {
+    setCollapsed((open) => {
+      writeCollapsed(!open);
+      return !open;
+    });
+  }, []);
 
   const dismissed = React.useMemo(
     () => aliases.filter((alias) => alias.source === 'dismissed'),
@@ -227,33 +267,52 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
     >
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 py-3">
-          <CardHeading>
-            <CardTitle className="text-sm">
-              {rows.length === 1
-                ? '1 code matches nothing we hold'
-                : `${rows.length} codes match nothing we hold`}
-            </CardTitle>
+          <CardHeading className="min-w-0">
+            {/* The whole title block is the toggle (R23) - the chevron says which way it
+                goes, and a queue this size has no business pushing the plan off screen when
+                somebody is done with it for now. */}
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-expanded={!collapsed}
+              aria-controls="unmatched-codes-body"
+              data-testid="unmatched-codes-toggle"
+              className="flex min-w-0 items-center gap-2 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {collapsed ? (
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              ) : (
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              )}
+              <CardTitle className="truncate text-sm">
+                {rows.length === 1
+                  ? '1 code matches nothing we hold'
+                  : `${rows.length} codes match nothing we hold`}
+              </CardTitle>
+              <Badge variant="secondary" appearance="light">
+                {fmtInt(rows.reduce((sum, r) => sum + (r.qty_packed || 0), 0))} packed
+              </Badge>
+            </button>
           </CardHeading>
           <div className="flex shrink-0 items-center gap-2">
-            <Badge variant="secondary" appearance="light">
-              {fmtInt(rows.reduce((sum, r) => sum + (r.qty_packed || 0), 0))} packed
-            </Badge>
             {/* Master data moves while this queue is being worked down - a product created to
                 answer one of these codes answers others too, and the ladder is what finds
-                them (R18). */}
+                them (R18). Outside the toggle: it is its own action, not a way to open this. */}
             <RefreshMatchingButton supplierId={supplierId} size="sm" />
           </div>
         </CardHeader>
-        <CardTable>
-          {/* Five columns are wider than a phone, so the table scrolls inside its own
-              container rather than dragging the page sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        </CardTable>
+        {!collapsed && (
+          <CardTable id="unmatched-codes-body">
+            {/* Five columns are wider than a phone, so the table scrolls inside its own
+                container rather than dragging the page sideways. */}
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+        )}
 
-        {dismissed.length > 0 && (
+        {!collapsed && dismissed.length > 0 && (
           <div className="border-t border-border p-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>
