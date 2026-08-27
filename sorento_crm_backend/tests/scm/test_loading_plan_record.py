@@ -616,3 +616,41 @@ def test_the_records_notice_history_is_only_its_own_plans(scm_app):
 
     assert [n["loading_plan_id"] for n in scoped["data"]] == [plan_a["id"]]
     assert len(every["data"]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# a send that could not go out (fix pass)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_send_that_failed_leaves_the_plan_in_planning_and_deletable(scm_app, monkeypatch):
+    # The plan flipped to `sent` on every send, so a refused email left a plan claiming it
+    # went out - and Q5 then refused to delete it, so the row could be neither sent nor
+    # removed. `sent` means the ask left the building; a failed notice means it did not.
+    from app.services import email_outbox_service
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+
+    def refuse(*_a, **_k):
+        raise RuntimeError("the outbox is not accepting mail")
+
+    monkeypatch.setattr(email_outbox_service, "enqueue", refuse)
+
+    r = client.post(
+        SEND_URL,
+        json={"plan_id": plan["id"], "lines": [{"product_id": str(w.product("A").id), "qty": 5}]},
+    )
+
+    assert r.status_code == 201, r.text
+    notice = r.json()["notices"][0]
+    assert notice["status"] == "failed"
+    assert "not accepting mail" in (notice["last_error"] or "")
+    assert r.json()["plan"]["status"] == "planning"
+    after = client.get(f"{PLANS_URL}/{plan['id']}").json()
+    assert after["status"] == "planning"
+    assert after["sent_at"] is None
+    assert client.delete(f"{PLANS_URL}/{plan['id']}").status_code == 204

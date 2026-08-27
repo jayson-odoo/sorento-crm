@@ -278,6 +278,11 @@ export function useSendContainerRequest() {
       void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
       toast.success(`Request sent to ${supplierName}.`);
     },
+    // A refused send still wrote its notice, and the record's "Requests sent" list has to
+    // show the attempt and its reason - so the notices are re-read on the failing path too.
+    onError: (_e, { supplierId }) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
+    },
     // No toast: the send dialog stays open on a refusal and prints the reason beside the
     // field that can fix it (AC-C5). A toast would say the same thing where it cannot be
     // acted on, and would vanish while she is still reading it.

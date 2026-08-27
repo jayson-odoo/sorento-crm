@@ -81,6 +81,12 @@ CHANNELS = ("email", "chat")
 #: before the dialog existed behaves exactly as it did.
 SEND_CHANNELS = ("email", "chat")
 
+#: The notice statuses that mean the ask LEFT THE BUILDING. `sent` is handed to the outbox or
+#: to Respond.io; `pending` is a row whose dispatch has not reported yet, which is still an
+#: ask in flight. `failed` and `skipped` are not: nothing reached the supplier, so a plan
+#: carrying only those has not been sent and is still the planner's to finish or to delete.
+WENT_OUT_STATUSES = frozenset({"sent", "pending"})
+
 #: The Respond.io channel source a supplier request rides on (R10, captain 27 Aug: "chat
 #: should be using wechat" - the factories are in China). Matched against
 #: `respond_channels.source`, which the template sync writes off `GET /v2/space/channel`.

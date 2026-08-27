@@ -768,10 +768,22 @@ def create_record(
 
 
 def has_notices(db: Session, plan_id: str) -> bool:
+    """Did anything for this plan actually leave the building (Q5)?
+
+    Not "is there a notice row": a refused send writes one too, and a plan whose only notice
+    is `failed` was never sent, so refusing to delete it would leave a row that can be neither
+    sent nor removed. The FK is `ON DELETE SET NULL`, so the failed row survives the delete as
+    the record of the attempt.
+    """
+    from app.services.scm import supplier_notice_service
+
     return bool(
         db.execute(
-            text("SELECT 1 FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) LIMIT 1"),
-            {"p": plan_id},
+            text(
+                "SELECT 1 FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) "
+                "AND status = ANY(:s) LIMIT 1"
+            ),
+            {"p": plan_id, "s": list(supplier_notice_service.WENT_OUT_STATUSES)},
         ).first()
     )
 

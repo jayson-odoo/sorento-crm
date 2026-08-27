@@ -14,7 +14,12 @@ vi.mock(
   }),
 );
 
-import { deleteSpo, downloadPackingListExport, getSupplierNotices } from './fulfilmentService';
+import {
+  deleteSpo,
+  downloadPackingListExport,
+  getSupplierNotices,
+  sendContainerRequest,
+} from './fulfilmentService';
 
 function fileResponse(disposition: string | null, status = 200) {
   const headers = new Headers();
@@ -151,5 +156,38 @@ describe('getSupplierNotices', () => {
     expect(String(apiFetch.mock.calls[0][0])).toBe(
       '/api/v1/scm/supplier-notices?supplier_id=sup-1',
     );
+  });
+});
+
+describe('sendContainerRequest', () => {
+  const notice = (over: Record<string, unknown>) => ({
+    id: 'n-1',
+    status: 'sent',
+    status_reason: null,
+    last_error: null,
+    ...over,
+  });
+
+  it('raises the reason when the 201 carries a notice that never went out', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse({
+        notices: [notice({ status: 'failed', last_error: 'the outbox is not accepting mail' })],
+        document_filename: 'container-request.pdf',
+      }),
+    );
+
+    await expect(sendContainerRequest('plan-1', [])).rejects.toThrow(
+      'the outbox is not accepting mail',
+    );
+  });
+
+  it('returns the body when the notice went out', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse({ notices: [notice({})], document_filename: 'container-request.pdf' }),
+    );
+
+    const out = await sendContainerRequest('plan-1', []);
+
+    expect(out.notices[0].status).toBe('sent');
   });
 });

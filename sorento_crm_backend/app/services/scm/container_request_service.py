@@ -1472,6 +1472,12 @@ def send(
     list can say when and on which channel the ask went out, and the row flips to `sent`. The
     supplier is re-checked here too (company-scoped, same as `build`), so a plan whose supplier
     moved company between the two calls fails cleanly before anything is rendered or queued.
+
+    It flips ONLY when the notice says the ask went out. A refused send (the outbox would not
+    take the mail, Respond.io refused the message) writes a `failed` notice and the plan stays
+    `planning`: it was never sent, so it is still the planner's to fix and resend, or to
+    delete. The 201 still carries the notice, because the reason is on it and the dialog
+    prints it.
     """
     from datetime import datetime as _datetime
 
@@ -1492,9 +1498,13 @@ def send(
         note=note,
     )
     # After the notices, never before: a send that failed to render must not leave a plan
-    # claiming it went out.
-    plan.status = "sent"
-    plan.sent_at = _datetime.utcnow()
+    # claiming it went out - and neither must one the outbox refused.
+    if any(
+        (n.get("status") or "") in supplier_notice_service.WENT_OUT_STATUSES
+        for n in (out.get("notices") or [])
+    ):
+        plan.status = "sent"
+        plan.sent_at = _datetime.utcnow()
     db.commit()
     out["plan"] = loading_plan_service.record_dict(db, plan)
     return out

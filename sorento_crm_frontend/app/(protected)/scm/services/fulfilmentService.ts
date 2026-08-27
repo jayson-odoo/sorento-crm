@@ -874,7 +874,23 @@ export async function sendContainerRequest(
   // Coded, not just messaged: the dialog stays open on a refusal and says which of the eight
   // things went wrong beside the field that can fix it (AC-C5).
   if (!res.ok) throw await codedError(res, 'Failed to send the request to the supplier');
-  return (await res.json()) as { notices: SupplierNotice[]; document_filename: string };
+  const body = (await res.json()) as {
+    notices: SupplierNotice[];
+    document_filename: string;
+  };
+  // A 201 whose notice says nothing went out is a refusal too, and the backend leaves the
+  // plan in `planning` for exactly that reason. Raised rather than returned so the dialog
+  // stays open and prints the notice's own words where the eight coded refusals already
+  // print, instead of toasting "Request sent" over a request that was not.
+  const refused = body.notices?.find((n) => n.status === 'failed' || n.status === 'skipped');
+  if (refused) {
+    throw new Error(
+      refused.last_error ||
+        refused.status_reason ||
+        'The request could not be sent to the supplier.',
+    );
+  }
+  return body;
 }
 
 /**
