@@ -585,13 +585,12 @@ def list_product_economics(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Sell-price, stock and turnover facts for every product the run planned.
+    """Movement health, sell-price, stock and turnover facts for every planned product.
 
-    Keyed by product id. Feeds the margin column and the discontinue advisory: realized
-    average selling price (last 12 months of real order lines; `sell_source` names the
-    fallback when list price had to stand in), total on hand, average monthly outflow and
-    months-of-stock. The verdicts are drawn on the frontend against the policy thresholds
-    carried here, so both sides use the same line.
+    Keyed by product id. `movement_class` (fast_moving / slow_moving / dead / no_history)
+    is what the Product health column reads: delivery orders in the last 3 months against
+    GRN receipts in the last 6 (AC-R12). The sell-price / turnover figures travel too -
+    the ranking's margin factor reads them - but no margin verdict is drawn on the plan.
     """
     svc.assert_run_visible(db, run_id)
     return product_economics_service.economics_for_run(db, run_id)

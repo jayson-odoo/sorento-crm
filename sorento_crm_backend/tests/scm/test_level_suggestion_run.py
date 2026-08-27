@@ -2,9 +2,13 @@
 
 > "the third suggestion is I should suggest the reorder level"
 
-What is pinned here: the suggestion is written for the PLAN's pairs only, it leans the
-way the trajectory leans (rising rounds up, dying rounds down), and the buyer's stored
-level - hand-set or uploaded - is never touched by any of it.
+What is pinned here: the suggestion is written for the PLAN's pairs only, it is the ADU
+formula (`ADU x lead_time + ADU x 14`, AC-R11), and the buyer's stored level - hand-set or
+uploaded - is never touched by any of it.
+
+The world below delivers 12 units a month. Only June and July land inside the 90 days
+before 2026-08-10 (the window opens on 2026-05-12), so ADU = 24 / 90 = 0.2667, and with
+no supplier lead time on file the level is 0.2667 x (30 + 14) = 11.73, rounded up to 12.
 """
 from __future__ import annotations
 
@@ -133,7 +137,7 @@ def _level_row(db, pid, wid) -> dict:
         {"p": pid, "w": wid}).mappings().first())
 
 
-def test_a_rising_book_rounds_the_suggested_level_up_and_leaves_the_level_alone():
+def test_the_run_writes_the_adu_level_and_leaves_the_buyers_level_alone():
     from tests._pg_fixture import pg_session
     with pg_session() as db:
         w = _world(db, rising=True)
@@ -142,34 +146,32 @@ def test_a_rising_book_rounds_the_suggested_level_up_and_leaves_the_level_alone(
         row = _level_row(db, w["product_id"], w["warehouse_id"])
 
         assert written == 1
-        # avg 12/month x 2 cover months = 24; rising rounds up, and 24 is already whole.
-        assert float(row["suggested_level"]) == 24.0
-        assert row["suggestion_basis"]["trend"] == "rising"
+        assert float(row["suggested_level"]) == 12.0
+        basis = row["suggestion_basis"]
+        assert basis["window_qty"] == 24.0
+        assert basis["lead_time_days"] == 30.0
+        assert basis["safety_days"] == 14.0
         # The buyer's number is exactly where they left it.
         assert float(row["level"]) == 20.0
         assert row["source"] == "manual"
 
 
-def test_a_dying_book_rounds_down_instead():
+def test_a_thinner_book_asks_for_a_lower_level():
     from tests._pg_fixture import pg_session
     with pg_session() as db:
         w = _world(db, rising=False)
-        # 2.5 cover months -> raw 30; drop one June order to 10 so raw = avg 11.333 x 2.5
-        # is fractional and the rounding direction is observable.
+        # June drops to 10: the window now holds 22, so ADU = 0.2444 and the level is
+        # 0.2444 x 44 = 10.76, rounded up to 11.
         db.execute(text(
             "UPDATE order_lines SET quantity = 10 WHERE product_id::text = :p "
             "AND order_id IN (SELECT id FROM orders WHERE order_date = :d)"),
             {"p": w["product_id"], "d": date(2026, 6, 10)})
-        db.execute(text(
-            "UPDATE scm.reorder_policy SET level_cover_months = 2.5 "
-            "WHERE scope_type = 'global'"))
 
         svc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
         row = _level_row(db, w["product_id"], w["warehouse_id"])
 
-        # avg (12+10+12)/3 = 11.3333 x 2.5 = 28.3333 -> quiet/falling floors to 28.
-        assert float(row["suggested_level"]) == 28.0
-        assert row["suggestion_basis"]["trend"] in ("falling", "quiet")
+        assert float(row["suggested_level"]) == 11.0
+        assert row["suggestion_basis"]["window_qty"] == 22.0
 
 
 def test_the_run_report_carries_the_current_level_beside_the_suggestion():
@@ -183,14 +185,14 @@ def test_the_run_report_carries_the_current_level_beside_the_suggestion():
 
         assert out["count"] == 1
         entry = out["suggestions"][key]
-        assert entry["suggested_level"] == 24.0
+        assert entry["suggested_level"] == 12.0
         assert entry["current_level"] == 20.0
         assert entry["current_source"] == "manual"
-        assert entry["basis"]["avg_monthly"] == 12.0
+        assert entry["basis"]["adu"] == round(24 / 90, 6)
         assert entry["product_code"], "the export names the product by code, not UUID"
-        # The lot to order when the level fires, beside AutoCount's own figure. One cover
-        # of demand (avg 12 x 2 = 24, already whole) rounded to a purchasable lot.
-        assert entry["suggested_quantity"] == 24.0
+        # The engine no longer suggests a reorder QUANTITY: the plan orders `level - net`,
+        # so "not computed" is the honest answer here rather than a number nothing sizes.
+        assert entry["suggested_quantity"] is None
         assert entry["master_reorder_quantity"] == 18.0
 
 
@@ -223,7 +225,7 @@ def test_the_endpoint_serves_the_list_and_rbac_holds(scm_app):
         body = r.json()
     assert body["count"] == 1
     entry = next(iter(body["suggestions"].values()))
-    assert entry["suggested_level"] == 24.0
+    assert entry["suggested_level"] == 12.0
 
     # A user with no grants is refused, not shown an empty list.
     from app.dependencies import get_current_user, get_current_user_or_api_key
@@ -310,7 +312,7 @@ def test_an_amendment_sits_beside_the_suggestion_and_touches_nothing_else():
             "SELECT level, source, suggested_level, amended_level, amended_by "
             "FROM scm.reorder_level WHERE product_id::text = :p AND warehouse_id::text = :w"),
             {"p": w["product_id"], "w": w["warehouse_id"]}).mappings().first()
-        assert float(row["suggested_level"]) == 24.0  # the engine's number survives
+        assert float(row["suggested_level"]) == 12.0  # the engine's number survives
         assert float(row["amended_level"]) == 30.0
         assert row["amended_by"] == "user-1"
         assert float(row["level"]) == 20.0            # the stored level is never touched
@@ -372,7 +374,7 @@ def test_the_run_report_carries_the_amendment_beside_the_engines_number():
         out = svc.suggestions_for_run(db, w["run_id"])
         entry = out["suggestions"][f"{w['product_id']}:{w['warehouse_id']}"]
 
-        assert entry["suggested_level"] == 24.0
+        assert entry["suggested_level"] == 12.0
         assert entry["amended_level"] == 30.0
 
 
@@ -390,7 +392,7 @@ def test_the_amend_endpoint_writes_and_rbac_holds(scm_app):
         })
         assert r.status_code == 200, r.text
         assert r.json()["amended_level"] == 30.0
-        assert r.json()["suggested_level"] == 24.0
+        assert r.json()["suggested_level"] == 12.0
 
         # Validation: an item with no suggestion has nothing to amend.
         bad = c.post("/api/v1/scm/reorder-levels/amend-suggestion", json={

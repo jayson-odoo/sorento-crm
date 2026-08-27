@@ -473,6 +473,17 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
     po_refs = Column(JSONB, nullable=True)
     reason_text = Column(Text, nullable=True)
+    #: `use_last` (cost the line at what we last paid) or `ask_new` (the price is still a
+    #: question, so the drafted line carries none). AC-R13.
+    price_mode = Column(String(20), nullable=True)
+    #: The supplier the BUYER chose, when they overrode the engine's. NULL = the
+    #: recommendation's own proposed supplier stands (AC-R14).
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The price this row is costed at, in the chosen supplier's currency. NULL under
+    #: `ask_new`: an unknown price is not a price of zero.
+    unit_cost = Column(Numeric, nullable=True)
     decided_by = Column(String, nullable=True)
     decided_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

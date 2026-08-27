@@ -181,7 +181,8 @@ async def apply_level_import(
 @router.post("/reorder-levels/refresh-suggestions")
 def refresh(payload: dict = Body(default_factory=dict), db: Session = Depends(get_db),
             _=Depends(_EDIT)) -> dict[str, Any]:
-    """Recompute suggestions from the last N months of movement. Stored levels are untouched."""
+    """Recompute suggestions from the last 90 days of delivery orders. Stored levels are
+    untouched. `study_months` only sizes the evidence bars the popover charts."""
     product_ids = [str(p) for p in (payload.get("product_ids") or [])]
     if not product_ids:
         raise AppException(status_code=422,
@@ -190,7 +191,6 @@ def refresh(payload: dict = Body(default_factory=dict), db: Session = Depends(ge
     written = svc.refresh_suggestions(
         db, product_ids, warehouse_ids,
         study_months=int(payload.get("study_months") or svc.DEFAULT_STUDY_MONTHS),
-        cover_months=float(payload.get("cover_months") or svc.DEFAULT_COVER_MONTHS),
         company_id=_company_id(db))
     return {"updated": written}
 
