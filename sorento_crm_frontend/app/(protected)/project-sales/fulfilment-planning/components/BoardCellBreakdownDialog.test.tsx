@@ -340,6 +340,66 @@ describe('BoardCellBreakdownDialog: the table', () => {
     expect(screen.queryByText('Contested')).toBeNull();
   });
 
+  /**
+   * R1/B1: every figure in the stock table is netted of ONE line's own quantity, so a cell
+   * holding two lines has two answers and the table has to say whose it is showing. It
+   * follows the row the planner opened, and names the line while there is a choice.
+   */
+  it('shows the EXPANDED line\u2019s own stock position, and says whose it is', async () => {
+    const cell = cellOf([
+      demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, qty: '24' }),
+      demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2, qty: '24' }),
+    ]);
+    const withPerLine: BoardCell = {
+      ...cell,
+      // Two lines, two tables. The first row's is the cell's own (the server sends it as
+      // `cell.locations` too); the second row's differs in exactly the way the netting does.
+      locations: [{ ...cell.locations[0], location: 'BRW-AM', available_qty: '-15' }],
+      contributions: cell.contributions.map((entry, index) => ({
+        ...entry,
+        locations: [
+          {
+            ...cell.locations[0],
+            location: 'BRW-AM',
+            available_qty: index === 0 ? '-15' : '-16',
+          },
+        ],
+      })),
+    };
+    render(
+      <BoardCellBreakdownDialog
+        cell={withPerLine}
+        bucketLabel="31 Aug 2026"
+        draft={{}}
+        onDecide={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Nothing expanded: the first contributing line's, which is what `cell.locations` holds.
+    expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain('-15');
+    expect(screen.getByTestId('cell-stock-for-line').textContent).toContain(
+      `${withPerLine.contributions[0].so_number} line ${withPerLine.contributions[0].line_no}`,
+    );
+
+    // Open the SECOND row and the table answers for that line instead.
+    const rows = contributionTable().querySelectorAll('tbody tr');
+    fireEvent.click(rows[1]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain('-16'),
+    );
+    expect(screen.getByTestId('cell-stock-for-line').textContent).toContain(
+      `${withPerLine.contributions[1].so_number} line ${withPerLine.contributions[1].line_no}`,
+    );
+  });
+
+  it('names no line at all on a cell holding one', () => {
+    renderDialog([demand()]);
+
+    expect(screen.queryByTestId('cell-stock-for-line')).not.toBeInTheDocument();
+  });
+
   it('lists the rows in the order the allocation rule served them', () => {
     renderDialog([
       demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, required_date: '2026-09-04' }),
@@ -559,7 +619,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
-      suspected_system_issue: undefined,
+      suspected_system_issue: false,
     });
   });
 
@@ -575,7 +635,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'rejected',
       reason: 'Cancelled by the customer.',
-      suspected_system_issue: undefined,
+      suspected_system_issue: false,
     });
   });
 
@@ -650,7 +710,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
-      suspected_system_issue: undefined,
+      suspected_system_issue: false,
     });
   });
 });

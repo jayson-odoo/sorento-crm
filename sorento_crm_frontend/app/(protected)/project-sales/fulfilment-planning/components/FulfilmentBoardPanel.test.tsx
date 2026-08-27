@@ -59,6 +59,14 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   },
 }));
 
+const getPlanningChangeBatch = vi.fn();
+vi.mock('../../_shared/services/planningChangeService', () => ({
+  listPlanningChangeBatches: vi.fn(),
+  getPlanningChangeBatch: (...args: unknown[]) => getPlanningChangeBatch(...args),
+  updatePlanningChangeRow: vi.fn(),
+  applyPlanningChanges: vi.fn(),
+}));
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
@@ -72,6 +80,8 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => false,
 }));
 vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
+  // The real key, because the confirm hook invalidates it by name (D6).
+  BOARD_TRANSFERS_KEY: 'board-stock-transfers',
   useBoardTransfers: () => ({ data: { data: [] }, isLoading: false, error: undefined }),
   useBoardTransferMutations: () => ({
     approve: { mutate: vi.fn(), isPending: false },
@@ -106,7 +116,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { toast } from 'sonner';
-import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { FulfilmentBoardPanel, unpostableNotices } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
   BoardContribution,
@@ -161,13 +171,17 @@ function withContribution(
   };
 }
 
-function renderPanel(soNumbers = ['SO403340', 'SO398322'], onBack: () => void = vi.fn()) {
+function renderPanel(
+  soNumbers = ['SO403340', 'SO398322'],
+  onBack: () => void = vi.fn(),
+  batchId: string | null = null,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={onBack} />
+      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={onBack} batchId={batchId} />
     </QueryClientProvider>,
   );
 }
@@ -967,6 +981,32 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
   });
 
+  it('names the movements it KEPT beside the ones it raised (R16)', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 2,
+          inquiry_rows_created: 0,
+          transfers_written: 1,
+          transfers_kept: 3,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        '2 lines confirmed · 1 transfer proposed · 3 kept · 0 inquiry rows',
+      ),
+    );
+  });
+
   it('refetches the board once the confirmation lands', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
     confirmMany.mockResolvedValue({
@@ -1033,9 +1073,12 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
+    // UNTOUCHED, so it is COUNTED rather than named (R11): silence is agreement, so the
+    // population that can be left out is every plannable line, and a notice naming hundreds
+    // of them one by one is a wall nobody reads.
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
+        '1 untouched line is not on the planning record yet; open it to decide.',
       ),
     ).toBeInTheDocument();
     // `plannedLineCount` still counts it here: it cannot tell "adopted, but this one line's
@@ -1077,7 +1120,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
+        '1 untouched line reserves at a warehouse the board cannot address; open it to decide.',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
@@ -1110,7 +1153,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+        '1 untouched line buys a discontinued product with no reason given; open it to decide.',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
@@ -1925,6 +1968,133 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
  * strip's cards carry every label in its own colour, and the column headers already say
  * "Already past" over the periods they mean - so both were the screen restated in words.
  */
+/**
+ * Undo all throws away every decision taken since the board was opened and there is no way
+ * back to them, so it asks first, with the count - PRINCIPLES: never one click, never
+ * `confirm()`.
+ */
+describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
+  async function decideOneLineInTheList() {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    // The list's own rows: click one to open its decision panel, then approve the suggestion.
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve suggestion' }));
+  }
+
+  it('opens a confirmation naming how many drafts would go, and keeps them on Cancel', async () => {
+    await decideOneLineInTheList();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Discard 1 draft decision?',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep them' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(await screen.findByTestId(/^decision-pill-/)).toHaveTextContent('Approved');
+  });
+
+  it('clears every draft decision once the discard is confirmed', async () => {
+    await decideOneLineInTheList();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId(/^decision-pill-/)).toHaveTextContent('Suggested'),
+    );
+  });
+});
+
+/**
+ * A planning change already applied to ONE sales order is not applied to it twice (AC-P3-4).
+ * The board-wide block only reads `applied_at` on the batch itself, which is set by the LAST
+ * press, so without this an order whose own rows already read applied went back up with the
+ * next one.
+ */
+describe('FulfilmentBoardPanel: an order whose change is already applied is not sent again', () => {
+  it('leaves it out of the post and says so in the results', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'pcb-1',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        {
+          so_number: 'SO403340',
+          rows: [{ id: 'pcr-1', applied_state: 'applied' }],
+        },
+      ],
+    });
+
+    renderPanel(['SO403340'], vi.fn(), 'pcb-1');
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    expect(
+      await screen.findByText(
+        /This planning change was already applied to this sales order\./,
+      ),
+    ).toBeInTheDocument();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The notice beside the button (R11): a line the planner composed is NAMED, capped at five,
+ * and the lines nobody touched are counted - there can be hundreds of those, and a wall of
+ * names is read by nobody.
+ */
+describe('unpostableNotices', () => {
+  function line(lineNo: number, touched: boolean) {
+    return {
+      contribution: {
+        item_code: 'TPE-9204',
+        line_no: lineNo,
+      } as unknown as BoardContribution,
+      reason: 'buy_reason_missing' as const,
+      touched,
+    };
+  }
+
+  it('names a touched line and states the fix', () => {
+    expect(unpostableNotices('buy_reason_missing', [line(2, true)])).toEqual([
+      'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+    ]);
+  });
+
+  it('caps the names at five and counts the rest', () => {
+    const [sentence] = unpostableNotices(
+      'buy_reason_missing',
+      [1, 2, 3, 4, 5, 6, 7].map((no) => line(no, true)),
+    );
+    expect(sentence).toContain('line 5 and 2 more');
+    expect(sentence).not.toContain('line 6');
+  });
+
+  it('counts untouched lines instead of naming them, in one sentence', () => {
+    expect(
+      unpostableNotices('buy_reason_missing', [1, 2, 3].map((no) => line(no, false))),
+    ).toEqual([
+      '3 untouched lines buy a discontinued product with no reason given; open them to decide.',
+    ]);
+  });
+
+  it('says both when the reason catches touched and untouched lines together', () => {
+    expect(
+      unpostableNotices('no_mirror', [line(2, true), line(3, false)]).length,
+    ).toBe(2);
+  });
+});
+
 describe('FulfilmentBoardPanel: what was taken off the page', () => {
   it('shows no legend row on either view', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));

@@ -66,3 +66,22 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 - F1 `alembic heads` on the branch shows exactly one head; `439_decision_suspected_issue` chains on main's `438_merge_price_supplier_sets` (#348 merged the two heads while this lane was open) and adds the boolean with default false.
 - F2 `response_model` for the board contribution decision and for `ConfirmResult` declares `suspected_system_issue` / `suspected_issues` (a test asserts the field is present in the JSON).
 - F3 vitest and pytest for every file in plan section 5 pass; no new Playwright spec; an agent-browser evidence run over A1, B1, C4, D6, D7 is attached to the PR.
+
+## G. Phase 3 fix round (28 Aug)
+
+- G1 Every contribution's own group subtotal equals the engine's `group_offer` for THAT line, on a cell holding two lines as well as one, and a negative subtotal never coexists with a `group_take` (pytest).
+- G2 Two products behind one item code do not net each other's demand out of their SO qty (pytest).
+- G3 The decision panel's "N available" is the expanded line's own figure, in the cell drawer AND in the List view; the drawer's table follows the expanded row and names the line when the cell holds several.
+- G4 Pressing Confirm fills the Stock transfers panel without a reload, and only the panel's "N lines confirmed · T transfers proposed · I inquiry rows" toast fires on success.
+- G5 A user without `inventory.stock_transfers.view` sees no transfers panel and the board asks for no transfer list.
+- G6 Approve and Approve all proposed each open a confirmation naming the transfer (or the count) and the movement before anything is approved.
+- G7 Opening a second row in the List view over an unsaved edit asks first.
+- G8 Switching Buy on and back off restores the Reserve quantities, the borrow rows and their reasons.
+- G9 Unticking "This might be a system problem" on a confirmed line clears the warning on the pill and posts `false`.
+- G10 An unplannable line's expanded panel states why it cannot be decided and offers no verb.
+- G11 The unpostable notice names touched lines (at most five, then "and N more") and counts untouched ones per reason.
+- G12 Undo all asks "Discard N draft decisions?" before it clears the draft.
+- G13 A sales order whose planning-change rows all read applied is not posted again by the board's Confirm, and the results say so.
+- G14 `line_ids=not-an-id` on `stock-detail` is refused by name rather than reaching the query (pytest).
+- G15 R16: a reconfirm of another line keeps an already-approved transfer as it is (state, number, approver); a movement that shrank is cancelled and re-proposed, one that vanished is cancelled, one that grew keeps its row and gets the difference, and `transfers_kept` reaches the wire on both confirm shapes (pytest).
+- G16 The over-reserve refusal names a competing line of the same order as "line N of this order".

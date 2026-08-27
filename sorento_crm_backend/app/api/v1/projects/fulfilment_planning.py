@@ -55,6 +55,7 @@ from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
 from app.services.project_supply_service import ProjectSupplyService
+from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
 
 logger = logging.getLogger(__name__)
@@ -369,9 +370,10 @@ def get_stock_detail(
     try:
         validate_uuid_path(product_id, resource="Product")
         validate_uuid_path(warehouse_id, resource="Warehouse")
-        wanted = [value.strip() for value in (line_ids or "").split(",") if value.strip()]
-        for value in wanted:
-            validate_uuid_path(value, resource="Sales order line")
+        # The SAME reader every other `*_ids` filter uses: it takes CSV, a JSON array or
+        # repeated params, deduplicates, and refuses a value that is not an id by naming the
+        # parameter - rather than handing the typo to the query.
+        wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
         return FulfilmentBoardService(db).stock_detail(
             product_id, warehouse_id, line_ids=wanted
         )

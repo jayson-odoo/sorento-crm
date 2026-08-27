@@ -2405,7 +2405,9 @@ class ProjectSupplyService:
 
         # THE ON-HAND GUARD (R14), ahead of the staleness refusals below so its sentence is
         # the one the planner reads: it names the location AND the earlier order, where the
-        # capacity message can only say how much is left for this line.
+        # capacity message can only say how much is left for this line. Order is all that is
+        # at stake - both refuse by raising, before `_write_decision`, so nothing is written
+        # either way; which sentence comes back is the whole difference.
         self._check_reserve_against_on_hand(checked, named=seen)
 
         if stale:
@@ -2783,7 +2785,6 @@ class ProjectSupplyService:
         product_ids = sorted({product_id for product_id, _ in pairs})
         levels = self.stock_levels_by_location(product_ids)
         holds = self._holds_by_holder(product_ids, exclude_line_ids=sorted(named))
-        taken: Dict[Tuple[str, str], Decimal] = {}
         mine: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
         for line, entry, fact in checked:
             for item in entry.reserve or []:
@@ -2803,9 +2804,10 @@ class ProjectSupplyService:
                 if holders and qty > on_hand - held:
                     warehouse = self._warehouse_row(warehouse_id)
                     code = warehouse.warehouse_code if warehouse else "That location"
+                    asking = self._so_number_of(fact)
                     names = ", ".join(
                         dict.fromkeys(
-                            holder["so_number"] or "another order" for holder in holders
+                            self._holder_name(holder, asking) for holder in holders
                         )
                     )
                     message = (
@@ -2831,7 +2833,6 @@ class ProjectSupplyService:
                             "asked": qty_text(qty),
                         },
                     )
-                taken[key] = taken.get(key, _ZERO) + qty
                 mine[key].append(
                     {
                         "so_number": self._so_number_of(fact),
@@ -2839,6 +2840,21 @@ class ProjectSupplyService:
                         "qty": qty_text(qty),
                     }
                 )
+
+    @staticmethod
+    def _holder_name(holder: Dict[str, Any], asking: Optional[str]) -> str:
+        """How the refusal names the line holding the stock this one asked for.
+
+        Another order is named by its document number. A line of the SAME order is named as
+        a line, because handing a planner their own SO number back reads as "some other copy
+        of this order is holding it" and sends them looking for a document they are already
+        on - when the competitor is a row on the screen in front of them.
+        """
+        number = holder.get("so_number")
+        if asking and number == asking:
+            line_no = holder.get("line_no")
+            return f"line {line_no} of this order" if line_no is not None else "this order"
+        return number or "another order"
 
     @staticmethod
     def _so_number_of(fact: _LineFacts) -> Optional[str]:
@@ -3365,7 +3381,7 @@ class ProjectSupplyService:
                     "carried": True,
                 }
             )
-        transfers_written, transfers_failed = self._write_transfers(
+        transfers_written, transfers_failed, transfers_kept = self._write_transfers(
             order, decision, snapshots
         )
         self.db.flush()
@@ -3417,6 +3433,10 @@ class ProjectSupplyService:
             # only sign a planner gets that a movement is missing, so it reaches the screen.
             "transfers_written": transfers_written,
             "transfers_failed": transfers_failed,
+            # And what was already on somebody's list and stayed there (R16). Counted apart
+            # from `transfers_written` so "nothing new had to move" reads as the outcome it
+            # is, rather than as a confirmation that raised nothing.
+            "transfers_kept": transfers_kept,
             # What somebody asked us to LOOK AT, beside what they decided (R10).
             "suspected_issues": suspected_issues,
             # The lines whose order inquiry row this confirmation UPDATED rather than
@@ -3991,7 +4011,7 @@ class ProjectSupplyService:
         order: ProjectSalesOrder,
         decision: SOSupplyDecision,
         snapshots: Sequence[Dict[str, Any]],
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, int]:
         """The physical movements this revision implies (PLAN section E, Q2 ruled).
 
         A reserve or a borrow drawn from a warehouse that is not the line's own location
@@ -4012,7 +4032,7 @@ class ProjectSupplyService:
         500 - and without the savepoint the failed statement would poison the transaction
         the promise itself is in, so catching the exception alone would not save it.
 
-        **The failure is reported, not swallowed.** Returns `(written, failed)`, which the
+        **The failure is reported, not swallowed.** Returns `(written, failed, kept)`, which the
         confirm result carries to the planner (`transfers_written` / `transfers_failed`):
         a movement nobody was told about is a movement nobody makes, and a silent log line
         on a server is not telling anybody. `failed` is the number of components that
@@ -4023,23 +4043,19 @@ class ProjectSupplyService:
 
         try:
             with self.db.begin_nested():
-                # Keyed on the ORDER, never on the revision this one supersedes: a
-                # confirmation whose transfer write failed leaves its predecessor's rows
-                # open, and sweeping only `previous.id` would strand them forever.
-                transfers.cancel_open_for_order(
-                    self.db,
-                    str(order.id),
-                    keep_decision_id=str(decision.id),
-                    reason=f"Superseded by revision {decision.revision_no}",
-                )
-                written = transfers.write_for_decision(
+                # RECONCILED against what is already open, never swept (R16): a movement the
+                # new revision still asks for keeps its row, its number and the approval
+                # somebody already gave it. Keyed on the ORDER, never on the revision this
+                # one supersedes: a confirmation whose transfer write failed leaves its
+                # predecessor's rows open, and matching only `previous.id` would strand them.
+                written, kept = transfers.reconcile_for_decision(
                     self.db,
                     order,
                     decision,
                     snapshots,
                     warehouse_id_for_code=self.warehouse_id_for_code,
                 )
-            return len(written), 0
+            return len(written), 0, len(kept)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "supply confirmed, but the stock transfers for revision %s were not "
@@ -4049,7 +4065,7 @@ class ProjectSupplyService:
             )
             return 0, transfers.movements_implied(
                 snapshots, warehouse_id_for_code=self.warehouse_id_for_code
-            )
+            ), 0
 
     def _write_allocations(
         self,
@@ -6118,6 +6134,7 @@ class ProjectSupplyService:
                         # dict and a key it never carried must not fail the whole press.
                         "transfers_written": body.get("transfers_written"),
                         "transfers_failed": body.get("transfers_failed"),
+                        "transfers_kept": body.get("transfers_kept"),
                         "suspected_issues": body.get("suspected_issues"),
                     }
                 )

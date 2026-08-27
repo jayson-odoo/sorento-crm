@@ -13,7 +13,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-const hasPermission = vi.fn(() => true);
+const hasPermission = vi.fn((_slug: string) => true);
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => hasPermission(slug),
 }));
@@ -76,7 +76,7 @@ function transferOf(overrides: Partial<StockTransfer> = {}): StockTransfer {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  hasPermission.mockReturnValue(true);
+  hasPermission.mockImplementation(() => true);
 });
 
 function mockData(rows: StockTransfer[], overrides: Partial<ReturnType<typeof useBoardTransfers>> = {}) {
@@ -132,21 +132,46 @@ describe('BoardTransfersPanel: hidden when empty (D4)', () => {
 });
 
 describe('BoardTransfersPanel: Approve and Approve all proposed (D7)', () => {
-  it('approves one row through the service', () => {
+  it('confirms first, then approves one row through the service', () => {
     mockData([transferOf()]);
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
 
+    // Nothing has moved yet: approving commits somebody to a physical movement, so it is
+    // confirmed first, in the transfers page's own words.
+    expect(approveMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Approve ST-000015?');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      '15 SRTWB7518 BRW to BRW-AM',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve', hidden: false }));
     expect(approveMutate).toHaveBeenCalledWith('transfer-1');
   });
 
-  it('approves every proposed row with Approve all proposed, counted in its own label', () => {
+  it('keeps the row unapproved when the confirmation is cancelled', () => {
+    mockData([transferOf()]);
+
+    render(<BoardTransfersPanel soNumbers={['SO404352']} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(approveMutate).not.toHaveBeenCalled();
+  });
+
+  it('names the count in the Approve all confirmation, then approves every proposed row', () => {
     mockData([transferOf({ id: 't-1' }), transferOf({ id: 't-2', transfer_no: 'ST-000016' })]);
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);
     fireEvent.click(screen.getByRole('button', { name: 'Approve all proposed (2)' }));
 
+    expect(approveAllMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Approve 2 proposed transfers?',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(approveAllMutate).toHaveBeenCalledWith(['t-1', 't-2']);
   });
 
@@ -161,9 +186,32 @@ describe('BoardTransfersPanel: Approve and Approve all proposed (D7)', () => {
   });
 });
 
+describe('BoardTransfersPanel: nothing at all without the view grant (D9)', () => {
+  it('renders no panel and asks for no list', () => {
+    hasPermission.mockImplementation((slug: string) => slug !== 'inventory.stock_transfers.view');
+    mockData([transferOf()]);
+
+    const { container } = render(
+      <BoardTransfersPanel soNumbers={['SO404352']} justConfirmed />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+    // The QUERY is off too: a request that comes back 403 on every board is not a read.
+    expect(useBoardTransfers).toHaveBeenCalledWith(['SO404352'], false);
+  });
+
+  it('passes the view grant to the hook when it is held', () => {
+    mockData([transferOf()]);
+
+    render(<BoardTransfersPanel soNumbers={['SO404352']} />);
+
+    expect(useBoardTransfers).toHaveBeenCalledWith(['SO404352'], true);
+  });
+});
+
 describe('BoardTransfersPanel: no buttons without inventory.stock_transfers.edit (D9)', () => {
   it('lists the transfers with no Approve button at all', () => {
-    hasPermission.mockReturnValue(false);
+    hasPermission.mockImplementation((slug: string) => slug !== 'inventory.stock_transfers.edit');
     mockData([transferOf()]);
 
     render(<BoardTransfersPanel soNumbers={['SO404352']} />);

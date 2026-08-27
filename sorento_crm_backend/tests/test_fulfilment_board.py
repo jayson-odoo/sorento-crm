@@ -56,6 +56,18 @@ def _sorento(db) -> str:
     return db.execute(text("select id from companies where code = 'SRT'")).scalar()
 
 
+def _mocha(db) -> str:
+    """A SECOND company, for the one case that needs two: `products` is unique on
+    `(company_id, product_code)`, so two products behind one item code - the live
+    `B2155-NL-BLUE` pair - can only be seeded across companies."""
+    from app.models.company import Company
+
+    row = Company(id=_uid(), name=f"{MARKER} Mocha", code=f"ZM{_uid()[:8]}")
+    db.add(row)
+    db.flush()
+    return row.id
+
+
 def _ensure_payment_terms_column(db) -> None:
     """`customers.payment_terms_days` is in the production database but not on the ORM model.
 
@@ -838,6 +850,11 @@ def test_the_board_route_answers_the_selection_it_was_given():
         assert contribution["qty_proposed_reserve"] == "10"
         location = body["cells"][0]["locations"][0]
         assert location["qty_on_hand"] == "10" and location["qty_free"] == "10"
+        # The PER-LINE stock block reaches the wire, on the cell's rows and on the top-level
+        # list the List view reads: it is what the decision panel prints "N available" from,
+        # and a field the response model does not declare is dropped silently.
+        assert contribution["locations"][0]["location"] == location["location"]
+        assert body["contributions"][0]["locations"][0]["qty_on_hand"] == "10"
         assert {f["key"]: f["raw"] for f in contribution["rank_factors"]}["need_by_date"] == (
             "2026-09-03"
         )
@@ -2476,7 +2493,15 @@ def test_a_refused_reserve_says_which_warehouse_and_what_to_do_about_it():
 # --------------------------------------------------------------------------- #
 
 
-def _group_world(db, *, on_hand: int, other_qty: int, own_qty: str, pool_qty: int = 16):
+def _group_world(
+    db,
+    *,
+    on_hand: int,
+    other_qty: int,
+    own_qty: str,
+    pool_qty: int = 16,
+    second_qty: str | None = None,
+):
     """SO404352's own shape: one ownership group of one warehouse, with the site pool
     behind it, this cell's line, and an earlier order's demand at the same location.
 
@@ -2484,6 +2509,10 @@ def _group_world(db, *, on_hand: int, other_qty: int, own_qty: str, pool_qty: in
     met from stock or wholly bought, so a group offering 9 of a 24 with nowhere else to go
     buys the whole line and the offer never reaches a component. 16 in the pool is the
     fixture's own figure, and 9 + 15 is what covers the line.
+
+    `second_qty` puts a SECOND line of the same order in the same cell, wanted on the same
+    date and at the same location - the case the netting has to answer per contribution
+    rather than per cell.
     """
     group = f"Z{_uid()[:3]}".upper()
     product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -2499,6 +2528,10 @@ def _group_world(db, *, on_hand: int, other_qty: int, own_qty: str, pool_qty: in
     mine.sales_agent_id = agent.id
     db.flush()
     _line(db, mine, product, qty=own_qty, required_date=date(2026, 9, 3), warehouse=own)
+    if second_qty is not None:
+        _line(
+            db, mine, product, qty=second_qty, required_date=date(2026, 9, 3), warehouse=own
+        )
 
     # SO383850's shape: an earlier order holding demand at the same location, not on the board.
     theirs = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
@@ -2587,6 +2620,103 @@ def test_the_group_subtotal_is_the_offer_the_ladder_obeyed_on_every_contribution
             if source.get("rung") == "group_take"
         )
         assert taken == offer
+        # The cell's own table IS that line's table when the cell holds one line: one set of
+        # figures, not a cell reading and a line reading of the same pile.
+        assert cell["locations"] == cell["contributions"][0]["locations"]
+
+
+def test_each_line_of_a_two_line_cell_nets_only_its_own_quantity():
+    """AC-B4 where the cell holds TWO lines: 10 on hand, 1 held elsewhere, 24 + 24 asked.
+
+    The netting used to come out of the WHOLE cell, so the row printed SO qty 1 and
+    Available 9 while the ladder offered each line nothing - `_group_offer` is
+    `max(group net + THIS line's own quantity, 0)`, and with 49 owed at the location that is
+    `max(-39 + 24, 0)`. A planner reading 9 beside a suggestion to buy the lot is back at
+    the two-definitions defect R1 was raised to end.
+
+    So every figure is per CONTRIBUTION: SO qty is the pressure less the asking line's own
+    open quantity, and the group subtotal is the group's net plus that same quantity.
+    """
+    with blank_session() as db:
+        group, product, own, mine = _group_world(
+            db, on_hand=10, other_qty=1, own_qty="24", second_qty="24"
+        )
+
+        service = _service(db)
+        board = service.build([mine.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-08-31")
+        assert len(cell["contributions"]) == 2
+
+        netting = service.supply.netting()
+        group_net = netting.group_net(str(product.id), netting.group_of(str(own.id))).net
+        assert group_net == Decimal("-39"), "10 on hand against 49 owed at the location"
+
+        for contribution in cell["contributions"]:
+            row = next(
+                entry
+                for entry in contribution["locations"]
+                if entry["location"] == own.warehouse_code
+            )
+            assert row["qty_owed_all_orders"] == "49", "the whole book, unchanged"
+            assert row["so_qty"] == "25", "49 owed here, less this line's own 24"
+            assert row["available_qty"] == "-15"
+            assert row["net_of"] == group
+            own_qty = Decimal(contribution["qty_outstanding"])
+            assert Decimal(row["net"]) == group_net + own_qty
+            # The pin itself: the subtotal IS the offer, and a negative one offers nothing.
+            offer = max(group_net + own_qty, Decimal("0"))
+            assert offer == Decimal("0")
+            assert not [
+                source
+                for source in contribution["sources"]
+                if source.get("rung") == "group_take"
+            ], "a subtotal below zero and a group take can never stand side by side"
+
+
+def test_a_second_product_behind_one_item_code_is_not_netted_out_of_the_first():
+    """Two products share the item code `B2155-NL-BLUE` on the live book, and they land in
+    ONE cell (cells are keyed by item code).
+
+    Their demand is not each other's: netting by warehouse alone took the second product's
+    30 out of the first product's SO qty and printed stock nobody has. The key is
+    `(product, warehouse)`, and the lookup uses the row's OWN product.
+    """
+    with blank_session() as db:
+        code = f"ZZT-{_uid()[:6]}"
+        first = _product(db, code)
+        # One code, two products - which `uq_products_company_product_code` allows only
+        # across companies, and is how the live pair came to exist. Seeded under its own
+        # code and moved, because the helper flushes before the company can be set.
+        second = _product(db, f"ZZT-{_uid()[:6]}")
+        second.company_id = _mocha(db)
+        second.product_code = code
+        db.flush()
+        warehouse = _warehouse(db, f"ZZT{_uid()[:6]}"[:20])
+        _stock(db, first, warehouse, on_hand=10)
+        _stock(db, second, warehouse, on_hand=10)
+
+        mine = _order(db, so_number=f"ZZT-SO-A{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, mine, first, qty="24", required_date=date(2026, 9, 3), warehouse=warehouse)
+        _line(db, mine, second, qty="30", required_date=date(2026, 9, 3), warehouse=warehouse)
+        # Another order's demand against the FIRST product only.
+        theirs = _order(db, so_number=f"ZZT-SO-B{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, theirs, first, qty="50", required_date=date(2026, 4, 1), warehouse=warehouse)
+
+        board = _service(db).build([mine.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, code, "2026-08-31")
+        asking = next(
+            entry for entry in cell["contributions"] if entry["product_id"] == str(first.id)
+        )
+        row = next(
+            entry
+            for entry in asking["locations"]
+            if entry["location"] == warehouse.warehouse_code
+            and entry["product_id"] == str(first.id)
+        )
+        assert row["qty_owed_all_orders"] == "74", "50 + this line's 24, on this product"
+        assert row["so_qty"] == "50", "the other ORDER's demand, not the other product's line"
+        assert row["available_qty"] == "-40"
 
 
 # --------------------------------------------------------------------------- #
@@ -2876,6 +3006,35 @@ def test_the_drill_down_route_answers_over_the_wire():
         assert [row["line_id"] for row in marked] == [asking]
         assert "rank_position" not in body["sales_orders"][0]
         assert refused.status_code == 403, refused.text
+
+
+def test_the_drill_down_refuses_a_line_ids_value_that_is_not_an_id():
+    """`line_ids` goes through the shared `parse_uuid_list`, exactly like every other
+    `*_ids` filter: a typed-in value comes back as a stated refusal naming the parameter,
+    never as a database error."""
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        _planned, _other, product, warehouse = _pressure_world(db)
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={
+                        "product_id": str(product.id),
+                        "warehouse_id": str(warehouse.id),
+                        "line_ids": "not-an-id",
+                    },
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 400, response.text
+        assert "line_ids" in response.text
 
 
 def test_the_drill_down_route_refuses_a_caller_without_the_view_permission():
@@ -5361,9 +5520,11 @@ def test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_the_b
             _confirm(db, pso_id, world["actor"], lines)
         assert refused.value.status_code == 409
         [failing] = refused.value.detail["failing_lines"]
+        # Named as a LINE, not as this order's own document number: handing a planner their
+        # own SO number back sends them looking for another copy of the order they are on.
         assert failing["reason"] == (
-            f"{pool.warehouse_code}: 7 on hand, 3 already reserved by ZZT-SO-HOLDS, "
-            "you asked 5"
+            f"{pool.warehouse_code}: 7 on hand, 3 already reserved by line 1 of this "
+            "order, you asked 5"
         ), failing["reason"]
         conflict = refused.value.detail["reserve_conflict"]
         assert conflict["held_by"] == [

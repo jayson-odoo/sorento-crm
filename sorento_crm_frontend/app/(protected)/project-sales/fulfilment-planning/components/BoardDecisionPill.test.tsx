@@ -7,7 +7,10 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { BoardDecisionPill } from './BoardDecisionPill';
-import type { BoardContribution, BoardDecision } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardContribution,
+  BoardLineDecision,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 const KEY = 'so-a|1|WESERP10B|2026-08-31';
 
@@ -124,7 +127,7 @@ describe('BoardDecisionPill: the warning flag (C10)', () => {
   });
 
   it('shows the flag from the frozen contribution.decision after a reload, with no draft entry', () => {
-    const frozen: BoardDecision = {
+    const frozen: BoardLineDecision = {
       revision_no: 1,
       timely_spo_qty: '0',
       reserve: [],

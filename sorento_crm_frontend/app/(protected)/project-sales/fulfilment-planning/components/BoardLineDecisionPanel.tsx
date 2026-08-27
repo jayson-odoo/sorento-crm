@@ -82,8 +82,12 @@ export function BoardLineDecisionPanel({
   const [reason, setReason] = React.useState(
     () => decision?.reason ?? contribution.decision?.amend_reason ?? '',
   );
-  const [suspected, setSuspected] = React.useState(
-    () => decision?.suspected_system_issue ?? contribution.decision?.suspected_system_issue ?? false,
+  // The draft's own answer, false included: an untick is a decision, and reading past it to
+  // the frozen `true` on a covered line put the tick straight back on screen.
+  const [suspected, setSuspected] = React.useState(() =>
+    decision
+      ? Boolean(decision.suspected_system_issue)
+      : Boolean(contribution.decision?.suspected_system_issue),
   );
   /**
    * A line an active decision covers opens READ-ONLY with an Amend button (C11): what is on
@@ -132,21 +136,39 @@ export function BoardLineDecisionPanel({
   };
   const setBorrow = (borrow: DraftBorrow[]) => edit({ ...draft, borrow });
 
-  /** The whole line, one way or the other. Never a mix - the confirmation refuses one. */
+  /**
+   * The whole line, one way or the other. Never a mix - the confirmation refuses one.
+   *
+   * Switching Buy ON zeroes the stock side, and switching it OFF puts back exactly what was
+   * there: the quantities, the donors and their reasons. The rows alone are not enough - a
+   * planner who typed a 9, a 15 and two sentences and then tried the Buy switch got a form of
+   * zeroes back, which is a composition they never wrote and the worst possible answer to
+   * "what happens if I press this".
+   */
+  const stockBefore = React.useRef<Pick<
+    DraftLine,
+    'reserve' | 'borrow' | 'timely_spo_qty'
+  > | null>(null);
   const setBuying = (next: boolean) => {
     if (next) {
+      stockBefore.current = {
+        reserve: draft.reserve,
+        borrow: draft.borrow,
+        timely_spo_qty: draft.timely_spo_qty,
+      };
       edit({
         ...draft,
         timely_spo_qty: '0',
-        // The rows stay, at zero: they are where the locations are named, and a planner
-        // switching Buy off again should find their own composition, not a blank form.
+        // The rows stay, at zero: they are where the locations are named.
         reserve: draft.reserve.map((row) => ({ ...row, qty: '0' })),
         borrow: [],
         buy_qty: draft.open_qty,
       });
       return;
     }
-    edit({ ...draft, buy_qty: '0' });
+    const held = stockBefore.current;
+    stockBefore.current = null;
+    edit({ ...draft, ...(held ?? {}), buy_qty: '0' });
   };
 
   /** Back to the engine's own composition, and that is the verdict. */
@@ -155,7 +177,7 @@ export function BoardLineDecisionPanel({
     setDraft(fresh);
     setReason('');
     setDirty(false);
-    onDecide({ verdict: 'approved', suspected_system_issue: suspected || undefined });
+    onDecide({ verdict: 'approved', suspected_system_issue: suspected });
   };
 
   const saveAmendment = () => {
@@ -163,7 +185,9 @@ export function BoardLineDecisionPanel({
     setLocked(false);
     onDecide({
       ...decisionFromAmendDraft(draft, reason),
-      suspected_system_issue: suspected || undefined,
+      // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
+      // are fine, and dropping the key let the frozen `true` behind it read as current.
+      suspected_system_issue: suspected,
     });
   };
 
@@ -172,7 +196,7 @@ export function BoardLineDecisionPanel({
     onDecide({
       verdict: 'rejected',
       reason: reason.trim(),
-      suspected_system_issue: suspected || undefined,
+      suspected_system_issue: suspected,
     });
   };
 
@@ -180,6 +204,47 @@ export function BoardLineDecisionPanel({
     decisionFromAmendDraft(draft, reason),
     contribution.fulfilment_location,
   );
+
+  /**
+   * A LINE THAT CANNOT BE DECIDED HERE STATES SO, AND OFFERS NOTHING.
+   *
+   * Its sales order names no fulfilment location, so there is no warehouse to reserve at and
+   * the confirmation leaves the line out entirely (`lineFor` returns null for it). An
+   * editable panel over that was a trap: the composition could be typed, the pill would read
+   * Amended, and the press would silently post nothing for it. The row still opens - the
+   * figures are worth reading, and a row that refused to open reads as a broken row - but the
+   * only thing it can say is why, and where the fix is.
+   */
+  if (contribution.unplannable) {
+    return (
+      <div
+        data-testid={`line-decision-${contribution.key}`}
+        className="border-t bg-muted/30 px-4 py-3 sm:px-5"
+      >
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+          <dl className="space-y-2">
+            <Figure label="Ordered" value={contribution.qty_ordered ?? 'Not stated'} />
+            <Figure label="Delivered" value={contribution.qty_delivered ?? 'Not stated'} />
+            <Figure
+              label="Outstanding"
+              value={contribution.qty_outstanding ?? contribution.qty}
+              strong
+            />
+          </dl>
+          <div className="space-y-1">
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">Decision</p>
+            <p
+              data-testid={`line-decision-blocked-${contribution.key}`}
+              className="break-words text-sm text-destructive"
+            >
+              This sales order states no fulfilment location, so this line cannot be decided
+              here. Set the location on the sales order, then plan it again.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

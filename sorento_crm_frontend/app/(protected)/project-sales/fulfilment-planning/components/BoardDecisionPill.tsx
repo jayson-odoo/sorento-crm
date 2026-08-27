@@ -63,11 +63,17 @@ export function BoardDecisionPill({
 
   const covered = Boolean(contribution.covered) && !decision;
   const verdict = covered ? 'confirmed' : (decision?.verdict ?? 'suggested');
-  // Flagged in this session's draft, or flagged on the decision that is already in the
-  // database - the icon has to survive a reload, or the doubt reads as answered (R10).
-  const suspected = Boolean(
-    decision?.suspected_system_issue ?? contribution.decision?.suspected_system_issue,
-  );
+  // Flagged in this session's draft, or - while nobody has decided it here - flagged on the
+  // decision that is already in the database: the icon has to survive a reload, or the doubt
+  // reads as answered (R10).
+  //
+  // THE DRAFT WINS OUTRIGHT, false included. A planner who unticks the box on a confirmed
+  // line has answered the question; falling through to the frozen `true` behind it left the
+  // warning on screen while the body about to be posted said `false`, so the row and the
+  // write disagreed about the one fact the flag exists to carry.
+  const suspected = decision
+    ? Boolean(decision.suspected_system_issue)
+    : Boolean(contribution.decision?.suspected_system_issue);
 
   return (
     <div className="flex min-w-0 items-center gap-1">

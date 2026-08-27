@@ -90,6 +90,23 @@ Two pages.
 1. main merged its own heads while this lane was open (#348, `438_merge_price_supplier_sets`); this lane adds no merge revision.
 2. `439_decision_suspected_issue` : `suspected_system_issue BOOLEAN NOT NULL DEFAULT false` on `projects.so_supply_decisions` (revision level, any line flagged); the per-line flag is frozen in the decision's `line_snapshots` beside `amend_reason`, because `so_line_allocations` is per component and a line covered only by timely SPO writes no component row. `down_revision = "438_merge_price_supplier_sets"`. Ids ≤ 32 chars. Applied to the dev DB via `Operations.context`, never stamped.
 
+## 3b. Phase 3 fix round (28 Aug, review findings + rulings R16-R17)
+
+| # | Change |
+| --- | --- |
+| F1 | **The location table is per CONTRIBUTION, not per cell** (B1 as written, which the first cut netted per cell). `_own_demand` is the asking line's own `(product, warehouse)` quantity, so `so_qty` = pressure less that one line's open qty and the group subtotal = `group net + that line's qty` = `group_offer` for every contribution (UAC B4). The payload carries `BoardContribution.locations`; `BoardCell.locations` is the first contribution's block, the drawer's table follows the expanded row and names the line when the cell holds more than one, and the decision panel's "N available" is that line's figure - in the List view too (C4) |
+| F2 | `_own_demand` is keyed by `(product_id, warehouse_id)`, looked up with the ROW's own product: two products share `B2155-NL-BLUE` and land in one cell, and their demand is not each other's |
+| F3 | Confirm invalidates `BOARD_TRANSFERS_KEY` (and `PLANNING_CHANGE_BATCH_KEY`), so the transfers panel fills on the press (D6). The generic "Confirmed N order(s)." toast is dropped: only the panel's three-number sentence fires, plus the partial-refusal warning |
+| F4 | `BoardTransfersPanel` is gated on `inventory.stock_transfers.view` (query off + nothing rendered) as well as `.edit` for the buttons (D9); Approve and Approve all confirm first with the transfers page's own `AlertDialog` copy |
+| F5 | The List view carries the unsaved-edit prompt and one-open-row rule the dialog has (C5); both use the shared `useDecisionRowExpansion` / `UnsavedDecisionPrompt` |
+| F6 | The Buy switch restores the composition it zeroed when switched back off; `suspected_system_issue` is emitted as a real boolean and the DRAFT's `false` beats a frozen `true` on the pill and in the panel |
+| F7 | An **unplannable** line opens read-only with its reason and no verbs: `lineFor` posts nothing for it, so an editable panel was a decision the press would silently drop |
+| F8 | The unpostable notice names TOUCHED lines (capped at 5, then "and N more") and COUNTS untouched ones per reason ("12 untouched lines buy a discontinued product with no reason given; open them to decide"), because R11 made every plannable line part of that population |
+| F9 | Undo all confirms first ("Discard N draft decisions?"); an order whose planning-change rows all read applied is left out of the confirm body and reported per order |
+| F10 | `line_ids` on `stock-detail` goes through the shared `parse_uuid_list` (400 `INVALID_UUID` naming the parameter) |
+| F11 | **R16, transfers are RECONCILED, not swept.** A confirm no longer cancels every open transfer of the order. Each open row is matched on `(so_line_id, product_id, from_warehouse_id, to_warehouse_id, kind)`: same qty = KEPT with its state, number and approval, re-pointed at the new revision; grown = kept plus a new row for the difference; shrunk = cancelled and re-proposed; vanished = cancelled. `transfers_written` counts only rows created, `transfers_kept` is new on `ConfirmResult` / `ConfirmManyOrderResult`, and the board's toast reads "N lines confirmed · T transfers proposed · K kept · I inquiry rows" (the kept part only when non-zero) |
+| F12 | The R14 refusal names a competing line of the SAME order as "line N of this order" rather than repeating the planner's own SO number |
+
 ## 4. Out of scope
 
 Engine formula (unchanged, per R1). Investigation listing for flagged decisions (R10). Mark-moved / cancel on the board panel (link to `/inventory-management/stock-transfers` for those). Order Inquiries changes. Reorder planning page.

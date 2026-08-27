@@ -54,7 +54,11 @@ export async function listBoardTransfers(
   soNumbers: string[],
 ): Promise<StockTransferListEnvelope> {
   // No orders, no call: an empty `so_numbers` would filter nothing and page the whole book.
-  if (soNumbers.length === 0) return { data: [], pagination: { total: 0, page: 1, limit: 0 } };
+  // The SAME envelope the route answers with, `empty` included, so a reader does not have to
+  // tell "nothing was asked" from "asked, and there is nothing".
+  if (soNumbers.length === 0) {
+    return { data: [], pagination: { total: 0, page: 1, limit: 0 }, empty: true };
+  }
 
   const search = buildDataGridParams(
     // One page, deliberately: a board takes at most 50 orders and a confirmation raises one
