@@ -256,3 +256,31 @@ order gained revision 2 from the board walk above (its rows re-raised, no links 
   puts one order back to never-planned on a dev copy (inquiries, links, claims,
   allocations, transfers, decisions, planning-change rows; `--rewind-book` restores the
   lines a batch moved from that batch's own `from_json`). Dry run by default.
+
+## 11. Link horizon and the rejected bounce (captain, 27 Aug, "go" at 15:40): built on `feat/scm-uat-next`
+
+**Link horizon.** Every path that links an order-inquiry row to a document (auto-link at
+acknowledge, Link now after an upload, the manual Link PO / Link SPO dialog, the PO-confirm
+cascade) takes a `link_up_to` date: rows whose delivery date is AFTER it are left Not linked
+and are not counted toward the document. The Order Inquiries page carries the date beside
+Acknowledge and Link selected (a date input, default = today + the reorder plan's horizon
+days, remembered per browser); the Link dialog shows the same date at its top; a PO confirm
+uses the plan's horizon. A row with no delivery date is inside the horizon.
+
+- AC-LH1 GIVEN two acknowledged rows of one product, due 2026-10-01 and 2030-01-01, one open
+  PO line of 100, `link_up_to = 2026-12-31` WHEN Acknowledge runs THEN the 2026 row links,
+  the 2030 row stays Not linked, the PO line keeps its remainder.
+- AC-LH2 Same rows WHEN Link selected runs with both ticked THEN the same result and the
+  result banner says "1 linked, 1 after <date>".
+- AC-LH3 The manual Link dialog on the 2030 row opens with the candidate list and a notice
+  "Due after <date>"; a hand-take is still allowed.
+- AC-LH4 A row with no delivery date links.
+- AC-LH5 The date travels in the URL (`?link_up_to=`) and is what the page's buttons send.
+
+**Rejected on the board.** A fulfilment-board cell whose line has a rejected order-inquiry
+row shows a "Rejected" badge with the reason on hover, and the strip's decision cards count
+rejected lines ("2 rejected") so CS sees the bounce without visiting Order Inquiries.
+
+- AC-RB1 GIVEN a rejected row on line 24 THEN the SRTWCX7405-RL-S-PJ cell reads "Rejected"
+  and the badge's title is "Rejected by <name>: <reason>".
+- AC-RB2 The count clears once CS re-decides the line and a new row is raised.
