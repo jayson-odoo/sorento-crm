@@ -495,7 +495,7 @@ export function ContainerRequestSection({
             channel="project"
           />
         ),
-        size: 125,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Project' },
       },
@@ -514,7 +514,7 @@ export function ContainerRequestSection({
             channel="retail"
           />
         ),
-        size: 125,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Retail' },
       },
