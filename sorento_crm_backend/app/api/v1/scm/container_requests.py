@@ -12,15 +12,22 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.services.scm import container_request_service
+from app.services.scm import container_request_service, supplier_notice_service
+from app.utils.http import content_disposition
 
 router = APIRouter()
+
+#: What the two on-demand documents are served as.
+_MEDIA_TYPES = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
 
 # The same two permissions the Loading Plan screen already reads and writes under (copied from
 # `fulfilment.py`) - a container request is an earlier stage of that screen, not a new
@@ -95,6 +102,37 @@ def container_request_history(
     """
     return container_request_service.history(
         db, supplier_id=supplier_id, product_ids=product_ids
+    )
+
+
+@router.post("/container-requests/document")
+def container_request_document(
+    body: ContainerRequestBody,
+    format: str = Query("xlsx", pattern="^(xlsx|pdf)$"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The request as a file for the lines currently on screen, WITHOUT sending anything (R23).
+
+    Behind the READ permission, not the write one: nothing is created, nothing leaves the
+    building, and the supplier is told nothing - it is the same ask the screen is already
+    showing, in a form that can be read, checked or forwarded by hand. `POST` because the
+    lines are the body: they are Ms Tee's edits, not a stored plan this could re-derive.
+
+    Ahead of `POST /container-requests` in this file for readability only; a static segment
+    under a path parameter is the shadowing trap (the SLA lesson), and there is no
+    `/container-requests/{id}` here.
+    """
+    content, filename = supplier_notice_service.request_document(
+        db,
+        supplier_id=body.supplier_id,
+        lines=[ln.model_dump() for ln in body.lines],
+        fmt=format,
+    )
+    return Response(
+        content=content,
+        media_type=_MEDIA_TYPES[format],
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

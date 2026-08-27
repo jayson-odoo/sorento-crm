@@ -85,10 +85,15 @@ class SupplierNotice(Base, CompanyScopedMixin):
 
     #: The read-only link the supplier opens instead of hunting for the attachment (F8).
     #: Random, single-purpose and expiring, exactly like the quotation counter-sign token
-    #: (`ProjectQuotationIssue.sign_token`): it identifies THIS notice, never a user, so a
+    #: (`ProjectQuotationIssue.sign_token`): it identifies THIS send, never a user, so a
     #: leaked URL exposes one request's lines and stops working after 30 days. Re-sending a
     #: request issues a new token, which is what retires the old one.
-    public_token = Column(String(255), nullable=True, unique=True)
+    #:
+    #: ONE token per SEND, shared by both channel rows (R23) - hence unique on
+    #: (token, channel) below rather than on the token alone. The email carries it to the
+    #: supplier and Ms Tee copies it off the chat row into WeChat; they are two ways to
+    #: deliver one credential, not two credentials.
+    public_token = Column(String(255), nullable=True)
     public_token_expires_at = Column(DateTime(timezone=False), nullable=True)
 
     created_by = Column(String, nullable=True)
@@ -112,6 +117,10 @@ class SupplierNotice(Base, CompanyScopedMixin):
         ),
         Index("ix_supplier_notices_supplier", "supplier_id", "created_at"),
         Index("ix_supplier_notices_plan", "loading_plan_id"),
+        #: Same NAME as migration 428 gave it, one column wider (migration 434): the token is
+        #: shared by the two rows of one send, so uniqueness is per channel. A repeat token
+        #: across two sends is still refused, which is all the index was ever guarding.
+        Index("uq_supplier_notices_public_token", "public_token", "channel", unique=True),
     )
 
 

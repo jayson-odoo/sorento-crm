@@ -28,9 +28,13 @@ Frontend contract (Phase 1):
       recipient: str|null, status: 'pending'|'sent'|'failed'|'skipped',
       status_reason: str|null, sent_at: iso|null, attempt_count: int, last_error: str|null,
       document_filename: str|null, has_document: bool,
+      xlsx_filename: str|null, has_xlsx: bool,
+      public_url: str|null, link_retired: bool,
       container_type, container_count, planned_cbm, line_count, production_line_count,
       created_at: iso, created_by: str|null,
     }
+
+    POST /api/v1/scm/container-requests/document?format=xlsx|pdf -> the bytes, no notice
 """
 from __future__ import annotations
 
@@ -432,6 +436,77 @@ def _product_catalogue(db: Session, product_ids: list) -> dict[str, dict]:
     }
 
 
+def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
+    """The reviewed lines with the catalogue's own words on them, or a 422 naming what is not ours.
+
+    B2: a line naming a malformed id ("nope") 500'd `_product_catalogue`'s
+    `CAST(:ids AS uuid[])`, and a line naming a well-formed but unknown product 500'd later,
+    on the `SupplierNoticeLine.product_id` foreign key at flush. Both are a form mistake, not
+    a server error: filter to id-shaped values BEFORE the cast, resolve the catalogue off that
+    filtered set, then refuse anything the catalogue could not name - which is exactly
+    `requested - catalogue`, whether the id never parsed or simply is not ours.
+    """
+    requested_ids = {str(ln.get("product_id")) for ln in lines if ln.get("product_id")}
+    catalogue = _product_catalogue(db, [pid for pid in requested_ids if is_uuid(pid)])
+    unknown = requested_ids - set(catalogue)
+    if unknown:
+        raise AppException(
+            422,
+            "These products do not exist: " + ", ".join(sorted(unknown)),
+            detail="product_id",
+        )
+    return [
+        {
+            "product_id": ln.get("product_id"),
+            "item_code": (catalogue.get(str(ln.get("product_id"))) or {}).get("item_code"),
+            "product_name": (catalogue.get(str(ln.get("product_id"))) or {}).get("product_name"),
+            "po_number": None,
+            "qty": ln.get("qty"),
+            "cbm": None,
+        }
+        for ln in lines
+    ]
+
+
+def _render_request_pdf(supplier: dict, pack: list[dict]) -> bytes:
+    return render_document(
+        _document_html(
+            supplier=supplier, plan=None, pack=pack, produce=[], notice_type="container_request"
+        )
+    )
+
+
+def request_document(
+    db: Session, *, supplier_id: str, lines: list[dict], fmt: str
+) -> tuple[bytes, str]:
+    """The request as a file, WITHOUT sending anything (R23).
+
+    The gear menu on "What to ask X for" hands Ms Tee the PDF or the supplier's sheet for the
+    quantities currently on her screen - to read, to check, to forward by hand. That is not a
+    send: no notice row, no token, no email, nothing the supplier has been told. So this
+    renders and returns, and stores nothing.
+
+    Same two builders `request_and_notify` uses, deliberately not forked: the moment the
+    downloaded sheet and the emailed one can differ, the download stops being worth having.
+    """
+    if fmt not in ("pdf", "xlsx"):
+        raise AppException(422, f"Unknown document format: {fmt}")
+
+    supplier = _supplier(db, supplier_id)
+    pack = _request_pack(db, lines)
+
+    if fmt == "xlsx":
+        from app.services.scm import container_request_xlsx
+
+        return (
+            container_request_xlsx.build(
+                db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
+            ),
+            container_request_xlsx.filename(supplier),
+        )
+    return _render_request_pdf(supplier, pack), _request_filename(supplier)
+
+
 def request_and_notify(
     db: Session,
     *,
@@ -448,40 +523,9 @@ def request_and_notify(
     (`_document_html` / `_EMAIL_COPY`, keyed on `notice_type`).
     """
     supplier = _supplier(db, supplier_id)
+    pack = _request_pack(db, lines)
 
-    # B2: a line naming a malformed id ("nope") 500'd `_product_catalogue`'s
-    # `CAST(:ids AS uuid[])`, and a line naming a well-formed but unknown product 500'd later,
-    # on the `SupplierNoticeLine.product_id` foreign key at flush. Both are a form mistake,
-    # not a server error: filter to id-shaped values BEFORE the cast, resolve the catalogue
-    # off that filtered set, then refuse anything the catalogue could not name - which is
-    # exactly `requested - catalogue`, whether the id never parsed or simply is not ours.
-    requested_ids = {str(ln.get("product_id")) for ln in lines if ln.get("product_id")}
-    catalogue = _product_catalogue(db, [pid for pid in requested_ids if is_uuid(pid)])
-    unknown = requested_ids - set(catalogue)
-    if unknown:
-        raise AppException(
-            422,
-            "These products do not exist: " + ", ".join(sorted(unknown)),
-            detail="product_id",
-        )
-
-    pack = [
-        {
-            "product_id": ln.get("product_id"),
-            "item_code": (catalogue.get(str(ln.get("product_id"))) or {}).get("item_code"),
-            "product_name": (catalogue.get(str(ln.get("product_id"))) or {}).get("product_name"),
-            "po_number": None,
-            "qty": ln.get("qty"),
-            "cbm": None,
-        }
-        for ln in lines
-    ]
-
-    document = render_document(
-        _document_html(
-            supplier=supplier, plan=None, pack=pack, produce=[], notice_type="container_request"
-        )
-    )
+    document = _render_request_pdf(supplier, pack)
     filename = _request_filename(supplier)
     provider, key = _store(document, filename)
 
@@ -513,6 +557,15 @@ def request_and_notify(
     # live links for one supplier at any point.
     _retire_public_tokens(db, str(supplier_id))
 
+    # ONE token per SEND, on BOTH channel rows (R23, captain 27 Aug: "email and chat need to
+    # both have link"). The supplier clicks it in the email; Ms Tee copies it off whichever
+    # row is in front of her and pastes it into WeChat, which is how she reaches the factories
+    # that never open email. Two tokens would be two live links to one ask, and every extra
+    # live link is another way for one to leak - so the credential is minted here, once, and
+    # the rows below merely carry it.
+    public_token = secrets.token_urlsafe(_PUBLIC_TOKEN_BYTES)
+    public_token_expires_at = datetime.utcnow() + timedelta(days=PUBLIC_TOKEN_TTL_DAYS)
+
     notices: list[SupplierNotice] = []
     for channel in CHANNELS:
         notice = SupplierNotice(
@@ -529,18 +582,8 @@ def request_and_notify(
             line_count=len(pack),
             production_line_count=0,
             created_by=actor,
-            # ONE token per send (PLAN section 5), on the channel that carries the link.
-            # The chat row is declared and dark - nothing sends on it - so a token there
-            # would be a second live link to the same request that nobody ever receives,
-            # and every extra live link is another way for one to leak.
-            public_token=(
-                secrets.token_urlsafe(_PUBLIC_TOKEN_BYTES) if channel == "email" else None
-            ),
-            public_token_expires_at=(
-                datetime.utcnow() + timedelta(days=PUBLIC_TOKEN_TTL_DAYS)
-                if channel == "email"
-                else None
-            ),
+            public_token=public_token,
+            public_token_expires_at=public_token_expires_at,
         )
         db.add(notice)
         db.flush()
@@ -629,6 +672,11 @@ def request_by_public_token(db: Session, token: str) -> SupplierNotice:
         notice = (
             db.query(SupplierNotice)
             .filter(SupplierNotice.public_token == token)
+            # Both channel rows of one send carry the token (R23) and hold the same lines and
+            # the same two files, so either answers identically - but a page that reads off
+            # whichever row the planner happened to return is a page that can change its mind.
+            # Descending puts `email` first: the row the link actually went out on.
+            .order_by(SupplierNotice.channel.desc())
             .first()
         )
     if notice is not None and notice.company_id:
@@ -897,6 +945,13 @@ def _log_attempt(db: Session, notice: SupplierNotice, *, ok: bool, detail: str,
 # --------------------------------------------------------------------------- read
 
 
+def _link_live(notice: SupplierNotice) -> bool:
+    return bool(
+        notice.public_token_expires_at
+        and notice.public_token_expires_at > datetime.utcnow()
+    )
+
+
 def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
     return {
         "id": str(notice.id),
@@ -917,13 +972,15 @@ def serialize(db: Session, notice: SupplierNotice) -> dict[str, Any]:
         "has_xlsx": bool(notice.xlsx_storage_key),
         # Built here, never in the browser: the address of a public page is a server fact
         # (it has to match what went out in the email), and null when it has run out or when
-        # no public base URL is configured - which is what hides the Copy link button.
+        # no public base URL is configured - which is what hides the Copy link button. A dead
+        # URL is never handed to the browser: a copied dead link is worse than no button.
         "public_url": (
-            public_request_url(db, notice)
-            if notice.public_token_expires_at
-            and notice.public_token_expires_at > datetime.utcnow()
-            else None
+            public_request_url(db, notice) if _link_live(notice) else None
         ),
+        # ...but "this send HAD a link and it has run out" is a different fact from "this
+        # send never had one", and only the first one earns the muted "Link retired" line on
+        # an older row (R23). One boolean, because `public_url` already answers the live case.
+        "link_retired": bool(notice.public_token) and not _link_live(notice),
         "container_type": notice.container_type,
         "container_count": notice.container_count,
         "planned_cbm": _f(notice.planned_cbm),

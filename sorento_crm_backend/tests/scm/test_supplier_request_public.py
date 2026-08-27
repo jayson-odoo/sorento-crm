@@ -59,6 +59,16 @@ def _sent(db, *, email: str | None = None, qty: float = 500) -> tuple[World, str
     return w, notice.public_token
 
 
+def _notices_for_token(db, token: str) -> list[SupplierNotice]:
+    """Both channel rows of the send that token belongs to (R23), email first."""
+    return (
+        db.query(SupplierNotice)
+        .filter(SupplierNotice.public_token == token)
+        .order_by(SupplierNotice.channel.desc())
+        .all()
+    )
+
+
 # --------------------------------------------------------------------------- #
 # the token
 # --------------------------------------------------------------------------- #
@@ -70,11 +80,35 @@ def test_sending_stamps_a_token_that_expires_in_thirty_days(scm_app):
     w, token = _sent(db)
 
     assert token
-    notice = (
-        db.query(SupplierNotice).filter(SupplierNotice.public_token == token).one()
-    )
+    notice = _notices_for_token(db, token)[0]
     life = notice.public_token_expires_at - datetime.utcnow()
     assert timedelta(days=29) < life <= timedelta(days=30)
+
+
+def test_one_token_per_send_lands_on_BOTH_channel_rows(scm_app):
+    # AC-C8 / R23 (captain, 27 Aug: "email and chat need to both have link"). The supplier
+    # clicks it in the email, Ms Tee pastes it into WeChat off the chat row - two ways to
+    # deliver ONE credential, so both rows carry the same token and the same expiry.
+    app, db, *_ = scm_app
+    w, token = _sent(db)
+
+    rows = _notices_for_token(db, token)
+
+    assert {n.channel for n in rows} == {"email", "chat"}
+    assert len({n.public_token for n in rows}) == 1
+    assert len({n.public_token_expires_at for n in rows}) == 1
+
+
+def test_the_page_answers_the_same_whichever_row_the_token_is_read_off(scm_app):
+    # Two rows now match the token, so the resolver must not be free to pick either: the
+    # lines are per-row copies, and a page that changes its mind is a page nobody trusts.
+    app, db, *_ = scm_app
+    w, token = _sent(db)
+
+    notice = svc.request_by_public_token(db, token)
+
+    assert notice.channel == "email"
+    assert svc.request_by_public_token(db, token).id == notice.id
 
 
 def test_resending_issues_a_new_token_and_retires_the_old_one(scm_app):
@@ -111,8 +145,8 @@ def test_an_expired_token_and_an_unknown_token_give_the_same_answer(scm_app):
     # AC-C7. Two different messages would confirm to anybody guessing that a token exists.
     app, db, *_ = scm_app
     w, token = _sent(db)
-    notice = db.query(SupplierNotice).filter(SupplierNotice.public_token == token).one()
-    notice.public_token_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    for notice in _notices_for_token(db, token):
+        notice.public_token_expires_at = datetime.utcnow() - timedelta(seconds=1)
     db.flush()
 
     with pytest.raises(AppException) as expired:
@@ -258,35 +292,58 @@ def test_with_no_base_url_configured_the_email_simply_has_no_link(scm_app, monke
     assert "None" not in row.body_text
 
 
-def test_the_notice_payload_carries_the_link_and_drops_it_once_retired(scm_app, monkeypatch):
-    # AC-C4: the Requests sent card offers "Copy link", and it must not offer one that has
-    # been retired by a resend - a copied dead link is worse than no button.
+def test_the_notice_payload_carries_the_link_on_both_rows(scm_app, monkeypatch):
+    # AC-C8: the Requests sent card offers "Copy link" on EVERY row of the current send, not
+    # on the email row alone - the chat row is the one Ms Tee copies from for WeChat.
     app, db, *_ = scm_app
     monkeypatch.setattr(svc, "_public_base_url", lambda: "https://crm.example.test")
     w, token = _sent(db)
 
     rows = svc.list_for_supplier(db, str(w.supplier.id))
-    live = next(n for n in rows if n["channel"] == "email")
-    assert live["public_url"].endswith(f"/supplier-request/{token}")
-    assert "/c/" in live["public_url"]
-    # One token per send, on the channel that carries the link. The chat row is dark, so a
-    # second live link to the same request would be one nobody ever receives.
-    assert next(n for n in rows if n["channel"] == "chat")["public_url"] is None
+
+    assert len(rows) == 2
+    for row in rows:
+        assert row["public_url"].endswith(f"/supplier-request/{token}")
+        assert "/c/" in row["public_url"]
+        assert row["link_retired"] is False
+
+
+def test_an_older_sends_rows_read_retired_rather_than_blank(scm_app, monkeypatch):
+    # AC-C8. A resend retires the previous link, and the previous rows must say so: no
+    # button (a copied dead link is worse than none) but not silence either, or the row
+    # reads as one that never had a link at all.
+    app, db, *_ = scm_app
+    monkeypatch.setattr(svc, "_public_base_url", lambda: "https://crm.example.test")
+    w, token = _sent(db)
+    old_ids = {str(n.id) for n in _notices_for_token(db, token)}
 
     svc.request_and_notify(
         db,
         supplier_id=str(w.supplier.id),
         lines=[{"product_id": str(w.product("A").id), "qty": 900}],
     )
-    retired = next(
-        n
-        for n in svc.list_for_supplier(db, str(w.supplier.id))
-        if n["id"]
-        == str(
-            db.query(SupplierNotice)
-            .filter(SupplierNotice.public_token == token)
-            .one()
-            .id
-        )
+
+    rows = svc.list_for_supplier(db, str(w.supplier.id))
+    old = [n for n in rows if n["id"] in old_ids]
+    current = [n for n in rows if n["id"] not in old_ids]
+
+    assert len(old) == 2 and len(current) == 2
+    assert all(n["public_url"] is None and n["link_retired"] is True for n in old)
+    assert all(n["public_url"] and n["link_retired"] is False for n in current)
+
+
+def test_a_notice_that_never_had_a_link_is_not_reported_as_retired(scm_app):
+    # A loading notice carries no public link at all, and "retired" would put a line on its
+    # row about something it never had.
+    app, db, *_ = scm_app
+    w = World(db)
+    notice = SupplierNotice(
+        supplier_id=str(w.supplier.id), channel="email", status="skipped"
     )
-    assert retired["public_url"] is None
+    db.add(notice)
+    db.flush()
+
+    payload = svc.serialize(db, notice)
+
+    assert payload["public_url"] is None
+    assert payload["link_retired"] is False
