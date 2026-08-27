@@ -1,6 +1,6 @@
 # PLAN - Order Inquiries: draft links up front, one Confirm, Outstanding PO/SPO
 
-Status: **PR #356 OPEN** 2026-08-28, onto main from `feat/scm-oi-draft-links`; CI watched to green by the captain agent. Before that: REVIEW FIXES DONE (section 13: four blockers and eight should-fixes from the Phase 3 review, each with its red test first; section 14 has the run. Two deliberate deviations from the review brief and one flagged conflict are recorded in section 13). Was: **TEST ROUND DONE** 2026-08-27 (section 10: vitest 3800/3800, pytest 340/17-file-sweep + `tests/scm` two halves with only pre-existing/unrelated reds, browser evidence on the lane for every AC except D1/D3/D5/D8's live walk, which rest on pytest+vitest - see section 10 for why SO381895 could not carry it fresh. One real defect found and fixed: `/order-inquiries/auto-place` was missing `redeal_drafts`/`include_awaiting`, so Auto link all never actually re-dealt anything). Was: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
+Status: **PR #356 OPEN** 2026-08-28, onto main from `feat/scm-oi-draft-links`; CI watched to green by the captain agent. CI ROUND DONE (section 15: the five reds in `tests/test_planning_change_apply_on_board.py` were B3 and B2 taking down the links part 3's own migration had just shifted onto the survivor; the apply now cancels its closed lines' rows before the confirm, and a drafted row settles in place rather than being re-raised). Before that: REVIEW FIXES DONE (section 13: four blockers and eight should-fixes from the Phase 3 review, each with its red test first; section 14 has the run. Two deliberate deviations from the review brief and one flagged conflict are recorded in section 13). Was: **TEST ROUND DONE** 2026-08-27 (section 10: vitest 3800/3800, pytest 340/17-file-sweep + `tests/scm` two halves with only pre-existing/unrelated reds, browser evidence on the lane for every AC except D1/D3/D5/D8's live walk, which rest on pytest+vitest - see section 10 for why SO381895 could not carry it fresh. One real defect found and fixed: `/order-inquiries/auto-place` was missing `redeal_drafts`/`include_awaiting`, so Auto link all never actually re-dealt anything). Was: **PHASE 2 DONE** 2026-08-27 (backend test-first, the three `PHASE2:` fallbacks removed, browser-smoked on the lane: `ack=to_confirm` answers 200, `late 31 d` and `BRW 2` read off the wire, both lightboxes answer with their Allocated to panels). Three judgements the plan did not spell out are recorded in section 5.9. Was: **PHASE 1 DONE** 2026-08-27 (frontend against the section 5 contract, browser-verified on the lane at 1280 and 375; three tagged `PHASE2:` fallbacks listed in section 6). Was: **GO** 2026-08-27 (captain: "proceed, govern phases 1 to 3 till completion"). Rulings R1 to R11 in section 2, R10 = keep. Lane: `.claude/worktrees/scm-oi-draft`, branch `feat/scm-oi-draft-links` off origin/main `a8dda501a`. UAC: `scm-oi-draft-links-acceptance-criteria.md`. Builds on `PLAN-scm-oi-handshake.md` (ack_state, cascade at acknowledge, link horizon) and reverses ONE of its rulings on purpose: the cascade runs again at raise, but what it writes is a draft until purchasing confirms. Page: `/project-sales/order-inquiries`. Lane: this checkout `feat/scm-planning-inline-decisions` is busy with the board; this work wants its own branch off main once #348 is in (main head `a8dda501a`).
 
 ## 0. What the captain asked (27 Aug, screenshots 28 to 36)
 
@@ -471,3 +471,40 @@ suites' test files). eslint clean on the touched files apart from one pre-existi
 `no-restricted-syntax` warning inside a mock. Pyright is not a usable gate on these two service
 files - the branch's own baseline is 233 SQLAlchemy `Column[...]` errors and the diff adds 8 of
 exactly that class.
+
+## 15. CI round: planning-change apply (28 Aug)
+
+CI on PR #356 was red on five tests in `tests/test_planning_change_apply_on_board.py`, and both
+causes were this branch's own review round meeting part 3's link migration
+(`PLAN-scm-cs-planning-uat.md`, AC-P3-6) for the first time. **The apply's migration of a closed
+line's placements to the surviving row of the same product and sales order is deliberate and
+wins**; a draft door that takes those links back down is the defect, not the migration. B3
+(`_retire_uncovered_rows` retires a drafted row whose line left the revision, unplacing its links)
+fired INSIDE `supply.confirm` on exactly the lines the apply was about to retire and shift, so by
+the time `_retire_inquiry_rows` ran they were already cancelled, `cancelled_row_ids` came back
+empty, the shift never ran, and the freed purchase-order quantity was re-dealt to the survivor
+under the PO's own number instead of the closed line's document (`ZZT-PO-...` where the test
+expected `202606-S0082`). The apply now cancels its closed lines' rows BEFORE the confirm, so they
+are already out of B3's reach with their links still on them, and the shift still runs after the
+confirm, where the survivor already carries its new quantity and has the headroom to take them.
+B3 itself is unchanged and still owns every OTHER line that leaves a revision (its own test goes
+through `uncover_lines`). The cascades the apply triggers afterwards keep `redeal_drafts=False`
+(`_draft_links_for_decision`, `auto_place_for_confirmed_products`): they deal the unlinked
+remainder only, and never move a link the shift has just placed. **B2 is refined rather than
+reverted**: a `placed` / `partly_linked` row that nobody has confirmed is still an instruction and
+not supply, but it now SETTLES IN PLACE instead of being unlinked, superseded and re-raised. The
+settle answers the same three complaints (a new date reaches the row, a lower quantity gives the
+excess back latest-dated first and writes no CANCEL_BALANCE, a higher one leaves one row rather
+than two) without cancelling anything, which is what lets a shifted placement stay where the shift
+put it. `_settle_row_in_place` still declines a line it cannot read as one instruction - two
+still-owed rows, or a lone placed row carrying no link at all - and those fall through to the old
+netting exactly as before: the drafted rows stand untouched and only the outstanding remainder is
+raised, which is what `test_a_line_with_two_still_owed_rows_declines_settle_in_place_and_the_old_path_stands`
+and `test_a_placed_row_with_no_link_declines_settle_and_keeps_its_placed_quantity` pin. Only a line
+the CALLER named in `settle_in_place_line_ids` is reported back in `settled_in_place`, so the
+planning change's own DELAY / ADVANCE decision is unchanged. One test expectation moved with the
+rule: `test_a_reconfirm_with_a_new_date_re_raises_the_drafted_row_on_that_date` is now
+`test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date` (same row, new date, the
+draft kept, `previous_delivery_date` written). Run: the brief's 12-file sweep 305 passed / 0
+failed, and the seven files naming `refresh_for_decision` / `auto_place_for_confirmed_products` /
+`_draft_links_for_decision` 127 passed / 0 failed.

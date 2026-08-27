@@ -900,16 +900,20 @@ def test_two_presses_of_auto_link_all_change_nothing_at_all(api):
 
 
 # ---------------------------------------------------------------------------
-# B2: a re-confirm of a DRAFTED row re-raises it rather than netting it as bought
+# B2: a re-confirm of a DRAFTED row settles it rather than netting it as bought
 # ---------------------------------------------------------------------------
 
 
-def test_a_reconfirm_with_a_new_date_re_raises_the_drafted_row_on_that_date(api):
-    """B2. A draft made the row `placed`, and the reconfirm netted it as supply already
-    bought - so a board re-confirm carrying a new delivery date did nothing at all and the
-    row went on saying the old one. A row nobody has confirmed is an instruction, not
-    supply: it is unlinked, superseded, and re-raised on the new date (which the raise-time
-    cascade then drafts again)."""
+def test_a_reconfirm_with_a_new_date_moves_the_drafted_row_onto_that_date(api):
+    """B2, as refined in the CI round (28 Aug). A draft made the row `placed`, and the
+    reconfirm netted it as supply already bought - so a board re-confirm carrying a new
+    delivery date did nothing at all and the row went on saying the old one. A row nobody
+    has confirmed is an instruction, not supply, so it SETTLES IN PLACE: the same row takes
+    the new date, keeps the document the raise found for it, and says what it was before.
+
+    It settles rather than being superseded and re-raised, because the same apply may have
+    just SHIFTED a closed line's placement onto this row (AC-P3-6) and a re-raise would
+    hand that placement straight back to a stranger."""
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
@@ -926,11 +930,14 @@ def test_a_reconfirm_with_a_new_date_re_raises_the_drafted_row_on_that_date(api)
     world.db.commit()
 
     world.db.refresh(row)
-    assert row.state == INQUIRY_CANCELLED, "the draft was netted as if it were bought"
-    assert _links_of(world, row) == [], "and it kept the document with it"
-    replacement = _order_row(world, fixture["line"])
-    assert replacement.delivery_date == NOW
-    assert _link_documents(world, replacement) == [po.po_number]
+    assert row.state == INQUIRY_PLACED, "the draft is still what purchasing is looking at"
+    survivor = _order_row(world, fixture["line"])
+    assert str(survivor.id) == str(row.id), "the same instruction, not a second one"
+    assert survivor.delivery_date == NOW
+    assert _link_documents(world, survivor) == [po.po_number], (
+        "the document the raise found for it is kept, never re-dealt"
+    )
+    assert survivor.previous_delivery_date == WAS, "and the row says what it was before"
 
 
 def test_a_reconfirm_that_lowers_a_drafted_rows_quantity_raises_no_exception(api):

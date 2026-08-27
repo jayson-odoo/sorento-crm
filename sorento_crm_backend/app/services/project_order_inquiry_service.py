@@ -532,10 +532,40 @@ class ProjectOrderInquiryService:
             # shrunk to what is linked rather than cancelled. Cancelling it would have
             # taken the links down with it; leaving it whole would have counted the
             # unlinked half twice, once here and once on the row raised below.
-            if str(line.id) in settle_in_place and self._settle_row_in_place(
+            #
+            # A DRAFT settles in place too, whoever asked for the confirmation (B2 as
+            # refined in the CI round, 28 Aug). Since R6 the raise links its own rows, so a
+            # row nobody has confirmed reads `placed` or `partly linked` within a second of
+            # being raised, and the netting below then read it as quantity purchasing had
+            # already bought: a reconfirm carrying a new date changed nothing at all, and a
+            # lower quantity raised a CANCEL_BALANCE exception about a purchase nobody had
+            # agreed to. Settling answers both - the row takes the new date and the new
+            # quantity, keeping the drafts it can still hold and giving the excess back
+            # latest-dated first (AC-P3-8's own rule) - and it answers them without
+            # cancelling anything, so a draft the planning change has just SHIFTED onto
+            # this row stays where the shift put it.
+            #
+            # `_settle_row_in_place` still declines a line it cannot read as one
+            # instruction (two still-owed rows, or a lone placed row carrying no link at
+            # all), and those fall through to the netting below exactly as they always
+            # did: the drafted rows stand and only the outstanding remainder is raised.
+            drafted = [
+                row
+                for row in rows
+                if row.verb in (IV_ORDER, IV_ORDER_BACK)
+                and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                and row.ack_state != ACK_ACKNOWLEDGED
+                and not row.redirected_to_pool
+            ]
+            asked_to_settle = str(line.id) in settle_in_place
+            if (asked_to_settle or drafted) and self._settle_row_in_place(
                 inquiry, entry, rows, need, decision
             ):
-                settled_in_place.append(str(line.id))
+                # Only what the CALLER asked for is reported back: the planning-change
+                # apply reads this list to decide whether to raise a separate DELAY /
+                # ADVANCE row, and a line it never named is none of its business.
+                if asked_to_settle:
+                    settled_in_place.append(str(line.id))
                 continue
             # Read BEFORE the loop below cancels anything: what purchasing had already
             # taken on for this line, off the rows that are still LIVE. Taken afterwards it
@@ -559,26 +589,13 @@ class ProjectOrderInquiryService:
                 # the new Buy would be silently short.
                 if row.redirected_to_pool:
                     continue
-                # A DRAFT is an instruction, not supply (B2, review round 28 Aug). Since
-                # R6 the raise links its own rows, so a row nobody has confirmed is
-                # `placed` within a second of being raised - and the netting below then
-                # read it as quantity purchasing had already bought. A reconfirm carrying
-                # a new date changed nothing at all, a lower quantity raised a
-                # CANCEL_BALANCE exception about a purchase nobody had agreed to, and a
-                # higher one split the line in two. The row goes back to what it is: its
-                # links come down (they were drafts, and the quantity returns to the
-                # document for whoever needs it next) and it is superseded and re-raised
-                # like any raised row, which the raise-time cascade drafts again.
-                # ACKNOWLEDGED is untouched: purchasing said yes, so it IS supply.
-                if row.ack_state != ACK_ACKNOWLEDGED and row.state in (
-                    INQUIRY_PLACED,
-                    INQUIRY_PARTLY_LINKED,
-                ):
-                    self._unplace_drafts([row], trigger="re-raise")
-                    row.state = INQUIRY_CANCELLED
-                    stamp = f"Superseded by revision {decision.revision_no}"
-                    row.note = f"{row.note}; {stamp}" if row.note else stamp
-                    continue
+                # A DRAFT that reached HERE is one the settle above declined - a line
+                # carrying two still-owed rows, or a lone placed row with no link behind it
+                # (B2 as refined in the CI round, 28 Aug). There is no way to say which of
+                # two rows the book moved, and no draft to give back on a row that holds
+                # none, so the old path stands: the drafted rows are netted and left
+                # exactly where they are, and only the outstanding remainder is raised -
+                # which the raise-time cascade drafts in its turn.
                 if row.state == INQUIRY_ACTIONED:
                     # `mark_rows` is the only writer of this state and it carries no
                     # links, so the row's own quantity is what purchasing dealt with.
