@@ -13,9 +13,11 @@ this exact column - a NULL left the X-API-Key scope at None, so the inbound ship
 n8n then created stamped ``DEFAULT_COMPANY_ID`` (Sorento) while holding Mocha
 products.
 
-"Positively owned" mirrors migration 302's own backfill predicate (directory_id
-present, or a product/promotion attachment). Form/entity attachments stay NULL so
-they remain shared across companies (AC-G3).
+The rule is the other way around: anything uploaded while exactly one company is
+active belongs to that company, folder or not, EXCEPT the shared form entity types
+(complaint, purchase_request, stock_inquiry) which stay NULL so they remain readable
+from every company (AC-G3). An ambiguous scope (UNSET, all-companies, or several
+companies) still stamps nothing - a wrong guess is worse than shared.
 """
 from __future__ import annotations
 
@@ -109,6 +111,28 @@ def test_the_same_upload_under_sorento_belongs_to_sorento(db):
     assert attachment.company_id == DEFAULT_COMPANY_ID
 
 
+def test_root_upload_without_a_folder_belongs_to_the_active_company(db):
+    """The 17 Aug packing list: ``CMAU4318062 - WH.xlsx`` was dropped at the root of
+    All files (no folder, no entity) while switched into a company, and the folder
+    gate short-circuited before the scope was ever read, so it landed shared."""
+    set_company_scope(db, frozenset({MOCHA_ID}))
+
+    attachment = _upload(db, _payload(db))
+
+    assert attachment.company_id == MOCHA_ID, (
+        "a root upload was left company-less, so it is shared across every company"
+    )
+
+
+def test_root_upload_under_sorento_belongs_to_sorento(db):
+    """Again, it follows whichever company is active, not a hardcoded one."""
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    attachment = _upload(db, _payload(db))
+
+    assert attachment.company_id == DEFAULT_COMPANY_ID
+
+
 def test_promotion_attachment_is_owned_too(db):
     set_company_scope(db, frozenset({MOCHA_ID}))
 
@@ -126,11 +150,14 @@ def test_a_form_attachment_stays_shared(db):
     they stay readable from every company (AC-G3). Stamping them would hide them."""
     set_company_scope(db, frozenset({MOCHA_ID}))
 
-    attachment = _upload(
-        db, _payload(db, entity_type="complaint", entity_id=str(uuid.uuid4()))
-    )
-
-    assert attachment.company_id is None
+    for entity_type in ("complaint", "purchase_request", "stock_inquiry", "Complaint"):
+        attachment = _upload(
+            db, _payload(db, entity_type=entity_type, entity_id=str(uuid.uuid4()))
+        )
+        assert attachment.company_id is None, (
+            f"a {entity_type!r} attachment was stamped, so it is now invisible from "
+            "every other company"
+        )
 
 
 def test_an_ambiguous_scope_is_never_guessed(db):
@@ -145,3 +172,6 @@ def test_an_ambiguous_scope_is_never_guessed(db):
         set_company_scope(db, scope)
         attachment = _upload(db, _payload(db, directory_id=directory_id))
         assert attachment.company_id is None, f"scope {scope!r} was guessed at"
+
+        at_root = _upload(db, _payload(db))
+        assert at_root.company_id is None, f"scope {scope!r} was guessed at, at root"

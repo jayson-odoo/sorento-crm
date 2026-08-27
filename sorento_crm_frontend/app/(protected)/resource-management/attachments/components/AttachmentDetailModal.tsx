@@ -28,7 +28,7 @@ import {
   useUpdateAttachment,
 } from '../hooks/useAttachments';
 import { getAttachmentMetadata } from '../services/attachmentService';
-import type { Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -1001,6 +1001,10 @@ export default function AttachmentDetailModal({
                             attachment.uploaded_by ??
                             '-'}
                         </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Company</p>
+                        <p className="font-medium">{attachmentCompanyLabel(attachment)}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Uploaded</p>
