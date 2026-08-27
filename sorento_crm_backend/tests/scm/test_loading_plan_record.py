@@ -61,6 +61,30 @@ def _world(db) -> World:
     return w
 
 
+def _live_links(db, *, supplier_id: str | None = None, plan_id: str | None = None) -> int:
+    """How many container-request links are still answering, for one supplier or one plan.
+
+    `clock_timestamp() AT TIME ZONE 'UTC'`, never `now()`, and neither half is cosmetic.
+    `now()` is the TRANSACTION's start time, and this suite runs every test inside one
+    rolled-back transaction (`scm_app`), so a link retired mid-test carries a stamp LATER
+    than `now()` and reads as live however dead it is. And the column is `timestamp without
+    time zone` holding UTC while `now()` is a `timestamptz` Postgres converts with the
+    session's zone, so the answer moved with the machine: a developer database set to
+    Asia/Seoul shifted the stamp nine hours back and hid the first problem, and CI (UTC)
+    did not. The service's own liveness test is `expires_at > datetime.utcnow()`
+    (`supplier_notice_service._link_live`); this is that same comparison in SQL.
+    """
+    column = "supplier_id" if supplier_id else "loading_plan_id"
+    return db.execute(
+        text(
+            f"SELECT count(*) FROM supplier_notices WHERE {column} = CAST(:v AS uuid) "
+            "AND public_token IS NOT NULL "
+            "AND public_token_expires_at > (clock_timestamp() AT TIME ZONE 'UTC')"
+        ),
+        {"v": supplier_id or plan_id},
+    ).scalar()
+
+
 def _create(client, supplier_id: str, **overrides):
     body = {
         "supplier_id": supplier_id,
@@ -266,14 +290,7 @@ def test_cancel_stamps_who_and_when_and_retires_the_suppliers_live_link(scm_app)
     client.post(SEND_URL, json={"plan_id": plan["id"], "lines": [
         {"product_id": str(w.product("A").id), "qty": 5}
     ]})
-    live_before = db.execute(
-        text(
-            "SELECT count(*) FROM supplier_notices WHERE supplier_id = :s "
-            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
-        ),
-        {"s": str(w.supplier.id)},
-    ).scalar()
-    assert live_before >= 1
+    assert _live_links(db, supplier_id=str(w.supplier.id)) >= 1
 
     r = client.post(f"{PLANS_URL}/{plan['id']}/cancel")
 
@@ -281,14 +298,7 @@ def test_cancel_stamps_who_and_when_and_retires_the_suppliers_live_link(scm_app)
     assert r.json()["status"] == "cancelled"
     assert r.json()["cancelled_at"]
     assert r.json()["cancelled_by"]
-    live_after = db.execute(
-        text(
-            "SELECT count(*) FROM supplier_notices WHERE supplier_id = :s "
-            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
-        ),
-        {"s": str(w.supplier.id)},
-    ).scalar()
-    assert live_after == 0
+    assert _live_links(db, supplier_id=str(w.supplier.id)) == 0
 
 
 def test_an_unsent_plan_is_hard_deleted(scm_app):
@@ -573,11 +583,18 @@ def test_the_cut_off_can_be_changed_on_an_open_plan(scm_app):
 # --------------------------------------------------------------------------- #
 
 
-def test_cancelling_one_plan_leaves_the_other_plans_link_answering(scm_app):
+def test_cancelling_one_plan_leaves_the_other_plans_link_answering(scm_app, monkeypatch):
     # R3/R11. Two plans against one supplier is the ordinary case (a September container and
     # an October one), and retirement per SUPPLIER meant cancelling either one killed the
     # link the supplier was working off for the other.
     app, db, gcu, gcuk = scm_app
+    # A link is only built when a public base URL is configured, and CI configures none
+    # (no FRONTEND_BASE_URL in the job): without this the send honestly returns
+    # `public_url: null` and the assertion below reads as "no link was issued". Same stub
+    # `test_supplier_request_public.py` uses wherever a URL is the subject.
+    monkeypatch.setattr(
+        supplier_notice_service, "_public_base_url", lambda: "https://crm.example.test"
+    )
     as_company_user(app, db, gcu, gcuk)
     w = _world(db)
     client = TestClient(app)
@@ -593,24 +610,8 @@ def test_cancelling_one_plan_leaves_the_other_plans_link_answering(scm_app):
 
     assert r.status_code == 200, r.text
     assert token_a, "plan A's send issued no link"
-    still_live = db.execute(
-        text(
-            "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) "
-            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
-        ),
-        {"p": plan_a["id"]},
-    ).scalar()
-    assert still_live == 1
-    assert (
-        db.execute(
-            text(
-                "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = "
-                "CAST(:p AS uuid) AND public_token_expires_at > now()"
-            ),
-            {"p": plan_b["id"]},
-        ).scalar()
-        == 0
-    )
+    assert _live_links(db, plan_id=plan_a["id"]) == 1
+    assert _live_links(db, plan_id=plan_b["id"]) == 0
 
 
 def test_a_resend_for_the_same_plan_still_retires_that_plans_link(scm_app):
@@ -624,13 +625,7 @@ def test_a_resend_for_the_same_plan_still_retires_that_plans_link(scm_app):
     client.post(SEND_URL, json={"plan_id": plan["id"], "lines": line})
     client.post(SEND_URL, json={"plan_id": plan["id"], "lines": line})
 
-    live = db.execute(
-        text(
-            "SELECT count(*) FROM supplier_notices WHERE loading_plan_id = CAST(:p AS uuid) "
-            "AND public_token IS NOT NULL AND public_token_expires_at > now()"
-        ),
-        {"p": plan["id"]},
-    ).scalar()
+    live = _live_links(db, plan_id=plan["id"])
 
     assert live == 1
 
