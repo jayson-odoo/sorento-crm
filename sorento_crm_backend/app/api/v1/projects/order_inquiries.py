@@ -31,11 +31,14 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryPoCandidate,
     OrderInquiryPoDetail,
     OrderInquiryRowOut,
+    OrderInquirySpoDetail,
     OrderInquirySummary,
     OrderInquiryWorklistRow,
     OrderInquiryWorklistSummary,
     PlaceOnPoRequest,
     RejectRowRequest,
+    RejectRowsRequest,
+    RejectRowsResult,
     UnlinkRequest,
     UnplaceAllPreview,
     UnplaceAllRequest,
@@ -162,13 +165,16 @@ def list_order_inquiry_worklist(
             "links point."
         ),
     ),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(
         None,
         description=(
             "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
             "taken on yet, `changed` is a row CS amended after it was acknowledged, and "
-            "`rejected` is one purchasing refused with a reason. A third question beside "
-            "`state` and `linked`, and a closed set for the same reason both of those are."
+            "`rejected` is one purchasing refused with a reason. `to_confirm` is the "
+            "page's own default (R3) and means awaiting OR changed - one question asked "
+            "of two stored states, never a fifth state a row can be in. A third question "
+            "beside `state` and `linked`, and a closed set for the same reason both of "
+            "those are."
         ),
     ),
     sort: Optional[WorklistSort] = Query(
@@ -235,7 +241,7 @@ def order_inquiry_worklist_summary(
             "the two beside it could not be pressed a second time."
         ),
     ),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(
         None,
         description=(
             "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
@@ -278,7 +284,7 @@ def export_order_inquiry_worklist(
     raised_by: Optional[str] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected"]] = Query(None),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -337,6 +343,37 @@ async def acknowledge_order_inquiry_rows(
             actor_user_id=current_user["id"],
             link_up_to=payload.link_up_to,
             link_horizon=payload.link_horizon,
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/reject", response_model=RejectRowsResult)
+async def reject_order_inquiry_rows(
+    payload: RejectRowsRequest,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Purchasing refuses a BATCH, with ONE reason (`PLAN-scm-oi-draft-links.md` 5.6).
+
+    Reject became a bulk action when the row Actions column went (R8), and one reason per
+    press is what a press means: the buyer refused these rows for this cause. Each row goes
+    through the same `reject_row` a single refusal does - links unplaced, the row stamped,
+    the sales-order line sent back to the board undecided carrying the reason - so the two
+    doors can never come to mean different things.
+
+    ALL OR NOTHING. Every row is checked before anything is written, and a batch holding
+    one row that cannot be refused is refused whole: a press that half happened leaves the
+    buyer to work out which half, from a screen that has already moved on.
+    """
+    try:
+        for row_id in payload.row_ids:
+            validate_uuid_path(row_id, resource="Order inquiry row")
+        body = ProjectOrderInquiryService(db).reject_rows(
+            payload.row_ids, reason=payload.reason, actor_user_id=current_user["id"]
         )
         db.commit()
         return body
@@ -440,6 +477,28 @@ def get_order_inquiry_po_detail(
     try:
         validate_uuid_path(po_id, resource="Purchase order")
         return OrderInquiryWorklistService(db).get_po_detail(po_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/spo/{spo_number:path}", response_model=OrderInquirySpoDetail)
+def get_order_inquiry_spo_detail(
+    spo_number: str,
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The "SPO no" cell's lightbox: that shipping order's allocation lines.
+
+    `{spo_number:path}` rather than a plain segment, because a shipping order is numbered
+    `SPO-2026/08-0015` - the number itself contains a slash, and a percent-encoded one is
+    decoded before routing, so a single-segment parameter would never match the document
+    the page is asking about.
+
+    Gated the same as the purchase-order lightbox next door (`projects.projects.view`),
+    for the same reason: purchasing works this worklist off project permissions.
+    """
+    try:
+        return OrderInquiryWorklistService(db).get_spo_detail(spo_number)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

@@ -472,21 +472,31 @@ def test_a_candidate_states_both_dates_and_its_line_label(world):
     assert first["default_take"] == "8", "the cascade's own preview, by the same walk"
 
 
-def test_an_order_row_is_never_offered_an_spo_allocation(world):
-    """Captain, 25 August: "Only for order back, we link to SPO allocations." A normal
-    ORDER is a NEW purchase and goes on a purchase order."""
+def test_an_order_row_is_offered_the_shipping_order_before_any_purchase_order(world):
+    """REVERSED by `PLAN-scm-oi-draft-links.md` R5 (captain, 27 Aug 2026): "SPO link is
+    always one, always SPO first then PO".
+
+    The rule used to be the captain's own of 25 August - "only for order back, we link to
+    SPO allocations" - on the reading that an SPO answers a shortfall against something
+    already ordered. The 27 August reading is simpler and matches the book: an open
+    shipping-order allocation is stock already bought and on its way, so an ORDER should be
+    answered by it before a new purchase order is dealt out.
+    """
     _two_purchase_orders(world)
-    world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
     row = world.row("ORDER", 8)
 
-    assert all(c["kind"] == "po" for c in world.svc.po_candidates_for_row(row.id))
+    candidates = world.svc.po_candidates_for_row(row.id)
+
+    assert candidates[0]["kind"] == "spo"
+    assert [c["kind"] for c in candidates[1:]] == ["po"] * 5
 
 
 def test_an_order_back_walks_its_cited_document_first_then_spo_then_purchase_orders(world):
     """AC-I2 + part 2 section 4b, against the fixture's SRTWCY7405-PJ row: the document CS
     cited comes before everything, then SPO allocations, then purchase order lines."""
     _two_purchase_orders(world)
-    world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332, line_number=2)
+    world.spo_allocation("SPO-2026/08-0061", "BRW", 332, line_number=2)
     row = world.row("ORDER_BACK", 10, cited="SPO-2026/08-0061")
 
     candidates = world.svc.po_candidates_for_row(row.id)
@@ -593,12 +603,19 @@ def test_auto_link_finishes_a_partly_linked_row_and_a_second_pass_links_nothing(
     assert second["placed_rows"] == 0
 
 
-def test_an_order_row_naming_an_spo_allocation_is_refused_in_the_buyers_own_words(world):
-    """Part 2 section 4b, held at the write and not only at the read: the candidate list
-    never offers one, and a caller that names one anyway is told why."""
+def test_an_spo_line_outside_the_pool_is_never_a_candidate_and_cannot_be_named(world):
+    """R11: "show every location in the lightbox, link only from POOL locations".
+
+    An SPO is allocated at a pool and moved out from there; a line already sitting at a
+    site's own group is spoken for by that site, and a link would promise it twice. Held at
+    the WRITE as well as the read, so a caller naming one by hand is refused rather than
+    quietly making the link the walk would not offer.
+    """
     _two_purchase_orders(world)
-    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-BB", 332)
     row = world.row("ORDER", 8)
+
+    assert all(c["kind"] == "po" for c in world.svc.po_candidates_for_row(row.id))
 
     from app.services.error_handler import AppException
 
@@ -609,12 +626,13 @@ def test_an_order_row_naming_an_spo_allocation_is_refused_in_the_buyers_own_word
             actor_user_id=None,
         )
 
-    assert "order_inquiry_spo_not_order_back" in str(caught.value)
+    assert "order_inquiry_po_line_closed" in str(caught.value)
 
 
 def test_an_order_back_may_link_to_an_spo_allocation(world):
-    """The other half of the same rule: the one verb that may."""
-    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    """The verb the SPO side was built for, still doing what it did (R5 widened the set,
+    it took nothing away)."""
+    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
     row = world.row("ORDER_BACK", 10, cited="SPO-2026/08-0061")
 
     world.svc.place_on_po_allocations(
@@ -631,11 +649,15 @@ def test_an_order_back_may_link_to_an_spo_allocation(world):
     assert body["links"][0]["document"] == "SPO-2026/08-0061"
 
 
-def test_an_order_back_whose_only_cover_is_an_spo_still_offers_a_link(world):
-    """The flag the row action reads. With no purchase order in the world at all, an
-    ORDER BACK row still has somewhere to go, and a flag that counted purchase orders
-    alone hid the Link button on the one row the feature was built for."""
-    world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+def test_a_row_whose_only_cover_is_an_spo_still_offers_a_link(world):
+    """The flag the row action reads. With no purchase order in the world at all, a row
+    still has somewhere to go, and a flag that counted purchase orders alone hid the Link
+    button on the one row the feature was built for.
+
+    BOTH verbs since R5 (`PLAN-scm-oi-draft-links.md`): an ORDER is answered by an open
+    shipping order as readily as an order back is.
+    """
+    world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
     back = world.row("ORDER_BACK", 10)
     plain = world.row("ORDER", 10)
 
@@ -643,12 +665,19 @@ def test_an_order_back_whose_only_cover_is_an_spo_still_offers_a_link(world):
 
     assert candidates["po"] == set()
     assert candidates["spo"] == {world.product}
-    assert (
-        world.svc.has_link_candidate(back.verb, world.product, candidates) is True
-    )
-    assert (
-        world.svc.has_link_candidate(plain.verb, world.product, candidates) is False
-    )
+    assert world.svc.has_link_candidate(back.verb, world.product, candidates) is True
+    assert world.svc.has_link_candidate(plain.verb, world.product, candidates) is True
+
+
+def test_an_spo_outside_the_pool_offers_no_link_at_all(world):
+    """The other half of R11, on the flag: a line the walk will never take must not put a
+    Link on a row, or the dialog opens empty."""
+    world.spo_allocation("SPO-2026/08-0061", "BRW-BB", 332)
+    world.row("ORDER_BACK", 10)
+
+    candidates = world.svc.link_candidate_products([world.product])
+
+    assert candidates["spo"] == set()
 
 
 def test_unlinking_one_link_leaves_the_others_and_the_row_partly_linked(world):
@@ -711,7 +740,7 @@ def test_the_linked_filter_answers_po_spo_and_none(world):
     from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 
     orders = _two_purchase_orders(world)
-    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
 
     on_po = world.row("ORDER", 8)
     world.svc.place_on_po_allocations(
@@ -1028,7 +1057,7 @@ def test_migration_421_round_trips_an_spo_link_through_spo_ref(world):
     row's own `spo_ref` - the only column that ever named a shipping order. The upgrade
     reads it back, so downgrade-then-upgrade is a round trip rather than a loss."""
     migration = _migration()
-    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    allocation = world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
     row = world.row("ORDER_BACK", 10, cited="SPO-2026/08-0061")
     world.svc.place_on_po_allocations(
         row.id,
@@ -1061,7 +1090,7 @@ def test_migration_421_never_turns_an_already_inbound_coverage_note_into_a_link(
     INBOUND row - a note about what already covers the quantity, never a placement.
     Turning one into a link would have retired demand nobody linked."""
     migration = _migration()
-    world.spo_allocation("SPO-2026/08-0061", "BRW-IB", 332)
+    world.spo_allocation("SPO-2026/08-0061", "BRW", 332)
     rid = _uid()
     world.db.execute(
         text(

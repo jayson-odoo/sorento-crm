@@ -123,10 +123,16 @@ def _draft_po_line(world, *, qty, product=None, warehouse=None):
     return po, line
 
 
-def test_po_confirm_cascade_links_the_acknowledged_row_and_leaves_the_awaiting_one_alone(api):
-    """AC-H11, walked through the real confirm rather than an already-open line: two rows
-    at the same cell, one taken on and one not, and confirming the purchase order
-    underneath them must reach only the one purchasing has read."""
+def test_po_confirm_cascade_links_the_confirmed_row_and_drafts_the_awaiting_one(api):
+    """REVERSED by `PLAN-scm-oi-draft-links.md` R6 (AC-D11), walked through the real
+    confirm rather than an already-open line.
+
+    Two rows at the same cell, one taken on and one not. Both are answered, and the
+    difference is what the answer MEANS: the confirmed row gains a link purchasing has
+    already stood behind, the awaiting one gains a draft it has still to confirm. Leaving
+    the awaiting row out was the handshake's rule, and it meant a plan-generated purchase
+    order landed on a page that still read "Not found" for the very rows that sized it.
+    """
     _client, world = api
     acknowledged = _raise_one_row(api, qty="5")
     awaiting = _raise_one_row(api, qty="5")
@@ -145,9 +151,9 @@ def test_po_confirm_cascade_links_the_acknowledged_row_and_leaves_the_awaiting_o
 
     assert out["confirmed_count"] == 1
     assert _links_of(world, acknowledged["row"]), "the confirm cascaded to the row that took it on"
-    assert _links_of(world, awaiting["row"]) == [], "an awaiting row is not this confirm's to link"
+    assert _links_of(world, awaiting["row"]), "and drafted the one that has not"
     world.db.refresh(awaiting["row"])
-    assert awaiting["row"].state == INQUIRY_RAISED, "left exactly where the raise put it"
+    assert awaiting["row"].ack_state == ACK_AWAITING, "a draft is not a confirmation"
 
 
 # ---------------------------------------------------------------------------
@@ -247,11 +253,17 @@ def test_rejecting_a_row_that_is_no_longer_open_is_refused_and_writes_nothing(ap
     )
 
 
-def test_rejecting_a_fully_linked_row_is_refused(api):
-    """The goods are bought. "Purchasing rejected it" beside a purchase order that exists
-    is not a sentence CS can act on."""
+def test_rejecting_a_fully_linked_row_takes_its_documents_back(api):
+    """REVERSED by `PLAN-scm-oi-draft-links.md` 5.6.
+
+    A fully linked row could not be refused while a link meant purchasing had already
+    bought. With DRAFTS the same state means the opposite - a row raised a minute ago is
+    fully linked and nobody has agreed to anything - so the rule refused most of the page.
+    The links come down first instead, which is what a refusal IS: the quantity goes back
+    to the document for whoever needs it next.
+    """
     _client, world = api
-    _open_po_line(world, qty=50)
+    _po, line = _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
     row = fixture["row"]
 
@@ -262,14 +274,18 @@ def test_rejecting_a_fully_linked_row_is_refused(api):
         assert row.state == INQUIRY_PLACED, "the cascade covered it whole"
         response = buyer.post(f"{LIST}/{row.id}/reject", json={"reason": "Too late"})
 
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
+    world.db.commit()
     world.db.refresh(row)
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_REJECTED
+    assert _links_of(world, row) == []
+    by_po, _by_spo = ProjectOrderInquiryService(world.db)._linked_by_target()
+    assert by_po.get(str(line.id), Decimal("0")) == Decimal("0")
 
 
-def test_rejecting_a_partly_linked_row_is_allowed(api):
-    """The other side of the same rule: half of it is still owed, so there is still
-    something to refuse - and refusing it must not take the buyer's own placement down."""
+def test_rejecting_a_partly_linked_row_takes_its_half_back_too(api):
+    """The same rule from the other side, and the same reversal: a refusal leaves the row
+    holding nothing, whether it was covered wholly or in part."""
     _client, world = api
     _po, _po_line = _open_po_line(world, qty=4)
     fixture = _raise_one_row(api, qty="10")
@@ -290,7 +306,7 @@ def test_rejecting_a_partly_linked_row_is_allowed(api):
     world.db.commit()
     world.db.refresh(row)
     assert row.ack_state == ACK_REJECTED
-    assert _links_of(world, row), "what was already arranged stays arranged"
+    assert _links_of(world, row) == [], "a refused row keeps no claim on anybody's order"
 
 
 # ---------------------------------------------------------------------------

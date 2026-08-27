@@ -151,8 +151,14 @@ _COVERING_VERBS = (IV_PRE_ORDERED, IV_ALREADY_INBOUND)
 # order back is exactly the row that should be able to name the shipping order it is owed
 # against, and it is the ONLY verb allowed to.
 _LINKABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK)
-#: The verbs whose links may name an SPO allocation. Only the order back (4b).
-_SPO_LINKABLE_VERBS = (IV_ORDER_BACK,)
+#: The verbs whose links may name an SPO allocation. EVERY linkable verb since R5
+#: (`PLAN-scm-oi-draft-links.md`, captain 27 Aug 2026): "SPO link is always one, always SPO
+#: first then PO". It was the order back alone while an SPO was read as the document a
+#: shortfall is owed against; the captain's reading is simpler and is the one that matches
+#: the book - an open shipping-order allocation is stock already bought and on its way, so
+#: an ORDER should be answered by it before a new purchase order is dealt out. The sort key
+#: already put an SPO ahead of a PO, so widening the set is the whole change.
+_SPO_LINKABLE_VERBS = _LINKABLE_VERBS
 #: The old name, for the readers that have not been renamed yet. Same tuple.
 _PLACEABLE_VERBS = _LINKABLE_VERBS
 
@@ -1830,6 +1836,9 @@ class ProjectOrderInquiryService:
             # never a reason to unlink: the quantity is still on that document, and taking
             # it off would leave the row with nothing rather than with something late.
             late = bool(arrives and row_needed_by and arrives > row_needed_by)
+            # HOW late, in whole days (AC-D17). `None` rather than 0 when it is not late,
+            # so the column has nothing to print instead of a zero that reads as on time.
+            late_days = (arrives - row_needed_by).days if late else None
             out.setdefault(link.row_id, []).append(
                 {
                     "id": link.id,
@@ -1846,6 +1855,7 @@ class ProjectOrderInquiryService:
                     "expected_date": spo_expected_date if is_spo else po_expected_date,
                     "tier": tier,
                     "late": late,
+                    "late_days": late_days,
                     "auto": bool(link.auto),
                     "linked_at": link.linked_at,
                     # WHO linked it, by name. Null on a cascade link, which nobody did.
@@ -2170,13 +2180,52 @@ class ProjectOrderInquiryService:
         The reason is required at the schema. It is required again here because a service
         caller (a test, a script) reaches this without one.
 
-        Only a row that is still OWED may be refused - raised, or linked in part. A row
-        already wholly on documents is not a refusal to make: the goods are bought, and
-        "purchasing rejected it" beside a purchase order that exists is a sentence CS
-        cannot act on. A cancelled or actioned row is past refusing for the same reason
+        A row WHOLLY on documents may be refused too (`PLAN-scm-oi-draft-links.md` 5.6).
+        It could not before, and the rule made sense while a link meant purchasing had
+        already bought: "purchasing rejected it" beside a purchase order that exists is a
+        sentence CS cannot act on. With DRAFTS the same state means the opposite - a row
+        raised a minute ago is fully linked and nobody has agreed to anything - so refusing
+        it would have refused most of the page. The links come down FIRST instead, which is
+        the truth of a refusal: the quantity goes back to the document for the next row.
+
+        A cancelled or actioned row is still past refusing, for the same reason
         acknowledging one is: nobody is doing it. Refused before anything is written, so
         such a row keeps its state AND gains no revision on its line.
         """
+        text_reason = self._reject_reason(reason)
+        row = self._row_or_404(row_id)
+        self._assert_rejectable(row)
+        self._reject_one(row, reason=text_reason, actor_user_id=actor_user_id)
+        return self.serialize_rows([row])[0]
+
+    def reject_rows(
+        self, row_ids: Sequence[str], *, reason: str, actor_user_id: str
+    ) -> Dict[str, Any]:
+        """Refuse a BATCH with ONE reason (`PLAN-scm-oi-draft-links.md` 5.6, item 15).
+
+        ALL OR NOTHING: every row is checked before the first is written, so a batch
+        holding one row nobody may refuse writes nothing at all. A press that half happened
+        leaves the buyer to work out which half from a screen that has already moved on,
+        and the dialog asked one question about all of them.
+
+        Each row then goes through the same `_reject_one` a single refusal does, so the two
+        doors cannot come to mean different things.
+        """
+        text_reason = self._reject_reason(reason)
+        rows = self._rows_or_404(row_ids)
+        for row in rows:
+            self._assert_rejectable(row)
+        for row in rows:
+            self._reject_one(row, reason=text_reason, actor_user_id=actor_user_id)
+        return {
+            "rejected": len(rows),
+            "results": [{"row_id": str(row.id), "ok": True} for row in rows],
+        }
+
+    @staticmethod
+    def _reject_reason(reason: str) -> str:
+        """The reason, required at the schema and required again here: a service caller (a
+        test, a script) reaches this without one."""
         text_reason = (reason or "").strip()
         if not text_reason:
             raise AppException(
@@ -2184,13 +2233,15 @@ class ProjectOrderInquiryService:
                 message="Say why this row is being rejected.",
                 code="order_inquiry_reject_reason_required",
             )
-        row = self._row_or_404(row_id)
-        if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED):
+        return text_reason
+
+    def _assert_rejectable(self, row: OrderInquiryRow) -> None:
+        """Whether this row is one a refusal can be about, said before anything is written."""
+        if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED):
             raise AppException(
                 status_code=422,
                 message=(
-                    "This row cannot be rejected: it is already bought, called off or "
-                    "answered elsewhere."
+                    "This row cannot be rejected: it is called off or answered elsewhere."
                 ),
                 code="order_inquiry_row_not_rejectable",
             )
@@ -2200,13 +2251,28 @@ class ProjectOrderInquiryService:
                 message="This row has already been rejected.",
                 code="order_inquiry_already_rejected",
             )
+
+    def _reject_one(
+        self, row: OrderInquiryRow, *, reason: str, actor_user_id: str
+    ) -> None:
+        """Take the row's documents back, stamp the refusal, and uncover its line.
+
+        The unlink comes FIRST and is not optional: every link on a refused row was a claim
+        on somebody's purchase order, and leaving it there would hold quantity for an
+        instruction nobody is answering.
+        """
+        links = self._links_of(row.id)
+        if links:
+            self._remove_links(row, links)
+            self._refresh_link_state([row])
+            self.db.flush()
         row.ack_state = ACK_REJECTED
         row.rejected_by = actor_user_id
         row.rejected_at = datetime.utcnow()
-        row.rejected_reason = text_reason
+        row.rejected_reason = reason
         self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
         self._uncover_rejected_line(row, actor_user_id=actor_user_id)
-        return self.serialize_rows([row])[0]
 
     def _uncover_rejected_line(self, row: OrderInquiryRow, *, actor_user_id: str) -> None:
         """Send the rejected row's sales-order line back to the board undecided.
@@ -2254,6 +2320,12 @@ class ProjectOrderInquiryService:
         page: the documents that arrived a moment ago meet the instructions already taken
         on. Narrowed to the products the upload touched when the caller knows them, because
         one book must not re-deal every open instruction in the company.
+
+        It is also the page's Auto link all, and that is why it RE-DEALS
+        (`PLAN-scm-oi-draft-links.md` R2): a book that has just landed may carry a nearer
+        document than the one a draft is sitting on, and the press is the buyer asking for
+        the best answer available now. Drafts only - a confirmed row's link is never moved
+        - and awaiting rows are in scope, because a draft is exactly what this deals.
         """
         return self.auto_place_for_products(
             list(product_ids) if product_ids else None,
@@ -2261,7 +2333,28 @@ class ProjectOrderInquiryService:
             trigger="link_now",
             link_up_to=link_up_to,
             link_horizon=link_horizon,
+            redeal_drafts=True,
+            include_awaiting=True,
         )
+
+    def row_ids_of_decision(self, decision_id: str) -> List[str]:
+        """The linkable rows THIS supply decision raised or carried (R6).
+
+        The scope of the raise-time draft pass. By the decision rather than by the products
+        those rows name, for the reason the Order Inquiry form's own pass already states: a
+        product scope walks every open row in the company that happens to name the same
+        item, and one board confirm must not re-deal somebody else's instructions.
+        """
+        rows = (
+            self.db.query(OrderInquiryRow.id)
+            .filter(
+                OrderInquiryRow.supply_decision_id == decision_id,
+                OrderInquiryRow.state.in_(INQUIRY_LINK_STATES),
+                OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
+            )
+            .all()
+        )
+        return [str(row_id) for (row_id,) in rows]
 
     def _rows_or_404(self, row_ids: Sequence[str]) -> List[OrderInquiryRow]:
         """The named rows, or a 404 naming how many of them are gone."""
@@ -2658,6 +2751,14 @@ class ProjectOrderInquiryService:
                 location = (
                     warehouse.warehouse_code if warehouse else allocation.location_code
                 )
+                # R11 (`PLAN-scm-oi-draft-links.md`): an SPO is always allocated at a POOL
+                # location, so only a pool line may be linked. A line at any other code is
+                # SHOWN - the lightbox lists every line of the document - and never taken,
+                # because the goods on it are already spoken for by the site that holds
+                # them. Read off the warehouse rather than the book's raw code: an unknown
+                # code resolved to no warehouse, and a code nobody holds is not a pool.
+                if str(location or "").strip().upper() not in pools:
+                    continue
                 candidates.append(
                     self._candidate(
                         kind="spo",
@@ -2774,8 +2875,11 @@ class ProjectOrderInquiryService:
         product take the line, and the walk ranks candidates by location without ever
         filtering by it, so a row at another group walked first simply took it.
 
-        `set()` for a row that is awaiting, rejected, fully linked, or resolves to no
-        location - none of those is the instruction a buy answers.
+        `set()` for a row that is rejected, fully linked, or resolves to no location - none
+        of those is the instruction a buy answers. An AWAITING row does count (R6): its
+        draft is the answer purchasing will read, and refusing a group its own purchase
+        order until somebody pressed Confirm left the page reading "Not found" for exactly
+        the rows the buy was sized from.
         """
         return {
             group
@@ -2784,8 +2888,7 @@ class ProjectOrderInquiryService:
         }
 
     def _groups_awaiting_a_link(self, product_id: str) -> set:
-        """The ownership groups holding an ACKNOWLEDGED row of this product with something
-        still unlinked - the demand a purchase order at that group was bought for.
+        """The ownership groups holding a still-unlinked row of this product - the demand a purchase order at that group was bought for.
 
         The LISTING's own read (`link_candidate_products`), which answers per product and
         has no row in hand. The per-ROW exemption the candidate walk applies is
@@ -2794,12 +2897,16 @@ class ProjectOrderInquiryService:
         return set(self._rows_awaiting_a_link(product_id))
 
     def _rows_awaiting_a_link(self, product_id: str) -> Dict[str, set]:
-        """`{group: {row ids}}` - every ACKNOWLEDGED row of this product with something
-        still unlinked, filed under the group it sits at.
+        """`{group: {row ids}}` - every row of this product a document is still owed to,
+        filed under the group it sits at.
 
         Read off the rows the cascade itself would walk (open supply state, linkable verb,
-        `ACK_LINKABLE`), so "there is an instruction waiting" here and "there is a row to
-        place" there cannot disagree. The row's group is its own stated `stock_location`
+        anything but rejected), so "there is an instruction waiting" here and "there is a
+        row to place" there cannot disagree. AWAITING rows count since
+        `PLAN-scm-oi-draft-links.md` R6: the cascade drafts for them now, and the demand a
+        group's purchase order was bought for is exactly the row CS has just raised - the
+        earlier `ACK_LINKABLE` reading refused a group its own buy until somebody had
+        pressed Confirm, which is the press this whole plan exists to answer. The row's group is its own stated `stock_location`
         where it has one, and otherwise the reconciled core line's warehouse - the same two
         arms `rows_needed_at` reads a row's location through. A row that resolves to no
         location belongs to no group and is not evidence about one.
@@ -2825,7 +2932,9 @@ class ProjectOrderInquiryService:
         query = self.db.query(OrderInquiryRow).filter(
             OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
             OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
-            OrderInquiryRow.ack_state.in_(ACK_LINKABLE),
+            OrderInquiryRow.ack_state.in_(
+                tuple(ACK_LINKABLE) + (ACK_AWAITING,)
+            ),
         )
         query = self._narrow_to_products(query, [product_id])
         rows = query.all() if query is not None else []
@@ -3563,6 +3672,8 @@ class ProjectOrderInquiryService:
         row_ids: Optional[Sequence[str]] = None,
         link_up_to: Optional[date] = None,
         link_horizon: Optional[str] = None,
+        redeal_drafts: bool = False,
+        include_awaiting: bool = False,
     ) -> Dict[str, Any]:
         """The bulk, idempotent cascade pass (G2 rule 1: "we need to link already at
         first already instead of suggesting and needing the users to click 1 by 1").
@@ -3584,9 +3695,10 @@ class ProjectOrderInquiryService:
         the old behaviour, never a different one. A second run places nothing further: a
         row this pass placed (or split) is no longer `raised`, so it drops out of the
         very query that feeds the next run - the idempotence the three triggers all rely
-        on. The three are ACKNOWLEDGE, Link now and a purchase-order confirm (the
-        handshake, section 3); a decision confirm is no longer one of them, because a row
-        CS has just raised is one nobody has read.
+        on. The doors are ACKNOWLEDGE, Link now, a purchase-order confirm and - since
+        `PLAN-scm-oi-draft-links.md` R6 - the board's own confirm again. What the board's
+        pass writes is a DRAFT, because its rows are `awaiting`, which is why it is safe:
+        purchasing still says the word, and now they say it looking at an answer.
 
         `trigger` is stamped onto every placement it makes (`_apply_placement`'s
         `auto_trigger`), so "why is this placed" is always answerable from the row's own
@@ -3598,21 +3710,46 @@ class ProjectOrderInquiryService:
         reorder plan's own horizon (`resolve_link_horizon`) - a press that says nothing is
         a press under the horizon the plan planned to. A caller that genuinely wants NO
         horizon says so, with `link_horizon="none"` (S1).
+
+        `include_awaiting` and `redeal_drafts` are the DRAFT half
+        (`PLAN-scm-oi-draft-links.md` R1/R2/R6). A link on a row purchasing has not
+        confirmed is a draft, so:
+
+        * `include_awaiting` widens the gate below to awaiting rows, which is what lets the
+          board's own confirm - and a purchase-order confirm, and Auto link all - find the
+          documents up front rather than leaving the page blank until somebody presses
+          Confirm. The links it writes read as drafts because their rows are awaiting;
+        * `redeal_drafts` UNPLACES the drafts of the rows in scope before dealing, so a
+          nearer document that has arrived since can take over. Only drafts: a confirmed
+          row's link is a promise, and no automatic pass ever moves it (R2).
+
+        Both default to false, so Confirm's own cascade and every existing caller keep the
+        acknowledged-only gate they were written under.
         """
         link_up_to = self.resolve_link_horizon(link_up_to, link_horizon)
+        # A row its drafts cover WHOLLY is `placed`, so a re-deal has to be able to see it:
+        # moving a link that is already there is the entire point of the press. Only on a
+        # re-deal, so an ordinary pass keeps walking exactly the rows it always did.
+        states = (
+            (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            if redeal_drafts
+            else (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)
+        )
+        linkable_ack = (
+            tuple(ACK_LINKABLE) + (ACK_AWAITING,) if include_awaiting else ACK_LINKABLE
+        )
         query = self.db.query(OrderInquiryRow).filter(
             # PARTLY LINKED rows are in scope too, which is new with the links table: a row
             # the last pass could only half cover is exactly the row a fresh purchase order
             # should finish, and before this it left the query the moment it was touched.
-            OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+            OrderInquiryRow.state.in_(states),
             OrderInquiryRow.verb.in_(_LINKABLE_VERBS),
-            # ACKNOWLEDGED (or changed since) and nothing else - the handshake
-            # (`PLAN-scm-oi-handshake.md` section 3). Held HERE rather than at each of the
-            # three callers, because it is one rule and three doors: the Acknowledge press,
-            # Link now, and a purchase-order confirm. An awaiting row is an instruction
-            # purchasing has not read, and tying a document to it commits the buyer to
-            # something they never saw.
-            OrderInquiryRow.ack_state.in_(ACK_LINKABLE),
+            # ACKNOWLEDGED (or changed since), and AWAITING too when the caller is one of
+            # the DRAFT doors (R6). Held HERE rather than at each caller, because it is one
+            # rule and several doors: Confirm, Link now, a purchase-order confirm and the
+            # board's own raise. What a link on an awaiting row MEANS is the whole
+            # difference: it is a draft, and Confirm is still the buyer's word.
+            OrderInquiryRow.ack_state.in_(linkable_ack),
         )
         if row_ids is not None:
             # The NAMED rows and nothing else. A product scope is right for "this purchase
@@ -3631,7 +3768,10 @@ class ProjectOrderInquiryService:
                 return self._nothing_placed(link_up_to)
             query = narrowed
 
-        rows = self._rank_raised_rows(query.all())
+        rows = query.all()
+        if redeal_drafts:
+            self._unplace_drafts(rows, trigger=trigger)
+        rows = self._rank_raised_rows(rows)
         # LADDER V4 (section 1d): prime the availability reader ONCE, from every product
         # this pass will ask about. `_netting` rebuilds whenever it meets a product it has
         # not seen, so a loop that met them one at a time would rebuild per row - three
@@ -3688,6 +3828,34 @@ class ProjectOrderInquiryService:
             "link_up_to": link_up_to,
             "link_horizon": self._horizon_mode(link_up_to),
         }
+
+    def _unplace_drafts(self, rows: Sequence[OrderInquiryRow], *, trigger: str) -> None:
+        """Take the DRAFT links off these rows so the walk can deal them again (R2).
+
+        A draft is a link whose row is not `acknowledged` - there is no state on the link
+        itself (R1) - so the test is the row's own stamp and nothing else. A confirmed row
+        is skipped whole: its link is a promise purchasing made, and an automatic pass that
+        moved it would move a commitment nobody was asked about.
+
+        WHY, on the row's note: `_remove_links` already writes "Unlinked from X", which
+        says what happened and not why. The trigger says why, so a buyer reading a row that
+        changed document overnight finds the press that did it.
+        """
+        touched: List[OrderInquiryRow] = []
+        for row in rows:
+            if row.ack_state == ACK_ACKNOWLEDGED:
+                continue
+            links = self._links_of(row.id)
+            if not links:
+                continue
+            self._remove_links(row, links)
+            stamp = f"Re-dealt by {trigger}"
+            row.note = f"{row.note}; {stamp}" if row.note else stamp
+            touched.append(row)
+        if touched:
+            self._refresh_link_state(touched)
+            self.db.flush()
+            self._refresh_inquiry_states({row.order_inquiry_id for row in touched})
 
     @staticmethod
     def _nothing_placed(link_up_to: Optional[date]) -> Dict[str, Any]:
@@ -4297,16 +4465,19 @@ class ProjectOrderInquiryService:
                         break
 
         spo_products: set = set()
-        for allocation_id, product_id, allocated, received in (
+        pools = self._pool_codes()
+        for allocation_id, product_id, allocated, received, warehouse_code in (
             self.db.query(
                 SPOAllocation.id,
                 SPOAllocation.product_id,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
+                Warehouse.warehouse_code,
             )
             .outerjoin(
                 InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
             )
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
             .filter(
                 SPOAllocation.product_id.in_(list(wanted)),
                 SPOAllocation.spo_number.isnot(None),
@@ -4314,6 +4485,10 @@ class ProjectOrderInquiryService:
             )
             .all()
         ):
+            # The POOL rule the walk applies (R11), applied here too, or the flag would
+            # offer a Link the dialog then shows as empty.
+            if str(warehouse_code or "").strip().upper() not in pools:
+                continue
             remaining = (
                 _dec(allocated) - _dec(received) - by_spo.get(str(allocation_id), _ZERO)
             )

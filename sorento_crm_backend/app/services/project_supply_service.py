@@ -3192,15 +3192,19 @@ class ProjectSupplyService:
                 if entry["line"].product_id
             }
         )
-        # NO CASCADE HERE any more (`PLAN-scm-oi-handshake.md` section 3, captain 27 Aug
-        # 2026). Links are purchasing's: a row raised on the board is an instruction CS is
-        # still free to change, and a document tied to it before anybody has read it is a
-        # commitment nobody made. The cascade now runs at ACKNOWLEDGE, at Link now and at a
-        # purchase-order confirm, and each of those is restricted to acknowledged rows
-        # (`ProjectOrderInquiryService.auto_place_for_products`). `defer_auto_place` and
-        # `auto_place_products` survive because the planning-change apply still asks for the
-        # products it owes a pass over, and that pass is now a no-op for an awaiting row
-        # rather than a link nobody asked for.
+        # THE CASCADE RUNS AGAIN HERE (`PLAN-scm-oi-draft-links.md` R6, captain 27 Aug
+        # 2026), reversing one half of the handshake's ruling on purpose. The handshake was
+        # right that a document tied to a row is purchasing's word; it was wrong that the
+        # page should therefore be blank until somebody presses Confirm. What this writes
+        # is a DRAFT - the rows are `awaiting`, and a link on an unconfirmed row IS a draft
+        # (R1) - so purchasing opens the page with the answer already found and still says
+        # the word. Scoped to THIS decision's own rows, never to their products: the
+        # products these rows name are named by half the company's open orders too.
+        #
+        # `defer_auto_place` still holds it back for the planning-change apply, which shifts
+        # a closed line's documents to the survivor first and then runs its own pass.
+        if not defer_auto_place:
+            self._draft_links_for_decision(decision, actor_user_id=actor_user_id)
         decided = len(checked) + len(carried)
         return {
             "revision_no": decision.revision_no,
@@ -3288,6 +3292,41 @@ class ProjectSupplyService:
             self.supersede_for_material_change(order, reason)
         return True
 
+    def _draft_links_for_decision(
+        self, decision, *, actor_user_id: str
+    ) -> None:
+        """Find the documents for the rows this confirmation just raised (R6).
+
+        Best-effort in a SAVEPOINT, exactly like `auto_place_for_confirmed_products` and
+        for the same reason: the decision and the inquiry rows are already written by the
+        time this runs, and a defect in the walk must not turn that success into a 500 the
+        planner cannot get past. The page's own Auto link all makes the same pass again.
+
+        Under the PLAN's link horizon, with nothing asked of the planner: the board has no
+        place to put a date and CS is not the person who owns one (R6).
+        """
+        try:
+            with self.db.begin_nested():
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                service = ProjectOrderInquiryService(self.db)
+                row_ids = service.row_ids_of_decision(str(decision.id))
+                if not row_ids:
+                    return
+                service.auto_place_for_products(
+                    None,
+                    actor_user_id=actor_user_id,
+                    trigger="raise",
+                    row_ids=row_ids,
+                    include_awaiting=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "supply confirmed, but the draft-link pass failed (%s)", exc
+            )
+
     def auto_place_for_confirmed_products(
         self, product_ids: Sequence[str], *, actor_user_id: str
     ) -> None:
@@ -3319,6 +3358,9 @@ class ProjectSupplyService:
                     wanted,
                     actor_user_id=actor_user_id,
                     trigger="decision_confirm",
+                    # Awaiting rows too (R6): the planning change raised them a moment ago
+                    # and its own pass is the raise-time cascade for them.
+                    include_awaiting=True,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning(

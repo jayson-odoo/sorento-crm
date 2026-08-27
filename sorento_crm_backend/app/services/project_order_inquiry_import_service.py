@@ -1082,6 +1082,10 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 row_ids=raised["row_ids"],
                 actor_user_id=link_actor,
                 trigger="order_inquiry_form",
+                # The rows this sheet just raised are AWAITING, and what the pass writes
+                # for them is a DRAFT (`PLAN-scm-oi-draft-links.md` R6): purchasing opens
+                # the page with the documents already found and still says the word.
+                include_awaiting=True,
             )["placed_rows"]
         except Exception as exc:  # noqa: BLE001 - see above
             logger.exception("auto-link failed after an order inquiry form upload")

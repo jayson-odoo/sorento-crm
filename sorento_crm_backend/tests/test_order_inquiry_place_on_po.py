@@ -1101,15 +1101,15 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_raises_the_buy_row_awaiting_and_links_nothing():
-    """The handshake REPLACED G2's second trigger (`PLAN-scm-oi-handshake.md`, captain 27
-    Aug 2026): a decision confirm no longer cascades at all.
+def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_draft_link():
+    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026).
 
-    It used to link the Buy it raised against the product's open purchase-order lines in
-    the same transaction. That put a buyer's own documents onto instructions they had
-    never read, and CS could still amend the instruction afterwards. So the row comes out
-    `awaiting` and unlinked, and the cascade runs when purchasing ACKNOWLEDGES it -
-    `tests/test_order_inquiry_handshake.py` is where that half is pinned."""
+    G2's original trigger linked at the decision confirm; the handshake took it away
+    because a buyer found their own documents dealt out to instructions they had never
+    read; this restores the pass and answers that objection with what the link MEANS. The
+    row comes out `awaiting` - nobody has confirmed anything - and the link on it is a
+    DRAFT (R1), which is precisely "here is what could cover this, say the word".
+    """
     from app.models.base import company_scope
     from app.services.project_service import register_project
 
@@ -1154,10 +1154,9 @@ def test_a_decision_confirm_raises_the_buy_row_awaiting_and_links_nothing():
             .first()
         )
         assert row is not None
-        assert row.state == INQUIRY_RAISED, "nothing is linked until purchasing acknowledges"
-        assert row.ack_state == ACK_AWAITING
-        assert row.po_line_id is None
-        assert po_line.id is not None, "the open line is still free for whoever is acknowledged"
+        assert row.ack_state == ACK_AWAITING, "a draft is not a confirmation"
+        assert row.state == INQUIRY_PLACED, "the 30-line covers the whole 20"
+        assert str(row.po_line_id) == str(po_line.id), "the draft names the open line"
 
 
 def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
