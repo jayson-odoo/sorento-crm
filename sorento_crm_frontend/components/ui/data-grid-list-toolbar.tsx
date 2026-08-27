@@ -165,8 +165,15 @@ export type DataGridListToolbarProps<TData extends object> = {
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
-  /** Primary call-to-action (e.g. the "Add" button). Anchored to the right edge. */
-  primaryAction?: ReactNode;
+  /**
+   * Primary call-to-action (e.g. the "Add" button). Anchored to the right edge.
+   *
+   * May be a render function receiving `{ openExport }` - for a page whose right cluster
+   * owns Export itself (the proforma-invoice book's gear, AC-E2) and passes
+   * `exportConfig={false}` so the toolbar renders no Export button of its own. The dialog
+   * behind `openExport` is the SAME selected-rows export, so the two cannot drift.
+   */
+  primaryAction?: ReactNode | ((api: { openExport: () => void }) => ReactNode);
   /** Secondary actions (Import, attachment links, templates). Overflow `▾` at >=2 (D7). */
   secondaryActions?: ToolbarAction[];
   /** Bulk actions shown in the bulk strip when rows are selected (H). */
@@ -526,7 +533,9 @@ export function DataGridListToolbar<TData extends object>({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          {primaryAction}
+          {typeof primaryAction === 'function'
+            ? primaryAction({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+            : primaryAction}
         </div>
       </div>
 
