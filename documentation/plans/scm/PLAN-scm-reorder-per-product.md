@@ -79,12 +79,12 @@ the pool-only cascade live in `PLAN-scm-oi-handshake.md` section 10.
 
 ### Suggested level, the industry way
 ```
-ADU          = AutoCount sales-order lines' qty_ordered over the study window (90 days,
-               all locations, retail + project, cancelled excluded) / 90.
-               Ruled 27 Aug: SO, not the CRM's own orders (which is what
-               scm.consumption_v reads today). Industry practice is actual issues (DO /
-               invoice); the DO book is not in the CRM yet (qty_delivered sits on 27% of
-               lines), so SO stands in until it is, and the source is one switch.
+ADU          = delivery-order lines' quantity over the study window (90 days, every
+               warehouse, cancelled excluded) / 90. The CRM's `orders` / `order_lines` ARE
+               the AutoCount delivery-order book (CG-, BRT- series, `sync_source`, a
+               warehouse per line), so this is what left the warehouses - what
+               `scm.consumption_v` already reads. Ruled 27 Aug after a look at the data:
+               DO covers 2,565 products in 90 days against 1,576 for SO lines.
 lead_time    = the product's supplier lead time (days); 30 when none is known
 safety_stock = ADU x 14 days (ruled 27 Aug)
 level        = ADU x lead_time + safety_stock, rounded up to a whole unit
