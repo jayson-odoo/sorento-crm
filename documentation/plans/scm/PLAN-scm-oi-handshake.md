@@ -257,7 +257,12 @@ order gained revision 2 from the board walk above (its rows re-raised, no links 
   allocations, transfers, decisions, planning-change rows; `--rewind-book` restores the
   lines a batch moved from that batch's own `from_json`). Dry run by default.
 
-## 11. Link horizon and the rejected bounce (captain, 27 Aug, "go" at 15:40): built on `feat/scm-uat-next`
+## 11. Link horizon and the rejected bounce (captain, 27 Aug, "go" at 15:40)
+
+Status: **built on `feat/scm-link-horizon`, not browser-verified.** pytest and vitest green
+(the one standing red on this dev copy,
+`test_every_new_field_reaches_the_list_the_row_and_the_export`, predates this branch); a
+tester still owes the browser walk of AC-LH1 to AC-LH5 and AC-RB1/AC-RB2.
 
 **Link horizon.** Every path that links an order-inquiry row to a document (auto-link at
 acknowledge, Link now after an upload, the manual Link PO / Link SPO dialog, the PO-confirm
@@ -284,3 +289,48 @@ rejected lines ("2 rejected") so CS sees the bounce without visiting Order Inqui
 - AC-RB1 GIVEN a rejected row on line 24 THEN the SRTWCX7405-RL-S-PJ cell reads "Rejected"
   and the badge's title is "Rejected by <name>: <reason>".
 - AC-RB2 The count clears once CS re-decides the line and a new row is raised.
+
+### What was built, and where it differs from the paragraphs above
+
+- **The plan's horizon is a calendar DATE, not "today + N days".** The paragraph above says
+  "default = today + the reorder plan's horizon days"; there is no horizon-days setting in
+  the codebase and never was. What the plan actually buys to is
+  `scm.priority_policy.reorder_coverage_until` (migration `394_reorder_coverage_until`
+  replaced the rolling `buy_all_horizon_days` with it in August, on the captain's own
+  framing: "purchasing reorders until October" is a fixed date). So the default IS that
+  date, read through the new `scm.priority.plan_link_horizon`, and no second setting was
+  invented. NULL there means no coverage limit is in force, and then no horizon is either -
+  a fresh install has never been asked how far out it plans, and a guessed date would refuse
+  links nobody asked to have refused. On the live copy the column is NULL today, so the
+  horizon does nothing until somebody sets it on the fulfilment-policy screen.
+- **A caller that names no date gets the plan's, never "no horizon".** One rule, three
+  doors: `auto_place_for_products(link_up_to=None)` resolves it, so the Acknowledge press,
+  Link now, Link selected, the worklist's Auto-link, the CS form's own pass and the
+  PO-confirm cascade all land on the same date without each caller stating it.
+- **The count rides the response, so the banner has both halves.** `after_horizon` and the
+  `link_up_to` it was measured against are on `AcknowledgeResult` and `AutoPlaceResult`;
+  `link_up_to_default` is on the worklist summary, which is what the page's date input
+  starts at. All four are declared on the schemas - `response_model` drops what it has not
+  been told about.
+- **The page's date is URL-first.** `?link_up_to=` beats this browser's memory, which beats
+  the plan default, and the plan default is taken ONCE: re-seeding on every summary refetch
+  would put the date back the moment the buyer cleared it.
+- **The manual Link dialog was left as override.** It shows the date and flags a row due
+  past it, and takes the hand-made link anyway (AC-LH3) - the same carve-out `manual`
+  already makes for a purchase order that is not yet active.
+- **The rejected bounce was HALF built already.** `_order_inquiries` on the board service
+  has carried `ack_state` / `rejected_reason` / `rejected_by_name` per line since the
+  handshake shipped, and it already clears them once CS decides the line again - which is
+  AC-RB2's own rule. What was missing was the reading: the cell printed the whole sentence
+  into a 150px column, so it was a truncated fragment of somebody's words. It is a
+  **Rejected badge with the sentence in its title** now, and the strip carries "N rejected"
+  beside the cards (`rejectedLineCount`, counted per LINE - a cell holds several).
+- **`_groups_in_deficit` had a boundary that hid the ordinary case** (captain's item 4). A
+  purchase order raised off the plan buys exactly what the plan said the group was short, so
+  the group lands on `group_net + remaining == 0` - and "at or below zero is deficit" then
+  refused that group its own buy: the rows that sized it stayed raised, the PO-confirm
+  cascade offered them nothing and the Link dialog listed nothing. Ruled and built: a group
+  is offered at zero, AND a group holding an acknowledged unlinked row of the product is
+  never in deficit at all, because that row is the demand the purchase order was bought for.
+  Three ladder-v4 tests moved with it - their asking row sits at the POOL now, which is what
+  keeps the deficit rule itself under test.

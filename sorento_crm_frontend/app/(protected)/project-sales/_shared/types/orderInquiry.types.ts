@@ -418,6 +418,13 @@ export interface OrderInquiryWorklistSummary {
    * here. Optional so a page rendered against an older answer still reads.
    */
   ack?: OrderInquiryAckCounts;
+  /**
+   * Where the page's "Link up to" date starts (AC-LH5): the reorder plan's own coverage
+   * date, `YYYY-MM-DD`. Read from here rather than invented on the page, so the plan and
+   * the buyer cannot be working to two different horizons. Null or absent means no
+   * coverage limit is set, and then no horizon is in force.
+   */
+  link_up_to_default?: string | null;
 }
 
 /** The four counts behind the Acknowledgement filter. */
@@ -454,6 +461,10 @@ export interface AcknowledgeResult {
   acknowledged: number;
   linked_rows: number;
   links: number;
+  /** Rows taken on but due after the horizon, so left Not linked (AC-LH1). */
+  after_horizon?: number;
+  /** The horizon the press ran under, `YYYY-MM-DD`. */
+  link_up_to?: string | null;
 }
 
 /* --------------------------------------------------------- the schedule matrix
@@ -592,12 +603,21 @@ export interface AutoPlaceRequest {
   product_ids?: string[];
   /** The named rows and nothing else ("Link selected"); wins over `product_ids`. */
   row_ids?: string[];
+  /**
+   * The LINK HORIZON (AC-LH1), `YYYY-MM-DD`. A row due after it is left Not linked and
+   * counted on `after_horizon`. Omitted means the reorder plan's own coverage date.
+   */
+  link_up_to?: string;
 }
 
 export interface AutoPlaceResult {
   placed_rows: number;
   allocations: number;
   products_touched: number;
+  /** Rows still owed but due after the horizon, left Not linked on purpose (AC-LH2). */
+  after_horizon?: number;
+  /** The horizon the pass ran under, stated back so a zero has a date beside it. */
+  link_up_to?: string | null;
 }
 
 /**

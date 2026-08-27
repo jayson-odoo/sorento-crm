@@ -360,3 +360,58 @@ describe('FulfilmentBoardMatrix: what was lent off a line', () => {
     expect(screen.queryByTestId('cell-lent-out')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * AC-RB1 (`PLAN-scm-oi-handshake.md` section 11): purchasing refused an instruction for a
+ * line in this cell, so the cell says so and the hover names who and why.
+ *
+ * A BADGE, not the sentence: the column is 150px wide and the reason is somebody's own
+ * words, so printed in full it was a truncated fragment - "Rejected by Joey: no supp...".
+ */
+describe('FulfilmentBoardMatrix: a refused line', () => {
+  const refused = () =>
+    contribution({
+      order_inquiry: {
+        inquiry_no: 'OI-000101',
+        state: 'raised',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey',
+        rejected_reason: 'No supplier until November',
+      },
+    });
+
+  it('reads Rejected, and the title names who refused it and why', () => {
+    renderMatrix([cellWith([refused()])]);
+
+    const badge = screen.getByTestId('cell-rejected');
+    expect(badge).toHaveTextContent('Rejected');
+    expect(badge).toHaveAttribute('title', 'Rejected by Joey: No supplier until November');
+  });
+
+  it('says nothing on a cell nobody refused', () => {
+    renderMatrix([cellWith([contribution()])]);
+
+    expect(screen.queryByTestId('cell-rejected')).toBeNull();
+  });
+
+  it('falls back rather than printing an empty sentence when neither is recorded', () => {
+    renderMatrix([
+      cellWith([
+        contribution({
+          order_inquiry: {
+            inquiry_no: 'OI-000101',
+            state: 'raised',
+            ack_state: 'rejected',
+            rejected_by_name: null,
+            rejected_reason: null,
+          },
+        }),
+      ]),
+    ]);
+
+    expect(screen.getByTestId('cell-rejected')).toHaveAttribute(
+      'title',
+      'Rejected by purchasing: no reason given',
+    );
+  });
+});

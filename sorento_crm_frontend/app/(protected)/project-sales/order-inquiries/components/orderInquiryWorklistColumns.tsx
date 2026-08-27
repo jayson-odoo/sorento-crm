@@ -48,6 +48,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 export function useOrderInquiryWorklistColumns({
   selectable = false,
   canAcknowledge = false,
+  linkUpTo,
 }: {
   /**
    * Draw the row checkboxes (AC-H2). Only where a bulk bar can act on them: the calendar
@@ -60,6 +61,11 @@ export function useOrderInquiryWorklistColumns({
    * CS sees the column and the filter; the actions are purchasing's.
    */
   canAcknowledge?: boolean;
+  /**
+   * How far out this page links (AC-LH3), `YYYY-MM-DD`. Handed to the Link dialog so it
+   * opens showing the same date the toolbar does, and flags a row due past it.
+   */
+  linkUpTo?: string | null;
 } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
     () => [
@@ -522,12 +528,14 @@ export function useOrderInquiryWorklistColumns({
               linkCount={(row.original.links ?? []).length}
               poLabel={row.original.po_number}
               hasLinkCandidate={row.original.has_link_candidate}
+              deliveryDate={row.original.delivery_date}
+              linkUpTo={linkUpTo}
             />
             {canAcknowledge ? <OrderInquiryRejectAction row={row.original} /> : null}
           </div>
         ),
       },
     ],
-    [selectable, canAcknowledge],
+    [selectable, canAcknowledge, linkUpTo],
   );
 }

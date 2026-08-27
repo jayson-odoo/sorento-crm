@@ -57,6 +57,11 @@ import {
   useUploadedBook,
 } from '../../_shared/hooks/useOrderInquiry';
 import { ACK_LABELS, ACK_STATES, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
+import {
+  initialLinkHorizon,
+  readStoredLinkHorizon,
+  storeLinkHorizon,
+} from '../../_shared/lib/linkHorizon';
 import { OrderInquiryUploadMenu } from './OrderInquiryUploadMenu';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 import type { OrderInquiryKind } from '../../_shared/lib/orderInquiryKinds';
@@ -215,6 +220,15 @@ export function OrderInquiriesClient() {
   // page's "N awaiting acknowledgement" chip links straight into this list narrowed to
   // them, and a chip that landed on an unfiltered list would leave the buyer to find them.
   const [ackFilter, setAckFilter] = React.useState(() => searchParams.get('ack') ?? '');
+  // How far out the three presses link (AC-LH1/AC-LH5). Sourced from `?link_up_to=` on
+  // mount, then from this browser's own memory, and seeded from the reorder plan's
+  // coverage date once the summary answers - the URL first, because a shared link is the
+  // buyer telling somebody else which horizon to look at. `seededHorizon` is what stops
+  // that seeding from overwriting a date the buyer has since cleared on purpose.
+  const [linkUpTo, setLinkUpTo] = React.useState(() =>
+    initialLinkHorizon(searchParams.get('link_up_to'), readStoredLinkHorizon(), null),
+  );
+  const seededHorizon = React.useRef(false);
   // Which rows are ticked for the bulk Acknowledge (AC-H2). react-table's own selection
   // state through `buildSelectColumn`, never a hand-rolled Set: the canonical toolbar
   // reads exactly this for its bulk strip.
@@ -280,6 +294,8 @@ export function OrderInquiriesClient() {
     else next.delete('query');
     if (ackFilter) next.set('ack', ackFilter);
     else next.delete('ack');
+    if (linkUpTo) next.set('link_up_to', linkUpTo);
+    else next.delete('link_up_to');
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
@@ -289,6 +305,7 @@ export function OrderInquiriesClient() {
     matrixGranularity,
     debounced,
     ackFilter,
+    linkUpTo,
     pathname,
     router,
     searchParams,
@@ -393,6 +410,22 @@ export function OrderInquiriesClient() {
   // computed with the card dropped (server-side), which is what keeps the other two
   // cards readable while one is held down.
   const summary = useOrderInquiryWorklistSummary(listFilters);
+  const planHorizon = summary.data?.link_up_to_default ?? null;
+
+  // The plan's own coverage date, taken ONCE and only when neither the URL nor this
+  // browser already carried one (AC-LH5). Once, because after the first answer the date on
+  // screen is the buyer's - re-seeding on every refetch would put it back the moment they
+  // cleared it, and a control that undoes itself is one nobody uses twice.
+  React.useEffect(() => {
+    if (seededHorizon.current || !planHorizon) return;
+    seededHorizon.current = true;
+    setLinkUpTo((current) => current || planHorizon);
+  }, [planHorizon]);
+
+  // Remembered per browser, so the buyer states their horizon once rather than every visit.
+  React.useEffect(() => {
+    storeLinkHorizon(linkUpTo);
+  }, [linkUpTo]);
 
   // The Schedule view's own request: the same filters, unpaged, so the matrix groups
   // exactly what the list would otherwise page through.
@@ -483,6 +516,7 @@ export function OrderInquiriesClient() {
   const columns = useOrderInquiryWorklistColumns({
     selectable: canAcknowledge,
     canAcknowledge,
+    linkUpTo,
   });
 
   const table = useReactTable({
@@ -653,7 +687,12 @@ export function OrderInquiriesClient() {
                       // open instruction in the company. Empty means the job named none,
                       // and then it IS every acknowledged row - the same rule the endpoint
                       // states for an omitted list.
-                      uploadedProducts.length ? { product_ids: uploadedProducts } : {},
+                      {
+                        ...(uploadedProducts.length
+                          ? { product_ids: uploadedProducts }
+                          : {}),
+                        ...(linkUpTo ? { link_up_to: linkUpTo } : {}),
+                      },
                       { onSuccess: () => setUploadJobId(null) },
                     )
                   }
@@ -982,7 +1021,10 @@ export function OrderInquiriesClient() {
                               : undefined,
                           onClick: () =>
                             autoPlaceRows.mutate(
-                              { row_ids: selectedLinkable.map((row) => row.id) },
+                              {
+                                row_ids: selectedLinkable.map((row) => row.id),
+                                ...(linkUpTo ? { link_up_to: linkUpTo } : {}),
+                              },
                               { onSuccess: () => setRowSelection({}) },
                             ),
                         },
@@ -1032,7 +1074,28 @@ export function OrderInquiriesClient() {
                   },
                 ]}
                 primaryAction={
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* How far out the three presses link (AC-LH1/AC-LH5). One control, sat
+                        beside the presses it governs, carried in the URL so a link to this
+                        worklist carries the horizon it was read at, and remembered per
+                        browser so the buyer states it once. */}
+                    {canAcknowledge ? (
+                      <div className="flex items-center gap-2">
+                        <Label
+                          htmlFor="link-up-to"
+                          className="text-sm text-muted-foreground"
+                        >
+                          Link up to
+                        </Label>
+                        <Input
+                          id="link-up-to"
+                          type="date"
+                          className="w-40"
+                          value={linkUpTo}
+                          onChange={(event) => setLinkUpTo(event.target.value)}
+                        />
+                      </div>
+                    ) : null}
                     {/* The books purchasing works from, uploaded from THEIR page (AC-H12):
                         the same two dialogs and the same worker jobs as the reorder and
                         purchase-order pages, so nothing is a second importer. */}
@@ -1052,7 +1115,10 @@ export function OrderInquiriesClient() {
                         disabled={selectedAcknowledgeable.length === 0 || acknowledge.isPending}
                         onClick={() =>
                           acknowledge.mutate(
-                            selectedAcknowledgeable.map((row) => row.id),
+                            {
+                              rowIds: selectedAcknowledgeable.map((row) => row.id),
+                              linkUpTo: linkUpTo || undefined,
+                            },
                             { onSuccess: () => setRowSelection({}) },
                           )
                         }

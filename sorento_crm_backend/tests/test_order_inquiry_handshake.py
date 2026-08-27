@@ -1059,3 +1059,172 @@ def test_the_sales_order_detail_carries_the_handshake(api):
     row = next(item for item in body["rows"] if item["id"] == str(fixture["row"].id))
     assert row["ack_state"] == ACK_AWAITING
     assert "rejected_reason" in row and "changed_at" in row
+
+
+# ---------------------------------------------------------------------------
+# AC-LH1 / AC-LH2 / AC-LH4: the link horizon
+#
+# `PLAN-scm-oi-handshake.md` section 11. Every path that ties a document to a row takes a
+# date to link up to; a row due after it is left Not linked and counted, so a 2030 order
+# stops eating a purchase order a nearer one needed.
+# ---------------------------------------------------------------------------
+
+HORIZON = date(2026, 12, 31)
+BEFORE_BOTH = date(2026, 9, 1)
+NEAR = date(2026, 10, 1)
+FAR = date(2030, 1, 1)
+
+AUTO_PLACE = f"{LIST}/auto-place"
+SUMMARY = f"{LIST}/summary"
+
+
+def _due(world, row, when):
+    """The row's delivery date, stated rather than inherited: the horizon is read off it
+    and the fixture's own required date says nothing about 2030."""
+    row.delivery_date = when
+    world.db.flush()
+    world.db.commit()
+    return row
+
+
+def _taken_off(world, line) -> Decimal:
+    """What every link together claims off one purchase-order line."""
+    by_po, _by_spo = ProjectOrderInquiryService(world.db)._linked_by_target()
+    return by_po.get(str(line.id), Decimal("0"))
+
+
+def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
+    """AC-LH1. Two acknowledged rows of one product, one open purchase-order line of 100,
+    and a horizon between them: the near row links, the far one stays Not linked and the
+    line keeps the rest of its quantity for whoever needs it sooner."""
+    _client, world = api
+    _po, line = _open_po_line(world, qty=100)
+    near = _due(world, _raise_one_row(api, qty="10")["row"], NEAR)
+    far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL,
+            json={
+                "row_ids": [str(near.id), str(far.id)],
+                "link_up_to": HORIZON.isoformat(),
+            },
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    body = response.json()
+    assert body["acknowledged"] == 2
+    assert body["linked_rows"] == 1
+    assert body["after_horizon"] == 1
+    assert body["link_up_to"] == HORIZON.isoformat()
+    assert sum(Decimal(str(link.qty)) for link in _links_of(world, near)) == Decimal("10")
+    assert _links_of(world, far) == [], "the 2030 row took a purchase order it is not due on"
+    assert _taken_off(world, line) == Decimal("10"), "the line kept its remainder"
+
+
+def test_link_selected_says_how_many_it_left_after_the_horizon(api):
+    """AC-LH2. The same two rows, acknowledged under a horizon that reaches neither, then
+    Link selected under one that reaches the near one: the banner reads "1 linked, 1 after
+    <date>", which is the pair of numbers this response carries."""
+    _client, world = api
+    _open_po_line(world, qty=100)
+    near = _due(world, _raise_one_row(api, qty="10")["row"], NEAR)
+    far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
+
+    with _as_purchasing(world) as buyer:
+        taken_on = buyer.post(
+            ACK_URL,
+            json={
+                "row_ids": [str(near.id), str(far.id)],
+                "link_up_to": BEFORE_BOTH.isoformat(),
+            },
+        )
+        assert taken_on.status_code == 200, taken_on.text
+        assert taken_on.json()["linked_rows"] == 0
+        world.db.commit()
+
+        response = buyer.post(
+            AUTO_PLACE,
+            json={
+                "row_ids": [str(near.id), str(far.id)],
+                "link_up_to": HORIZON.isoformat(),
+            },
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    body = response.json()
+    assert body["placed_rows"] == 1
+    assert body["after_horizon"] == 1
+    assert body["link_up_to"] == HORIZON.isoformat()
+    assert _links_of(world, far) == []
+
+
+def test_a_row_with_no_delivery_date_is_inside_the_horizon(api):
+    """AC-LH4. A blank date is not a far one: the row is still owed, nobody has said when,
+    and refusing it a document would leave it unbought for a date nobody stated."""
+    _client, world = api
+    _open_po_line(world, qty=100)
+    undated = _due(world, _raise_one_row(api, qty="10")["row"], None)
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL,
+            json={"row_ids": [str(undated.id)], "link_up_to": BEFORE_BOTH.isoformat()},
+        )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    assert response.json()["after_horizon"] == 0
+    assert sum(
+        Decimal(str(link.qty)) for link in _links_of(world, undated)
+    ) == Decimal("10")
+
+
+def test_the_summary_offers_the_plans_own_horizon_as_the_default(api):
+    """AC-LH5's own half of the contract: the page does not invent a default date, it reads
+    the reorder plan's coverage date off the active fulfilment policy. One setting, so the
+    plan and the buyer cannot be working to two different horizons."""
+    from app.models.scm import PriorityPolicy
+
+    client, world = api
+    policy = (
+        world.db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
+    )
+    assert policy is not None, "the migrated database always has one active policy"
+    policy.reorder_coverage_until = HORIZON
+    world.db.flush()
+    world.db.commit()
+
+    body = client.get(SUMMARY).json()
+
+    assert body["link_up_to_default"] == HORIZON.isoformat(), (
+        "`response_model` dropped link_up_to_default"
+    )
+
+
+def test_a_caller_that_names_no_horizon_takes_the_plans_own(api):
+    """The default is not "no horizon": a press that says nothing is a press under the
+    plan's own coverage date, which is what a purchase-order confirm uses too."""
+    from app.models.scm import PriorityPolicy
+
+    _client, world = api
+    policy = (
+        world.db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
+    )
+    policy.reorder_coverage_until = HORIZON
+    world.db.flush()
+    _open_po_line(world, qty=100)
+    far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(ACK_URL, json={"row_ids": [str(far.id)]})
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    body = response.json()
+    assert body["linked_rows"] == 0
+    assert body["after_horizon"] == 1
+    assert body["link_up_to"] == HORIZON.isoformat()
+    assert _links_of(world, far) == []

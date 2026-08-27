@@ -135,3 +135,141 @@ def test_rows_needed_at_reads_the_location_the_view_reads(scm_app):
     assert str(row["inquiry_row"].id) not in service.rows_needed_at([(pid, elsewhere)])
     assert service.rows_needed_at([(pid, None)]) == [], "a NULL cell claims a located row"
     assert service.rows_needed_at([]) == []
+
+
+# ---------------------------------------------------------------------------
+# The link horizon on a purchase-order confirm (`PLAN-scm-oi-handshake.md` section 11)
+# ---------------------------------------------------------------------------
+
+
+def _plan_horizon(db, when):
+    """The reorder plan's own coverage date, on the active fulfilment policy. ONE setting:
+    a confirm links to the same horizon the plan bought to."""
+    from app.models.scm import PriorityPolicy
+
+    policy = db.query(PriorityPolicy).filter(PriorityPolicy.is_active.is_(True)).first()
+    assert policy is not None, "the migrated database always has one active policy"
+    policy.reorder_coverage_until = when
+    db.flush()
+    return policy
+
+
+def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
+    """A confirm has nobody to ask for a date, so it uses the plan's own - the horizon the
+    buy was sized against. A 2030 line eating the purchase order a 2026 line asked for is
+    the whole reason the date exists."""
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    _plan_horizon(db, date(2026, 12, 31))
+    here = _mk_warehouse(db, f"{MARKER}HZN")
+    pid = _mk_product(db, f"{MARKER}-HZNSKU")
+
+    near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
+    near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    db.flush()
+
+    poid = _u()
+    db.execute(text(
+        "INSERT INTO purchase_orders (id, po_number, status, issue_date, currency, "
+        "source_system) VALUES (:i, :n, 'draft_recommendation', :d, 'MYR', "
+        "'scm_recommendation')"),
+        {"i": poid, "n": f"{MARKER}-{uuid.uuid4().hex[:8]}", "d": date(2026, 7, 1)})
+    db.execute(text(
+        "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
+        "VALUES (:i, :po, :p, :w, 8, 0, 10, 'MYR', 'open')"),
+        {"i": _u(), "po": poid, "p": pid, "w": here})
+    db.flush()
+
+    PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
+
+    assert _linked_qty(db, near["inquiry_row"].id) == 5.0
+    assert _linked_qty(db, far["inquiry_row"].id) == 0.0, (
+        "the 2030 row took the buy under a horizon that does not reach it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# `_groups_in_deficit`: the boundary (captain, 27 Aug)
+# ---------------------------------------------------------------------------
+
+
+def _group_warehouse(db, code: str) -> str:
+    """A warehouse whose code carries an ownership-group suffix, so ladder v4's group rule
+    is in play (`group_of_warehouse_code` reads the suffix after the first hyphen)."""
+    return _mk_warehouse(db, code)
+
+
+def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
+    """The boundary, and it is the ordinary case rather than an edge one.
+
+    A purchase order raised off the plan buys exactly what the plan said was short, so the
+    group lands on `group_net + remaining == 0`. Read as "at or below zero is deficit" that
+    group is refused its own purchase order and the rows that sized it stay raised forever -
+    the buy is invisible to the cascade, to the PO-confirm pass and to the Link dialog.
+    Offered at zero: nothing is promised twice, because the demand this covers IS the
+    demand the group carries.
+    """
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _group_warehouse(db, f"{MARKER}EXACT-BB")
+    pid = _mk_product(db, f"{MARKER}-EXACTSKU")
+    row = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=8)
+
+    poid = _u()
+    db.execute(text(
+        "INSERT INTO purchase_orders (id, po_number, status, issue_date, currency, "
+        "source_system) VALUES (:i, :n, 'draft_recommendation', :d, 'MYR', "
+        "'scm_recommendation')"),
+        {"i": poid, "n": f"{MARKER}-{uuid.uuid4().hex[:8]}", "d": date(2026, 7, 1)})
+    db.execute(text(
+        "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
+        "VALUES (:i, :po, :p, :w, 8, 0, 10, 'MYR', 'open')"),
+        {"i": _u(), "po": poid, "p": pid, "w": here})
+    db.flush()
+
+    PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
+
+    assert _linked_qty(db, row["inquiry_row"].id) == 8.0, (
+        "a group bought to exactly the plan figure was refused its own purchase order"
+    )
+
+
+def test_a_group_short_of_its_backlog_is_offered_for_an_acknowledged_unlinked_row(scm_app):
+    """The second half of the ruling. The group is genuinely short - it owes more than its
+    open purchase orders can cover - but it holds an ACKNOWLEDGED row nobody has linked,
+    and that row is the demand somebody bought this purchase order for. Refusing it would
+    leave a buy sitting open beside the instruction it answers.
+    """
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    _, db, _, _ = scm_app
+    actor = seed_user(db, None)
+    here = _group_warehouse(db, f"{MARKER}SHORT-BB")
+    pid = _mk_product(db, f"{MARKER}-SHORTSKU")
+    # 13 owed at the group against 8 on order: net + remaining is -5, a real deficit.
+    row = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=8)
+    _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+
+    poid = _u()
+    db.execute(text(
+        "INSERT INTO purchase_orders (id, po_number, status, issue_date, currency, "
+        "source_system) VALUES (:i, :n, 'active', :d, 'MYR', 'autocount')"),
+        {"i": poid, "n": f"{MARKER}-{uuid.uuid4().hex[:8]}", "d": date(2026, 7, 1)})
+    db.execute(text(
+        "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+        "warehouse_id, qty_ordered, qty_received, unit_cost, currency, line_status) "
+        "VALUES (:i, :po, :p, :w, 8, 0, 10, 'MYR', 'open')"),
+        {"i": _u(), "po": poid, "p": pid, "w": here})
+    db.flush()
+
+    ProjectOrderInquiryService(db).auto_place_for_products(
+        [pid], actor_user_id=actor, trigger="worklist",
+    )
+
+    assert _linked_qty(db, row["inquiry_row"].id) > 0, (
+        "the group's own acknowledged row was refused the purchase order bought for it"
+    )

@@ -363,6 +363,11 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: How many rows sit at each acknowledgement state (AC-H4), computed with the `ack`
     #: filter dropped for the same reason `kinds` drops its own.
     ack: OrderInquiryAckCounts = OrderInquiryAckCounts()
+    #: What the page's "Link up to" date starts at (AC-LH5): the reorder plan's own coverage
+    #: date, off the active fulfilment policy. Read from here rather than invented on the
+    #: page, so the plan and the buyer cannot be working to two different horizons. `None`
+    #: when no coverage limit is set, which means no horizon is in force.
+    link_up_to_default: Optional[date] = None
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -373,17 +378,30 @@ class AcknowledgeRowsRequest(BaseModel):
     """
 
     row_ids: List[str] = Field(..., min_length=1)
+    #: The LINK HORIZON (`PLAN-scm-oi-handshake.md` section 11): rows due AFTER this date
+    #: are still TAKEN ON, but they are left Not linked, so a 2030 order stops eating a
+    #: purchase order a nearer one needed. Omitted means the reorder plan's own coverage
+    #: date, never "no horizon".
+    link_up_to: Optional[date] = None
 
 
 class AcknowledgeResult(BaseModel):
-    """What one press did, in the two numbers the toast reports: how many rows were taken
-    on, and how much of them found a document at that moment."""
+    """What one press did, in the numbers the banner reports: how many rows were taken on,
+    how much of them found a document at that moment, and how many were left for a later
+    horizon."""
 
     acknowledged: int = 0
     #: Rows the cascade linked, and how many placements it made across them. `0` is an
     #: ordinary answer: there may be nothing open to link to yet.
     linked_rows: int = 0
     links: int = 0
+    #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH1). The
+    #: banner's second half: "1 linked, 1 after 31 Dec 2026".
+    after_horizon: int = 0
+    #: The horizon the press actually ran under - the caller's own date, or the plan's when
+    #: they named none. Stated back so a zero is never a figure measured against a date
+    #: nobody can see.
+    link_up_to: Optional[date] = None
 
 
 class RejectRowRequest(BaseModel):
@@ -408,6 +426,8 @@ class LinkNowRequest(BaseModel):
     changed row that still has something unlinked."""
 
     product_ids: Optional[List[str]] = None
+    #: The LINK HORIZON (section 11). Omitted means the reorder plan's own coverage date.
+    link_up_to: Optional[date] = None
 
 
 class MarkInquiryRowsRequest(BaseModel):
@@ -525,6 +545,9 @@ class AutoPlaceRequest(BaseModel):
 
     product_ids: Optional[List[str]] = None
     row_ids: Optional[List[str]] = None
+    #: The LINK HORIZON (section 11) the page's "Link selected" carries. Omitted means the
+    #: reorder plan's own coverage date.
+    link_up_to: Optional[date] = None
 
 
 class UnlinkRequest(BaseModel):
@@ -538,6 +561,11 @@ class AutoPlaceResult(BaseModel):
     placed_rows: int = 0
     allocations: int = 0
     products_touched: int = 0
+    #: Rows still owed but due after `link_up_to`, left Not linked on purpose (AC-LH2).
+    after_horizon: int = 0
+    #: The horizon the pass ran under - the caller's own date, or the plan's coverage date
+    #: when they named none.
+    link_up_to: Optional[date] = None
 
 
 class UnplaceAllRequest(BaseModel):

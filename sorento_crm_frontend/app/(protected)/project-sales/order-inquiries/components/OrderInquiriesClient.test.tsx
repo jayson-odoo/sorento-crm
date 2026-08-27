@@ -184,6 +184,9 @@ function openActionsMenu() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The "Link up to" date is remembered per browser (AC-LH5), and jsdom keeps ONE storage
+  // for the whole file - so a test that set it would seed every test after it.
+  window.localStorage.clear();
   granted = new Set(['projects.order_inquiry.action']);
   uploadSessions = [];
   getOrderInquiryUploadJob.mockResolvedValue({
@@ -862,8 +865,10 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     const button = await screen.findByRole('button', { name: 'Acknowledge (2)' });
     fireEvent.click(button);
 
+    // The horizon travels with the press (AC-LH1) and is `undefined` here, because this
+    // summary states no plan coverage date and nothing is in the URL or in storage.
     await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3']),
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2', 'row-3'], undefined),
     );
   });
 
@@ -1037,5 +1042,134 @@ describe('The handshake (`PLAN-scm-oi-handshake.md`): bulk bar and permission ga
     expect(screen.queryByRole('button', { name: 'Upload (stub)' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Link now' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open purchase orders' })).toBeNull();
+  });
+});
+
+/**
+ * The LINK HORIZON on the page (`PLAN-scm-oi-handshake.md` section 11, AC-LH1/AC-LH5).
+ *
+ * One date, beside the presses it governs: it starts at the reorder plan's own coverage
+ * date, a URL that names one wins over that, it is what the two presses send, and it is
+ * written back into the URL so the worklist a buyer shares carries the horizon they read
+ * it at.
+ */
+describe('The link horizon', () => {
+  const HORIZON = '2026-12-31';
+
+  function withPlanHorizon(value: string | null) {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      link_up_to_default: value,
+    });
+  }
+
+  beforeEach(() => {
+    granted = new Set([
+      'projects.order_inquiry.action',
+      'projects.order_inquiries.acknowledge',
+    ]);
+  });
+
+  it("AC-LH5: the date starts at the reorder plan's own coverage date", async () => {
+    withPlanHorizon(HORIZON);
+    renderClient();
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(HORIZON));
+  });
+
+  it('AC-LH5: a date in the URL wins over the plan default', async () => {
+    withPlanHorizon(HORIZON);
+    currentSearchParams = new URLSearchParams('link_up_to=2027-06-30');
+    renderClient();
+
+    const input = (await screen.findByLabelText('Link up to')) as HTMLInputElement;
+    expect(input.value).toBe('2027-06-30');
+    // And the plan's own date never overwrites it once the summary answers.
+    await screen.findByText('SO385126');
+    expect(input.value).toBe('2027-06-30');
+  });
+
+  it('AC-LH5: changing the date writes it back into the URL', async () => {
+    withPlanHorizon(null);
+    renderClient();
+
+    const input = await screen.findByLabelText('Link up to');
+    fireEvent.change(input, { target: { value: '2027-06-30' } });
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        expect.stringContaining('link_up_to=2027-06-30'),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('AC-LH1: Acknowledge sends the date the page is showing', async () => {
+    withPlanHorizon(HORIZON);
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 1,
+      link_up_to: HORIZON,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Acknowledge (1)' }));
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(['row-2'], HORIZON),
+    );
+  });
+
+  it('AC-LH2: Link selected sends the date, and the banner reports what it left behind', async () => {
+    const { linkOutcomeText } = await import('../../_shared/lib/linkHorizon');
+    withPlanHorizon(HORIZON);
+    // Row 3 is partly linked and ACKNOWLEDGED, which is what "Link selected" counts: a row
+    // nobody has taken on is not one the cascade may place.
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope(
+        MOCK_WORKLIST_ROWS.map((row) =>
+          row.id === 'row-3' ? { ...row, ack_state: 'acknowledged' as const } : row,
+        ),
+      ),
+    );
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 1,
+      allocations: 1,
+      products_touched: 1,
+      after_horizon: 1,
+      link_up_to: HORIZON,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Link up to') as HTMLInputElement).value).toBe(HORIZON),
+    );
+
+    fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Link selected (1)' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({
+        row_ids: ['row-3'],
+        link_up_to: HORIZON,
+      }),
+    );
+    expect(
+      linkOutcomeText({
+        placed_rows: 1,
+        allocations: 1,
+        products_touched: 1,
+        after_horizon: 1,
+        link_up_to: HORIZON,
+      }),
+    ).toBe('1 linked, 1 after 31/12/2026');
   });
 });
