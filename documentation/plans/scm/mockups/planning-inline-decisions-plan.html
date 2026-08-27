@@ -1,0 +1,170 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Planning inline decisions plan</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}
+.warn{background:#fffbeb;border-color:#fcd34d}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}
+.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}
+.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}
+.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}
+.badge.go{background:#f5f5f4;color:var(--fg);border-color:#d6d3d1}
+.mock{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;margin:8px 0;font-size:12px;overflow-x:auto;min-width:0}
+.mock table{font-size:12px}.mock th{font-weight:500;color:var(--mut);white-space:nowrap;background:#fafaf9}
+.mock td{white-space:nowrap}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.three{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.btn{display:inline-block;font-size:12px;padding:5px 11px;border:1px solid #d6d3d1;border-radius:7px;background:#fff;margin-right:6px;white-space:nowrap}
+.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}
+.btn.dim{opacity:.5}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 0}
+.menu{border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;display:inline-block;font-size:12px;vertical-align:top;margin-left:8px}
+.menu div{padding:4px 10px;border-radius:5px}.menu div.dim{color:var(--mut)}
+.neg{color:var(--rose);font-weight:600}.pos{color:var(--em);font-weight:600}
+.strike{text-decoration:line-through;color:var(--mut)}
+.exp{background:#f5f5f4;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.3fr) minmax(0,1.1fr);gap:16px;font-size:12px}
+.exp h4{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.exp .row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed #e7e5e4}
+.inp{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 6px;width:44px;text-align:right;background:#fff;font-variant-numeric:tabular-nums}
+.ta{border:1px solid #d6d3d1;border-radius:6px;background:#fff;padding:6px;color:var(--mut);min-height:44px}
+.chk{display:flex;gap:6px;align-items:flex-start;margin:8px 0}
+.chk span.box{display:inline-block;width:12px;height:12px;border:1px solid #a8a29e;border-radius:3px;margin-top:3px}
+.kpi{display:inline-block;font-size:26px;font-weight:600;margin-right:10px}
+.note{font-size:12px;color:var(--mut)}
+.arrow{color:var(--mut);padding:0 6px}
+ol,ul{margin:6px 0 6px 20px}li{margin:3px 0}
+code{font-size:12px;background:#f5f5f4;padding:1px 4px;border-radius:4px}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid}
+.pill.sug{border-color:#d6d3d1;color:var(--mut);background:#fafaf9}
+.pill.app{border-color:#a7f3d0;color:var(--em);background:#ecfdf5}
+.pill.amd{border-color:#bfdbfe;color:var(--pri);background:#eff6ff}
+.pill.con{border-color:#6ee7b7;color:#047857;background:#fff}
+.pill.rej{border-color:#fecdd3;color:var(--rose);background:#fff1f2}
+.tri{color:var(--amb)}
+.tag{font-size:10px;border:1px solid #bfdbfe;color:var(--pri);background:#eff6ff;border-radius:4px;padding:0 4px;margin-left:4px}
+</style></head><body>
+<h1>Fulfilment planning: decide in the row, one Confirm, transfers on the page</h1>
+<div class="sub">Plan <code>documentation/plans/scm/PLAN-scm-planning-inline-decisions.md</code> · UAC alongside · branch <code>feat/next-lane</code> off main #347 · 27 Aug 2026 · Status: PLANNED, awaiting go</div>
+
+<div class="three">
+<div class="card"><b>Goal</b>The board never contradicts itself on a number, every decision is made inside the contributing-lines row, one Confirm sends the whole board, and the stock transfers it proposes are approved on the same page.</div>
+<div class="card warn"><b>The number that started it</b>SRTWB7518 at BRW-AM: drawer said Available <span class="neg">-15</span>, suggestion said "9 from BRW-AM". Same data, two definitions. The engine excludes the asking line's own 24; the drawer did not.</div>
+<div class="card ruled"><b>Captain's rule (R1)</b>Available = on hand - other open SO lines at that location + SPO qty. Negative means no own-location offer. The engine already does this; only the drawer changes. A test pins the two together.</div>
+</div>
+
+<h2>1. Sales orders list <span class="badge">FE only</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p>
+<div class="mock"><div class="toolbar"><span>Search · Filters · Columns</span><span><span class="btn">Actions ▾</span><span class="btn p">+ Add sales order</span></span></div>
+<div class="note">Actions ▾ = Plan selected (N) · Reset planning (N) · Refresh · Upload sales orders</div>
+<table style="margin-top:8px"><tr><th>Sales order</th><th>Customer</th><th>Type</th><th>…</th><th>Source</th></tr>
+<tr><td>SO404352<br><span class="note">20/05/2026</span></td><td>E-REGION BUILDER S…<br><span class="note">Retail</span></td><td><span class="badge">Retail</span></td><td>…</td><td>Sales order upload</td></tr></table></div></div>
+<div><p class="lbl">Proposed</p>
+<div class="mock"><div class="toolbar"><span>Search · Filters · Columns</span><span><span class="btn">⚙ Actions ▾</span><span class="btn p">▶ Start ▾</span></span></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><div class="menu"><div>⬆ Upload sales orders</div><div class="dim">Plan selected (0)</div></div><div class="menu"><div>+ Add sales order</div><div>Reset planning (0)</div><div>Refresh</div></div></div>
+<table style="margin-top:8px"><tr><th>Sales order</th><th>Document date</th><th>Customer</th><th>Type</th><th>…</th><th>Source</th></tr>
+<tr><td>SO404352</td><td>20/05/2026</td><td>E-REGION BUILDER SDN BHD (PROJECT-CASH)</td><td><span class="badge">Retail</span></td><td>…</td><td>Upload</td></tr></table>
+<div class="note" style="margin-top:6px">Document date = <code>order_date</code>, already in the payload and sortable. Lands next to Sales order even for saved layouts (mergeColumnOrder inserts beside its neighbour).</div></div></div>
+</div>
+
+<h2>2. Drawer numbers <span class="badge">BE + FE</span></h2>
+<div class="two">
+<div><p class="lbl">Today: BRW-AM row, SO qty counts this line's own 24</p>
+<div class="mock"><table><tr><th>Location</th><th>Where</th><th class="n">On hand</th><th class="n">SO qty</th><th class="n">SPO</th><th class="n">Available</th><th class="n">Taken</th></tr>
+<tr><td>BRW-AM</td><td>Own</td><td class="n">10</td><td class="n">25</td><td class="n">0</td><td class="n neg">-15</td><td class="n">9</td></tr>
+<tr><td colspan="2">AM group subtotal</td><td class="n">10</td><td class="n">25</td><td class="n">0</td><td class="n neg">-15</td><td class="n">9</td></tr>
+<tr><td>BRW</td><td>Site pool</td><td class="n">16</td><td class="n">0</td><td class="n">0</td><td class="n">16</td><td class="n">15</td></tr></table>
+<div class="note" style="margin-top:6px">Suggestion above it: "Use own location 9 from BRW-AM". Reads as a contradiction.</div></div></div>
+<div><p class="lbl">Proposed: the asking line excluded, subtotal == engine offer</p>
+<div class="mock"><table><tr><th>Location</th><th>Where</th><th class="n">On hand</th><th class="n">SO qty</th><th class="n">SPO</th><th class="n">Available</th><th class="n">Taken</th></tr>
+<tr><td>BRW-AM</td><td>Own</td><td class="n">10</td><td class="n">1</td><td class="n">0</td><td class="n pos">9</td><td class="n">9</td></tr>
+<tr><td colspan="2">AM group subtotal</td><td class="n">10</td><td class="n">1</td><td class="n">0</td><td class="n pos">9</td><td class="n">9</td></tr>
+<tr><td>BRW</td><td>Site pool</td><td class="n">16</td><td class="n">0</td><td class="n">0</td><td class="n">16</td><td class="n">15</td></tr></table>
+<div class="note" style="margin-top:6px">SO qty is the other open lines at that location, nothing else. If other lines alone held 12: Available <span class="neg">-2</span>, and the suggestion carries no own-location component (engine already does this). pytest pins subtotal Available == <code>group_offer</code>.</div></div></div>
+</div>
+<p class="lbl" style="margin-top:12px">Expanded location documents (chevron on BRW-AM)</p>
+<div class="two">
+<div class="mock"><div class="note">Today</div><table><tr><th>#</th><th>Doc</th><th>Number</th><th>Customer</th><th>Delivery</th><th class="n">Qty</th><th>State</th></tr>
+<tr><td>1</td><td>S/O</td><td>SO383850</td><td>CASH (AMIRUL)</td><td>01/04/2026</td><td class="n">1</td><td>Not queued</td></tr>
+<tr><td></td><td>S/O</td><td>SO404352</td><td>E-REGION BUILDER</td><td>29/06/2026</td><td class="n">24</td><td>Covered</td></tr></table></div>
+<div class="mock"><div class="note">Proposed: no rank, no state, sorted by delivery date</div><table><tr><th>Doc</th><th>Number</th><th>Customer</th><th>Agent</th><th>Doc date</th><th>Delivery</th><th class="n">Qty</th></tr>
+<tr><td>S/O</td><td>SO383850</td><td>CASH (AMIRUL)</td><td>AMIRUL</td><td>22/12/2025</td><td>01/04/2026</td><td class="n">1</td></tr>
+<tr><td>S/O</td><td>SO404352 <span class="tag">this line</span></td><td>E-REGION BUILDER</td><td>AMIRUL</td><td>20/05/2026</td><td>29/06/2026</td><td class="n">24</td></tr>
+<tr><td colspan="6">Total</td><td class="n">25</td></tr></table></div>
+</div>
+
+<h2>3. Contributing lines: decide in the row <span class="badge">FE, reuses the draft + confirm payload</span></h2>
+<div class="note">Rank, Ordered, Delivered leave the grid. Decision column becomes a pill. Click the row to expand; the editor replaces the Amend modal. Fits 1280 with no sideways scroll.</div>
+<div class="mock" style="padding:0;overflow:hidden">
+<table style="border:0"><tr><th></th><th>Sales order</th><th>Customer</th><th>Agent</th><th>Project</th><th class="n">Outstanding</th><th>Delivery date</th><th>Location</th><th>Sourced from</th><th>Order inquiry</th><th>Decision</th></tr>
+<tr><td>▾</td><td>SO404352<br><span class="note">Line 22</span></td><td>E-REGION BUILDER S…</td><td>AMIRUL</td><td>Not named</td><td class="n">24</td><td>29/06/2026</td><td>BRW-AM</td><td>Own 9 at BRW-AM · BRW 15 at BRW</td><td>-</td><td><span class="pill amd">Amended <span class="tri">▲</span></span></td></tr></table>
+<div class="exp">
+<div><h4>Line</h4><div class="row"><span>Ordered</span><b>24</b></div><div class="row"><span>Delivered</span><b>0</b></div><div class="row"><span>Outstanding</span><b>24</b></div><div class="row"><span>Incoming by 29/06/2026</span><b>0</b></div>
+<h4 style="margin-top:12px">Suggestion</h4><div class="note">Own 9 at BRW-AM<br>BRW 15 at BRW</div></div>
+<div><h4>Reserve</h4><div class="row"><span>BRW-AM <span class="note">own · 9 available</span></span><span class="inp">9</span></div><div class="row"><span>BRW <span class="note">site pool · 16 available</span></span><span class="inp">15</span></div><div class="row"><span>DC1 <span class="note">site pool · 0 available</span></span><span class="inp">0</span></div>
+<h4 style="margin-top:12px">Borrow</h4><div class="note">Nothing borrowed on this line. <u>Add a borrow</u></div>
+<h4 style="margin-top:12px">Buy</h4><div class="note">◯ Buy the whole line</div></div>
+<div><h4>Decision</h4><div class="note">Own 9 BRW-AM · BRW 15 BRW · Moves: 15 BRW → BRW-AM</div><div class="note neg" style="margin:4px 0">0 short</div>
+<h4 style="margin-top:10px">Why this differs from the proposal</h4><div class="ta">In your own words</div>
+<div class="chk"><span class="box"></span><span>This might be a system problem, flag it for investigation</span></div>
+<div style="margin-top:8px"><span class="btn">Approve suggestion</span><span class="btn p">Save amendment</span><span class="btn">Reject</span></div></div>
+</div></div>
+<div class="two" style="margin-top:8px">
+<div class="card"><b>Pills</b><span class="pill sug">Suggested</span> <span class="pill app">Approved</span> <span class="pill amd">Amended</span> <span class="pill con">Confirmed</span> <span class="pill rej">Rejected</span> <span class="pill amd">Amended <span class="tri">▲</span></span> = flagged<br><span class="note">No "rev N". A confirmed row opens read-only with an Amend button that unlocks the same panel.</span></div>
+<div class="card"><b>Balance</b><span class="strike">24 outstanding = 0 incoming + 24 reserve + 0 borrow + 0 buy</span><br><span class="note">Gone. Only "N short" / "N over" while the amendment does not add up; Save disabled until it does. <code>lineBalance</code> / <code>lineBlockers</code> / <code>decisionFromAmendDraft</code> reused as-is.</span></div>
+</div>
+
+<h2>4. Header, one Confirm, transfers above the matrix <span class="badge">FE + BE</span></h2>
+<div class="two">
+<div><p class="lbl">Today</p><div class="mock"><div class="toolbar"><span>0 approved · 2 undecided</span><span><span class="btn">✓ Approve all</span><span class="btn">↶ Undo all</span><span class="btn p dim">Confirm all approved</span></span></div>
+<div class="note">… cards … matrix … then at the bottom a Commit section with one "Confirm this order" card per order.</div></div></div>
+<div><p class="lbl">Proposed</p><div class="mock"><div class="toolbar"><span>37 to confirm · 0 rejected</span><span><span class="btn">⚙ ▾</span><span class="menu"><div>Undo all</div><div>Back to sales orders</div></span><span class="btn p" style="margin-left:8px">Confirm (37)</span></span></div>
+<div class="note">Confirm sends every non-rejected line: amended as amended, untouched as suggested. Approve all, Confirm all approved and the Commit section are gone.</div></div></div>
+</div>
+<p class="lbl" style="margin-top:12px">Stock transfers panel, above the product matrix, after a confirm (and on every reload while transfers are open)</p>
+<div class="mock"><div class="toolbar"><b>Stock transfers</b><span><span class="btn p">Approve all proposed (1)</span></span></div>
+<table><tr><th>Transfer</th><th>Product</th><th>From → To</th><th class="n">Qty</th><th>Kind</th><th>For</th><th>State</th><th>Proposed</th><th></th></tr>
+<tr><td>ST-000412</td><td>SRTWB7518</td><td>BRW → BRW-AM</td><td class="n">15</td><td>Pool</td><td>SO404352 · line 22</td><td><span class="badge a">Proposed</span></td><td>27/08/2026 19:40</td><td><span class="btn">Approve</span></td></tr></table>
+<div class="note" style="margin-top:6px">0 order inquiry rows raised → <u>Order Inquiries</u>. Lists open transfers for the board's orders via <code>GET /inventory/stock-transfers?so_numbers=…</code> (new filter), approves via the existing <code>/approve</code> and <code>/bulk-approve</code>. No <code>inventory.stock_transfers.edit</code> = list without buttons.</div></div>
+
+<h2>5. Correctness guard and data</h2>
+<div class="three">
+<div class="card"><b>Confirm-time guard (R14)</b>Server refuses a reserve above on hand minus what other lines already confirmed there: <span class="note">"BRW-AM: 10 on hand, 1 already reserved by SO383850, you asked 15"</span> (409, pinned on the row). Two lines told "9" in the same session: the second confirm is caught.</div>
+<div class="card"><b>Flag on the wire</b><code>ConfirmLine.suspected_system_issue</code> → column on the decision line beside <code>amend_reason</code>, echoed on the board contribution after reload, counted in <code>ConfirmResult.suspected_issues</code>. No investigation listing this round.</div>
+<div class="card"><b>Migrations</b><code>438_merge_430_437</code> first (main has two alembic heads today), then <code>439_decision_suspected_issue</code>. Dev DB is stamped at the price-tag lane's head: apply via <code>Operations.context</code>, never stamp.</div>
+</div>
+
+<h2>6. Rulings</h2>
+<table><tr><th style="width:36px">#</th><th>Ruling</th></tr>
+<tr><td>R1</td><td>Available = on hand - other open SO lines + SPO qty, asking line excluded, no date order, no rank; negative = no own location. Engine unchanged, drawer changes.</td></tr>
+<tr><td>R2</td><td>Customer sub-line dropped entirely.</td></tr>
+<tr><td>R3</td><td>Start ▾ = Upload sales orders, Plan selected (N). Actions ▾ = Add sales order, Reset planning (N), Refresh.</td></tr>
+<tr><td>R4</td><td>SPO qty stays in Available.</td></tr>
+<tr><td>R5</td><td>Location documents: no rank, no state, sorted by delivery date, asking line tagged, Total kept.</td></tr>
+<tr><td>R6</td><td>Decision pill = status only, no rev N.</td></tr>
+<tr><td>R7</td><td>All editing in the expanded row; Amend modal deleted.</td></tr>
+<tr><td>R8</td><td>Grid columns: Sales order, Customer, Agent, Project, Outstanding, Delivery date, Location, Sourced from, Order inquiry, Decision.</td></tr>
+<tr><td>R9</td><td>Equation gone; "N short / N over" hint only.</td></tr>
+<tr><td>R10</td><td>System-problem checkbox, stored, badge on pill, counted. No listing yet.</td></tr>
+<tr><td>R11</td><td>One Confirm (N): untouched = suggestion, amended = amendment, rejected = skipped.</td></tr>
+<tr><td>R12</td><td>Gear: Undo all, Back to sales orders.</td></tr>
+<tr><td>R13</td><td>Commit section removed; stock transfers panel above the matrix with Approve / Approve all.</td></tr>
+<tr><td>R14</td><td>Confirm-time over-reserve guard.</td></tr></table>
+
+<h2>7. Build order</h2>
+<ol>
+<li><b>Phase 1, FE on mocks</b>: sales orders toolbar + columns; contributing-lines columns, pill, expand editor; header, gear, transfers panel on a mocked list. Browser check via sidebar on :3000, 1280 + 375.</li>
+<li><b>Phase 2, BE test-first</b>: drawer <code>so_qty</code> exclusion + the pinning test; documents panel sort/shape; <code>so_numbers</code> filter; flag column + migrations; the guard. pytest + vitest land here.</li>
+<li><b>Phase 3</b>: /code-review, DoD gate, agent-browser evidence run on SO404352 (subtotal reads 9, Confirm proposes 15 BRW → BRW-AM, Approve it on the page), PR to main.</li>
+</ol>
+<div class="note">Estimate: FE 3 days, BE 1.5 days, review + evidence 0.5. One coder slot on this checkout (:3000 / :8000). Out of scope: engine formula, flagged-decision listing, mark-moved / cancel on the board, List view, reorder page.</div>
+<div class="card warn" style="margin-top:14px"><b>One thing to check before the evidence run</b>The planner role in the dev DB needs <code>inventory.stock_transfers.edit</code> or the Approve buttons will be hidden by design.</div>
+</body></html>
