@@ -60,7 +60,7 @@ def _built(db, lines: list[dict], *, monkeypatch, sheet: bytes | None = None):
     monkeypatch.setattr(
         model, "_retained_stock_list", lambda _db, _sid: sheet if sheet else _their_sheet()
     )
-    return model.build(db, supplier=SUPPLIER, supplier_id=str(uuid.uuid4()), lines=lines)
+    return model.build(db, supplier_id=str(uuid.uuid4()), lines=lines)
 
 
 def _row_for(sheet: model.SheetModel, item_code: str) -> model.Row:
@@ -161,7 +161,6 @@ def test_the_ask_lands_on_their_row_through_the_snapshot_binding(monkeypatch):
 
         sheet = model.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(product.product_code, 11, product_id=str(product.id))],
         )
@@ -231,7 +230,6 @@ def test_without_a_retained_file_the_columns_are_the_same_eleven(monkeypatch):
 
         sheet = model.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(w.product("A").product_code, 500)],
         )
@@ -256,7 +254,6 @@ def test_without_a_retained_file_the_row_states_what_we_know(monkeypatch):
 
         sheet = model.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(product.product_code, 500, product_id=str(product.id))],
         )
@@ -281,7 +278,6 @@ def test_without_a_retained_file_a_zero_holding_is_still_red(monkeypatch):
 
         sheet = model.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(w.product("A").product_code, 500)],
         )
@@ -298,7 +294,6 @@ def test_a_stored_file_that_will_not_open_falls_back_rather_than_failing(monkeyp
 
         sheet = model.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(w.product("A").product_code, 500)],
         )

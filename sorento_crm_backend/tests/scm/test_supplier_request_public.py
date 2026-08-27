@@ -347,3 +347,50 @@ def test_a_notice_that_never_had_a_link_is_not_reported_as_retired(scm_app):
 
     assert payload["public_url"] is None
     assert payload["link_retired"] is False
+
+
+# --------------------------------------------------------------------------- #
+# the sheet (S4, AC-D5 / AC-H2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_page_carries_the_same_sheet_the_documents_draw(scm_app):
+    # AC-D5. The link view is the third renderer of the ONE model (R12): the supplier's own
+    # columns, in their words, with the bilingual labels as a second line and our column K.
+    app, db, *_ = scm_app
+    _w, token = _sent(db)
+
+    sheet = TestClient(app).get(f"{URL}/{token}").json()["sheet"]
+
+    labels = [c["label"] for c in sheet["columns"]]
+    assert labels[:2] == ["序号", "型号"]
+    assert labels[-1] == "需装数量"
+    assert sheet["columns"][-1]["label_en"] == "Qty to load"
+    assert sheet["columns"][1]["label_en"] == "Model"
+    assert sheet["rows"], "the request's lines are the sheet's rows"
+    assert sheet["totals"]["cells"][0]["value"] == "合计："
+
+
+def test_a_sheet_cell_carries_its_merge_and_its_marks(scm_app):
+    # AC-D5. `rowspan`, the yellow field and the red figure are what make the page look like
+    # the sheet the supplier sent us rather than a listing of ours.
+    app, db, *_ = scm_app
+    _w, token = _sent(db)
+
+    row = TestClient(app).get(f"{URL}/{token}").json()["sheet"]["rows"][0]
+
+    cell = row["cells"][0]
+    assert set(cell) == {"value", "rowspan", "colspan", "covered", "fill", "red"}
+    assert row["family_span"] >= 1
+
+
+def test_the_page_still_carries_the_flat_lines(scm_app):
+    # AC-H2. A link issued before S4 is open in somebody's inbox; the page it lands on must
+    # keep rendering, so the flat `lines` array stays alongside the sheet.
+    app, db, *_ = scm_app
+    w, token = _sent(db)
+
+    body = TestClient(app).get(f"{URL}/{token}").json()
+
+    assert body["lines"][0]["item_code"] == w.product("A").product_code
+    assert body["lines"][0]["qty"] == 500

@@ -79,21 +79,13 @@ def filename(supplier: dict) -> str:
     return f"container-request-{code}-{stamp}.xlsx"
 
 
-def build(
-    db: Session,
-    *,
-    supplier: dict,
-    supplier_id: str,
-    lines: list[dict],
-) -> bytes:
+def build(db: Session, *, supplier_id: str, lines: list[dict]) -> bytes:
     """Model then render, for a caller that holds no model yet (the download route, tests).
 
     The send path builds the model once and hands the SAME object here and to the PDF
     (AC-D7), so this convenience must stay a two-line wrapper rather than a second path.
     """
-    return render(
-        sheet_model.build(db, supplier=supplier, supplier_id=supplier_id, lines=lines)
-    )
+    return render(sheet_model.build(db, supplier_id=supplier_id, lines=lines))
 
 
 def render(model: SheetModel) -> bytes:

@@ -42,7 +42,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta
 from html import escape
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -53,6 +53,9 @@ from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm.supplier_scope import is_uuid, supplier_label
+
+if TYPE_CHECKING:  # the model is imported lazily at every use site, as this module's peers are
+    from app.services.scm.supplier_document_model import SheetModel
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +124,8 @@ def _supplier(db: Session, supplier_id: str) -> dict:
 
 
 def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[dict],
-                   produce: list[dict], notice_type: str = "loading") -> str:
+                   produce: list[dict], notice_type: str = "loading",
+                   sheet: Optional["SheetModel"] = None) -> str:
     """The notice, in both languages, in the shape the supplier already reads (AC-F2).
 
     Bilingual side by side rather than two documents: the supplier's staff read the Chinese and
@@ -134,6 +138,11 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
     the meta table states nothing about containers/CBM and the production section (which is
     plan-shaped - it reads `unfinished_at_supplier`) is dropped; `plan` is None. Everything
     else - the styling, the bilingual pack table - is the same document.
+
+    `sheet` is S4/R12: the ONE `SheetModel` the xlsx is drawn from, so the PDF prints the
+    supplier's own ten columns with their merges, their yellow fields and their red figures
+    rather than four of our own naming. Optional because a notice minted before S4 has no
+    model behind it and its PDF must still render (AC-H2).
     """
     # A container request has no CBM yet (that stage is not reached until the supplier packs -
     # see the module docstring), so `request_and_notify` always sends `cbm: None`; a CBM
@@ -173,7 +182,7 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
             "container type and volume will follow once they are confirmed. / "
             "请为下一个货柜准备以下项目，柜型及体积将在确认后另行通知。</p>"
         )
-        sections = f"""
+        sections = _sheet_sections(sheet) if sheet is not None else f"""
   <h2>Requested items / 请求项目</h2>
   <table>
     <thead><tr>
@@ -218,9 +227,12 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
     <tbody>{rows(produce, 'Qty')}</tbody>
   </table>
 """
+    # Their sheet is eleven columns wide and 120 rows long; portrait would either clip it or
+    # shrink it past reading. The loading notice keeps its own page.
+    page = "A4 landscape" if sheet is not None else "A4"
     return f"""
 <html><head><meta charset="utf-8"><style>
-  @page {{ size: A4; margin: 14mm; }}
+  @page {{ size: {page}; margin: 10mm; }}
   body {{ font-family: 'Helvetica Neue', Arial, 'Noto Sans CJK SC', sans-serif; font-size: 10pt;
           color: #111; }}
   h1 {{ font-size: 15pt; margin: 0 0 2mm; }}
@@ -233,6 +245,15 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
   td.empty {{ color: #777; text-align: center; }}
   .meta td {{ border: none; padding: 0.6mm 0; }}
   .meta td.k {{ color: #555; width: 40mm; }}
+  table.sheet {{ font-family: "Songti SC", "宋体", Calibri, sans-serif; font-size: 8pt; }}
+  table.sheet th, table.sheet td {{ padding: 0.8mm 1mm; text-align: center;
+                                    vertical-align: middle; }}
+  table.sheet tr {{ page-break-inside: avoid; }}
+  table.sheet th.doc-title {{ font-size: 13pt; }}
+  table.sheet td.fill {{ background: #ffff00; }}
+  table.sheet td.red, table.sheet tr.totals td {{ color: #ff0000; }}
+  table.sheet tr.totals td {{ font-weight: 600; }}
+  table.sheet span.en {{ display: block; color: #555; font-size: 7pt; font-weight: 400; }}
 </style></head><body>
   <h1>{title}</h1>
   <p class="sub">{escape(str(supplier.get('supplier_name') or ''))}
@@ -241,6 +262,73 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
 {sections}
 </body></html>
 """.strip()
+
+
+def _sheet_sections(sheet: "SheetModel") -> str:
+    """Their own sheet as an HTML table - the same model the xlsx is written from (R12).
+
+    Their merged families become `rowspan`, their yellow fields and red figures become
+    classes, and their header keeps its Chinese with our English under it. The header sits in
+    a `thead` so it repeats on every page of a 120-row list, and every row is
+    `page-break-inside: avoid` so a family is never split across a page.
+    """
+    width = len(sheet.columns)
+    title = (
+        f'<tr><th class="doc-title" colspan="{width}">{escape(sheet.title)}</th></tr>'
+        if sheet.title
+        else ""
+    )
+    head = "".join(
+        "<th>"
+        + escape(column.label)
+        + (f'<span class="en">{escape(column.label_en)}</span>' if column.label_en else "")
+        + "</th>"
+        for column in sheet.columns
+    )
+    body = "".join(
+        "<tr>" + "".join(_sheet_cell(cell) for cell in row.cells) + "</tr>"
+        for row in sheet.rows
+    )
+    foot = (
+        '<tr class="totals">'
+        + "".join(_sheet_cell(cell) for cell in sheet.totals.cells)
+        + "</tr>"
+        if sheet.totals
+        else ""
+    )
+    return f"""
+  <table class="sheet">
+    <thead>{title}<tr>{head}</tr></thead>
+    <tbody>{body}</tbody>
+    <tfoot>{foot}</tfoot>
+  </table>
+"""
+
+
+def _sheet_cell(cell) -> str:
+    """One cell, or nothing at all when a merge above it already covers this position."""
+    if cell.covered:
+        return ""
+    attrs = ""
+    if cell.rowspan > 1:
+        attrs += f' rowspan="{cell.rowspan}"'
+    if cell.colspan > 1:
+        attrs += f' colspan="{cell.colspan}"'
+    classes = [name for name, on in (("fill", cell.fill), ("red", cell.red)) if on]
+    if classes:
+        attrs += f' class="{" ".join(classes)}"'
+    return f"<td{attrs}>{_sheet_value(cell.value)}</td>"
+
+
+def _sheet_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return escape(str(value))
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return str(int(number)) if number == int(number) else f"{number:g}"
+    return escape(str(value))
 
 
 def _qty(v) -> str:
@@ -515,10 +603,28 @@ def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
     ]
 
 
-def _render_request_pdf(supplier: dict, pack: list[dict]) -> bytes:
+def _request_sheet(db: Session, supplier_id: str, pack: list[dict]) -> "SheetModel":
+    """The document, built ONCE (R12 / AC-D7).
+
+    Both renderers take this object. Building it twice would let the emailed sheet and the
+    emailed PDF disagree about the same ask, which is the defect S4 exists to close.
+    """
+    from app.services.scm import supplier_document_model
+
+    return supplier_document_model.build(db, supplier_id=str(supplier_id), lines=pack)
+
+
+def _render_request_pdf(
+    supplier: dict, pack: list[dict], sheet: Optional["SheetModel"] = None
+) -> bytes:
     return render_document(
         _document_html(
-            supplier=supplier, plan=None, pack=pack, produce=[], notice_type="container_request"
+            supplier=supplier,
+            plan=None,
+            pack=pack,
+            produce=[],
+            notice_type="container_request",
+            sheet=sheet,
         )
     )
 
@@ -541,17 +647,16 @@ def request_document(
 
     supplier = _supplier(db, supplier_id)
     pack = _request_pack(db, lines)
+    sheet = _request_sheet(db, str(supplier_id), pack)
 
     if fmt == "xlsx":
         from app.services.scm import container_request_xlsx
 
         return (
-            container_request_xlsx.build(
-                db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
-            ),
+            container_request_xlsx.render(sheet),
             container_request_xlsx.filename(supplier),
         )
-    return _render_request_pdf(supplier, pack), _request_filename(supplier)
+    return _render_request_pdf(supplier, pack, sheet), _request_filename(supplier)
 
 
 def request_and_notify(
@@ -571,25 +676,26 @@ def request_and_notify(
     """
     supplier = _supplier(db, supplier_id)
     pack = _request_pack(db, lines)
+    sheet = _request_sheet(db, str(supplier_id), pack)
 
-    document = _render_request_pdf(supplier, pack)
+    document = _render_request_pdf(supplier, pack, sheet)
     filename = _request_filename(supplier)
     provider, key = _store(document, filename)
 
-    # F4: their own sheet back to them, with the quantity to load filled in. Best-effort by
-    # design - `container_request_xlsx.build` never raises, and if the store below did, the
-    # request would fail for the sake of the SECOND copy of an ask the PDF already states.
+    # F4: their own sheet back to them, with the quantity to load filled in - the same model
+    # the PDF above was drawn from (R12). Best-effort by design: if the render or the store
+    # below failed, the request would otherwise die for the sake of the SECOND copy of an ask
+    # the PDF already states.
     xlsx_filename: Optional[str] = None
     xlsx_provider: Optional[str] = None
     xlsx_key: Optional[str] = None
     try:
         from app.services.scm import container_request_xlsx
 
-        sheet = container_request_xlsx.build(
-            db, supplier=supplier, supplier_id=str(supplier_id), lines=pack
-        )
         xlsx_filename = container_request_xlsx.filename(supplier)
-        xlsx_provider, xlsx_key = _store(sheet, xlsx_filename)
+        xlsx_provider, xlsx_key = _store(
+            container_request_xlsx.render(sheet), xlsx_filename
+        )
     except Exception:  # noqa: BLE001 - the PDF and the notice still go
         xlsx_filename = xlsx_provider = xlsx_key = None
         logger.warning(
@@ -762,6 +868,22 @@ def public_request_page(db: Session, token: str) -> dict:
         "supplier_name": _supplier_name(db, str(notice.supplier_id)),
         "requested_at": notice.created_at.isoformat() if notice.created_at else None,
         "line_count": len(lines),
+        # S4 / AC-D5: the third renderer of the ONE model - their own columns, their merges,
+        # their marks. `lines` stays beside it (AC-H2): a link issued before S4 is open in
+        # somebody's inbox and its page must keep rendering.
+        "sheet": _request_sheet(
+            db,
+            str(notice.supplier_id),
+            [
+                {
+                    "product_id": str(ln.product_id) if ln.product_id else None,
+                    "item_code": ln.item_code,
+                    "product_name": ln.product_name,
+                    "qty": _f(ln.qty) or 0.0,
+                }
+                for ln in lines
+            ],
+        ).to_dict(),
         "lines": [
             {
                 "item_code": ln.item_code,

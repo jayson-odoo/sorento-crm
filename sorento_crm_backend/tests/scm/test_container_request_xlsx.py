@@ -62,7 +62,6 @@ def _sheet_model(
     monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: data)
     return model.build(
         db,
-        supplier=SUPPLIER,
         supplier_id=str(supplier_id or uuid.uuid4()),
         lines=lines,
     )
@@ -337,7 +336,6 @@ def test_build_goes_from_the_database_straight_to_bytes(monkeypatch):
 
         data = svc.build(
             db,
-            supplier=SUPPLIER,
             supplier_id=str(w.supplier.id),
             lines=[_line(w.product("A").product_code, 500)],
         )

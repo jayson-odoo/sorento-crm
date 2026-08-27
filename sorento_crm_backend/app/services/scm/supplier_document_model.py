@@ -192,9 +192,7 @@ class SheetModel:
 # --------------------------------------------------------------------------- build
 
 
-def build(
-    db: Session, *, supplier: dict, supplier_id: str, lines: list[dict]
-) -> SheetModel:
+def build(db: Session, *, supplier_id: str, lines: list[dict]) -> SheetModel:
     """The document for one container request. Never raises: a bad stored file falls back.
 
     ``lines`` are the reviewed lines as `supplier_notice_service._request_pack` holds them:
