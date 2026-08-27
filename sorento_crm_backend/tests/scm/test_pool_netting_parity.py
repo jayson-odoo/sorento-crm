@@ -136,13 +136,13 @@ def _seed_scenario(db):
     db.flush()
 
     def _demand(product, wh, qty, when):
-        # S13b: `scm.committed_v` only nets a project-class order when the Order Inquiry
-        # created or named it (see app.services.scm.demand.COMMITTED_V_SQL). Without
-        # demand_origin these rows silently stop counting as committed demand and the
-        # parity scenario nets nothing, which is not what this file is testing.
+        # RETAIL, because the sales-order BOOK is the retail channel and nothing else
+        # since P3 (`app.services.scm.demand.COMMITTED_V_SQL`): a project-class line is
+        # demand as the un-linked Order Inquiry ROW it becomes, so seeded as project these
+        # rows count for nothing and the parity scenario nets nothing - which is not what
+        # this file is testing. The quantities are untouched, so the golden numbers are.
         so = SalesOrder(id=_u(), so_number=f"{_MK}-{uuid.uuid4().hex[:8]}", status="open",
-                        customer_id=cust.id, demand_class="project",
-                        demand_origin="scm_order_inquiry")
+                        customer_id=cust.id, demand_class="retail")
         db.add(so)
         db.flush()
         db.add(SalesOrderLine(
@@ -192,6 +192,14 @@ def _plan(db, warehouse_ids: list[str]) -> list[dict]:
     # tests are ABOUT pooled behaviour, so they turn it on explicitly - which is also the
     # one row a tenant whose planners really do move stock freely would set.
     db.execute(text("UPDATE scm.reorder_policy SET pool_netting = true"))
+    # And the policy TYPE, for the same reason the snapshot exists at all. CI plans against
+    # a from-zero database whose only policy is the `reorder_point` global seeded above; the
+    # shared development one is a copy of production, where the captain's global policy is
+    # `reorder_level`, and a `reorder_level` policy with no level set emits `needs_level`
+    # rather than sizing anything. The golden file would then be un-reproducible on the very
+    # machine it is regenerated from. Inside the rolled-back transaction, so nobody's real
+    # policy is touched.
+    db.execute(text("UPDATE scm.reorder_policy SET policy_type = 'reorder_point'"))
     db.flush()
     policies = eng.load_policies(db)
     last_move = rrs._last_movement_map(
