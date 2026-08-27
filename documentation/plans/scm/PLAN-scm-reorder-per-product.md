@@ -114,3 +114,18 @@ the Suggested supplier is a select over the product's suppliers (`alternatives` 
 recommendation, then every supplier linked to the product). Both ride on the row's decision
 (`plan_row_decision`: `price_mode`, `supplier_id`, `unit_cost`) and flow into the draft PO
 the plan confirms. Changing the supplier re-reads that supplier's last price and lead time.
+
+### Data joins: what each source may and may not do (captain, 27 Aug: "our DO and GRN are quite disconnected from SO and PO")
+
+| Source | Used for | Never used for |
+|---|---|---|
+| DO lines (`orders` / `order_lines`) | ADU, "sold" in health | reducing SO outstanding |
+| GRN receipts (`picking_lines`) | "bought" in health, receipt lead time | reducing PO open quantity |
+| SO book outstanding (AutoCount's own column) | retail demand in net | - |
+| PO outstanding book (AutoCount's own figure) | open PO in net | - |
+| AutoCount stock snapshot | on hand in net | - |
+
+On hand already reflects every DO and GRN AutoCount booked. Deriving "SO minus our DO" or
+"PO minus our GRN" double-counts wherever the join missed (a DO naming no SO line, a GRN the
+"Our PO No." matcher tied to the wrong line). Movement sources count movement; the books
+say what is outstanding.

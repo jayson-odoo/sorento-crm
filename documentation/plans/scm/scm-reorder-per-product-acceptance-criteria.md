@@ -45,3 +45,6 @@ service) or a vitest (ledger card); the two named rows are the browser proof on 
 - **AC-R14 supplier select.** GIVEN a product with two suppliers WHEN the buyer picks the
   other one THEN the row shows that supplier's last price and lead time, the decision carries
   `supplier_id`, and the draft PO goes to that supplier.
+- **AC-R15 no cross-book subtraction.** GIVEN a DO of 50 that names no SO line and a GRN of
+  30 matched to no PO line THEN ADU and health count both movements, and net's retail
+  outstanding and open PO are exactly the AutoCount outstanding figures, unchanged by either.
