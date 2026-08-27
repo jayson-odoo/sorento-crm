@@ -437,3 +437,126 @@ def test_the_overstocked_location_still_gets_its_disposition_row(scm_app):
     assert len(disposition) == 1, "the location holding the stock, and only it"
     assert disposition[0]["warehouse_id"] == root
     assert disposition[0]["inputs"]["disposition_action"] == "hold"
+
+
+# --- the lane run, 27 Aug: three things the seeded tests did not catch -------------------
+
+def _segment(db, wid: str, segment: str) -> None:
+    db.execute(text("UPDATE warehouses SET segment = :s WHERE id = :w"),
+               {"s": segment, "w": wid})
+    db.flush()
+
+
+def test_stock_at_a_group_bin_counts_toward_the_products_own_net(scm_app):
+    """AC-R1 as the lane run found it: "every location" is every `stock` row.
+
+    SRTWT7408 holds 5,498 across the warehouses, but the plan counted 1,296 - the group
+    bins are `segment = 'project'`, and every other planning path deliberately drops their
+    stock (captain, 20 Aug: a project bin's quantity is not freely usable). This basis asks
+    a different question - how much of this item does the company have - so the bins count,
+    and the row still says how much of the total is sitting in one.
+    """
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root, root_code = _wh(db, "GBR")
+    bin_, bin_code = _wh(db, "GBB")
+    _segment(db, root, "dealer")
+    _segment(db, bin_, "project")
+    pid, code = _product(db, master_level=500)
+    _mk_stock(db, pid, root, 1296)
+    _mk_stock(db, pid, bin_, 4202)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} GB"), moq=None, mult=None)
+    _core_line_for_run(db, pid, root, qty=7, demand_class="retail")
+    db.flush()
+
+    rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
+
+    assert not _buys(rows), "5,491 against a level of 500 is not a shortage"
+    inputs = _sizing_row(rows)["inputs"]
+    assert float(inputs["on_hand"]) == 5498.0, "the whole stock, both bins"
+    assert float(inputs["project_on_hand"]) == 4202.0, "and how much of it sits in a bin"
+    assert float(inputs["net"]) == 5491.0
+    by_code = {loc["warehouse_code"]: loc for loc in inputs["plan_basis"]["locations"]}
+    assert float(by_code[bin_code]["on_hand"]) == 4202.0, (
+        "a bin reading 0 beside 4,202 of its own stock is what made the product look empty"
+    )
+
+
+def test_an_autocount_mirror_of_zero_is_not_a_buyers_level(scm_app):
+    """AC-R7 / AC-R2 as the lane run found it: the level upload mirrors the AutoCount master
+    into `scm.reorder_level` (`source = 'autocount'`, 7,852 of them a level of 0 on the live
+    copy). Read as an override, B2155-NL-BLUE planned against a level of 0 and reported
+    itself covered on a net of 3,065 - when nobody had set it a level at all."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "ACZ")
+    pid, code = _product(db, master_level=0)
+    db.execute(text(
+        "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, notes, "
+        "created_at) VALUES (:id, :p, NULL, 0, 'autocount', 'AutoCount upload by ZZT', now())"
+    ), {"id": str(uuid.uuid4()), "p": pid})
+    _mk_stock(db, pid, wid, 3065)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} ACZ"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=40, demand_class="retail")
+    db.flush()
+
+    rows = _recs(db, _run(db, [wh_code], code), pid)
+
+    assert not _buys(rows)
+    row = _sizing_row(rows)
+    assert row["rec_type"] == "needs_level", (
+        "a mirrored master of 0 is not a level, whichever table it is read from"
+    )
+
+
+def test_an_autocount_mirror_with_a_level_is_the_master_not_an_override(scm_app):
+    """The other half: the mirror IS the master, so a real number in it plans the product -
+    and the row names it as AutoCount's rather than as somebody's own decision (AC-R3)."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "ACM")
+    pid, code = _product(db, master_level=None)
+    db.execute(text(
+        "INSERT INTO scm.reorder_level (id, product_id, warehouse_id, level, source, notes, "
+        "created_at) VALUES (:id, :p, NULL, 500, 'autocount', 'AutoCount upload by ZZT', now())"
+    ), {"id": str(uuid.uuid4()), "p": pid})
+    _mk_stock(db, pid, wid, 100)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} ACM"), moq=None, mult=None)
+    db.flush()
+
+    buys = _buys(_recs(db, _run(db, [wh_code], code), pid))
+    assert len(buys) == 1
+    assert float(buys[0]["inputs"]["reorder_level"]) == 500.0
+    assert buys[0]["inputs"]["reorder_level_source"] == "autocount_master"
+    assert float(buys[0]["rounded_qty"]) == 400.0
+
+
+def test_a_covered_row_suggests_buying_nothing(scm_app):
+    """A covered row means the stock is already there, so the quantity it SUGGESTS is 0.
+
+    `recommended_qty` carried the committed demand instead, so the plan read as a
+    7,936-unit suggestion for a product holding more than it owes. What buying anyway would
+    cost stays on `rounded_qty` - the Covered-by-stock view's "Buy anyway" column, and the
+    quantity `decision_service` records if the buyer takes it.
+    """
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    wid, wh_code = _wh(db, "CVD")
+    pid, code = _product(db, master_level=500)
+    _set_level(db, pid, None, 500)
+    _mk_stock(db, pid, wid, 4000)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} CVD"), moq=None, mult=None)
+    _core_line_for_run(db, pid, wid, qty=200, demand_class="retail")
+    db.flush()
+
+    row = _sizing_row(_recs(db, _run(db, [wh_code], code), pid))
+
+    assert row["rec_type"] == "covered"
+    assert float(row["recommended_qty"]) == 0.0, "nothing is being bought"
+    assert float(row["rounded_qty"]) == 200.0, "what buying anyway would cost, kept"
+    assert float(row["inputs"]["covered_committed"]) == 200.0

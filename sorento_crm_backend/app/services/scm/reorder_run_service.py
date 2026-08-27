@@ -887,17 +887,30 @@ def _product_level(levels: dict, product_id: str,
     A master level of 0 is not a level. It is a target every deficit trips, which is the
     same failure `needs_level` exists to prevent, so it reads as unset.
 
+    ONLY A PERSON'S ROW IS AN OVERRIDE. `scm.reorder_level` holds two different things
+    under one shape: the level a buyer typed or accepted (`source` in
+    `reorder_level_service.VALID_SOURCES`), and the AutoCount master MIRRORED into the same
+    table by the level upload (`source = 'autocount'`, 11,007 product-wide rows on the live
+    copy, 7,852 of them a level of 0). Treating the mirror as an override made B2155-NL-BLUE
+    plan against a level of 0 and emit `covered` on a net of 3,065, when nobody had set a
+    level for it at all. So a mirror row follows the MASTER's rule, which is the rule it is
+    a copy of: 0 is not a level.
+
     The row returned is the product-wide `scm.reorder_level` row (possibly empty): its
     suggestion columns are what a `needs_level` row carries, and they are keyed the same
     way `level_suggestion_service` writes them for a product-grain plan row.
     """
     wide = levels.get((product_id, None)) or {}
     level = _fnum(wide.get("level"))
-    if level is not None:
-        return wide, level, wide.get("source") or rl_service.SOURCE_MANUAL
-    master = _fnum(row.get("master_reorder_level"))
-    if master:
-        return wide, float(master), MASTER_LEVEL_SOURCE
+    source = wide.get("source")
+    if level is not None and source in rl_service.VALID_SOURCES:
+        return wide, level, source
+    # Not a person's row, so whatever it carries is the master level under another name.
+    # The mirror is read before `products.reorder_level` because the upload is the fresher
+    # of the two readings, and a 0 in either is not a level.
+    for candidate in (level, _fnum(row.get("master_reorder_level"))):
+        if candidate:
+            return wide, float(candidate), MASTER_LEVEL_SOURCE
     return wide, None, None
 
 
@@ -1118,7 +1131,8 @@ def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor:
                  agg_cell: dict, *, moq: Optional[float] = None,
                  order_multiple: Optional[float] = None,
                  plan_basis: Optional[dict] = None,
-                 scope_label: str = "in this pool") -> Optional[ReorderRecommendation]:
+                 scope_label: str = "in this pool",
+                 include_project_on_hand: bool = False) -> Optional[ReorderRecommendation]:
     """A demand line the pool's own stock covers is a SUGGESTION, never a silent omission.
 
     An order-inquiry line reaching the plan has already been through CS: they decided this
@@ -1146,7 +1160,11 @@ def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor:
     # supply here too, or a pool sitting on a PO for the exact committed quantity still
     # reads as "buy this anyway" instead of "you already have this on order".
     available = sum(float(r["quantity_on_hand"] or 0.0) + float(r["on_order"] or 0.0)
-                    + float(r["po_ordered"] or 0.0) for r in prows)
+                    + float(r["po_ordered"] or 0.0)
+                    # Per-product scope counts every `stock` row (AC-R1); every other
+                    # scope keeps the pool-only reading it was netted with.
+                    + (float(r["project_on_hand"] or 0.0) if include_project_on_hand else 0.0)
+                    for r in prows)
     rounded = eng.round_order_qty(committed, moq, order_multiple)
     cell = dict(agg_cell)
     # The row's own facts, so the grid states the trade-off without re-deriving it from
@@ -1155,7 +1173,13 @@ def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor:
     cell["covered_available"] = available
     return _build_rec(
         run_id, "covered", anchor, cell, warehouse_id=pool_id,
-        order_qty=committed, rounded=rounded,
+        # NOTHING IS BEING BOUGHT, so the suggested quantity is 0. `recommended_qty` means
+        # "the gap this row was sized to close" everywhere else, and storing the committed
+        # demand in it made a covered product row read as a 7,936-unit suggestion on a
+        # product holding more than it owes. What buying anyway WOULD cost stays on
+        # `rounded_qty` (the Covered-by-stock view's "Buy anyway", and the quantity
+        # `decision_service` records if the buyer takes it) and on `covered_committed`.
+        order_qty=0.0, rounded=rounded,
         reason_label=(f"{_qty_label(available)} available {scope_label} covers "
                       f"{_qty_label(committed)} committed"),
         plan_basis=plan_basis,
@@ -1399,6 +1423,21 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     return recs
 
 
+def _cell_full_on_hand(c: dict) -> float:
+    """Everything the company holds of this item AT THIS LOCATION.
+
+    `on_hand` is the pool-only reading (captain, 20 Aug: a project bin's stock is not
+    freely usable), with the rest parked in `project_on_hand`. The per-product basis asks
+    "how much do we have", not "how much may this site sell", so it reads both (AC-R1).
+    """
+    return float(c.get("on_hand") or 0.0) + float(c.get("project_on_hand") or 0.0)
+
+
+def _cell_full_net(c: dict) -> float:
+    """The cell's net with the group-bin stock added back - see `_cell_full_on_hand`."""
+    return float(c.get("net") or 0.0) + float(c.get("project_on_hand") or 0.0)
+
+
 def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) -> bool:
     """Whether this product is planned on the buyer's level rather than on a forecast.
 
@@ -1449,7 +1488,15 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                   # committed, project demand included. The project channel is NETTED here
                   # rather than added on top of a retail-only sizing, because there is one
                   # net now and the level is measured against all of it (AC-R2).
-                  "net": float(c.get("net") or 0.0)}
+                  #
+                  # `project_on_hand` is ADDED BACK (AC-R1, "the total across all
+                  # locations"). Every other planning path drops it, because a project bin
+                  # holds stock a site cannot freely sell (captain, 20 Aug) - but this
+                  # basis asks a different question, "how much of this item does the
+                  # company have", and the answer is every `stock` row whatever segment the
+                  # bin was sorted into. Without it B2155-NL-BLUE read 1 on hand against
+                  # 28,831 in the warehouses, and SRTWT7408 read 1,296 against 5,498.
+                  "net": _cell_full_net(c)}
                  for r, c in zip(prows, cells)]
     agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
                                 order_multiple=order_multiple)
@@ -1466,7 +1513,8 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # which is where the goods would come from and the row a planner recognises. Ties break
     # on code so a re-run cannot move it. Only `sku` / `product_name` are read off it: the
     # emitted row names no warehouse.
-    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0),
+    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0)
+                                            + float(r["project_on_hand"] or 0.0),
                                             str(r["warehouse_code"] or ""))))
     # Demand nobody located was landed on ONE location of the product; the product row was
     # sized against all of it, so it states the whole of it rather than only the part that
@@ -1487,8 +1535,14 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # A location has no level of its own any more, so its own "retail need" is what it is
     # SHORT by beyond its firm project demand - a statement about that place. The group's
     # netted figure is the one that sized the buy, and it is stated once, above.
-    loc_cells = [dict(c, retail_need=max(max(-float(c.get("net") or 0.0), 0.0)
-                                         - float(c.get("project_need") or 0.0), 0.0))
+    # Each location's `on_hand` is its WHOLE stock for the same reason the net is: a bin
+    # reading 0 beside a `project_on_hand` of 5,290 is the number that made the product
+    # look empty. The split is not lost - `project_on_hand` still says how much of it sits
+    # at a project-held bin.
+    loc_cells = [dict(c,
+                      on_hand=_cell_full_on_hand(c),
+                      retail_need=max(max(-_cell_full_net(c), 0.0)
+                                      - float(c.get("project_need") or 0.0), 0.0))
                  for c in cells]
     basis = _plan_basis(pid, "product", prows, loc_cells, split,
                         retail_need=retail_need, recommended=recommended,
@@ -1516,7 +1570,8 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     else:
         covered = _covered_rec(run_id, None, prows, anchor, cell, moq=moq,
                                order_multiple=order_multiple, plan_basis=basis,
-                               scope_label="across every location")
+                               scope_label="across every location",
+                               include_project_on_hand=True)
         if covered is not None:
             recs.append(covered)
 
@@ -1563,7 +1618,9 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
 
     lp, lp_basis = _last_purchase_for(last_cost or {}, str(prows[0]["product_id"]), None)
     cell.update({
-        "on_hand": _total("on_hand"),
+        # The product's WHOLE stock, group bins included (AC-R1). `project_on_hand` stays
+        # beside it saying how much of that total sits at a project-held bin.
+        "on_hand": _total("on_hand") + _total("project_on_hand"),
         "project_on_hand": _total("project_on_hand"),
         "on_order": _total("on_order"),
         "po_ordered": _total("po_ordered"),
