@@ -772,7 +772,7 @@ describe('The plan horizon is stated in the header', () => {
     );
   });
 
-  it('says so when no plan is in force', async () => {
+  it('says so when no Plan until is in force (no completed run, or a run that planned every open line)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       link_up_to_default: null,
@@ -782,7 +782,7 @@ describe('The plan horizon is stated in the header', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('oi-plan-until')).toHaveTextContent(
-        'No reorder plan in force',
+        'No Plan until in force',
       ),
     );
   });

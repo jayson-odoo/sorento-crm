@@ -769,7 +769,7 @@ export function OrderInquiriesClient() {
               ? 'Plan until ...'
               : planHorizon
                 ? `Plan until ${formatDateInMalaysia(planHorizon)}`
-                : 'No reorder plan in force'}
+                : 'No Plan until in force'}
           </p>
         </div>
       </header>
