@@ -456,7 +456,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
-                   GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty
+                   GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty,
+                   -- How much of the instruction is already on a purchase or shipping
+                   -- order. `qty` above is what is LEFT, so without this the reader
+                   -- cannot tell a 20 that was always 20 from a 50 that is 30 placed
+                   -- (AC-R8: the project rows carry the linked quantity).
+                   COALESCE(lk.linked, 0) AS linked_qty
             FROM projects.order_inquiry_rows oir
             JOIN projects.so_supply_decisions d
               ON d.id = oir.supply_decision_id AND d.state = :active_state
@@ -516,6 +521,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "linked_qty": float(r["linked_qty"] or 0),
             "source": "order_inquiry_confirmed",
             # This leg is BUILT from `projects.order_inquiry_rows` - there is always a row,
             # by construction, unlike the book query's stamp-only `order_inquiry` source.

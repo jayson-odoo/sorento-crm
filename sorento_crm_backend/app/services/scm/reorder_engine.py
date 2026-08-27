@@ -496,6 +496,45 @@ def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
             "buy_qty": buy, "warehouses": per_wh, "allocation": alloc}
 
 
+def aggregate_product(warehouses: list[dict], *, level: Optional[float],
+                     moq: Optional[float] = None,
+                     order_multiple: Optional[float] = None) -> dict:
+    """ONE level, ONE net, across every location of a product (per-product reorder basis).
+
+    > "our reorder is per product, so it doesn't matter your location, just take the total
+    >  across all locations" ... "with our net, we need to reorder up to the reorder level"
+    >  (captain, 27 Aug 2026)
+
+    The sibling of ``aggregate_network`` for the ``reorder_level`` basis, and the difference
+    is the whole point: the target is the PRODUCT's single level, never the sum of the
+    members' levels. Summing was what proposed 4,507 units of SRTWT7408 - an AutoCount
+    master level of 500 read once per empty bin, nine times over, for a product holding
+    1,296 at the pool root.
+
+    ``warehouses``: ``[{warehouse_id, demand_rate, net}]``. ``level`` of ``None`` means
+    nobody has set one, which is NOT a level of 0: the caller emits ``needs_level`` instead
+    of planning it, so nothing here triggers and the buy is 0.
+
+    A location's ``deficit`` is what IT is short by (a negative net), which is only ever the
+    placement question - where the goods land. It never resizes the buy: the buy is the
+    product's own gap and it is computed once.
+    """
+    agg_demand = sum(float(w["demand_rate"]) for w in warehouses)
+    agg_net = sum(float(w["net"]) for w in warehouses)
+    target = None if level is None else float(level)
+    recommended = 0.0 if target is None else target - agg_net
+    buy = round_order_qty(recommended, moq, order_multiple) if recommended > 0 else 0.0
+    per_wh = [{"warehouse_id": w["warehouse_id"],
+               "deficit": max(-float(w["net"]), 0.0),
+               "demand_rate": float(w["demand_rate"]),
+               "reorder_point": target}
+              for w in warehouses]
+    return {"agg_demand": agg_demand, "agg_net": agg_net, "safety_stock": 0.0,
+            "reorder_point": target, "order_up_to": target,
+            "recommended_qty": max(recommended, 0.0), "buy_qty": buy,
+            "warehouses": per_wh, "allocation": allocate(buy, per_wh)}
+
+
 # --- disposition + transfer flag (AC-M3.9) ---------------------------------
 
 def disposition(*, on_hand: float, last_movement_days: Optional[float],
