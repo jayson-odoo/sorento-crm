@@ -649,6 +649,33 @@ def test_build_returns_a_sources_block_naming_the_latest_ingest_per_family(scm_a
     assert sources["proforma_as_of"] is None
 
 
+def test_build_reads_the_spo_freshness_off_the_allocation_book(scm_app):
+    """`spo_as_of` used to be read off `purchase_orders`, and migration 420 moved every
+    SPO document out of that table into `spo_allocations` - so the strip has said nothing
+    about the shipping-order book since, however recently one was uploaded. The freshness
+    is read off the rows the SPO writers actually write."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=1, cbm=0.5)
+    db.add(
+        SPOAllocation(
+            id=str(uuid.uuid4()),
+            spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+            product_id=w.product("A").id,
+            allocated_quantity=5,
+            quantity_received=0,
+            source_system="scm_upload",
+        )
+    )
+    db.flush()
+
+    r = TestClient(app).post(BUILD_URL, json={"supplier_id": str(w.supplier.id)})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sources"]["spo_as_of"] is not None
+
+
 def test_build_include_lines_returns_flat_lines_summing_to_the_retail_need(scm_app):
     # CHANGE 2 + the invariant `build`'s docstring states, as P3 leaves it: sum(lines.qty per
     # product) == retail_qty. The flat lines are the sales-order BOOK, and the book speaks for

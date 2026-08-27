@@ -351,6 +351,14 @@ class PreviewResult:
     spo_lines: int = 0
     spo_unknown_locations: int = 0
     spo_closed: int = 0
+    # The same lines split by what they would DO to the table: never held before, held and
+    # differing, held and identical. `spo_lines` is their sum. Counted because the screen
+    # used to print "721 rows are shipping orders" beside "nothing would change" - both
+    # honestly computed, and neither able to contradict the other, because this half stated
+    # how many lines it carried and never what they would change.
+    spo_new: int = 0
+    spo_changed: int = 0
+    spo_unchanged: int = 0
 
     @property
     def ok(self) -> bool:
@@ -377,6 +385,9 @@ class PreviewResult:
             "spo_lines": self.spo_lines,
             "spo_unknown_locations": self.spo_unknown_locations,
             "spo_closed": self.spo_closed,
+            "spo_new": self.spo_new,
+            "spo_changed": self.spo_changed,
+            "spo_unchanged": self.spo_unchanged,
         }
 
 
@@ -1184,19 +1195,26 @@ def _unreadable_date_warning(problems: list[RowProblem]) -> list[str]:
     ]
 
 
-def _shipping_order_warning(read: ReadResult) -> list[str]:
+def _shipping_order_warning(read: ReadResult, spo: "_SpoWrite") -> list[str]:
     """The purchase book states two families and they land in two different tables. Said
     once, up front: the operator reads the Test result before pressing Confirm upload, and
     "N of your rows went somewhere else" is a fact they need before it happens, not after.
 
-    It used to say "left out", which was true and is not any more (R4)."""
+    It used to say "left out", which was true and is not any more (R4). And it used to stop
+    at the row count, which is how the Test result came to print "721 rows are shipping
+    orders" directly above "nothing would change": the sentence stated how many rows went
+    the other way and never what they would do there, so an operator had no figure to weigh
+    against the purchase-order half's own verdict. It now carries the four numbers, and it
+    makes no claim about whether anything changes - that is the caller's to say once it has
+    read both halves."""
     n = len(read.shipping_order_row_numbers)
     if not n:
         return []
     row = "row" if n == 1 else "rows"
+    line = "line" if spo.new == 1 else "lines"
     return [
-        f"{n} {row} are shipping orders (SPO); they are filed as open SPO allocations "
-        "rather than as purchase orders"
+        f"{n} {row} are shipping orders (SPO): {spo.new} new {line}, "
+        f"{spo.changed} changed, {spo.unchanged} unchanged, {spo.closed} would close"
     ]
 
 
@@ -1215,6 +1233,10 @@ class _SpoWrite:
     lines: int = 0
     closed: int = 0
     unknown_locations: int = 0
+    #: `lines` split by what each one would do to the row it maps to. They sum to `lines`.
+    new: int = 0
+    changed: int = 0
+    unchanged: int = 0
     product_ids: list[str] = field(default_factory=list)
 
 
@@ -1368,16 +1390,62 @@ def _spo_stated_keys(plans: dict) -> set[tuple[str, int]]:
     }
 
 
-def _spo_counts(plans: dict, out: _SpoWrite) -> None:
+def _spo_line_verdict(plan: _SpoLinePlan, read: ReadResult) -> Optional[str]:
+    """What one planned line would DO to the table: new, changed, unchanged - or nothing.
+
+    `None` is a line this channel writes no row for at all: an item the master does not
+    hold, or a row another feed owns. It is counted in neither `lines` nor any of the three,
+    because the file's own row count already says how many rows went this way and the point
+    of these figures is what lands.
+
+    "Changed" is decided on the facts the plan and the receipt read off the row - the two
+    quantities, where the goods are going, when they are expected, and whether the line is
+    open - which is exactly the set the write path restates unconditionally. Cost and
+    currency are deliberately not among them: they are written when the file states them,
+    they move no plan, and comparing a file's float against the column's decimal would
+    report a book as "changed" on every upload.
+    """
+    if plan.line_number is None:
+        return None
+    row = plan.row
+    if row is None:
+        return "new"
+    extra = read.extras.get(str(plan.line.row_ref), {})
+    ordered, received = _spo_quantities(plan.line, extra)
+    status = "open" if ordered - received > 0 else "closed"
+    held_warehouse = str(row.warehouse_id) if row.warehouse_id else None
+    same = (
+        int(row.allocated_quantity or 0) == ordered
+        and int(row.quantity_received or 0) == received
+        and held_warehouse == plan.warehouse_id
+        and (row.location_code or None) == plan.code
+        and (row.line_status or "") == status
+        # An unreadable date leaves the held one alone, so it cannot make a line changed.
+        and (plan.line.required_date is None
+             or row.expected_date == plan.line.required_date)
+    )
+    return "unchanged" if same else "changed"
+
+
+def _spo_counts(plans: dict, out: _SpoWrite, read: ReadResult) -> None:
     """The figures the summary and the Test result print, counted ONCE for both paths."""
     for _number, document_plans in plans.items():
         if not document_plans:
             continue
         out.documents += 1
-        out.lines += len(document_plans)
         for plan in document_plans:
             if plan.code and plan.warehouse_id is None:
                 out.unknown_locations += 1
+            verdict = _spo_line_verdict(plan, read)
+            if verdict is None:
+                continue
+            out.lines += 1
+            if verdict == "new":
+                out.new += 1
+            elif verdict == "changed":
+                out.changed += 1
+            else:
+                out.unchanged += 1
 
 
 def _spo_quantities(line, extra: dict) -> tuple[int, int]:
@@ -1419,7 +1487,7 @@ def _write_spo_lines(db: Session, read: ReadResult, outcome: ImportOutcome) -> _
 
     out = _SpoWrite()
     plans, _products = _spo_line_plans(db, read)
-    _spo_counts(plans, out)
+    _spo_counts(plans, out, read)
     touched: set[str] = set()
     for number in sorted(plans):
         for plan in plans[number]:
@@ -1531,7 +1599,7 @@ def _spo_preview(db: Session, read: ReadResult) -> _SpoWrite:
     """
     out = _SpoWrite()
     plans, _products = _spo_line_plans(db, read)
-    _spo_counts(plans, out)
+    _spo_counts(plans, out, read)
     out.closed = len(_spo_lines_to_close(db, _spo_stated_keys(plans))) if plans else 0
     return out
 
@@ -1562,12 +1630,16 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
-        warnings=_unreadable_date_warning(row_problems) + _shipping_order_warning(read),
+        warnings=_unreadable_date_warning(row_problems)
+        + _shipping_order_warning(read, spo),
         shipping_order_rows=len(read.shipping_order_row_numbers),
         spo_documents=spo.documents,
         spo_lines=spo.lines,
         spo_unknown_locations=spo.unknown_locations,
         spo_closed=spo.closed,
+        spo_new=spo.new,
+        spo_changed=spo.changed,
+        spo_unchanged=spo.unchanged,
     )
 
 
@@ -2532,6 +2604,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "spo_lines": spo.lines,
         "spo_closed": spo.closed,
         "spo_unknown_locations": spo.unknown_locations,
+        # The same lines split by what they did: filed for the first time, restated with a
+        # different figure, or already matching what we held. The confirm screen reads the
+        # identical three off the preview, so what the operator agreed to and what the job
+        # reports are one answer.
+        "spo_new": spo.new,
+        "spo_changed": spo.changed,
+        "spo_unchanged": spo.unchanged,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

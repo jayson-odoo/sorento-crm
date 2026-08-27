@@ -493,6 +493,99 @@ describe('OutstandingUploadDialog - the Test verdict', () => {
   });
 });
 
+// ── 4a. the shipping-order half of a purchase book ──────────────────────────
+// The prod defect: the verdict printed "721 rows are shipping orders (SPO)" and, directly
+// under it, "Nothing would change - every line already matches what we hold". The sentence
+// read the PURCHASE-order diff only, so a book whose entire content was shipping orders
+// claimed to change nothing while it filed 721 lines.
+
+const NO_PO_CHANGES = {
+  added: 0,
+  qty_changed: 0,
+  date_moved: 0,
+  date_and_qty_changed: 0,
+  closed: 0,
+  unchanged: 0,
+};
+
+describe('OutstandingUploadDialog - the shipping orders in a purchase book', () => {
+  it('states what the shipping-order lines would do, in one line', async () => {
+    previewOutstandingImport.mockResolvedValue(
+      preview({
+        counts: { ...NO_PO_CHANGES, unchanged: 12 },
+        samples: {},
+        shipping_order_rows: 9,
+        spo_documents: 2,
+        spo_lines: 9,
+        spo_new: 4,
+        spo_changed: 2,
+        spo_unchanged: 3,
+        spo_closed: 5,
+        spo_unknown_locations: 1,
+      }),
+    );
+    renderDialog();
+    await chooseFile();
+
+    expect(
+      await screen.findByText(
+        /Shipping orders: 2 documents, 4 new, 2 changed, 3 unchanged, 5 would close, 1 with no warehouse/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about shipping orders when the book carries none', async () => {
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText(/No errors/i);
+    expect(screen.queryByText(/Shipping orders:/i)).toBeNull();
+  });
+
+  it('never claims nothing would change while it files a shipping-order line', async () => {
+    previewOutstandingImport.mockResolvedValue(
+      preview({
+        counts: { ...NO_PO_CHANGES, unchanged: 12 },
+        samples: {},
+        shipping_order_rows: 721,
+        spo_documents: 30,
+        spo_lines: 721,
+        spo_new: 721,
+        spo_changed: 0,
+        spo_unchanged: 0,
+        spo_closed: 0,
+        spo_unknown_locations: 0,
+      }),
+    );
+    renderDialog();
+    await chooseFile();
+
+    await screen.findByText(/Shipping orders:/i);
+    expect(screen.queryByText(/Nothing would change/i)).toBeNull();
+  });
+
+  it('still says nothing would change when BOTH halves already match what we hold', async () => {
+    previewOutstandingImport.mockResolvedValue(
+      preview({
+        counts: { ...NO_PO_CHANGES, unchanged: 12 },
+        samples: {},
+        shipping_order_rows: 721,
+        spo_documents: 30,
+        spo_lines: 721,
+        spo_new: 0,
+        spo_changed: 0,
+        spo_unchanged: 721,
+        spo_closed: 0,
+        spo_unknown_locations: 0,
+      }),
+    );
+    renderDialog();
+    await chooseFile();
+
+    expect(await screen.findByText(/Nothing would change/i)).toBeInTheDocument();
+  });
+});
+
 // ── 4b. the derivation itself ───────────────────────────────────────────────
 // The verdict is computed in the browser off the preview rather than asked for a second
 // time, so the mapping is pinned directly: it is the one piece of logic in this file.
