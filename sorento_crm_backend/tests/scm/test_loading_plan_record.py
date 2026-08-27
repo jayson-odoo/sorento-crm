@@ -654,3 +654,30 @@ def test_a_send_that_failed_leaves_the_plan_in_planning_and_deletable(scm_app, m
     assert after["status"] == "planning"
     assert after["sent_at"] is None
     assert client.delete(f"{PLANS_URL}/{plan['id']}").status_code == 204
+
+
+def test_a_cancelled_plan_can_no_longer_be_sent_or_downloaded(scm_app):
+    # AC-A8. The record page is read-only once cancelled, but both POSTs took a plan id and
+    # neither looked at its status - so a stale tab could still send the supplier an ask for
+    # a plan that had been called off.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+    client.post(f"{PLANS_URL}/{plan['id']}/cancel")
+    lines = [{"product_id": str(w.product("A").id), "qty": 5}]
+
+    send = client.post(SEND_URL, json={"plan_id": plan["id"], "lines": lines})
+    document = client.post(
+        f"{SEND_URL}/document?format=xlsx", json={"plan_id": plan["id"], "lines": lines}
+    )
+
+    assert send.status_code == 409, send.text
+    assert send.json()["detail"]["code"] == "plan_cancelled"
+    assert document.status_code == 409, document.text
+    assert document.json()["detail"]["code"] == "plan_cancelled"
+    assert (
+        db.query(SupplierNotice).filter(SupplierNotice.loading_plan_id == plan["id"]).count()
+        == 0
+    )

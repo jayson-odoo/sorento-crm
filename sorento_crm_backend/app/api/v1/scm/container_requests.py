@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy.orm import Session
 
+from app.api.v1.scm.fulfilment import _refuse_cancelled
 from app.database import get_db
 from app.dependencies import require_permission
 from app.services.scm import (
@@ -165,11 +166,15 @@ def container_request_document(
     Ahead of `POST /container-requests` in this file for readability only; a static segment
     under a path parameter is the shadowing trap (the SLA lesson), and there is no
     `/container-requests/{id}` here.
+
+    A cancelled plan is refused (409 `plan_cancelled`, AC-A8): the record page is read-only
+    once it is called off, and a document off a stale tab would be an ask nobody is placing.
     """
     try:
         plan = container_request_service._plan_or_404(db, body.plan_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    _refuse_cancelled(plan)
     content, filename = supplier_notice_service.request_document(
         db,
         supplier_id=str(plan.supplier_id),
@@ -196,9 +201,12 @@ def send_container_request(
     the list can say what went out and when, and the plan can no longer be deleted (Q5).
     Anything that would make the send impossible (no address, no WeChat channel connected, no
     approved template out of window) is a 422 with a `code` and nothing is written - see
-    `supplier_notice_service.request_and_notify`.
+    `supplier_notice_service.request_and_notify`. A cancelled plan is refused first, with the
+    409 `plan_cancelled` every other write on the record answers (AC-A8): a stale tab must not
+    be able to send a supplier an ask that was called off.
     """
     try:
+        _refuse_cancelled(container_request_service._plan_or_404(db, body.plan_id))
         return container_request_service.send(
             db,
             plan_id=body.plan_id,
