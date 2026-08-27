@@ -13,8 +13,8 @@
  * was just created and 404 the screen under verification.
  */
 import type {
+  LoadingPlanListParams,
   LoadingPlanRecord,
-  LoadingPlanStatus,
   PlanDocumentKind,
 } from '../../services/fulfilmentService';
 
@@ -77,13 +77,10 @@ export function mockGetPlan(id: string): LoadingPlanRecord {
   return found;
 }
 
-export function mockListPlans(params: {
-  query: string;
-  status: LoadingPlanStatus | 'active' | '';
-  pageIndex: number;
-  pageSize: number;
-}): { data: LoadingPlanRecord[]; total: number } {
-  const needle = params.query.trim().toLowerCase();
+export function mockListPlans(
+  params: LoadingPlanListParams,
+): { data: LoadingPlanRecord[]; total: number } {
+  const needle = (params.searchQuery ?? '').trim().toLowerCase();
   let rows = read();
   if (needle) {
     rows = rows.filter((p) => (p.supplier_name ?? '').toLowerCase().includes(needle));

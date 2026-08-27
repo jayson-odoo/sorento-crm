@@ -9,6 +9,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -184,6 +185,11 @@ export function PlanContainerDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Plan a container</DialogTitle>
+          <DialogDescription>
+            {needsFile
+              ? 'Test reads the file. Confirm applies it and opens the new plan.'
+              : 'Start the plan from what is already on file for this supplier.'}
+          </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">

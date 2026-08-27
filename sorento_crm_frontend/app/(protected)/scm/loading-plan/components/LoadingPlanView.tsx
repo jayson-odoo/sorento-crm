@@ -24,6 +24,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -251,13 +252,21 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     <div className="space-y-4">
       <Toolbar>
         <ToolbarHeading className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ToolbarTitle className="truncate">{plan.supplier_name ?? EM_DASH}</ToolbarTitle>
+          {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
+              so its lines are sized to their content and a long supplier name would push the
+              header past the viewport at 375px instead of ellipsing. */}
+          <div
+            className="flex w-full min-w-0 flex-wrap items-center gap-2"
+            title={plan.supplier_name ?? ''}
+          >
+            <ToolbarTitle className="min-w-0 max-w-full truncate">
+              {plan.supplier_name ?? EM_DASH}
+            </ToolbarTitle>
             <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
               {STATUS_LABEL[plan.status]}
             </Badge>
           </div>
-          <p className="text-xs text-muted-foreground" data-testid="plan-subtitle">
+          <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
             {subtitle}
           </p>
         </ToolbarHeading>
@@ -493,6 +502,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Change the sales order cut-off</DialogTitle>
+            <DialogDescription>
+              The suggestion is worked out again against the new date.
+            </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-2">
             <Label htmlFor="plan-cutoff" className="text-xs">
