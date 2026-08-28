@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LoaderCircleIcon, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,11 +14,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import {
-  useCustomerOptions,
-  useOrderTypeOptions,
-  useProductOptions,
-} from '../../hooks/useScmOptions';
+import { useCustomerOptions, useOrderTypeOptions } from '../../hooks/useScmOptions';
+import { SELECT_PAGE_SIZE, searchProductOptions } from '../../services/scmOptionsService';
 import type { SalesOrderFormData, SalesOrderPriority } from '../../types/scm.types';
 
 /**
@@ -58,10 +55,34 @@ export function SalesOrderFormModal({
   const [requestedDate, setRequestedDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [error, setError] = useState<string | null>(null);
+  /** Labels of every product this modal has seen come back from the server, so a line whose
+   *  product is not on the page currently loaded still reads as `CODE · Name`. */
+  const [productLabels, setProductLabels] = useState<Record<string, string>>({});
 
   const orderTypeOptions = useOrderTypeOptions();
   const customerOptions = useCustomerOptions();
-  const productOptions = useProductOptions();
+
+  /** Products are SEARCHED ON THE SERVER, never a static list: `products/select` answers with
+   *  its own default of 100 rows against ~22,000 active products, so the list this field used
+   *  to hold covered 0.5% of the catalogue and said "no product found" for the rest. Same
+   *  helper the sales-order detail line picker uses. */
+  const fetchProductOptions = useCallback(async (query: string, pageIndex: number) => {
+    const options = await searchProductOptions(query, pageIndex);
+    setProductLabels((prev) => {
+      const next = { ...prev };
+      for (const opt of options) next[opt.value] = opt.label;
+      return next;
+    });
+    return options;
+  }, []);
+
+  const selectedProductOptions = useMemo(
+    () =>
+      lines.map((l) =>
+        l.sku ? { value: l.sku, label: productLabels[l.sku] ?? l.sku } : undefined,
+      ),
+    [lines, productLabels],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -71,6 +92,7 @@ export function SalesOrderFormModal({
     setRequestedDate('');
     setLines([emptyLine()]);
     setError(null);
+    setProductLabels({});
   }, [open]);
 
   const segment = customerOptions.data?.find((c) => c.value === customer)?.description ?? null;
@@ -177,8 +199,12 @@ export function SalesOrderFormModal({
                     <SearchableSelect
                       value={line.sku}
                       onChange={(v) => updateLine(idx, { sku: v })}
-                      options={productOptions.data ?? []}
+                      paginated
+                      pageSize={SELECT_PAGE_SIZE}
+                      fetchOptions={fetchProductOptions}
+                      selectedOption={selectedProductOptions[idx]}
                       placeholder="Select product"
+                      emptyMessage="No product found."
                     />
                   </div>
                   <div className="w-24">
