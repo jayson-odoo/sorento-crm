@@ -1714,6 +1714,16 @@ def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
     return False
 
 
+#: The currency a PURCHASE document is in when the export states none (captain, 28 Aug
+#: 2026: "our upload should take CNY also for now"). The AutoCount PO export that landed
+#: 4,050 headers and 65,204 lines without a currency column is a China book, and the
+#: detail page printed every one of them as RM. A FILL, never an overwrite: a stated
+#: currency always wins, and a document that already holds one keeps it
+#: (`test_a_file_without_a_po_date_column_does_not_blank_the_issue_date`). The sales book
+#: is untouched - a customer invoice's currency is not this rule's to guess.
+DEFAULT_PO_CURRENCY = "CNY"
+
+
 def _refresh_money(line, extra: dict, bind: _Binding) -> None:
     """Bring the line's money columns up to what this extract says.
 
@@ -1722,11 +1732,16 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
     line that arrived with the column blank and was priced later would stay blank for ever -
     ranked as if it were free. A value the file does NOT state leaves the column alone rather
     than blanking a cost we already know.
+
+    The one exception is a purchase line's CURRENCY, which is filled with
+    `DEFAULT_PO_CURRENCY` when neither the file nor the row states one.
     """
     for col, key in bind.money_cols:
         value = extra.get(key)
         if value is not None:
             setattr(line, col, value)
+    if bind.header is PurchaseOrder and not getattr(line, "currency", None):
+        line.currency = DEFAULT_PO_CURRENCY
 
 
 def _settled_quantities(after: Line, extra: dict) -> tuple[float, float]:
@@ -2189,6 +2204,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             value = resolved.header_by_doc.get(number, {}).get(key)
             if value is not None:
                 setattr(header, col, value)
+        # A purchase header with no currency, from the file or from before, is CNY
+        # (`DEFAULT_PO_CURRENCY`); a stated one has just been written above and stands.
+        if doc_type == PO and not getattr(header, "currency", None):
+            header.currency = DEFAULT_PO_CURRENCY
         # Columns the file FILLS rather than restates. The sales book's order type is the
         # case: for a document this upload creates the file is the only evidence there is,
         # while a value already on the header was set by a person and a weekly re-upload
@@ -2355,6 +2374,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             }
             for col, key in bind.money_cols:
                 fields[col] = extra.get(key)
+            # A new purchase line with no stated currency is CNY (`DEFAULT_PO_CURRENCY`),
+            # the same fill `_refresh_money` applies to a line that already exists.
+            if bind.header is PurchaseOrder and not fields.get("currency"):
+                fields["currency"] = DEFAULT_PO_CURRENCY
             db.add(bind.line(**fields))
             if settled:
                 # Claimed for this run, so a second identical row of the same completed book
