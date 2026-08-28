@@ -94,7 +94,7 @@ data, P3 = browser run). A criterion is met only when its check passes on the de
   Issued, ETA, Status; BRW pool key only; a BRW-BB-bound or destination-less line excluded (test).
 - F7 (P2) Panel last price / last supplier equal the PO dialog's newest history row (same source).
 
-## I. Pool-only on hand, cover and channels (R16-R18, 28 Aug)
+## I. Pool-only on hand, cover and channels (R16-R19, 28 Aug)
 
 - I1 (P2) `GET /reorder-runs/location-stock` lists EVERY active site pool for the product,
   zeros included, and drops an all-zero project bin. Rows come back pools-first, each set
@@ -118,6 +118,16 @@ data, P3 = browser run). A criterion is met only when its check passes on the de
   planning: `grep -rn channelOf app/(protected)/scm/reorder` is empty, the group meta
   carries `PLAN_CHANNEL_ORDER`, and the ungrouped grid has no "Order type" column or
   filter.
+- I9 (P2) On hand is the site pool on EVERY basis, the `reorder_level` one included (R19,
+  28 Aug, superseding AC-R1 of `scm-reorder-per-product-acceptance-criteria.md`). Test: 34
+  in a project bin with 0 in the pool and a level of 50 gives `inputs.on_hand` 0, a net
+  that excludes the 34 and a suggested quantity of 50; the same product holding 120 in the
+  pool reads 120 and buys nothing.
+- I10 (P2) No path carries a second on-hand figure that could re-admit a bin:
+  `project_on_hand` is gone from the planning SQL, the frozen `inputs`, the plan basis
+  locations, a covered row's `covered_available` and the frontend types and grouping.
+- I11 (P1) The ledger's on-hand disclosure is labelled "by site pool", so the copy cannot
+  read as a promise that every bin holding stock is listed under it.
 
 ## G. Regressions guarded
 

@@ -113,7 +113,8 @@ reflects them and he is not asked twice.
 
 - **AC-S10d.1 [BE]** Every plan row carries: on hand, outstanding PO, incoming SPO,
   outstanding sales, MOQ, order multiple, level, suggested level, and the 3-month movement
-  split by month.
+  split by month. "On hand" is the SITE POOL's stock on every basis (R19, captain 28 Aug
+  2026); a project bin's quantity is not carried as a second figure beside it.
 - **AC-S10d.2 [BE]** Last purchase cost and date are resolved **per segment**: a dealer row
   reads receipts into dealer warehouses, a project row reads receipts into project
   warehouses.

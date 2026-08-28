@@ -85,11 +85,10 @@ def test_a_dealer_location_counts_its_stock_in_full(db):
 
     assert len(rows) == 1
     assert rows[0]["quantity_on_hand"] == 229
-    assert rows[0]["project_on_hand"] == 0
     assert rows[0]["net_position"] == 229
 
 
-def test_a_project_bin_counts_zero_but_states_its_own_stock_visibly(db):
+def test_a_project_bin_counts_zero_and_carries_no_second_figure(db):
     p = _product(db)
     pool = _warehouse(db, segment="dealer")
     project_supplier_bin = pool.id  # kept only to make the pool concrete for the reader
@@ -100,7 +99,9 @@ def test_a_project_bin_counts_zero_but_states_its_own_stock_visibly(db):
 
     assert len(rows) == 1
     assert rows[0]["quantity_on_hand"] == 0, "project-held stock is not usable supply"
-    assert rows[0]["project_on_hand"] == 80, "but it is never dropped from the screen"
+    assert "project_on_hand" not in rows[0], (
+        "and no second column carries it (R19) - the one basis that read it added it back"
+    )
 
 
 def test_net_position_moves_with_the_pool_only_reading_never_the_view_own_figure(db):
@@ -119,7 +120,6 @@ def test_net_position_moves_with_the_pool_only_reading_never_the_view_own_figure
 
     assert len(rows) == 1
     assert rows[0]["quantity_on_hand"] == 0
-    assert rows[0]["project_on_hand"] == 80
     assert rows[0]["committed"] == 100
     assert rows[0]["net_position"] == -100, (
         "not -20 - the 80 sitting in the bin is not usable cover for its own demand either"
@@ -129,7 +129,7 @@ def test_net_position_moves_with_the_pool_only_reading_never_the_view_own_figure
 def test_pool_only_on_hand_reaches_a_frozen_recommendation(scm_app):
     """End to end through the real engine and the freeze: the SRT-H3005 shape (229 at the
     pool, 80 at the project bin it feeds) survives `create_run` -> `run_reorder` with the
-    same split on the frozen row, not only on the private helper's return value."""
+    same reading on the frozen row, not only on the private helper's return value."""
     from tests.scm.test_m3_run import _link, _mk_supplier  # noqa: PLC0415
 
     _, db, _, _ = scm_app
@@ -172,9 +172,10 @@ def test_pool_only_on_hand_reaches_a_frozen_recommendation(scm_app):
     ), {"r": created["run_id"], "p": p.id}).mappings().all()
     by_wh = {str(r["warehouse_id"]): r["inputs"] for r in rows}
     assert float(by_wh[str(pool.id)]["on_hand"]) == 229.0
-    assert float(by_wh[str(pool.id)]["project_on_hand"]) == 0.0
     assert float(by_wh[str(bin_.id)]["on_hand"]) == 0.0
-    assert float(by_wh[str(bin_.id)]["project_on_hand"]) == 80.0
+    assert "project_on_hand" not in by_wh[str(bin_.id)], (
+        "the frozen row holds ONE on-hand figure, the pool's (R19)"
+    )
 
 
 def _mk_open_so(db) -> str:
