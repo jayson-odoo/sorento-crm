@@ -121,7 +121,9 @@ def _warehouse(db) -> str:
     db.execute(
         text(
             "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
-            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"
+            # A SITE POOL: after R18 a project bin is neither a cover source nor counted
+            # in the product-health on-hand, so these run-scope reads would see nothing.
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'dealer')"
         ),
         {"id": wid, "c": f"{MARKER}-WH"},
     )
@@ -456,7 +458,9 @@ def test_two_identical_page_fetches_return_the_same_rows_in_the_same_order():
             db.execute(
                 text(
                     "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
-                    "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"
+                    # A SITE POOL: after R18 a project bin is neither a cover source nor counted
+            # in the product-health on-hand, so these run-scope reads would see nothing.
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'dealer')"
                 ),
                 {"id": wh, "c": f"{MARKER}-TIE{i:02d}"},
             )

@@ -81,7 +81,9 @@ def test_a_product_with_no_stock_row_says_so_rather_than_stamping_now(db):
 
     out = location_stock_service.location_stock_for_product(db, str(prod.id))
 
-    assert out["locations"] == []
+    # R16: the site pools are listed whatever they hold, so "nothing anywhere" is every
+    # pool at zero rather than an empty list. No project bin joins them.
+    assert all(loc["is_pool"] and loc["on_hand"] == 0 for loc in out["locations"])
     # Either a fallback import time or nothing at all - never a fabricated "now".
     source = _stock_as_of(db, str(prod.id))[1]
     assert source in ("import_job", "none")

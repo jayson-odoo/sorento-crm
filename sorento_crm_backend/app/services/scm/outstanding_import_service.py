@@ -20,7 +20,6 @@ from typing import Any, Callable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -53,6 +52,14 @@ from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
 from app.services.scm.demand_class import class_of as _class_of
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
+# The supplier back-create rule itself, shared with the purchase-HISTORY channel: the two
+# books name the same creditors, so one of them creating and the other leaving them unlinked
+# is the same supplier held twice on every screen that reads either.
+from app.services.scm.supplier_back_create import (
+    CREATED_SUPPLIERS_LISTED,
+    back_create_supplier,
+    supplier_slug,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +72,12 @@ logger = logging.getLogger(__name__)
 # the diff uses, for the same reason.
 _QTY_EPSILON = 0.0005
 
-# How many back-created supplier codes the job report names outright before it switches to
-# "... and N more". `suppliers_created` (the count) is never capped - only the list an
-# operator would actually read is, the same trade `_samples` makes for diff evidence.
-_CREATED_SUPPLIERS_LISTED = 20
-
 # A trailing "(RMB)" / "（RMB)" style currency note AutoCount appends to a creditor NAME,
 # never part of the legal name. Anchored to the END of the string so a genuine parenthesised
 # token earlier in the name ("XYZ TRADING (M) SDN BHD") is never touched, and written to
 # accept EITHER paren style on EITHER side ("（RMB)" - the captain's real file mismatches
 # them) because NFKC header folding does not touch cell VALUES, only header text.
 _CURRENCY_SUFFIX_RE = re.compile(r"[\(（]\s*[A-Za-z]{2,4}\s*[\)）]\s*$")
-
-# `suppliers.supplier_code` is String(50) (see the model); a slug longer than this is
-# truncated to leave room for the `-2`/`-3` disambiguator below.
-_SUPPLIER_SLUG_MAX = 50
 
 
 def _clean_supplier_name(raw: Optional[str]) -> str:
@@ -93,27 +91,6 @@ def _clean_supplier_name(raw: Optional[str]) -> str:
     if not raw:
         return ""
     return _CURRENCY_SUFFIX_RE.sub("", str(raw).strip()).strip()
-
-
-def _supplier_slug(db: Session, bind: _Binding, name: str) -> str:
-    """A deterministic `supplier_code` for a creditor the file names but gives no code for.
-
-    Upper-cased alphanumerics only - punctuation and spaces dropped rather than kept, so
-    `XIAMEN TAIYANG TECHNOLOGY CO.,LTD` becomes `XIAMENTAIYANGTECHNOLOGYCOLTD` - truncated to
-    fit the column. A code already held in this company (another supplier whose name
-    happens to slug the same way; by construction this is never the SAME name, since a
-    matching existing name would have resolved before creation was ever considered) gets a
-    numeric `-2`, `-3`, ... suffix rather than colliding on the unique constraint.
-    """
-    base = re.sub(r"[^A-Z0-9]", "", name.upper()) or "SUPPLIER"
-    code_col = getattr(bind.party, bind.party_code_col)
-    candidate = base[:_SUPPLIER_SLUG_MAX]
-    suffix = 1
-    while db.query(bind.party.id).filter(func.upper(code_col) == candidate).first() is not None:
-        suffix += 1
-        tail = f"-{suffix}"
-        candidate = base[: max(_SUPPLIER_SLUG_MAX - len(tail), 0)] + tail
-    return candidate
 
 
 @dataclass(frozen=True)
@@ -2099,20 +2076,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 continue
             raw_code = resolved.party_raw_code_by_code.get(code, code)
             name = resolved.party_label_by_code.get(code) or raw_code
-            try:
-                with db.begin_nested():
-                    created = bind.party(**{
-                        bind.party_code_col: raw_code,
-                        bind.party_name_col: name,
-                        "is_active": True,
-                    })
-                    db.add(created)
-                    db.flush()
-            except IntegrityError:
-                logger.warning(
-                    "outstanding import: could not back-create %s %r for the "
-                    "purchase-order book (the code already exists)",
-                    bind.party.__name__.lower(), raw_code)
+            created = back_create_supplier(
+                db, code=raw_code, name=name, party=bind.party,
+                code_col=bind.party_code_col, name_col=bind.party_name_col)
+            if created is None:
                 continue
             party_ids_by_code[code] = str(created.id)
             created_supplier_codes.append(raw_code)
@@ -2149,21 +2116,12 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             if existing is not None:
                 party_ids_by_name_key[name_key] = str(existing.id)
                 continue
-            slug = _supplier_slug(db, bind, cleaned)
-            try:
-                with db.begin_nested():
-                    created = bind.party(**{
-                        bind.party_code_col: slug,
-                        bind.party_name_col: cleaned,
-                        "is_active": True,
-                    })
-                    db.add(created)
-                    db.flush()
-            except IntegrityError:
-                logger.warning(
-                    "outstanding import: could not back-create %s %r for the "
-                    "purchase-order book (the generated code already exists)",
-                    bind.party.__name__.lower(), slug)
+            slug = supplier_slug(db, cleaned, party=bind.party,
+                                 code_col=bind.party_code_col)
+            created = back_create_supplier(
+                db, code=slug, name=cleaned, party=bind.party,
+                code_col=bind.party_code_col, name_col=bind.party_name_col)
+            if created is None:
                 continue
             party_ids_by_name_key[name_key] = str(created.id)
             # The cleaned NAME, not the generated slug: it is what the operator's file
@@ -2627,5 +2585,5 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # evidence, because a report naming every one of a few thousand codes is not one
         # a person can read either.
         "suppliers_created": len(created_supplier_codes),
-        "suppliers_created_codes": created_supplier_codes[:_CREATED_SUPPLIERS_LISTED],
+        "suppliers_created_codes": created_supplier_codes[:CREATED_SUPPLIERS_LISTED],
     }

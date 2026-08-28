@@ -205,6 +205,28 @@ def test_the_supplier_is_created_from_the_creditor_code(db, imported):
     assert str(_order(db, "202001-S0001").supplier_id) == str(supplier.id)
 
 
+def test_a_back_created_supplier_is_reported_on_the_job_summary(db, catalogue, blank_book):
+    """An operator must never discover an invented supplier by surprise.
+
+    Same two keys, same cap and same semantics as the outstanding purchase-order upload
+    reports its own back-creations with (captain, 28 Aug 2026). Written against whether the
+    master already held `400-F020`, because that is a fact about the environment: the local
+    database is a prod copy that holds it, CI's is empty.
+    """
+    held = db.query(Supplier).filter(Supplier.supplier_code == "400-F020").first()
+
+    out = svc.apply(db, FIXTURE.read_bytes())
+    db.flush()
+
+    supplier = db.query(Supplier).filter(Supplier.supplier_code == "400-F020").one()
+    assert str(_order(db, "202001-S0001").supplier_id) == str(supplier.id)
+    if held is None:
+        assert "400-F020" in out["suppliers_created_codes"]
+        assert out["suppliers_created"] == len(out["suppliers_created_codes"])
+    else:
+        assert "400-F020" not in out["suppliers_created_codes"]
+
+
 def test_the_currency_and_the_cost_come_from_the_file(db, imported):
     order = _order(db, "202001-S0001")
     assert order.currency == "CNY"

@@ -7,6 +7,12 @@ on-hand is already inside its net position - it is not a choice, it is arithmeti
 already happened. The real question is whether some OTHER location is holding stock that could
 cover this shortage, so the company does not buy what it already owns.
 
+## Where cover may come from
+
+The SITE POOL, and nowhere else (R18, captain 28 Aug). Stock in a project bin is already
+claimed by an Order Inquiry, so offering it to a reorder promises units that cannot move -
+the live tell was a plan row reading "Stock 34" off BRW-IB while the BRW pool held none.
+
 ## What counts as free
 
 Surplus, never on-hand. A location holding 231 against its own demand of 419 has nothing to
@@ -57,12 +63,10 @@ class CoverSource:
 
     warehouse_id: str
     warehouse_code: str
+    #: The location's own segment. `project` is never a source (R18) - the segment is
+    #: carried so :func:`sources_in_scope` can say so rather than trusting its caller.
     segment: Optional[str]
     qty: float
-    #: True when the source sits in a different segment from the line being covered. Dealer
-    #: stock covering project demand is a real option and a real decision, so it is offered
-    #: and flagged rather than mixed in silently.
-    cross_segment: bool
     #: The pool this location belongs to - `COALESCE(pool_warehouse_id, id)`, so a location
     #: with no pool of its own IS its own pool. Carried on every source because the cover
     #: endpoint is keyed by PRODUCT while the scope question is per ROW: two rows of the same
@@ -107,6 +111,13 @@ LEFT JOIN plan_demand d
        ON d.product_id = s.product_id AND d.warehouse_id = s.warehouse_id
 WHERE s.quantity_on_hand > 0
   AND w.counts_as_available
+  -- SITE POOL ONLY (R18, captain 28 Aug). A project bin's stock is already claimed by an
+  -- Order Inquiry, so offering it to a reorder promises the same units twice: the plan
+  -- read "Stock 34" off BRW-IB while the BRW pool held none, and none of those 34 could
+  -- move. `segment` is the test, never the code's hyphen suffix, and a location nobody
+  -- has classified counts as pool - the same call `reorder_run_service._planning_rows`
+  -- makes for the on-hand this cover is netted against.
+  AND COALESCE(w.segment, 'dealer') <> 'project'
   -- The cast goes on the PARAMETER. `uuid = ANY(text[])` is 'operator does not exist',
   -- which is what the ::text-on-both-sides version was working around; casting the bound
   -- array instead satisfies the operator without casting the column.
@@ -124,10 +135,10 @@ WHERE s.quantity_on_hand > 0
 def free_stock_by_product(
     db: Session, run_id: str, product_ids: list[str]
 ) -> dict[str, list[CoverSource]]:
-    """Free stock per product, per location, largest first.
+    """Free stock per product, per SITE POOL location, largest first (R18).
 
-    `cross_segment` is left False here: it depends on the line being covered, which this
-    function does not know. :func:`propose_cover` stamps it.
+    Project bins never appear: their stock is spoken for by an Order Inquiry, so a reorder
+    that covered from one would move units that are not there to move.
     """
     if not product_ids:
         return {}
@@ -147,7 +158,6 @@ def free_stock_by_product(
                 warehouse_code=r["warehouse_code"],
                 segment=r["segment"],
                 qty=free,
-                cross_segment=False,
                 pool_warehouse_id=r["pool_warehouse_id"],
             )
         )
@@ -163,6 +173,11 @@ def sources_in_scope(
 ) -> list[CoverSource]:
     """The sources the policy actually allows this row to draw on.
 
+    A PROJECT bin is dropped whatever the scope says (R18): it is not an option the policy
+    widens or narrows, it is stock a reorder may never take. The read that builds the map
+    already excludes it, and this states the rule where the offer is composed, so a caller
+    holding an older payload cannot re-admit one.
+
     Under `own_pool` a source has to sit in the ROW's pool. A row whose own pool is unknown
     (a network row carries no warehouse) is NOT filtered to nothing: there is no pool to
     compare against, and scoping it would silently delete every option rather than narrow
@@ -174,10 +189,11 @@ def sources_in_scope(
     testing for ``!= OWN_POOL`` failed OPEN, so a caller that omitted the argument offered
     every site rather than the one the policy allows.
     """
+    pool_only = [s for s in free if (s.segment or "dealer") != "project"]
     if cover_scope == ALL_LOCATIONS or not line_pool_warehouse_id:
-        return list(free)
+        return pool_only
     return [
-        s for s in free
+        s for s in pool_only
         if (s.pool_warehouse_id or s.warehouse_id) == line_pool_warehouse_id
     ]
 
@@ -185,18 +201,17 @@ def sources_in_scope(
 def propose_cover(
     shortage: float,
     line_warehouse_id: Optional[str],
-    line_segment: Optional[str],
     free: list[CoverSource],
     *,
     already_taken: Optional[dict[str, float]] = None,
     cover_scope: Optional[str] = None,
     line_pool_warehouse_id: Optional[str] = None,
 ) -> CoverProposal:
-    """How much of `shortage` other locations can cover, and from where.
+    """How much of `shortage` other SITE POOLS can cover, and from where.
 
-    Sources in the SAME segment are offered first: moving project stock to serve dealer demand
-    (or the reverse) crosses a boundary the business tracks deliberately, so it should be the
-    fallback rather than the first answer, and it is always marked.
+    Biggest pile first, the code breaking a tie so two runs cannot disagree. There is no
+    segment ranking any more: after R18 a project bin is not a lower-ranked option, it is
+    not an option (`sources_in_scope` drops it), so nothing here crosses a boundary.
 
     `already_taken` is what earlier decisions in this same pass have consumed, keyed by
     warehouse. Without it two lines are each told the same units are free and the second
@@ -232,12 +247,11 @@ def propose_cover(
                 warehouse_code=s.warehouse_code,
                 segment=s.segment,
                 qty=remaining,
-                cross_segment=bool(line_segment and s.segment and s.segment != line_segment),
                 pool_warehouse_id=s.pool_warehouse_id,
             )
         )
 
-    candidates.sort(key=lambda s: (s.cross_segment, -s.qty, s.warehouse_code))
+    candidates.sort(key=lambda s: (-s.qty, s.warehouse_code))
 
     used: list[CoverSource] = []
     covered = 0.0
@@ -251,7 +265,6 @@ def propose_cover(
                 warehouse_code=s.warehouse_code,
                 segment=s.segment,
                 qty=take,
-                cross_segment=s.cross_segment,
                 pool_warehouse_id=s.pool_warehouse_id,
             )
         )

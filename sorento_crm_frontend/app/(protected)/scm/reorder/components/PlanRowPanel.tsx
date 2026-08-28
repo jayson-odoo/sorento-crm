@@ -107,6 +107,8 @@ export function PlanRowPanel({
   const skipped = Boolean(current.skip);
 
   const stockQty = current.stock?.qty ?? 0;
+  /** Where the From-stock units are being taken from - the draft's own split (R18). */
+  const stockSources = current.stock?.sources ?? [];
   const poQty = current.po ?? 0;
   const buyQty = current.buy ?? 0;
   const covered = stockQty + poQty + buyQty;
@@ -244,6 +246,17 @@ export function PlanRowPanel({
             disabled={disabled || stockMax <= 0}
             onChange={setStock}
           />
+          {/* WHICH pools the units come out of, once there is more than one (R18). One
+              source needs no split: the hint already says how many and the panel's own
+              "pool available" is that location's. Only site pools reach here - a project
+              bin is never a source. */}
+          {stockSources.length > 1 ? (
+            <p className="text-2xs text-muted-foreground">
+              {stockSources
+                .map((src) => `${src.warehouse_code} ${fmtInt(src.qty)}`)
+                .join(' + ')}
+            </p>
+          ) : null}
           <NumberField
             label="From PO"
             hint={`open ${fmtInt(poMax)}`}

@@ -974,9 +974,11 @@ def _so_coverage(db: Session, product_id: str, packed: float) -> list[dict]:
 
 def _location_options(db: Session, product_id: str) -> dict:
     """Candidate destination warehouses for a new SPO on this product, ranked - the module
-    docstring's "second amendment" section. Every location carrying any live figure for the
-    product (`location_stock_service.location_stock_for_product` - the SAME per-location
-    reader the reorder Buy-row popup and the fulfilment board already use), ranked by the
+    docstring's "second amendment" section. Every site pool, plus every project bin carrying
+    a live figure for the product (`location_stock_service.location_stock_for_product` - the
+    SAME per-location reader the reorder Buy-row popup and the fulfilment board already use;
+    R16 made the pool rows unconditional, so a site holding none of this item is still a
+    destination the buyer can pick), ranked by the
     active Fulfilment Priority policy (`priority.factors_for_demand_rows` - project earlier
     delivery first, then retail, never a second sort); a location with no open demand behind
     it sorts after every ranked one, by warehouse code, mirroring `container_request_service.
