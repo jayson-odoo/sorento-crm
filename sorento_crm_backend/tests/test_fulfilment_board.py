@@ -5988,9 +5988,10 @@ def test_a_covered_lines_frozen_reserve_carries_the_rung_it_was_drawn_from():
         ]
 
 
-def test_a_revision_written_before_the_field_existed_says_not_recorded_not_nothing():
-    """An absent key is not an empty proposal. The board answers `null`, and the screen
-    says "not recorded" rather than claiming the engine suggested nothing."""
+def test_a_covered_line_is_suggested_live_even_when_its_snapshot_recorded_nothing():
+    """The snapshot is the record, not the suggestion (captain, 28 Aug 2026, ruling 1): a
+    revision written before the proposal was frozen still gets today's ladder under
+    `proposed`, because that is what a Save has to be able to commit."""
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.models.project_so import SOSupplyDecision
@@ -6025,7 +6026,66 @@ def test_a_revision_written_before_the_field_existed_says_not_recorded_not_nothi
         board = _service(db).build(
             [world["order"].so_number], granularity="week", as_of=TODAY
         )
-        assert _contribution(board, "10")["proposed"] is None
+        proposed = _contribution(board, "10")["proposed"]["components"]
+        assert [(c["kind"], c["qty"], c["location"], c["rung"]) for c in proposed] == [
+            ("reserve", "10", world["pool"].warehouse_code, "pool")
+        ]
+
+
+def test_a_covered_lines_suggestion_is_todays_ladder_not_the_snapshot():
+    """SO381895, 28 August 2026: the snapshot froze "Pool BRW lends 30" on three dates by
+    an engine with no pool ledger, revision 1 decided Reserve / Buy / Buy, and Approve
+    resubmitted the snapshot until the confirm refused it. The board reads the ladder
+    TODAY for a covered line, so a stale snapshot cannot reach the Save button."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.project_so import SOSupplyDecision
+
+    with blank_session() as db:
+        world = _suggested_world(db)
+        _confirm(
+            db,
+            world["pso_id"],
+            world["actor"],
+            [
+                {
+                    "project_line_id": world["mirror_line_id"],
+                    "timely_spo_qty": "0",
+                    "reserve": [],
+                    "buy_qty": "10",
+                    "amend_reason": "Site asked for new stock.",
+                }
+            ],
+        )
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.project_sales_order_id == world["pso_id"])
+            .first()
+        )
+        stale = [
+            {
+                "kind": "buy", "qty": "10", "location": None, "warehouse_id": None,
+                "reason": "an engine that has since been corrected", "rung": "buy",
+            }
+        ]
+        decision.line_snapshots = [
+            {**snapshot, "proposed_components": stale}
+            for snapshot in decision.line_snapshots
+        ]
+        flag_modified(decision, "line_snapshots")
+        db.flush()
+
+        board = _service(db).build(
+            [world["order"].so_number], granularity="week", as_of=TODAY
+        )
+        contribution = _contribution(board, "10")
+
+    assert contribution["covered"] is True
+    assert contribution["decision"]["buy_qty"] == "10", "the decided side is untouched"
+    assert [
+        (c["kind"], c["qty"], c["location"], c["rung"])
+        for c in contribution["proposed"]["components"]
+    ] == [("reserve", "10", world["pool"].warehouse_code, "pool")]
 
 
 def test_the_suggested_side_reaches_the_wire():

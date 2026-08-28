@@ -1092,10 +1092,12 @@ class FulfilmentBoardService:
             # Covered or not, and by what. A line an active decision covers is not planned
             # again: it states the composition that was frozen for it (13.4).
             row.decision = frozen.get(str(line.id))
-            # What the engine had suggested for it when that decision was taken. `None` on a
-            # revision written before the proposal was frozen, which the screen reads as
-            # "not recorded"; `_allocate` replaces it with the LIVE ladder on every line no
-            # decision covers.
+            # What the engine had suggested for it when that decision was taken - the
+            # STARTING value only. `_allocate` replaces it with the live ladder on every
+            # line: the uncovered ones from the board's own walk, the covered ones from a
+            # walk of their order today (`_suggest_live_for_covered`). The snapshot stays
+            # in `line_snapshots` for the record; it stopped being the on-screen
+            # suggestion when a stale one sent "BRW 30" to the confirm three times over.
             row.proposed_components = frozen_proposals.get(str(line.id))
             # What was already asked for, and how far purchasing got with it. The decision
             # beside it is what was PROMISED; these are the two halves of one answer, and a
@@ -1945,6 +1947,11 @@ class FulfilmentBoardService:
                 "retail_classification_available": not fact.classification_unavailable,
             }
 
+        # A covered line's SUGGESTION is what the ladder says TODAY (captain, 28 Aug 2026,
+        # ruling 1), read after the walk so the fresh service below cannot disturb the
+        # caches the walk above read.
+        self._suggest_live_for_covered(served, as_of=as_of)
+
     def _donors_for(
         self,
         borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]],
@@ -1965,6 +1972,75 @@ class FulfilmentBoardService:
         if cache_key not in borrow_cache:
             borrow_cache[cache_key] = self.supply.borrow_candidates_for(fact, need=need)
         return borrow_cache[cache_key]
+
+    def _suggest_live_for_covered(
+        self, served: Sequence[_Row], *, as_of: Optional[date] = None
+    ) -> None:
+        """A covered line's `proposed` is what the ladder would propose for it TODAY.
+
+        The captain, 28 August 2026, on SO381895: revision 1 had frozen Reserve 30 / Buy 30
+        / Buy 15 for TPE-9204's three dates, but the board printed the proposal SNAPSHOT
+        taken with that revision - "BRW 30" on every date, by an engine that had no pool
+        ledger yet - and Approve resubmitted it: "0 of 1 orders confirmed ... BRW now has 1
+        free for this line, and 30 was asked for". Ruled: the suggestion is live (option 1);
+        the at-decision-time proposal stays in `line_snapshots` for the record.
+
+        ONE WALK PER ORDER, the order's own lines in line order - the walk `proposal_for`
+        and the freeze run - against facts that un-net THIS order's holds (`replacing`) and
+        keep every other order's. That is the reading `confirm` judges an amendment of the
+        order against, so what is suggested here is what a Save can commit; and it is a
+        walk, not a per-line composition, so the pool and donor ledgers hold across the
+        order's delivery dates exactly as they do for undecided lines.
+
+        A FRESH service, because `_facts_for` replaces the request's stock caches and the
+        board's own walk has already read the ones it needs. The decided side is untouched:
+        `sources`, `decision` and the proposed totals go on stating what was frozen.
+        """
+        by_order: Dict[str, List[_Row]] = defaultdict(list)
+        for row in served:
+            if (
+                row.covered
+                and not row.unplannable
+                and row.project_sales_order_id
+                and row.project_line_id
+            ):
+                by_order[str(row.project_sales_order_id)].append(row)
+        if not by_order:
+            return
+        for pso_id, rows in by_order.items():
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == pso_id)
+                .first()
+            )
+            if order is None:
+                continue
+            supply = ProjectSupplyService(self.db)
+            lines = supply.lines_of(pso_id)
+            wanted = {str(row.project_line_id) for row in rows}
+            replacing = {str(line.id) for line in lines if str(line.id) in wanted}
+            if not replacing:
+                continue
+            facts = supply._facts_for(order, lines, replacing=replacing)
+            checked = [
+                (line, None, facts[str(line.id)])
+                for line in lines
+                if str(line.id) in replacing and str(line.id) in facts
+            ]
+            proposals = supply._proposals_for(lines, checked, facts=facts, as_of=as_of)
+            for row in rows:
+                components = proposals.get(str(row.project_line_id))
+                if components is None:
+                    continue
+                for component in components:
+                    code = component.source_location
+                    if code and code not in row.warehouse_ids:
+                        warehouse_id = self.supply.warehouse_id_for_code(code)
+                        if warehouse_id:
+                            row.warehouse_ids[code] = warehouse_id
+                row.proposed_components = [
+                    self._source(component, row, ()) for component in components
+                ]
 
     def _apply_frozen(self, row: _Row) -> None:
         """A covered line states what was decided for it, and nothing else (13.4).
