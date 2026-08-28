@@ -577,11 +577,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # be a project bin). `quantity_on_hand` counted here is the ONLY figure the engine
     # ever reads for netting/trigger, so moving it also moves `net_position` in the SAME
     # expression (never two readings of one fact that could drift apart) - the coupling
-    # the diagnosis flagged. Stock sitting in a project bin is not silently dropped:
-    # `project_on_hand` carries it, visible, on every row.
+    # the diagnosis flagged. R19 (captain, 28 Aug) settled the remaining half: a bin's
+    # quantity is not carried alongside as `project_on_hand` either, because the ONE basis
+    # that read it added it back into the gap it was sizing. On hand is the pool, on every
+    # basis, and no path holds a second figure that could re-admit a bin.
     is_dealer_expr = "(COALESCE(w.segment, 'dealer') <> 'project')"
     on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN np.quantity_on_hand ELSE 0 END)"
-    project_on_hand_expr = f"(CASE WHEN {is_dealer_expr} THEN 0 ELSE np.quantity_on_hand END)"
     net_position_col = f"({on_hand_expr} + np.on_order - {committed_expr}) AS net_position"
 
     sql = text(f"""
@@ -598,7 +599,6 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- freezes them.
                COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
                {on_hand_expr} AS quantity_on_hand,
-               {project_on_hand_expr} AS project_on_hand,
                np.on_order, {committed_col}, {net_position_col},
                -- Front planning 5.3: the SAME committed figure, split by demand channel.
                -- Read off `committed_v` (or, under a horizon, its run-scoped override)
@@ -1182,8 +1182,7 @@ def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor:
                  agg_cell: dict, *, moq: Optional[float] = None,
                  order_multiple: Optional[float] = None,
                  plan_basis: Optional[dict] = None,
-                 scope_label: str = "in this pool",
-                 include_project_on_hand: bool = False) -> Optional[ReorderRecommendation]:
+                 scope_label: str = "in this pool") -> Optional[ReorderRecommendation]:
     """A demand line the pool's own stock covers is a SUGGESTION, never a silent omission.
 
     An order-inquiry line reaching the plan has already been through CS: they decided this
@@ -1210,11 +1209,10 @@ def _covered_rec(run_id: str, pool_id: Optional[str], prows: list[dict], anchor:
     # Same leg as `_compute_cell`'s `net` (captain, 20 Aug): outstanding PO is incoming
     # supply here too, or a pool sitting on a PO for the exact committed quantity still
     # reads as "buy this anyway" instead of "you already have this on order".
+    # `quantity_on_hand` is the pool-only reading the row was netted with (R19), so what
+    # this row quotes as available is stock the site may actually use.
     available = sum(float(r["quantity_on_hand"] or 0.0) + float(r["on_order"] or 0.0)
                     + float(r["po_ordered"] or 0.0)
-                    # Per-product scope counts every `stock` row (AC-R1); every other
-                    # scope keeps the pool-only reading it was netted with.
-                    + (float(r["project_on_hand"] or 0.0) if include_project_on_hand else 0.0)
                     for r in prows)
     rounded = eng.round_order_qty(committed, moq, order_multiple)
     cell = dict(agg_cell)
@@ -1424,7 +1422,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                           "project_supply_reduction", "retail_net",
                           "ss", "ss_used", "ss_fallback",
                           "demand_window_days",
-                          "on_hand", "project_on_hand", "on_order", "po_ordered", "segment",
+                          "on_hand", "on_order", "po_ordered", "segment",
                           "master_reorder_level", "master_reorder_quantity",
                           "committed", "list_price",
                           "reorder_level", "reorder_level_source", "suggested_level",
@@ -1472,21 +1470,6 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                    disposition_action=action,
                                    transfer_flag=flags.get(str(r["warehouse_id"]))))
     return recs
-
-
-def _cell_full_on_hand(c: dict) -> float:
-    """Everything the company holds of this item AT THIS LOCATION.
-
-    `on_hand` is the pool-only reading (captain, 20 Aug: a project bin's stock is not
-    freely usable), with the rest parked in `project_on_hand`. The per-product basis asks
-    "how much do we have", not "how much may this site sell", so it reads both (AC-R1).
-    """
-    return float(c.get("on_hand") or 0.0) + float(c.get("project_on_hand") or 0.0)
-
-
-def _cell_full_net(c: dict) -> float:
-    """The cell's net with the group-bin stock added back - see `_cell_full_on_hand`."""
-    return float(c.get("net") or 0.0) + float(c.get("project_on_hand") or 0.0)
 
 
 def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) -> bool:
@@ -1540,14 +1523,11 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                   # rather than added on top of a retail-only sizing, because there is one
                   # net now and the level is measured against all of it (AC-R2).
                   #
-                  # `project_on_hand` is ADDED BACK (AC-R1, "the total across all
-                  # locations"). Every other planning path drops it, because a project bin
-                  # holds stock a site cannot freely sell (captain, 20 Aug) - but this
-                  # basis asks a different question, "how much of this item does the
-                  # company have", and the answer is every `stock` row whatever segment the
-                  # bin was sorted into. Without it B2155-NL-BLUE read 1 on hand against
-                  # 28,831 in the warehouses, and SRTWT7408 read 1,296 against 5,498.
-                  "net": _cell_full_net(c)}
+                  # The cell's own net, which counts the SITE POOL only (R19, captain 28
+                  # Aug - superseding AC-R1's "the total across all locations"). Stock in a
+                  # project bin is not stock this site may sell, so folding it in here shrank
+                  # a gap nothing was covering: CB2907 read On hand 2 with every pool empty.
+                  "net": float(c.get("net") or 0.0)}
                  for r, c in zip(prows, cells)]
     agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
                                 order_multiple=order_multiple)
@@ -1564,8 +1544,7 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # which is where the goods would come from and the row a planner recognises. Ties break
     # on code so a re-run cannot move it. Only `sku` / `product_name` are read off it: the
     # emitted row names no warehouse.
-    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0)
-                                            + float(r["project_on_hand"] or 0.0),
+    anchor = dict(max(prows, key=lambda r: (float(r["quantity_on_hand"] or 0.0),
                                             str(r["warehouse_code"] or ""))))
     # Demand nobody located was landed on ONE location of the product; the product row was
     # sized against all of it, so it states the whole of it rather than only the part that
@@ -1586,13 +1565,10 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     # A location has no level of its own any more, so its own "retail need" is what it is
     # SHORT by beyond its firm project demand - a statement about that place. The group's
     # netted figure is the one that sized the buy, and it is stated once, above.
-    # Each location's `on_hand` is its WHOLE stock for the same reason the net is: a bin
-    # reading 0 beside a `project_on_hand` of 5,290 is the number that made the product
-    # look empty. The split is not lost - `project_on_hand` still says how much of it sits
-    # at a project-held bin.
+    # A location states the on hand it was netted with - the site pool's, so a project bin
+    # reads 0 (R19). The location list and the row's own total then say the same thing.
     loc_cells = [dict(c,
-                      on_hand=_cell_full_on_hand(c),
-                      retail_need=max(max(-_cell_full_net(c), 0.0)
+                      retail_need=max(max(-float(c.get("net") or 0.0), 0.0)
                                       - float(c.get("project_need") or 0.0), 0.0))
                  for c in cells]
     basis = _plan_basis(pid, "product", prows, loc_cells, split,
@@ -1621,8 +1597,7 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     else:
         covered = _covered_rec(run_id, None, prows, anchor, cell, moq=moq,
                                order_multiple=order_multiple, plan_basis=basis,
-                               scope_label="across every location",
-                               include_project_on_hand=True)
+                               scope_label="across every location")
         if covered is not None:
             recs.append(covered)
 
@@ -1671,10 +1646,10 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         last_cost or {}, str(prows[0]["product_id"]), None,
         pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     cell.update({
-        # The product's WHOLE stock, group bins included (AC-R1). `project_on_hand` stays
-        # beside it saying how much of that total sits at a project-held bin.
-        "on_hand": _total("on_hand") + _total("project_on_hand"),
-        "project_on_hand": _total("project_on_hand"),
+        # The product's stock across its SITE POOLS (R19, superseding AC-R1's "the total
+        # across all locations"): a project bin's quantity is not stock this product may be
+        # sold from, so it is not summed into the figure the buy is sized against.
+        "on_hand": _total("on_hand"),
         "on_order": _total("on_order"),
         "po_ordered": _total("po_ordered"),
         # The group's own figures, not the sum of ten locations each measured against the
@@ -1911,10 +1886,6 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         # rate is a number the reader has to take on faith.
         "demand_window_days": _fnum(row.get("window_days")),
         "on_hand": _fnum(row.get("quantity_on_hand")),
-        # Stock physically sitting at a bin this location's pool feeds - NOT counted in
-        # `on_hand` (captain, 20 Aug), but never dropped from the screen either: the buyer
-        # can still see where it sits. 0.0 at a pool root, the bin's own quantity at a bin.
-        "project_on_hand": _fnum(row.get("project_on_hand")),
         "on_order": _fnum(row.get("on_order")),
         "po_ordered": _fnum(row.get("po_ordered")),
         "segment": row.get("segment"),
@@ -2287,8 +2258,6 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
             "retail_need": _r(c.get("retail_need")) or 0.0,
             # Shared facts of the product-location, carrying no channel dimension.
             "on_hand": _fnum(c.get("on_hand")),
-            # Visible-but-not-counted: stock at a project-held bin (captain, 20 Aug).
-            "project_on_hand": _fnum(c.get("project_on_hand")),
             "incoming_spo": _fnum(c.get("on_order")),
             "on_order_po": _fnum(c.get("po_ordered")),
             "reorder_level": _fnum(c.get("reorder_level")),
@@ -2371,9 +2340,6 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         # The weekly checklist, frozen with the row so it still reads true next month.
         "demand_window_days": c.get("demand_window_days"),
         "on_hand": c.get("on_hand"),
-        # Visible-but-not-counted (captain, 20 Aug): stock at a project-held bin, kept
-        # beside `on_hand` so a pool-only figure never reads as stock going missing.
-        "project_on_hand": c.get("project_on_hand"),
         "on_order": c.get("on_order"),
         "po_ordered": c.get("po_ordered"),
         "segment": c.get("segment"),

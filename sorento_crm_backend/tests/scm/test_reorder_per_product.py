@@ -447,41 +447,67 @@ def _segment(db, wid: str, segment: str) -> None:
     db.flush()
 
 
-def test_stock_at_a_group_bin_counts_toward_the_products_own_net(scm_app):
-    """AC-R1 as the lane run found it: "every location" is every `stock` row.
+def test_stock_at_a_project_bin_never_counts_toward_the_products_net(scm_app):
+    """R19 (captain, 28 Aug): on hand is the SITE POOL, on every basis, everywhere.
 
-    SRTWT7408 holds 5,498 across the warehouses, but the plan counted 1,296 - the group
-    bins are `segment = 'project'`, and every other planning path deliberately drops their
-    stock (captain, 20 Aug: a project bin's quantity is not freely usable). This basis asks
-    a different question - how much of this item does the company have - so the bins count,
-    and the row still says how much of the total is sitting in one.
+    This is the ruling that SUPERSEDES AC-R1's "every `stock` row". CB2907 read On hand 2
+    with every pool at 0 - the 2 sit at BRW-BB - and a bin's stock is not stock the site
+    may sell, so counting it shrank a gap that was never covered. 34 in a project bin
+    against a level of 50 is a 50-unit buy, not a 16-unit one.
     """
     _, db, _, _ = scm_app
     _use_level_basis(db)
-    root, root_code = _wh(db, "GBR")
-    bin_, bin_code = _wh(db, "GBB")
+    root, root_code = _wh(db, "PBR")
+    bin_, bin_code = _wh(db, "PBB")
     _segment(db, root, "dealer")
     _segment(db, bin_, "project")
-    pid, code = _product(db, master_level=500)
-    _mk_stock(db, pid, root, 1296)
-    _mk_stock(db, pid, bin_, 4202)
+    pid, code = _product(db, master_level=50)
+    _mk_stock(db, pid, root, 0)
+    _mk_stock(db, pid, bin_, 34)
     _mk_demand(db, pid, root, 0.0)
     _mk_demand(db, pid, bin_, 0.0)
-    _link(db, pid, _mk_supplier(db, f"{MARKER} GB"), moq=None, mult=None)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} PB"), moq=None, mult=None)
+    db.flush()
+
+    rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
+
+    buys = _buys(rows)
+    assert len(buys) == 1, "a pool holding nothing against a level of 50 is short"
+    assert float(buys[0]["rounded_qty"]) == 50.0, "the whole gap, not 50 - 34"
+    inputs = buys[0]["inputs"]
+    assert float(inputs["on_hand"]) == 0.0, "the pool holds none of it"
+    assert float(inputs["net"]) == 0.0, "and the 34 in the bin never reaches the net"
+    assert "project_on_hand" not in inputs, "the split is gone with the rule that read it"
+    by_code = {loc["warehouse_code"]: loc for loc in inputs["plan_basis"]["locations"]}
+    assert float(by_code[bin_code]["on_hand"]) == 0.0, (
+        "a project bin states 0 on hand, the same figure the engine netted"
+    )
+
+
+def test_the_same_stock_held_in_the_pool_counts_in_full(scm_app):
+    """The other half of R19: pool stock is never the thing being dropped. 120 at the pool
+    against a level of 50 is a product nobody needs to buy, and it reads 120."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root, root_code = _wh(db, "PPR")
+    bin_, bin_code = _wh(db, "PPB")
+    _segment(db, root, "dealer")
+    _segment(db, bin_, "project")
+    pid, code = _product(db, master_level=50)
+    _mk_stock(db, pid, root, 120)
+    _mk_stock(db, pid, bin_, 34)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} PP"), moq=None, mult=None)
     _core_line_for_run(db, pid, root, qty=7, demand_class="retail")
     db.flush()
 
     rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
 
-    assert not _buys(rows), "5,491 against a level of 500 is not a shortage"
+    assert not _buys(rows), "113 against a level of 50 is not a shortage"
     inputs = _sizing_row(rows)["inputs"]
-    assert float(inputs["on_hand"]) == 5498.0, "the whole stock, both bins"
-    assert float(inputs["project_on_hand"]) == 4202.0, "and how much of it sits in a bin"
-    assert float(inputs["net"]) == 5491.0
-    by_code = {loc["warehouse_code"]: loc for loc in inputs["plan_basis"]["locations"]}
-    assert float(by_code[bin_code]["on_hand"]) == 4202.0, (
-        "a bin reading 0 beside 4,202 of its own stock is what made the product look empty"
-    )
+    assert float(inputs["on_hand"]) == 120.0, "the pool's stock, and only it"
+    assert float(inputs["net"]) == 113.0
 
 
 def test_an_autocount_mirror_of_zero_is_not_a_buyers_level(scm_app):
@@ -560,3 +586,28 @@ def test_a_covered_row_suggests_buying_nothing(scm_app):
     assert float(row["recommended_qty"]) == 0.0, "nothing is being bought"
     assert float(row["rounded_qty"]) == 200.0, "what buying anyway would cost, kept"
     assert float(row["inputs"]["covered_committed"]) == 200.0
+
+
+def test_a_covered_rows_available_stock_is_the_pool_only(scm_app):
+    """R19 in the covered branch: `_covered_rec` added the bins back on this basis alone,
+    so a product read as covered "across every location" quoted the buyer stock the site
+    cannot sell. It quotes the pool, the same figure the row was netted with."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root, root_code = _wh(db, "CVR")
+    bin_, bin_code = _wh(db, "CVB")
+    _segment(db, root, "dealer")
+    _segment(db, bin_, "project")
+    pid, code = _product(db, master_level=500)
+    _mk_stock(db, pid, root, 4000)
+    _mk_stock(db, pid, bin_, 500)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} CVR"), moq=None, mult=None)
+    _core_line_for_run(db, pid, root, qty=200, demand_class="retail")
+    db.flush()
+
+    row = _sizing_row(_recs(db, _run(db, [root_code, bin_code], code), pid))
+
+    assert row["rec_type"] == "covered"
+    assert float(row["inputs"]["covered_available"]) == 4000.0, "not 4,500"
