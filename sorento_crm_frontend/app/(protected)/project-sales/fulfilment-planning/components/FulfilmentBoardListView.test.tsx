@@ -128,16 +128,17 @@ describe('FulfilmentBoardListView', () => {
     expect(pill.textContent).toBe('Confirmed');
   });
 
-  it('calls onDecide with an approved verdict from the expanded row’s Approve suggestion (pill + panel, not a row button)', async () => {
+  it('calls onDecide with an approved verdict from the expanded row’s Save (pill + panel, not a row button)', async () => {
     const { onDecide } = renderView();
 
-    // No row-level Approve button any more: the row expands, the same panel the grid uses.
+    // No row-level Approve button any more: the row expands into the same panel the grid
+    // uses, and its one Save reads the untouched suggestion as an approval.
     // Clicked on the Agent cell, not the Sales order cell - that one is a `Link` that stops
     // the click from bubbling to the row, on purpose (it navigates instead of expanding).
     expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
     await screen.findByText('SO397450');
     fireEvent.click(screen.getByText('JEREMY'));
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() =>
       expect(onDecide).toHaveBeenCalledWith('so-1:line-10', {

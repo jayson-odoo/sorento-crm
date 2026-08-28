@@ -907,7 +907,7 @@ class ProjectSupplyService:
                     )
                 )
                 continue
-            components, _pool_open, _borrow_open = composed[str(line.id)]
+            components, _pool_open, _borrow_open, _net_open = composed[str(line.id)]
             payload_lines.append(
                 self._serialize_line(
                     fact, components, frozen.get(str(line.id)),
@@ -1007,6 +1007,7 @@ class ProjectSupplyService:
         pool_free_left: Optional[Decimal] = None,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
         as_of: Optional[date] = None,
+        pools_net_left: Optional[Decimal] = None,
     ) -> Tuple[Component, ...]:
         """The source ladder for ONE line, ladder v5's four questions
         (`PLAN-scm-cs-planning-uat.md` section 1e): the lead-time window and purchasing's
@@ -1036,6 +1037,14 @@ class ProjectSupplyService:
         confirmation refused all but the first ("BRW-SYNT has 0 free, and 10 was asked for",
         28 August 2026). `None` reads the live free stock, which is what a single line on its
         own may draw; `compose_lines` states it for every line of a walk.
+
+        `pools_net_left` is the third ledger, and the one that actually BOUNDS rung 2:
+        `pool_reserve_capacity` offers `max(pools_net, 0)` across the five pools, and each
+        pool's `free` only says where it can come from. Drawing `pool_free_left` down was
+        not drawing the pile down - BRW held 3365 with 31 net, so every delivery date of
+        SO381895 was offered "30 of the 31" and the confirmation refused all but the first
+        (28 August 2026). `None` reads the fact's own net, which is what a single line on
+        its own may draw.
         """
         # The ATP reserve window (`front_planning_engine`): a line due beyond
         # `as_of + lead time + buffer` takes NO STOCK under ladder v3, so none of the STOCK
@@ -1050,6 +1059,7 @@ class ProjectSupplyService:
         # buys whole.
         outside_window = self.outside_reserve_window(fact, as_of=as_of)
         pools = [] if outside_window else self._pool_chain(fact, own_pool_free_left=pool_free_left)
+        pools_net = fact.pools_net if pools_net_left is None else pools_net_left
         group_take = [] if outside_window else self._group_take_candidates(fact)
         cross_group = (
             []
@@ -1057,7 +1067,7 @@ class ProjectSupplyService:
             else self._cross_group_borrow_candidates(
                 fact,
                 residual=self._ladder_residual_before_cross_group(
-                    fact, pools=pools, group_take=group_take
+                    fact, pools=pools, group_take=group_take, pools_net=pools_net
                 ),
                 borrow_left=borrow_left,
             )
@@ -1081,7 +1091,7 @@ class ProjectSupplyService:
             # the number it is a share of; `pools_net` bounds rung 3 inside the engine,
             # where the hot-selling gate that can zero the whole rung already lives.
             group_offer=fact.group_offer if fact.group_code else None,
-            pools_net=fact.pools_net,
+            pools_net=pools_net,
         )
 
     # ----------------------------------------------------- ladder v6: order units
@@ -1091,14 +1101,20 @@ class ProjectSupplyService:
         entries: Sequence[Tuple[Any, _LineFacts, Any]],
         *,
         as_of: Optional[date] = None,
-    ) -> Dict[Any, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]]:
+    ) -> Dict[
+        Any,
+        Tuple[
+            Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal], Optional[Decimal]
+        ],
+    ]:
         """Compose a WHOLE WALK: every entry in the order it is walked, keyed by its caller's
         own key, with the shared piles drawn down once as the walk passes them.
 
         `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
-        `(components, pool_open, borrow_open)` - the composition, and what the two shared
-        piles held when its unit was reached: this line's own site pool, and the
-        cross-group donors by warehouse id. The board's proof states both, and it states
+        `(components, pool_open, borrow_open, net_open)` - the composition, and what the
+        shared piles held when its unit was reached: this line's own site pool's free
+        stock, the cross-group donors by warehouse id, and the five site pools' NET (the
+        number that bounds rung 2, `pool_reserve_capacity`). The board's proof states both, and it states
         them from HERE rather than re-reading the live figures, which is how question 3
         came to say "free stock at DC1-NT, within the limit" beside a Buy the ledger had
         just forced.
@@ -1115,25 +1131,35 @@ class ProjectSupplyService:
 
         A unit of one line is `compose_line` exactly as before, on the fact itself.
 
-        THE TWO SHARED PILES are drawn once per unit, and this is the only place either
-        ledger lives: the own-site pool (`pool_free_left`) and the cross-group donors
-        (`borrow_left`). All three callers used to keep the pool one and none of them kept
-        the donor one - which is how four delivery dates of SO381895 were each proposed a
-        Borrow of 10 from a location holding 10 in all, and why `confirm` refused every line
-        but the first.
+        THE SHARED PILES are drawn once per unit, and this is the only place any of the
+        ledgers lives: the own-site pool's free stock (`pool_free_left`), the cross-group
+        donors (`borrow_left`), and the site pools' net (`pools_net_left`, per product -
+        the net is ONE pile across all five pools, section 1d). All three callers used to
+        keep the pool one and none of them kept the donor one - which is how four delivery
+        dates of SO381895 were each proposed a Borrow of 10 from a location holding 10 in
+        all, and why `confirm` refused every line but the first. The net one came the same
+        day, from the same order one rung up: three delivery dates of TPE-9204 were each
+        offered "30 of the 31 the site pools net between them", because the free-stock
+        ledger stood at 3365 while the 31 was read fresh off the fact every time.
 
         A fact with an `unplannable_reason` is not walked at all (empty tuple), as before: a
         mirror line with no reconciled AutoCount line has no open quantity to promise
         against.
         """
         out: Dict[
-            Any, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]
+            Any,
+            Tuple[
+                Tuple[Component, ...],
+                Optional[Decimal],
+                Dict[str, Decimal],
+                Optional[Decimal],
+            ],
         ] = {}
         units: Dict[Any, List[Tuple[Any, _LineFacts]]] = {}
         walk: List[Any] = []
         for key, fact, unit_key in entries:
             if fact.unplannable_reason:
-                out[key] = ((), None, {})
+                out[key] = ((), None, {}, None)
                 continue
             if unit_key not in units:
                 units[unit_key] = []
@@ -1141,6 +1167,10 @@ class ProjectSupplyService:
             units[unit_key].append((key, fact))
 
         pool_left: Dict[str, Decimal] = {}
+        # product id -> what the five site pools still net between them in this walk.
+        # Keyed by PRODUCT alone: the net is one pile across every pool (section 1d), so a
+        # draw at any of them is a draw on the same number.
+        net_left: Dict[str, Decimal] = {}
         # product id -> warehouse id -> what is still borrowable there in this walk.
         borrow_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
@@ -1157,6 +1187,13 @@ class ProjectSupplyService:
             # Captured BEFORE the draw: the proof states what each pile held when this unit
             # was reached, and reading it back afterwards would state what was left instead.
             pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
+            # Whether or not this location names a pool of its own: rung 2 draws the OTHER
+            # site pools too (`_pool_chain`'s `rest`), and a bare site code with no
+            # `pool_warehouse_id` (BRW-IB on the live book) still draws BRW through them.
+            product_id = unit_fact.product_id
+            if product_id and product_id not in net_left:
+                net_left[product_id] = _dec(unit_fact.pools_net)
+            net_open = net_left.get(product_id) if product_id else None
             # A fact with no product cannot borrow at all (`_cross_group_borrow_candidates`
             # refuses it by rule), so it keeps no ledger either - one bucket keyed by the
             # empty string would pool every such line's donors together.
@@ -1171,6 +1208,7 @@ class ProjectSupplyService:
                 pool_free_left=pool_open,
                 borrow_left=donors,
                 as_of=as_of,
+                pools_net_left=net_open,
             )
             if pool_key and unit_fact.pool_code:
                 drawn = sum(
@@ -1183,14 +1221,26 @@ class ProjectSupplyService:
                     _ZERO,
                 )
                 pool_left[pool_key] = max(pool_left.get(pool_key, _ZERO) - drawn, _ZERO)
+            if product_id and net_open is not None:
+                # EVERY pool draw, not only the own pool's: rung 2 may spill into the other
+                # site pools, and all of it comes off the one net.
+                drawn_net = sum(
+                    (
+                        component.qty
+                        for component in components
+                        if component.kind == RESERVE and component.rung == "pool"
+                    ),
+                    _ZERO,
+                )
+                net_left[product_id] = max(net_open - drawn_net, _ZERO)
             if donors is not None:
                 self._draw_donors(donors, unit_fact, components)
 
             if len(members) == 1:
-                out[members[0][0]] = (components, pool_open, borrow_open)
+                out[members[0][0]] = (components, pool_open, borrow_open, net_open)
                 continue
             for key, split in self._split_unit(members, components).items():
-                out[key] = (split, pool_open, borrow_open)
+                out[key] = (split, pool_open, borrow_open, net_open)
         return out
 
     def _members_in_line_order(
@@ -1915,6 +1965,7 @@ class ProjectSupplyService:
         *,
         pools: Sequence[Dict[str, Any]],
         group_take: Sequence[Dict[str, Any]],
+        pools_net: Optional[Decimal] = None,
     ) -> Decimal:
         """What rung 4 (cross-group borrow) would still need to cover, walking rungs 1-3
         the same greedy way `propose_line` does. The cap in section 1b rung 4 is stated
@@ -1937,7 +1988,10 @@ class ProjectSupplyService:
         for _location, capacity in pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             pools=pools,
-            pools_net=fact.pools_net,
+            # The walk's running net when the caller keeps one (`compose_lines`), else
+            # the fact's own: the residual has to be measured against the same cap the
+            # rung above it was.
+            pools_net=fact.pools_net if pools_net is None else pools_net,
         ):
             if remaining <= _ZERO:
                 break

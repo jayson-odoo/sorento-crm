@@ -854,15 +854,19 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
     """What each in-scope document's demand class should be, and what could not be decided.
 
     Per DOCUMENT, in order: the order type the header already carries, then the one the file
-    states (which is also the value that fills an absent header), then the customer's market
-    segment via the debtor code the file names, and last the demand class held against the
-    agent who sold it. When none of the four answers, the document is REPORTED and left
-    exactly as it was.
+    states (which is also the value that fills an absent header), then the demand class held
+    against the AGENT who sold it, and last the customer's market segment via the debtor code
+    the file names. When none of the four answers, the document is REPORTED and left exactly
+    as it was.
 
-    The agent is LAST on purpose. An agent who mostly sells project work will still sell the
-    occasional trade order, so their class is a tendency about the seller while the three
-    ahead of it are statements about this order and this buyer. Reading it earlier would
-    overwrite a fact with a tendency.
+    The agent comes BEFORE the customer (captain, 28 Aug 2026). The sales force is split by
+    channel - a project agent sells project work, a trade agent sells trade - so who sold the
+    order says what the order is for. The customer does not: one debtor buys through both
+    channels (YOTU BUILDER SDN BHD held nine project orders and seven the customer master
+    called retail), so its segment is a default about the account, not a statement about
+    this order. Read the other way round, a project customer's segment marked retail hid
+    SO381895 from the fulfilment board. The two order types still stand ahead of both:
+    they are statements about THIS document.
 
     Defaulting to retail is the failure this column exists to avoid: it under-prioritises a
     project order invisibly, and the wrong answer is stable, so no later upload surfaces it
@@ -900,12 +904,12 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
         stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
         agent_code = resolved.agent_by_doc.get(number, "")
         cls = (_class_of(stored_split) or _class_of(stated_split)
-               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, "")))
                # Taken as stored, NOT through `_class_of`: the column holds a class already,
                # constrained to the vocabulary, so passing it through the segment matcher
                # would turn a value that somehow escaped the constraint into `retail` - a
                # guess, in the one place this module refuses to guess.
-               or agent_classes.get(agent_code))
+               or agent_classes.get(agent_code)
+               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
         if cls is not None:
             out[number] = cls
             continue
@@ -915,8 +919,8 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
             # that stopped winning stock, weeks later, with nothing to point at.
             continue
         # Named specifically, because the four sources have four different fixes: an order
-        # type on the header, an order type in the export, a market segment on the customer,
-        # or a demand class on the agent. "Unclassified" alone tells the operator nothing
+        # type on the header, an order type in the export, a demand class on the agent, or
+        # a market segment on the customer. "Unclassified" alone tells the operator nothing
         # about which one to go and set. The DEBTOR is named beside the order because it is
         # the fix they will reach for first: give that customer a market segment and the
         # whole file goes in.
@@ -1710,6 +1714,16 @@ def _money_differs(held: dict, extra: dict, bind: _Binding) -> bool:
     return False
 
 
+#: The currency a PURCHASE document is in when the export states none (captain, 28 Aug
+#: 2026: "our upload should take CNY also for now"). The AutoCount PO export that landed
+#: 4,050 headers and 65,204 lines without a currency column is a China book, and the
+#: detail page printed every one of them as RM. A FILL, never an overwrite: a stated
+#: currency always wins, and a document that already holds one keeps it
+#: (`test_a_file_without_a_po_date_column_does_not_blank_the_issue_date`). The sales book
+#: is untouched - a customer invoice's currency is not this rule's to guess.
+DEFAULT_PO_CURRENCY = "CNY"
+
+
 def _refresh_money(line, extra: dict, bind: _Binding) -> None:
     """Bring the line's money columns up to what this extract says.
 
@@ -1718,11 +1732,16 @@ def _refresh_money(line, extra: dict, bind: _Binding) -> None:
     line that arrived with the column blank and was priced later would stay blank for ever -
     ranked as if it were free. A value the file does NOT state leaves the column alone rather
     than blanking a cost we already know.
+
+    The one exception is a purchase line's CURRENCY, which is filled with
+    `DEFAULT_PO_CURRENCY` when neither the file nor the row states one.
     """
     for col, key in bind.money_cols:
         value = extra.get(key)
         if value is not None:
             setattr(line, col, value)
+    if bind.header is PurchaseOrder and not getattr(line, "currency", None):
+        line.currency = DEFAULT_PO_CURRENCY
 
 
 def _settled_quantities(after: Line, extra: dict) -> tuple[float, float]:
@@ -2185,6 +2204,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             value = resolved.header_by_doc.get(number, {}).get(key)
             if value is not None:
                 setattr(header, col, value)
+        # A purchase header with no currency, from the file or from before, is CNY
+        # (`DEFAULT_PO_CURRENCY`); a stated one has just been written above and stands.
+        if doc_type == PO and not getattr(header, "currency", None):
+            header.currency = DEFAULT_PO_CURRENCY
         # Columns the file FILLS rather than restates. The sales book's order type is the
         # case: for a document this upload creates the file is the only evidence there is,
         # while a value already on the header was set by a person and a weekly re-upload
@@ -2351,6 +2374,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             }
             for col, key in bind.money_cols:
                 fields[col] = extra.get(key)
+            # A new purchase line with no stated currency is CNY (`DEFAULT_PO_CURRENCY`),
+            # the same fill `_refresh_money` applies to a line that already exists.
+            if bind.header is PurchaseOrder and not fields.get("currency"):
+                fields["currency"] = DEFAULT_PO_CURRENCY
             db.add(bind.line(**fields))
             if settled:
                 # Claimed for this run, so a second identical row of the same completed book

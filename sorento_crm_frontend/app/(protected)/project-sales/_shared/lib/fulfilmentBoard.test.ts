@@ -19,6 +19,7 @@ import {
   confirmLinesFor,
   DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
   factorLabel,
+  matchesSuggestion,
   plannedLineCount,
   rankingNote,
   rowMatchesSearch,
@@ -26,6 +27,7 @@ import {
   unpostableDecidedFor,
   standingsFor,
 } from './fulfilmentBoard';
+import { amendDraftFrom, suggestionDraftFrom } from './boardAmend';
 import {
   bucketKeyFor,
   buildBoard,
@@ -759,6 +761,105 @@ describe('amendNeedsReason on a covered line', () => {
 });
 
 /**
+ * WHICH VERDICT THE ONE SAVE TAKES (the captain, 28 August: "if the suggestion is same as
+ * decision then it is approved, if suggestion different from decision then it is amended, so I
+ * just click on 1 button").
+ *
+ * Asserted against the drafts the editor actually opens on - `amendDraftFrom` and
+ * `suggestionDraftFrom` - because the panel compares one of those, and a baseline that agreed
+ * with a hand-written composition but not with the seeded one would call an untouched form an
+ * amendment.
+ */
+describe('matchesSuggestion', () => {
+  const board = buildBoard([line({ qty: '100' })], {
+    today: TODAY,
+    freeStock: { 'WESERP10B|BRW-BB': '40' },
+  });
+  const contribution = board.cells[0].contributions[0];
+
+  it('reads the draft the editor opens on as the suggestion, untouched', () => {
+    expect(matchesSuggestion(contribution, amendDraftFrom(contribution))).toBe(true);
+  });
+
+  it('stops reading it as the suggestion once a Reserve quantity is changed', () => {
+    const draft = amendDraftFrom(contribution);
+    expect(
+      matchesSuggestion(contribution, {
+        ...draft,
+        reserve: draft.reserve.map((row) => ({ ...row, qty: '10' })),
+        buy_qty: '90',
+      }),
+    ).toBe(false);
+  });
+
+  it('stops reading it as the suggestion once the same total moves to another warehouse', () => {
+    const draft = amendDraftFrom(contribution);
+    expect(
+      matchesSuggestion(contribution, {
+        ...draft,
+        reserve: draft.reserve.map((row) => ({ ...row, warehouse_id: 'wh-elsewhere' })),
+      }),
+    ).toBe(false);
+  });
+});
+
+/**
+ * A COVERED LINE IS THE CASE `amendNeedsReason` CANNOT ANSWER, and the reason this helper is
+ * its own function rather than a negation of that one.
+ *
+ * The canonical line: confirmed at 8 from its own location plus a Buy of 35 while the engine
+ * suggested the whole 43 from stock. `amendNeedsReason` compares against what was DECIDED, so
+ * it reports the frozen composition as needing no reason - correct, it overrides nothing - and
+ * would have called a planner typing the engine's numbers back an amendment.
+ */
+describe('matchesSuggestion on a covered line', () => {
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '43',
+      location: 'BRW-BB',
+      warehouse_id: 'wh-BRW-BB',
+      reason: 'Free unclaimed stock at BRW-BB covers the whole line by the delivery date.',
+    },
+  ];
+  const board = buildBoard(
+    [
+      line({
+        qty: '43',
+        decision: {
+          revision_no: 4,
+          confirmed_at: '2026-08-18T02:00:00',
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '8' }],
+          borrow: [],
+          buy_qty: '35',
+        },
+        proposed_components: suggestion,
+      }),
+    ],
+    { today: TODAY },
+  );
+  const covered = board.cells[0].contributions[0];
+
+  it('is a covered contribution whose decision left the suggestion', () => {
+    expect(covered.covered).toBe(true);
+    expect(covered.proposed?.components).toEqual(suggestion);
+  });
+
+  it('reads the frozen composition Amend opens on as an amendment, not as the suggestion', () => {
+    const frozenDraft = amendDraftFrom(covered);
+    expect(matchesSuggestion(covered, frozenDraft)).toBe(false);
+    // The two questions, side by side: re-saving what was decided overrides nothing, so it is
+    // not the reason that separates them - it is what the composition IS.
+    expect(amendNeedsReason(covered, frozenDraft)).toBe(false);
+  });
+
+  it('reads the engine’s own composition as the suggestion, whatever was frozen', () => {
+    expect(matchesSuggestion(covered, suggestionDraftFrom(covered))).toBe(true);
+  });
+});
+
+/**
  * Phase 2, deviation 5: the contribution key is the SERVER's, and the counter must use it.
  *
  * The server derives `line_no` (core `sales_order_lines` carries none) and pins the key format
@@ -1411,9 +1512,8 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
    * AN EXPLICIT APPROVAL ON A COVERED LINE IS A DECISION, AND IT IS POSTED (C11).
    *
    * Silence on a covered line means "leave it as the database has it", which is why an
-   * untouched one is never named. Pressing Approve suggestion is not silence: the planner
-   * amended a confirmed line, changed their mind, and asked for the engine's composition
-   * back. The board swallowed it - the pill read Approved, the Confirm counter stayed where
+   * untouched one is never named. An approval is not silence: the planner amended a
+   * confirmed line, changed their mind, and put the engine's composition back. The board swallowed it - the pill read Approved, the Confirm counter stayed where
    * it was and the press wrote nothing, so a reload showed the old revision unchanged. An
    * approved covered line goes down the same derivation branch an approved uncovered one
    * does, and the confirmation writes a new revision at the suggestion.
@@ -1471,12 +1571,12 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
 });
 
 /**
- * APPROVE SUGGESTION ON A COVERED LINE POSTS THE ENGINE'S COMPOSITION, NOT THE FROZEN ONE.
+ * AN APPROVAL ON A COVERED LINE POSTS THE ENGINE'S COMPOSITION, NOT THE FROZEN ONE.
  *
  * The plan's canonical line, third browser run: SO404352 line 22 was confirmed at Reserve 8
- * from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend, then
- * Approve suggestion, flipped the pill to Approved and moved the Confirm counter - and then
- * posted the 8 and the 16 again ("0 transfers proposed", the revision unchanged after a
+ * from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend, then the
+ * engine's numbers typed back, flipped the pill to Approved and moved the Confirm counter -
+ * and then posted the 8 and the 16 again ("0 transfers proposed", the revision unchanged after a
  * reload), because `qty_proposed_*` and the source strip both state the ACTIVE DECISION on a
  * covered line (the server's `_apply_frozen`). So the approval is composed from the
  * suggestion the way the editor composes it, and posted the way an amendment is.

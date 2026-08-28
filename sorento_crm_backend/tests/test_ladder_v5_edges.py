@@ -298,9 +298,14 @@ def test_a_decided_incoming_component_totals_on_the_contribution_and_stales_corr
         assert decided_contribution["covered"] is True
         assert decided_contribution["qty_proposed_incoming"] == "15"
         proposed_parts = decided_contribution["proposed"]["components"]
-        assert proposed_parts, "the frozen suggestion is still recorded beside the decision"
-        assert any(part.get("ladder") != "v5" for part in proposed_parts), (
-            "the frozen suggestion predates v5, which is the stale signal the FE reads"
+        assert proposed_parts, "a covered line still carries a suggestion beside its decision"
+        # Captain, 28 Aug 2026 (ruling 1): a covered line's suggestion is TODAY'S ladder,
+        # not the snapshot frozen with the decision. The downgraded snapshot above is the
+        # record and stays in `line_snapshots`; what the board serves is live and so is
+        # stamped by the current ladder, which is why "Suggestion (before ladder v5)" can
+        # no longer be produced from this field.
+        assert {part.get("ladder") for part in proposed_parts} == {"v5"}, (
+            "a covered line's suggestion is the live ladder, never the frozen snapshot"
         )
 
         undecided_contribution = _cell(

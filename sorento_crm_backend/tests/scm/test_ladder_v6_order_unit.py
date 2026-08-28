@@ -52,6 +52,7 @@ from .test_ladder_v5 import _cap
 from .test_project_supply_service_ladder import (
     REQUIRED_DATE,
     _group_sites,
+    _seed_line,
     _spo_line,
     _world,
 )
@@ -525,6 +526,103 @@ def test_one_donor_is_borrowed_once_across_the_walk_and_the_later_dates_buy():
     assert _stated_board(board[4]) == [("buy", "5", None, "buy")]
     # The confirm path is the one that refused these, so it has to agree line for line.
     for line_no in (1, 2, 3, 4):
+        assert _stated(frozen[line_no]) == _stated_board(board[line_no]), (
+            f"the freeze and the board disagree about line {line_no}"
+        )
+
+
+def test_the_pools_net_is_one_pile_across_the_walk_and_the_later_dates_buy():
+    """AC-U10, the live failure of 28 August, one rung up from AC-U9: SO381895's TPE-9204
+    on three delivery dates (30, 30, 15) at BRW-IB, the site pools netting 31 - and the board
+    proposed "Pool BRW lends 30 of the 31" to ALL THREE. The confirmation then refused two:
+    "BRW now has 1 free for this line, and 30 was asked for".
+
+    `compose_lines` drew the pool's FREE stock down across the walk, but rung 2 is bounded by
+    the pile's NET (`pool_reserve_capacity`, ladder v4), and that number was read fresh off
+    the fact for every unit. The net is a running ledger across the walk now, exactly as the
+    donor is: the earliest date takes the 30, the pile has 1 left, and the later dates buy
+    whole (the whole-line rule; the captain: "we don't partial fulfil with stock and partial
+    fulfil with buy").
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, pool = sites["BRW"]
+        # The live shape: the pool holds plenty (3365), and the pool's OWN book owes 3334 of
+        # it on a date AFTER every line here - so nothing is ranked ahead of these lines and
+        # each one's `pool_free` reads the full pile, while the pile's net is 31. It is the
+        # net that bounds rung 2, and the net is what nobody drew down.
+        _stock(db, product, pool, on_hand=3365)
+        _seed_line(
+            db, company_id, project, product, pool,
+            qty_ordered="3334", required_date=REQUIRED_DATE + timedelta(days=60),
+        )
+        _cap(db, f"zzt-v6-{_uid()[:6]}")
+
+        core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (1, "30", own, REQUIRED_DATE),
+                (2, "30", own, REQUIRED_DATE + timedelta(days=7)),
+                (3, "15", own, REQUIRED_DATE + timedelta(days=14)),
+            ],
+        )
+        board = _board(db, core_so, as_of=date.today())
+        frozen = _frozen(db, order)
+        sheet = _sheet(db, order)
+
+    assert _stated_board(board[1]) == [("reserve", "30", pool.warehouse_code, "pool")]
+    assert _stated_board(board[2]) == [("buy", "30", None, "buy")]
+    assert _stated_board(board[3]) == [("buy", "15", None, "buy")]
+    # The proof states the pile as the walk found it, not the live net: question 2 on the
+    # second date is answered from 1, not from 31.
+    pool_step = next(step for step in board[2]["trail"] if step["kind"] == "pool")
+    assert "1" in pool_step["why"] and "of the 31" not in pool_step["why"], pool_step["why"]
+    for line_no in (1, 2, 3):
+        assert _stated(frozen[line_no]) == _stated_board(board[line_no]), (
+            f"the freeze and the board disagree about line {line_no}"
+        )
+        assert _stated_sheet(sheet[line_no]) == _stated_board(board[line_no]), (
+            f"the sheet and the board disagree about line {line_no}"
+        )
+
+
+def test_the_pools_net_ledger_holds_for_a_site_with_no_pool_of_its_own():
+    """AC-U10 on the live book's own shape. BRW-IB names NO `pool_warehouse_id` (a bare site
+    code is its own pool, migration 311), so its lines reach BRW through rung 2's "other
+    site pools" chain rather than as their own pool - and a ledger keyed off the own pool
+    alone would have skipped them, which is exactly how the first cut of this fix passed
+    its test and still proposed 30 / 30 / 15 to SO381895.
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _own_pool = sites["BRW"]
+        own.pool_warehouse_id = None
+        db.flush()
+        _mwh, pool = sites["MWH"]
+        _stock(db, product, pool, on_hand=3365)
+        _seed_line(
+            db, company_id, project, product, pool,
+            qty_ordered="3334", required_date=REQUIRED_DATE + timedelta(days=60),
+        )
+        _cap(db, f"zzt-v6-{_uid()[:6]}")
+
+        core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[
+                (1, "30", own, REQUIRED_DATE),
+                (2, "30", own, REQUIRED_DATE + timedelta(days=7)),
+                (3, "15", own, REQUIRED_DATE + timedelta(days=14)),
+            ],
+        )
+        board = _board(db, core_so, as_of=date.today())
+        frozen = _frozen(db, order)
+
+    assert _stated_board(board[1]) == [("reserve", "30", pool.warehouse_code, "pool")]
+    assert _stated_board(board[2]) == [("buy", "30", None, "buy")]
+    assert _stated_board(board[3]) == [("buy", "15", None, "buy")]
+    for line_no in (1, 2, 3):
         assert _stated(frozen[line_no]) == _stated_board(board[line_no]), (
             f"the freeze and the board disagree about line {line_no}"
         )

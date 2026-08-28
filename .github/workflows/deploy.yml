@@ -379,8 +379,21 @@ jobs:
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
                 -c "ALTER SYSTEM SET synchronous_commit = off" \
                 -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "ALTER SYSTEM SET max_locks_per_transaction = 1024" \
                 -c "SELECT pg_reload_conf()"
-          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+          # max_locks_per_transaction is postmaster-level, so the service container
+          # is restarted for it to take. Without it the lock table (default 64 x
+          # max_connections) ran out under xdist - four workers each holding a
+          # scratch schema of ~400 relations - and a test died with "out of shared
+          # memory" (run 33130805987, test_media_quota_serialization). The three
+          # durability settings above survive the restart: ALTER SYSTEM persists.
+          docker restart ${{ job.services.postgres.id }}
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U sorento && break
+            sleep 1
+          done
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes" \
+                -c "SHOW max_locks_per_transaction"
 
       - name: Bootstrap the database
         working-directory: sorento_crm_backend
@@ -506,8 +519,21 @@ jobs:
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
                 -c "ALTER SYSTEM SET synchronous_commit = off" \
                 -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "ALTER SYSTEM SET max_locks_per_transaction = 1024" \
                 -c "SELECT pg_reload_conf()"
-          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes"
+          # max_locks_per_transaction is postmaster-level, so the service container
+          # is restarted for it to take. Without it the lock table (default 64 x
+          # max_connections) ran out under xdist - four workers each holding a
+          # scratch schema of ~400 relations - and a test died with "out of shared
+          # memory" (run 33130805987, test_media_quota_serialization). The three
+          # durability settings above survive the restart: ALTER SYSTEM persists.
+          docker restart ${{ job.services.postgres.id }}
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U sorento && break
+            sleep 1
+          done
+          $PSQL -c "SHOW fsync" -c "SHOW synchronous_commit" -c "SHOW full_page_writes" \
+                -c "SHOW max_locks_per_transaction"
 
       - name: Bootstrap the database
         working-directory: sorento_crm_backend

@@ -61,8 +61,8 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
  * THE ENGINE'S SUGGESTION as the editor's draft, whatever the line's own decision says.
  *
  * `amendDraftFrom` opens a covered line on what was DECIDED, which is right for Amend and
- * wrong for Approve suggestion: the planner has just asked for the engine's composition back,
- * and on SO404352 line 22 they got the frozen 8 / 16 they were pressing the button to leave.
+ * wrong for an approval: the planner has just asked for the engine's composition back, and on
+ * SO404352 line 22 they got the frozen 8 / 16 they were pressing Save to leave.
  *
  * The suggestion is `contributionSuggestion`'s own rule (`supplyVocabulary`) - the proposal
  * FROZEN beside the decision when the revision recorded one, the live ladder otherwise - so
@@ -378,7 +378,7 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
  * amendment as the planner typed it, and an approval of the engine's suggestion on a line an
  * active decision already covers (C9 / C11). The approval used to be derived from
  * `qty_proposed_*` and the source strip, and BOTH state the decision on a covered line, so
- * pressing Approve suggestion re-posted the very numbers it was pressed to leave.
+ * an approval re-posted the very numbers Save was pressed to leave.
  *
  * A zero-quantity component is dropped: it decides nothing, and the confirmation would drop
  * it anyway. `amend_reason` is whatever the decision carries - an approval carries none,

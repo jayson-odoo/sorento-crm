@@ -9,7 +9,8 @@
  *     `decided_count: 0` (deviation 4). Everything ELSE about a standing is read, not counted:
  *     anything counted off the cells is window-scoped and therefore wrong;
  * - `commitPreviewFor`, which turns a standing into the sentence beside its Confirm;
- * - `amendNeedsReason`, which decides whether an edit is displacing the ranking.
+ * - `amendNeedsReason`, which decides whether an edit is displacing the ranking, and
+ *     `matchesSuggestion`, which decides which verdict the one Save button takes.
  *
  * The board-CONSTRUCTION engine that used to live here (bucketing, scoring, allocation) moved to
  * `__testsupport__/boardFixture.ts` when the mock was deleted. It builds realistic boards for the
@@ -26,6 +27,7 @@ import type {
   BoardOrderStanding,
   BoardProductRow,
   BoardRowAxis,
+  BoardSource,
   ConfirmBorrowComponent,
   ConfirmLine,
   ConfirmReserveComponent,
@@ -320,9 +322,10 @@ function lineFor(
   //
   // AN EXPLICIT VERDICT IS NOT SILENCE, though, and both of them are posted: an AMENDMENT as
   // composed, and an APPROVAL as the engine's suggestion, down the same branch an uncovered
-  // approval takes. A planner who amends a confirmed line, changes their mind and presses
-  // Approve suggestion has asked for the suggestion to be written; this swallowed it, so the
-  // pill read Approved, the Confirm counter never moved and a reload showed the old revision.
+  // approval takes. A planner who amends a confirmed line, changes their mind and puts the
+  // engine's numbers back has asked for the suggestion to be written; this swallowed it, so
+  // the pill read Approved, the Confirm counter never moved and a reload showed the old
+  // revision.
   if (contribution.covered && !isAmendment(decision) && decision?.verdict !== 'approved') {
     return null;
   }
@@ -347,8 +350,8 @@ function lineFor(
   //
   // The derivation below reads `qty_proposed_*`, the source strip and the borrow strip, and
   // on a covered line the server fills all three from the ACTIVE DECISION (`_apply_frozen`).
-  // So Approve suggestion on SO404352 line 22 - confirmed at 8 from BRW-AM and 16 from the
-  // pool, suggested at 9 and 15 - flipped the pill to Approved, moved the Confirm counter and
+  // So an approval on SO404352 line 22 - confirmed at 8 from BRW-AM and 16 from the pool,
+  // suggested at 9 and 15 - flipped the pill to Approved, moved the Confirm counter and
   // then posted the 8 and the 16 again: "0 transfers proposed", and the revision unchanged
   // after a reload. The suggestion is composed exactly as the editor composes it and posted
   // exactly as an amendment is, with no `amend_reason`, because an approval is not an
@@ -375,10 +378,10 @@ function lineFor(
   // re-deriving a composition from the source strip would be a second, worse allocator
   // quietly disagreeing with the real one.
   const incoming = numberOr(contribution.qty_proposed_incoming, () =>
-    sumSources(contribution, 'timely_spo'),
+    sumSources(contribution.sources, 'timely_spo'),
   );
   const proposedReserve = numberOr(contribution.qty_proposed_reserve, () =>
-    sumSources(contribution, 'reserve'),
+    sumSources(contribution.sources, 'reserve'),
   );
   const reserveQty =
     decision?.verdict === 'amended' && decision.reserve_qty !== undefined
@@ -455,8 +458,8 @@ function numberOr(value: string | null | undefined, fallback: () => number): num
   return value === null || value === undefined ? fallback() : toMinor(value);
 }
 
-function sumSources(contribution: BoardContribution, kind: string): number {
-  return contribution.sources
+function sumSources(sources: BoardSource[], kind: string): number {
+  return sources
     .filter((source) => source.kind === kind)
     .reduce((total, source) => total + toMinor(source.qty), 0);
 }
@@ -644,18 +647,83 @@ function proposalBaseline(contribution: BoardContribution): AmendComposition {
     .filter((source) => source.kind === 'reserve')
     .map((source) => ({ qty: source.qty, warehouse_id: source.warehouse_id ?? null }));
   const statedReserve = numberOr(contribution.qty_proposed_reserve, () =>
-    sumSources(contribution, 'reserve'),
+    sumSources(contribution.sources, 'reserve'),
   );
   return {
     timely_spo_qty: fromMinor(
-      numberOr(contribution.qty_proposed_incoming, () => sumSources(contribution, 'timely_spo')),
+      numberOr(contribution.qty_proposed_incoming, () => sumSources(contribution.sources, 'timely_spo')),
     ),
     reserve:
       reserve.length > 0 || statedReserve === 0
         ? reserve
         : [{ qty: fromMinor(statedReserve), warehouse_id: null }],
     borrow: [],
-    buy_qty: fromMinor(numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy'))),
+    buy_qty: fromMinor(numberOr(contribution.qty_proposed_buy, () => sumSources(contribution.sources, 'buy'))),
+  };
+}
+
+/**
+ * Whether what is in the editor IS the engine's suggestion, which is what tells the one Save
+ * button which verdict it is taking (the captain, 28 August: "if the suggestion is same as
+ * decision then it is approved, if suggestion different from decision then it is amended, so I
+ * just click on 1 button").
+ *
+ * It is NOT `!amendNeedsReason(...)`. That one asks whether the composition OVERRIDES what the
+ * line already stands on, so on a covered line it compares against the FROZEN decision - and a
+ * planner typing the engine's numbers back onto a covered line is approving the suggestion,
+ * which that comparison would call an amendment.
+ *
+ * Compared the same way, per warehouse for a Reserve and per warehouse-and-donor for a Borrow,
+ * because 9 at the pool is not the same answer as 9 at the own location.
+ */
+export function matchesSuggestion(
+  contribution: BoardContribution,
+  composition: AmendComposition,
+): boolean {
+  const baseline = suggestionBaseline(contribution);
+  return (
+    sameRows(baseline.reserve, composition.reserve, (row) => row.warehouse_id ?? '') &&
+    toMinor(composition.timely_spo_qty) === toMinor(baseline.timely_spo_qty) &&
+    toMinor(composition.buy_qty) === toMinor(baseline.buy_qty) &&
+    sameRows(
+      baseline.borrow,
+      composition.borrow,
+      (row) => `${row.warehouse_id ?? ''}|${row.donor_project_id ?? ''}`,
+    )
+  );
+}
+
+/**
+ * The engine's suggestion as a composition, seeded exactly as the editor seeds its opening
+ * draft from it (`suggestionDraftFrom`), or the two would disagree about an untouched form.
+ *
+ * ON A COVERED LINE THE FROZEN PROPOSAL IS THE SUGGESTION: `sources` and `qty_proposed_*`
+ * state what was DECIDED there, so `proposalBaseline` would compare the draft against the
+ * decision and never once report the suggestion. A revision written before the proposal was
+ * frozen records none, and then those fields are all the board holds for the line.
+ *
+ * The Borrow is read off the sources rather than left empty the way `proposalBaseline` leaves
+ * it: a borrow the engine composed itself (the cross-group rung) is part of the suggestion,
+ * and the editor opens holding it, so a form nobody touched has to read as the suggestion.
+ */
+function suggestionBaseline(contribution: BoardContribution): AmendComposition {
+  const frozen = contribution.covered ? contribution.proposed?.components : null;
+  const borrow = (frozen ?? contribution.sources)
+    .filter((source) => source.kind === 'borrow')
+    .map((source) => ({
+      qty: source.qty,
+      warehouse_id: source.warehouse_id ?? null,
+      // The editor's own borrow rows seeded from sources name no donor project either.
+      donor_project_id: null,
+    }));
+  if (!frozen) return { ...proposalBaseline(contribution), borrow };
+  return {
+    timely_spo_qty: fromMinor(sumSources(frozen, 'timely_spo')),
+    reserve: frozen
+      .filter((source) => source.kind === 'reserve')
+      .map((source) => ({ qty: source.qty, warehouse_id: source.warehouse_id ?? null })),
+    borrow,
+    buy_qty: fromMinor(sumSources(frozen, 'buy')),
   };
 }
 

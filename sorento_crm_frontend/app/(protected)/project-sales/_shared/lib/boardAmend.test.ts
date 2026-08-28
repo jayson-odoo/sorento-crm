@@ -255,8 +255,8 @@ describe('amendDraftFrom on a covered line', () => {
  *
  * The fixture is the plan's own canonical example: SO404352 line 22, SRTWB7518, confirmed at
  * Reserve 8 from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend
- * opens on the 8 and the 16 - the planner edits their OWN composition - and Approve suggestion
- * has to put the 9 and the 15 back, which is the whole reason this seeder exists beside
+ * opens on the 8 and the 16 - the planner edits their OWN composition - and an approval has to
+ * put the 9 and the 15 back, which is the whole reason this seeder exists beside
  * `amendDraftFrom`.
  */
 describe('suggestionDraftFrom on a covered line', () => {
@@ -340,7 +340,7 @@ describe('suggestionDraftFrom on a covered line', () => {
   });
 
   it('leaves Amend itself on the frozen composition', () => {
-    // Two different questions: Amend edits what was decided, Approve suggestion asks for the
+    // Two different questions: Amend edits what was decided, an approval asks for the
     // engine's. Seeding both from the same place is the defect, not the fix.
     const draft = amendDraftFrom(coveredContribution());
 

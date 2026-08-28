@@ -7,7 +7,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { amendNeedsReason } from '../../_shared/lib/fulfilmentBoard';
+import {
+  amendNeedsReason,
+  matchesSuggestion,
+} from '../../_shared/lib/fulfilmentBoard';
 import {
   amendDraftFrom,
   amendSummary,
@@ -46,10 +49,14 @@ import { BorrowAddDialog } from './BorrowAddDialog';
  * against the same `lineBalance` and `lineBlockers` - the sheet and the board have to agree
  * about what balances, or one screen refuses what the other accepted.
  *
- * THREE VERBS, and they are the whole decision: Approve suggestion (take the engine's
- * composition), Save amendment (take the one in these inputs), Reject (take none of it, with
- * a reason). There is no Undo button: approving the suggestion IS the way back, and a fourth
- * verb that only differs from it on an untouched line taught nothing.
+ * TWO VERBS, and they are the whole decision: Save (take what is in these inputs) and Reject
+ * (take none of it, with a reason). Save used to be two buttons - Approve suggestion beside
+ * Save amendment - and the captain, on 28 August: "having 1 button save amendment for me to
+ * click when an amendment is needed, and another button Approve when an amendment is not
+ * needed, is too much of a work for me to think ... if the suggestion is same as decision then
+ * it is approved, if suggestion different from decision then it is amended, so I just click on
+ * 1 button". So the COMPARISON takes the verdict, not the planner: a form still holding the
+ * engine's composition is approved, and one holding anything else is amended.
  *
  * NO BALANCE EQUATION (R9). The line "24 outstanding = 0 incoming + 9 reserve + ..." restated
  * four inputs the planner had just typed. What they cannot see is whether it ADDS UP, so that
@@ -118,6 +125,9 @@ export function BoardLineDecisionPanel({
   const balance = lineBalance(draft);
   const blockers = lineBlockers(draft);
   const needsReason = amendNeedsReason(contribution, draft);
+  // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
+  // own composition is never blocked, because there is nothing about it to balance or justify.
+  const approving = matchesSuggestion(contribution, draft);
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
   // WHOLLY bought, which is what the switch means. A composition carrying stock AND a Buy is
@@ -177,23 +187,23 @@ export function BoardLineDecisionPanel({
   };
 
   /**
-   * Back to the engine's own composition, and that is the verdict.
+   * ONE PRESS, TWO VERDICTS, decided by what the inputs hold rather than by which button was
+   * chosen: the engine's composition is an approval, anything else is an amendment.
    *
-   * `suggestionDraftFrom`, never `draftFor`: on a covered line the panel opens on what was
-   * DECIDED, so resetting to that put the frozen numbers back and called it the suggestion -
-   * SO404352 line 22 stayed at 8 / 16 under a pill reading Approved.
+   * The approval re-seeds from `suggestionDraftFrom`, never `draftFor`: on a covered line the
+   * panel opens on what was DECIDED, so resetting to that put the frozen numbers back and
+   * called it the suggestion - SO404352 line 22 stayed at 8 / 16 under a pill reading
+   * Approved. The reason goes with it, because an approval overrides nothing.
    */
-  const approveSuggestion = () => {
-    const fresh = suggestionDraftFrom(contribution);
-    setDraft(fresh);
-    setReason('');
-    setDirty(false);
-    onDecide({ verdict: 'approved', suspected_system_issue: suspected });
-  };
-
-  const saveAmendment = () => {
+  const save = () => {
     setDirty(false);
     setLocked(false);
+    if (approving) {
+      setDraft(suggestionDraftFrom(contribution));
+      setReason('');
+      onDecide({ verdict: 'approved', suspected_system_issue: suspected });
+      return;
+    }
     onDecide({
       ...decisionFromAmendDraft(draft, reason),
       // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
@@ -483,7 +493,7 @@ export function BoardLineDecisionPanel({
           </Block>
         </div>
 
-        {/* WHAT WOULD BE CONFIRMED, and the three verbs. */}
+        {/* WHAT WOULD BE CONFIRMED, and the two verbs. */}
         <div className="space-y-3">
           <div>
             <p className="text-2xs uppercase tracking-wide text-muted-foreground">
@@ -576,18 +586,14 @@ export function BoardLineDecisionPanel({
             </Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" onClick={approveSuggestion}>
-                <Check className="size-4" aria-hidden />
-                Approve suggestion
-              </Button>
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                disabled={!canSave}
-                onClick={saveAmendment}
+                disabled={!approving && !canSave}
+                onClick={save}
               >
-                Save amendment
+                <Check className="size-4" aria-hidden />
+                Save
               </Button>
               <Button
                 type="button"

@@ -1197,9 +1197,6 @@ export function FulfilmentBoardPanel({
                 confirmSummary.orderCount === 1 ? '' : 's'
               }?`}
             </AlertDialogTitle>
-            <AlertDialogDescription>
-              Each order writes on its own; one order refusing does not stop the rest.
-            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

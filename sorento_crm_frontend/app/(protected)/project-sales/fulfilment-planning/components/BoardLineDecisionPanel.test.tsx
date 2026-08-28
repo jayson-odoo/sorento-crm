@@ -132,11 +132,17 @@ describe('BoardLineDecisionPanel: Reserve inputs carry the server figure beside 
   });
 });
 
-describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
-  it('approve suggestion takes the engine composition, with no reason and no flag', () => {
+/**
+ * TWO VERBS (C9), because the captain would not press two Saves: "if the suggestion is same as
+ * decision then it is approved, if suggestion different from decision then it is amended, so I
+ * just click on 1 button". So the comparison takes the verdict, and these tests assert WHICH
+ * verdict one press produces rather than which button was chosen.
+ */
+describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
+  it('Save on the untouched suggestion approves it, with no reason and no flag', () => {
     const { onDecide } = renderPanel();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'approved',
@@ -144,7 +150,7 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
     });
   });
 
-  it('save amendment posts the composition typed, once it balances and carries a reason', () => {
+  it('Save on a changed composition amends it, once it balances and carries a reason', () => {
     const { onDecide } = renderPanel();
 
     fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
@@ -157,7 +163,7 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save amendment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -193,8 +199,8 @@ describe('BoardLineDecisionPanel: the three verbs (C9)', () => {
 
 /**
  * C7, in the UAC's own words: "Editing Reserve BRW-AM from 9 to 5 shows the hint 4 short and
- * Save amendment is disabled; setting BRW to 19 clears the hint, and Save enables once the
- * reason is typed (a composition that differs from the suggestion always needs the reason)."
+ * Save is disabled; setting BRW to 19 clears the hint, and Save enables once the reason is
+ * typed (a composition that differs from the suggestion always needs the reason)."
  */
 describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => {
   it('shows "N short" once a composition falls under the outstanding quantity', () => {
@@ -208,7 +214,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
       '4 short',
     );
     expect(
-      screen.getByRole('button', { name: 'Save amendment' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeDisabled();
   });
 
@@ -237,7 +243,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
     expect(
       screen.queryByTestId(`line-decision-hint-${KEY}`),
     ).not.toBeInTheDocument();
-    const save = screen.getByRole('button', { name: 'Save amendment' });
+    const save = screen.getByRole('button', { name: 'Save' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -246,12 +252,13 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
     expect(save).toBeEnabled();
   });
 
-  it('never needs a reason to approve the suggestion as it stands', () => {
+  it('never needs a reason to save the suggestion as it stands', () => {
     renderPanel();
 
-    // The composition on open IS the suggestion, so Approve needs nothing typed.
+    // The composition on open IS the suggestion, so the press is an approval: there is
+    // nothing to justify, and Save is enabled with nothing typed at all.
     expect(
-      screen.getByRole('button', { name: 'Approve suggestion' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeEnabled();
   });
 });
@@ -267,11 +274,11 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     });
   }
 
-  it('carries the flag on an approval', () => {
+  it('carries the flag on an approval (the suggestion, untouched)', () => {
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -294,7 +301,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save amendment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -322,13 +329,18 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
   });
 
   it('unticking on a covered line clears the flag, in the draft AND on screen', () => {
+    // Frozen at the engine's own composition, so the untouched form IS the suggestion and the
+    // press is an approval: the flag is the only thing this decision changes.
     const frozen: BoardLineDecision = {
       revision_no: 1,
       confirmed_at: '2026-08-18T02:00:00',
       timely_spo_qty: '0',
-      reserve: [{ warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' }],
+      reserve: [
+        { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' },
+        { warehouse_id: 'wh-BRW', location: 'BRW', qty: '15' },
+      ],
       borrow: [],
-      buy_qty: '15',
+      buy_qty: '0',
       suspected_system_issue: true,
     };
     const { onDecide } = renderPanel({ covered: true, decision: frozen });
@@ -336,7 +348,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     expect(checkbox()).toBeChecked();
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
     // rather than falling through to the frozen `true` and contradicting the body.
@@ -464,10 +476,7 @@ describe('BoardLineDecisionPanel: an unplannable line states why, and offers no 
       screen.getByTestId(`line-decision-blocked-${KEY}`),
     ).toHaveTextContent('states no fulfilment location');
     expect(
-      screen.queryByRole('button', { name: 'Approve suggestion' }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Save amendment' }),
+      screen.queryByRole('button', { name: 'Save' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -499,10 +508,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     expect(screen.getByRole('button', { name: 'Amend' })).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Approve suggestion' }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Save amendment' }),
+      screen.queryByRole('button', { name: 'Save' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -517,7 +523,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save amendment' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),
@@ -525,13 +531,30 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * Approve suggestion on an unlocked confirmed row is a REAL verdict, and it reaches the
-   * draft as one. It looked like it did - the inputs snapped back to the suggestion and the
-   * pill read Approved - while `confirmLinesFor` dropped every covered line the planner had
-   * not amended, so the press wrote nothing and the reload showed the old revision.
+   * An approval on an unlocked confirmed row is a REAL verdict, and it reaches the draft as
+   * one. It looked like it did - the inputs snapped back to the suggestion and the pill read
+   * Approved - while `confirmLinesFor` dropped every covered line the planner had not amended,
+   * so the press wrote nothing and the reload showed the old revision.
+   *
+   * The way there is the engine's own numbers: this row was confirmed at 8 from BRW-AM plus 16
+   * from the pool while the engine suggests 9 plus 15, so typing those back IS the approval.
+   * One button, and the comparison takes the verdict.
    */
-  it('takes Approve suggestion on the unlocked row, and the pill reads Approved', () => {
-    const contribution = contributionOf({ covered: true, decision: frozen });
+  it('takes an approval once the engine’s numbers are typed back on the unlocked row, and the pill reads Approved', () => {
+    const contribution = contributionOf({
+      covered: true,
+      decision: {
+        revision_no: 4,
+        confirmed_at: '2026-08-18T02:00:00',
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+          { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
     const onDecide = vi.fn();
     render(
       <BoardLineDecisionPanel
@@ -544,9 +567,12 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
-      target: { value: '5' },
+      target: { value: '9' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '15' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'approved',
@@ -566,13 +592,13 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * The inputs RESET TO THE SUGGESTION, and the suggestion is the engine's, not the frozen
-   * composition (C9). SO404352 line 22 was confirmed at 8 from BRW-AM plus 16 from the pool
-   * while the engine suggests 9 plus 15: Approve suggestion left the two inputs reading 8 and
-   * 16, and the confirmation posted them, so the revision never moved.
+   * AMEND OPENS ON WHAT WAS DECIDED, not on the engine's numbers (C9), and saving that is an
+   * amendment: SO404352 line 22 was confirmed at 8 from BRW-AM plus 16 from the pool while the
+   * engine suggests 9 plus 15, so the two compositions are not the same answer and only the
+   * comparison says which verdict the press takes.
    */
-  it('resets the inputs to the engine’s numbers, not to the composition the revision froze', () => {
-    renderPanel({
+  it('opens on the composition the revision froze, and Save on it amends rather than approves', () => {
+    const { onDecide } = renderPanel({
       covered: true,
       decision: {
         revision_no: 4,
@@ -592,10 +618,19 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(8);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(16);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    // Re-saving what was already decided needs no reason - it overrides nothing - but it is
+    // still not the engine's composition, so the verdict is Amended.
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(9);
-    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(15);
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '8' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '16' }),
+        ]),
+      }),
+    );
   });
 });
 
