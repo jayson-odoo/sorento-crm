@@ -1979,9 +1979,10 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    // The list's own rows: click one to open its decision panel, then approve the suggestion.
+    // The list's own rows: click one to open its decision panel, then Save the suggestion it
+    // opens on, which is the approval.
     fireEvent.click(await screen.findByText('WESERP10B'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
   }
 
   it('opens a confirmation naming how many drafts would go, and keeps them on Cancel', async () => {

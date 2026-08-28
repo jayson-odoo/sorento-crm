@@ -701,7 +701,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
     ).toHaveTextContent('Suggested');
     expect(
-      screen.queryByRole('button', { name: 'Approve' }),
+      screen.queryByRole('button', { name: 'Save' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -819,11 +819,11 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('approve suggestion, from the row, writes into the draft with no reason and no flag', () => {
+  it('Save on the untouched suggestion, from the row, approves it with no reason and no flag', () => {
     const { onDecide } = renderDialog([demand()]);
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -847,7 +847,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     });
   });
 
-  it('save amendment, from the row, posts the whole composition typed (AC-L5, whole-line)', () => {
+  it('Save on a changed composition, from the row, posts the whole of it (AC-L5, whole-line)', () => {
     // Wholly from stock (AC-L5): a mix of stock and a Buy on one line is refused by
     // `lineBlockers` and by the confirmation alike.
     const { onDecide } = renderDialog([demand({ qty: '100' })], {
@@ -857,7 +857,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO403340'));
     // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
     fireEvent.click(screen.getByLabelText('Buy the whole line'));
-    const save = screen.getByRole('button', { name: 'Save amendment' });
+    const save = screen.getByRole('button', { name: 'Save' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -906,11 +906,11 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save amendment' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeInTheDocument();
   });
 
-  it('an amended row can be returned to the suggestion by Approve suggestion (no Undo button)', () => {
+  it('an amended row is returned to the suggestion by putting it back, and Save then approves (no Undo button)', () => {
     const { onDecide } = renderDialog(
       [demand({ qty: '100' })],
       { 'WESERP10B|BRW-BB': '100' },
@@ -934,7 +934,13 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.click(screen.getByRole('button', { name: 'Approve suggestion' }));
+    // The way back is the composition itself: switch the whole-line Buy off, put the engine's
+    // own 100 back at BRW-BB, and the one Save reads that as the approval it is.
+    fireEvent.click(screen.getByLabelText('Buy the whole line'));
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), {
+      target: { value: '100' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -982,10 +988,7 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
       within(panel).getByRole('button', { name: 'Amend' }),
     ).toBeInTheDocument();
     expect(
-      within(panel).queryByRole('button', { name: 'Approve suggestion' }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(panel).queryByRole('button', { name: 'Save amendment' }),
+      within(panel).queryByRole('button', { name: 'Save' }),
     ).not.toBeInTheDocument();
     expect(
       within(panel).queryByRole('button', { name: 'Reject' }),
@@ -998,7 +1001,7 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
     renderDialog([demand({ fulfilment_location: null })]);
 
     expect(
-      screen.queryByRole('button', { name: 'Approve' }),
+      screen.queryByRole('button', { name: 'Save' }),
     ).not.toBeInTheDocument();
     expect(screen.getByText('Needs a location')).toBeInTheDocument();
   });
@@ -1029,7 +1032,7 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
     expect(body.className).toContain('min-h-0');
     expect(body.contains(contributionTable())).toBe(true);
     expect(
-      body.contains(screen.getByRole('button', { name: 'Approve suggestion' })),
+      body.contains(screen.getByRole('button', { name: 'Save' })),
     ).toBe(true);
   });
 
@@ -1608,7 +1611,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     fireEvent.click(screen.getByText('SO000002'));
     expect(
-      screen.getByRole('button', { name: 'Approve suggestion' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeInTheDocument();
   });
 });
@@ -2265,7 +2268,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save amendment' }),
+      screen.getByRole('button', { name: 'Save' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),
