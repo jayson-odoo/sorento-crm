@@ -1847,7 +1847,7 @@ class FulfilmentBoardService:
             # What the shared pool still held when this line's UNIT was reached, captured
             # before the draw: the trail states what each source held, and reading it back
             # afterwards would state what was left instead.
-            components, pool_open, borrow_open = composed[row.key]
+            components, pool_open, borrow_open, net_open = composed[row.key]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
             # location `warehouse_ids` (own + pool only, above) does not cover.
             for component in components:
@@ -1893,7 +1893,7 @@ class FulfilmentBoardService:
             # off the trail rather than filtered a second time out of the raw donor list
             # (AC-V4: the note must never offer what the proof has refused).
             row.trail, offerable = self._trail(
-                row, fact, components, pool_open, borrow_open
+                row, fact, components, pool_open, borrow_open, net_open
             )
             row.sources = [
                 self._source(component, row, offerable) for component in components
@@ -2103,8 +2103,14 @@ class FulfilmentBoardService:
         components: Sequence[Any],
         pool_open: Optional[Decimal],
         borrow_open: Optional[Mapping[str, Decimal]] = None,
+        net_open: Optional[Decimal] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
+
+        `net_open` is the site pools' net as the walk found it for this line's unit
+        (`compose_lines`' third ledger); `None` reads the fact's own. Question 2 is
+        answered from it, so the second delivery date says "the site pools net 1" and
+        not the 31 the first date has already drawn from.
 
         FIVE ROWS, always, in one order: our own location, the pool, another location,
         the same agent's other order, Buy. The captain, walking SO381895: "our thought
@@ -2290,6 +2296,7 @@ class FulfilmentBoardService:
         pool_chain = (
             [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
         )
+        pools_net_open = fact.pools_net if net_open is None else net_open
         pool_taken = took_at("pool")
         pool_pile = (
             self._pool_pile(row, fact, max(_dec(pool_open), _ZERO))
@@ -2302,7 +2309,7 @@ class FulfilmentBoardService:
             else pool_reserve_capacity(
                 is_dealer_hot_selling=fact.is_dealer_hot_selling,
                 pools=list(pool_chain),
-                pools_net=fact.pools_net,
+                pools_net=pools_net_open,
             )
         )
         add(
@@ -2319,7 +2326,8 @@ class FulfilmentBoardService:
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
                 else self._pool_answer_why(
-                    fact, pool_chain, pool_taken, pool_pile, pool_open, outcome
+                    fact, pool_chain, pool_taken, pool_pile, pool_open, outcome,
+                    pools_net=pools_net_open,
                 )
             ),
             pool=pool_pile,
@@ -2569,8 +2577,12 @@ class FulfilmentBoardService:
         pile: Optional[Dict[str, Any]],
         pool_open: Optional[Decimal],
         outcome: str,
+        pools_net: Optional[Decimal] = None,
     ) -> str:
         """Question 2's one sentence, with the PILE's net inside it (section 1e).
+
+        `pools_net` is the walk's running net for this unit when the caller has one;
+        `None` reads the fact's own.
 
         One entry point where the old trail had three - the line's own pool, a line with no
         pool of its own, and no active pool anywhere - because the answer to "can we take
@@ -2583,10 +2595,11 @@ class FulfilmentBoardService:
         # `pool_reserve_capacity` is the SAME cap the ladder applied, read rather than
         # forked: an oversold pile whose raw free stock still reads positive must not show
         # an offer the engine itself refused.
+        net = fact.pools_net if pools_net is None else pools_net
         capacity = pool_reserve_capacity(
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             pools=list(pool_chain),
-            pools_net=fact.pools_net,
+            pools_net=net,
         )
         capacity_by_location = {location: amount for location, amount in capacity}
         pools_net_refused = not capacity and any(
@@ -2601,6 +2614,7 @@ class FulfilmentBoardService:
                 capacity_by_location.get(fact.pool_code, _ZERO),
                 taken,
                 pools_net_refused,
+                pools_net=net,
             )
         if fact.is_dealer_hot_selling:
             return (
@@ -2636,6 +2650,7 @@ class FulfilmentBoardService:
         offered: Decimal,
         taken: Decimal,
         pools_net_refused: bool = False,
+        pools_net: Optional[Decimal] = None,
     ) -> str:
         """Why the pool rung ended where it did, with the pool's own numbers in the sentence.
 
@@ -2678,7 +2693,7 @@ class FulfilmentBoardService:
         if pools_net_refused:
             return (
                 f"{self._pool_class_prefix(fact)}: the site pools net "
-                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} between them, so no "
+                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO) if pools_net is None else pools_net))} between them, so no "
                 "pool is offered."
             )
         available = _dec(pile.get("available"))
@@ -2688,7 +2703,7 @@ class FulfilmentBoardService:
             # draw exactly as it bounds a cold item's.
             base = (
                 f"{self._pool_class_prefix(fact)}: the site pools net "
-                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO)))} between them, and "
+                f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO) if pools_net is None else pools_net))} between them, and "
                 f"{qty_text(offered)} is offered here."
             )
             return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
