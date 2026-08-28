@@ -6,10 +6,8 @@ service) or a vitest (ledger card); the two named rows are the browser proof on 
 - **AC-R1 one net per product.** GIVEN SRTWT7408 with 1,296 on hand at BRW, 0 at nine group
   bins, master level 500, 7 retail outstanding, no acknowledged OI rows WHEN a manual plan runs
   THEN net = 1,289, the product is NOT triggered, suggested qty = 0, and no row reads 500 for a
-  bin.
-  R19 (28 Aug 2026, "R16 wins"): the net is the POOL's. Stock in a project bin is stated as
-  `project_on_hand` and never netted - GIVEN 68 in BRW project bins, 0 at the root, 106 owed,
-  level 100 THEN net = -106 and suggested qty = 206.
+  bin. **Superseded in part by R19 (captain, 28 Aug 2026):** "every location" is every SITE
+  POOL, never a project bin, so on hand, net and the suggested quantity count pool stock only.
 - **AC-R2 order up to the level.** GIVEN level 12,000 (product override), on hand 10,860 +
   0 + 0, PO open 860, SPO 0, project demand 150, retail 290 THEN net = 11,280, gap = 720,
   qty = 720 (before MoQ / multiple).

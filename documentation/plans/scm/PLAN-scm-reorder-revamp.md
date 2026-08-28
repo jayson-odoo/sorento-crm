@@ -1,8 +1,7 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: DONE 28 Aug 2026, plus R16-R18 (pool-only On hand, cover and channels) built and
-tested on top. PR #357 open. One open captain question in section 11 (the collapsed
-"On hand BRW" cell on the reorder_level basis).
+Status: DONE 28 Aug 2026, plus R16-R19 (pool-only On hand, cover, channels, and the
+sizing itself) built and tested on top. PR #357 open.
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
@@ -59,6 +58,7 @@ Nothing about the engine or its frozen numbers changes.
 | R16 | "On hand" in reorder planning is the **site pool** (`segment <> 'project'`), never a project bin. The collapsed column reads "On hand BRW"; the lightbox lists EVERY site pool (BRW, DC1, MWH, RSW, WH3) pool-first by code, zeros included, and no project bin at all. Product-health "On hand" is pool-only too and reads "On hand: N in the pool". |
 | R17 | **No warehouse-segment derivation of a demand channel anywhere in reorder planning.** Project = `project_committed`, Retail = `retail_committed` (the sales order's own demand class), full stop. `channelOf` / `presentChannels` are deleted, and so is the ungrouped grid's segment-derived "Order type" chip and its filter. |
 | R18 | Cover "From stock" offers **site pools only**. A project bin is never a source, so the `cross_segment` concept goes with it. The panel's per-pool split is listed under the input when the take spans more than one location. |
+| R19 | (28 Aug) **On hand is the site pool on every basis, everywhere.** Project-bin stock never counts toward on hand, net, a covered row's available stock or the suggested quantity, and no path carries it as a second figure. This SUPERSEDES AC-R1's "the total across all locations" (`scm-reorder-per-product-acceptance-criteria.md`), which the `reorder_level` basis had implemented by adding `project_on_hand` back into the sizing. |
 
 Removed from the page: Manual plan button, Upload data menu (moves to the list's Actions), the reset
 icon (R4), "Confirm decisions" wording, Select all in the modal, the "Live stock as of" line in the panel.
@@ -268,7 +268,7 @@ Everything below departs from section 5, with the reason. Nothing here changes a
   who has never opened the page - everyone else keeps theirs until they use Columns ->
   Reset columns. Not a defect, but it is why the widths look unchanged on a warm profile.
 
-## 11. R16-R18: pool-only on hand, cover and channels (28 Aug 2026)
+## 11. R16-R19: pool-only on hand, cover, channels and sizing (28 Aug 2026)
 
 Built as one pass after the Phase 3 review. What each ruling touched:
 
@@ -299,17 +299,37 @@ the two `sources_in_scope` guards make it hold for a payload already in a browse
 engine's own `covered_by_stock` row was never the problem: `_planning_rows` already zeroes
 a project bin's `on_hand`, so `covered_available` cannot name one.
 
-**R19 (captain, 28 Aug 2026: "R16 wins").** The product basis now reads the pool only: `_cell_full_on_hand` / `_cell_full_net` are gone, `on_hand` and `net` on the product row and on every location are the pool-only reading, and `project_on_hand` states the bin stock beside them without counting it. SRTWT7445-LV: 68 in four BRW project bins, 0 at the root, 106 owed, level 100 - was Buy 138, is Buy 206. Tests: `test_stock_at_a_group_bin_is_shown_but_never_netted_on_the_product_basis`, `test_a_product_held_only_in_project_bins_buys_the_whole_gap`. The paragraph below is the state it replaced.
+**R19 answered the open question (captain, 28 Aug: "no I don't want project bins
+quantity").** The COLLAPSED "On hand BRW" cell reads `rec.on_hand`, and on the
+`reorder_level` basis - which IS the live global policy - `_cell_full_on_hand` used to ADD
+`project_on_hand` back ("the total across all locations", AC-R1 of
+`scm-reorder-per-product-acceptance-criteria.md`; the plan misnamed the file as the
+level-basis UAC). CB2907 read On hand 2 with every pool at 0 - the 2 sit at BRW-BB - and
+SRTWT7445-LV's ledger said 68 against an empty BRW pool. So the label was right and the
+figure was wrong: on hand is the site pool on every basis, and the sizing moves with it.
 
-**Was: not done, and why (needed a ruling).** The COLLAPSED "On hand BRW" cell reads
-`rec.on_hand`, and on the `reorder_level` basis - which IS the live global policy -
-`_cell_full_on_hand` deliberately ADDS `project_on_hand` back ("the total across all
-locations", AC-R1 of `scm-reorder-level-basis-acceptance-criteria.md`, the fix for
-B2155-NL-BLUE reading 1 against 28,831). So on today's runs that number includes project
-bins while its new label says the pool. Making it pool-only changes `net` and therefore
-the SIZING, which is out of this lane's scope (section 6, G1: engine output byte-identical),
-so it is left for the captain: either R19 restates AC-R1, or the column keeps a name that
-does not claim the pool.
+What that changed. `_cell_full_on_hand` / `_cell_full_net` are gone; the per-product basis
+nets each cell's own (pool-only) `net`, its anchor is the location holding the most POOL
+stock, `_product_agg_cell` sums pool on hand alone, and `_covered_rec` lost its
+`include_project_on_hand` flag so a covered row quotes stock the site may actually use.
+`project_on_hand` itself is deleted rather than kept beside the figure - the one basis that
+read it was the defect, nothing rendered it (the frontend only summed it into a grouped
+row), and a second on-hand column is how a bin gets re-admitted next time. It is gone from
+the planning SQL, `_compute_cell`, the frozen `inputs`, the plan-basis locations and the
+frontend types and grouping. Sizing MOVES on the `reorder_level` basis, deliberately: a
+product whose only stock sits in a bin is now short by the whole level. That is the one
+place this lane breaks G1 (byte-identical engine output), by ruling.
+
+**R19 evidence run (agent-browser, 28 Aug, :3060).** Sidebar Supply Chain -> Planning ->
+Reorder Planning, plan of 28/08 07:58 scoped to CB2907, SRTWT7445-LV and ACC-KS7014-YG
+(the plan was created through the service with the same scope the Start Plan modal would
+send: its product picker loads a capped 100-item list and filters client-side, so neither
+code can be typed into it - a standing defect of that modal, not of this lane). CB2907
+reads On hand 0 against 2 units in BRW-BB, level 300, Suggested qty 300 - the whole gap,
+not 298. SRTWT7445-LV reads On hand 0 against 72 units spread over seven bins, retail
+demand 59, Suggested 159. The On hand lightbox lists BRW, DC1, MWH, RSW and WH3 at 0 and
+no bin; the ledger's aside says "On hand by site pool" over "No stock in the pool". No
+console errors. Screenshots: `/tmp/scm-reorder-revamp-evidence/r19-*.png`.
 
 ## 12. Phase 3 review pass (28 Aug 2026)
 

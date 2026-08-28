@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
+import { searchProductOptions } from '../../services/scmOptionsService';
+import { useWarehouseOptions } from '../../hooks/useScmOptions';
 
 /** Start Plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
@@ -86,6 +87,9 @@ export function RunPlanningModal({
   const [products, setProducts] = useState<string[]>([]);
   const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** Labels of every product this modal has seen come back from the server, so a chip for a
+   *  code that is not on the page currently loaded still reads as its name. */
+  const [productLabels, setProductLabels] = useState<Record<string, string>>({});
 
   const {
     data: warehouseOptions,
@@ -93,11 +97,25 @@ export function RunPlanningModal({
     isError: warehousesError,
   } = useWarehouseOptions();
 
-  const {
-    data: productOptions,
-    isLoading: productsLoading,
-    isError: productsError,
-  } = useProductOptions();
+  /** Products are SEARCHED ON THE SERVER, never a static list: `products/select` answers with
+   *  its own default of 100 rows against ~22,000 active products, so the list this field used
+   *  to hold covered 0.5% of the catalogue and said "no products found" for the rest (R19
+   *  browser run: CB2907 and SRTWT7445-LV were unpickable). Same helper the sales-order and
+   *  purchase-order line pickers use. */
+  const fetchProductOptions = useCallback(async (query: string) => {
+    const options = await searchProductOptions(query);
+    setProductLabels((prev) => {
+      const next = { ...prev };
+      for (const opt of options) next[opt.value] = opt.label;
+      return next;
+    });
+    return options;
+  }, []);
+
+  const selectedProductOptions = useMemo(
+    () => products.map((code) => ({ value: code, label: productLabels[code] ?? code })),
+    [products, productLabels],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -105,6 +123,7 @@ export function RunPlanningModal({
     setProducts([]);
     setHorizon('');
     setError(null);
+    setProductLabels({});
   }, [open]);
 
   const today = todayDateInputValue();
@@ -205,10 +224,10 @@ export function RunPlanningModal({
             <SearchableMultiSelect
               value={products}
               onChange={setProducts}
-              options={productOptions ?? []}
-              disabled={productsLoading}
-              placeholder={productsLoading ? 'Loading products...' : 'All products'}
-              emptyMessage={productsError ? 'Could not load products.' : 'No products found.'}
+              fetchOptions={fetchProductOptions}
+              selectedOptions={selectedProductOptions}
+              placeholder="All products"
+              emptyMessage="No products found."
             />
             <p className="mt-1 text-2xs text-muted-foreground">
               Leave empty to plan every product.
