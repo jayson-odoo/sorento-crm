@@ -112,9 +112,13 @@ export function healthVerdict(
     econ.bought_recent_qty > 0
       ? `Bought: ${fmt(econ.bought_recent_qty)} received in the last ${fmt(boughtMonths)} months.`
       : `Bought: nothing received in the last ${fmt(boughtMonths)} months.`,
+    // The SITE POOL's stock (R16). It used to read "across every location", which counted
+    // project bins - stock an Order Inquiry has already claimed - so the health chip said
+    // 154 beside a plan row saying 120, and this is the figure the discontinue advice is
+    // weighed on.
     econ.on_hand > 0
-      ? `On hand: ${fmt(econ.on_hand)} across every location.`
-      : 'On hand: nothing left anywhere.',
+      ? `On hand: ${fmt(econ.on_hand)} in the pool.`
+      : 'On hand: nothing in the pool.',
   ];
   return {
     klass,

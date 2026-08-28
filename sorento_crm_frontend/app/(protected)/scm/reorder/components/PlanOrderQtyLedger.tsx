@@ -435,8 +435,8 @@ function DemandBlock({
  *
  * The buy is one net across every location, so the total is the number that decides - and
  * the first question it raises is "where is it". Fetched only once the reader asks, and
- * LIVE rather than frozen, which is the same reading the grouped Buy view's own expand
- * panel shows (`useLocationStock`).
+ * LIVE rather than frozen, which is the same reading the On hand lightbox shows
+ * (`useLocationStock`). Site pools only, like the figure it breaks down (R16).
  */
 function LocationStockRows({ productId }: { productId: string | null }) {
   const { data, isLoading, isError } = useLocationStock(productId, Boolean(productId));
@@ -446,9 +446,12 @@ function LocationStockRows({ productId }: { productId: string | null }) {
   if (isError) {
     return <p className="ms-3 text-2xs text-muted-foreground">Could not load the locations</p>;
   }
-  const rows = (data?.locations ?? []).filter((l) => (l.on_hand ?? 0) !== 0);
+  // SITE POOLS ONLY (R16). This aside breaks down the figure ABOVE it, which counts the
+  // pool and nothing else, so listing a project bin under it would print locations that
+  // do not add up to the total they are explaining.
+  const rows = (data?.locations ?? []).filter((l) => l.is_pool && (l.on_hand ?? 0) !== 0);
   if (!rows.length) {
-    return <p className="ms-3 text-2xs text-muted-foreground">No stock at any location</p>;
+    return <p className="ms-3 text-2xs text-muted-foreground">No stock in the pool</p>;
   }
   return (
     <div className="ms-3 space-y-0.5">

@@ -8,11 +8,9 @@ import { describe, it, expect } from 'vitest';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from './planLine';
 import {
-  channelOf,
   groupPlanLinesByChannel,
   isGroupedLine,
   locationLabel,
-  presentChannels,
 } from './planLineGrouping';
 
 function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
@@ -42,41 +40,12 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
 
-describe('channelOf', () => {
-  it('maps the bare-site dealer segment to retail', () => {
-    expect(channelOf(line({ segment: 'dealer' }))).toBe('retail');
-  });
-  it('maps the suffixed-bin project segment to project', () => {
-    expect(channelOf(line({ segment: 'project' }))).toBe('project');
-  });
-  it('reads a site with no persisted segment as retail, the same call the engine makes', () => {
-    // `reorder_run_service` nets on `COALESCE(w.segment, 'dealer') <> 'project'`, so an
-    // untagged bin is already planned as dealer stock. It used to read Unclassified here
-    // and nowhere else, which grew a column for a missing tag (captain, P4: "nothing
-    // should be unclassified").
-    expect(channelOf(line({ segment: null }))).toBe('retail');
-  });
-});
-
 describe('locationLabel', () => {
   it('joins codes while short', () => {
     expect(locationLabel(['BRW-IB', 'BRW-IR'])).toBe('BRW-IB, BRW-IR');
   });
   it('falls back to a count once the list gets long', () => {
     expect(locationLabel(['A', 'B', 'C', 'D'])).toBe('4 locations');
-  });
-});
-
-describe('presentChannels', () => {
-  it('is Project then Retail, in fixed order, never the order rows first appear', () => {
-    const rows = [line({ segment: 'dealer' }), line({ segment: 'project' })];
-    expect(presentChannels(rows)).toEqual(['project', 'retail']);
-  });
-  it('never grows a third column, whatever the segments say', () => {
-    expect(presentChannels([line({ segment: 'dealer' })])).toEqual(['retail']);
-    expect(
-      presentChannels([line({ segment: 'dealer' }), line({ segment: null })]),
-    ).toEqual(['retail']);
   });
 });
 
@@ -116,7 +85,9 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     expect(group.warehouse).toBe('Butterworth, BRW - IB, BRW - IR');
   });
 
-  it('the channel columns are dynamic - Project and Retail, and never a third', () => {
+  it('the channel columns are Project and Retail, always, whatever the rows hold', () => {
+    // R17: never derived from a warehouse segment. A plan with no project demand shows a
+    // Project column reading zero, which is the answer - a missing column is not.
     const [group] = groupPlanLinesByChannel([retail, projectIb, projectIr]);
     expect(group.__group.channels).toEqual(['project', 'retail']);
   });
@@ -200,7 +171,7 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     expect(group.__group.channelQty.retail).toBeNull();
   });
 
-  it('groups a segment-less warehouse into the SAME product row, as retail', () => {
+  it('groups a segment-less warehouse into the SAME product row', () => {
     const untagged = line({
       id: 'd', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
       segment: null, rank: 5, outstanding_sales: 1, retail_committed: 1,
@@ -208,7 +179,7 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     const groups = groupPlanLinesByChannel([retail, untagged]);
     expect(groups).toHaveLength(1);
     expect(groups[0].__group.members).toEqual([retail, untagged]);
-    expect(groups[0].__group.channels).toEqual(['retail']);
+    expect(groups[0].__group.channels).toEqual(['project', 'retail']);
     expect(groups[0].__group.channelQty.retail).toBe(7);
   });
 

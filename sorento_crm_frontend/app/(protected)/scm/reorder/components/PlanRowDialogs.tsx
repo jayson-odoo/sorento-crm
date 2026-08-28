@@ -306,17 +306,18 @@ function OnHandTable({ line }: { line: PlanLine }) {
   const [openRow, setOpenRow] = useState<string | null>(null);
 
   /**
-   * The SITE POOL rows only (R12/R15) - never a project bin, which holds stock already
+   * The SITE POOL rows only (R12/R15/R16) - never a project bin, which holds stock already
    * spoken for by an Order Inquiry and would double-count against the plan's own netting.
    *
-   * A response with no pool row at all falls back to everything it was given, rather than
-   * showing an empty table for a product that plainly has stock somewhere.
+   * EVERY pool, zeros included: the server states one row per site whatever it holds (R16),
+   * because "DC1 has none" is what a buyer choosing where to buy into needs to read, and a
+   * missing row says only that nobody told them. There is no fall-back to the whole list:
+   * a table with no pool row at all is a product held nowhere, which the empty state says.
    */
-  const rows = useMemo(() => {
-    const locations = stock.data?.locations ?? [];
-    const pools = locations.filter((l) => l.is_pool);
-    return pools.length ? pools : locations;
-  }, [stock.data]);
+  const rows = useMemo(
+    () => (stock.data?.locations ?? []).filter((l) => l.is_pool),
+    [stock.data],
+  );
 
   return (
     <div className="space-y-2">
@@ -338,7 +339,7 @@ function OnHandTable({ line }: { line: PlanLine }) {
           {stock.isLoading ? (
             <LoadingRows colSpan={9} />
           ) : rows.length === 0 ? (
-            <EmptyRow colSpan={9}>No stock rows for this product.</EmptyRow>
+            <EmptyRow colSpan={9}>No site pool holds this product.</EmptyRow>
           ) : (
             rows.map((loc) => {
               const expanded = openRow === loc.warehouse_id;
@@ -594,7 +595,7 @@ const TITLES: Record<PlanDialogKind, string> = {
   suggested: 'Suggested qty',
   project: 'Project demand',
   retail: 'Retail demand',
-  on_hand: 'On hand',
+  on_hand: 'On hand BRW',
   spo: 'SPO',
   po: 'PO',
 };

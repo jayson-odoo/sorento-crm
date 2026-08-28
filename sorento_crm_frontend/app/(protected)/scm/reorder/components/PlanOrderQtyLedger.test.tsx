@@ -570,9 +570,11 @@ describe('order-qty ledger - shaped fixtures render coherently', () => {
  * >  editable per-location quantities feeding the buy qty."
  */
 describe('order-qty ledger - per-location use stock', () => {
+  // Site pools: after R18 a project bin is never offered as a source at all, so a
+  // per-location editing test built on bins would have no locations to edit.
   const twoSources: CoverSource[] = [
-    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'project', qty: 5 },
-    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 1 },
+    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'dealer', qty: 5 },
+    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'dealer', qty: 1 },
   ];
   const shortLine = () =>
     line({ order_qty: 20, recommended_qty: 20, moq: null, order_multiple: null });
@@ -689,8 +691,8 @@ describe('order-qty ledger - per-location use stock', () => {
  */
 describe('order-qty ledger - the offered locations, at what they hold', () => {
   const bigSources: CoverSource[] = [
-    { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
-    { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'project', qty: 30 },
+    { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'dealer', qty: 50 },
+    { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'dealer', qty: 30 },
   ];
   const gapLine = () =>
     line({ order_qty: 10, recommended_qty: 10, moq: null, order_multiple: null,
@@ -953,9 +955,15 @@ describe('order-qty ledger - on hand, expandable per location (AC-R8)', () => {
       data: {
         locations: [
           { warehouse_id: 'w1', warehouse_code: 'BRW', on_hand: 1296, reserved: 0,
-            held_by_decisions: 0, free: 1296, so_qty: 0, spo_qty: 0, available: 1296 },
+            held_by_decisions: 0, free: 1296, so_qty: 0, spo_qty: 0, available: 1296,
+            is_pool: true },
           { warehouse_id: 'w2', warehouse_code: 'BRW-BB', on_hand: 0, reserved: 0,
-            held_by_decisions: 0, free: 0, so_qty: 0, spo_qty: 0, available: 0 },
+            held_by_decisions: 0, free: 0, so_qty: 0, spo_qty: 0, available: 0,
+            is_pool: false },
+          // Holding stock, but a project bin: it is not part of the figure above (R16).
+          { warehouse_id: 'w3', warehouse_code: 'BRW-IB', on_hand: 34, reserved: 0,
+            held_by_decisions: 0, free: 34, so_qty: 0, spo_qty: 0, available: 34,
+            is_pool: false },
         ],
       },
       isLoading: false,
@@ -968,5 +976,8 @@ describe('order-qty ledger - on hand, expandable per location (AC-R8)', () => {
     expect(screen.getByText('BRW')).toBeInTheDocument();
     // A location holding nothing is not evidence of anything - only stock is listed.
     expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+    // Nor is a project bin, however much it holds: this aside breaks down the pool-only
+    // figure above it, so a bin under it would not add up (R16).
+    expect(screen.queryByText('BRW-IB')).not.toBeInTheDocument();
   });
 });

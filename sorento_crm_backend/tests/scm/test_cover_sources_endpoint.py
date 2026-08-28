@@ -51,13 +51,16 @@ def _mk_product(db, code):
     return pid
 
 
-def _mk_warehouse(db, code, pool_of=None):
+def _mk_warehouse(db, code, pool_of=None, segment="dealer"):
+    """A SITE POOL by default: after R18 a project bin is never offered as cover at all,
+    so a pool-scoping test built on project bins would prove nothing."""
     wid = str(uuid.uuid4())
     db.execute(text(
         "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
         "counts_as_available, segment, pool_warehouse_id, created_at, updated_at) "
-        "VALUES (:id, :code, :name, true, true, 'project', :pool, now(), now())"
-    ), {"id": wid, "code": code, "name": f"{MARKER} {code}", "pool": pool_of})
+        "VALUES (:id, :code, :name, true, true, :seg, :pool, now(), now())"
+    ), {"id": wid, "code": code, "name": f"{MARKER} {code}", "pool": pool_of,
+        "seg": segment})
     return wid
 
 
@@ -170,6 +173,27 @@ def test_a_row_in_a_pool_reports_the_pool_root_not_itself(scm_app):
     assert res.status_code == 200, res.text
     row = next(r for r in res.json()["data"] if r["warehouse_id"] == w["b"])
     assert row["pool_warehouse_id"] == w["a"]
+
+
+def test_a_project_bin_is_not_offered_as_a_source(scm_app):
+    """R18: project stock is claimed by an Order Inquiry, so a reorder may never take it -
+    the live tell was a row proposing "Stock 34" from BRW-IB while BRW held none."""
+    app, db = _client(scm_app)
+    w = _world(db)
+    bin_id = _mk_warehouse(db, f"{MARKER}-IB-{uuid.uuid4().hex[:4]}", segment="project")
+    db.execute(text(
+        "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+        "synced_to_excel, created_at, updated_at) "
+        "VALUES (:id, :p, :w, 34, false, now(), now())"
+    ), {"id": str(uuid.uuid4()), "p": w["product_id"], "w": bin_id})
+    db.flush()
+
+    with TestClient(app) as c:
+        sources = c.get(
+            f"/api/v1/scm/reorder-runs/{w['run_id']}/cover-sources"
+        ).json()["sources"][w["product_id"]]
+
+    assert bin_id not in {s["warehouse_id"] for s in sources}
 
 
 def test_cover_sources_rbac_denied_without_view(scm_app):

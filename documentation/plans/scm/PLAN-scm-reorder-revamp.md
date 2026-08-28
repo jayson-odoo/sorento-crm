@@ -1,6 +1,8 @@
 # PLAN: Reorder planning revamp - plans list, Start Plan, decide in the expanded row, one Confirm
 
-Status: DONE 28 Aug 2026. Phases 1-3 built, reviewed and browser-verified; PR #357 open, CI green. Awaiting merge.
+Status: DONE 28 Aug 2026, plus R16-R18 (pool-only On hand, cover and channels) built and
+tested on top. PR #357 open. One open captain question in section 11 (the collapsed
+"On hand BRW" cell on the reorder_level basis).
 UAC: `scm-reorder-revamp-acceptance-criteria.md` (alongside).
 Alignment artifact: `mockups/reorder-revamp-plan.html` (lavish, reviewed by the captain, "ok good to go").
 Branch: `feat/scm-reorder-revamp` off main `741469185` (#353), worktree `.claude/worktrees/scm-reorder-revamp`.
@@ -54,6 +56,9 @@ Nothing about the engine or its frozen numbers changes.
 | R13 | Column "PO outstanding" renamed "PO". |
 | R14 | Confirm (N), Save (N), "N of Total made" count **distinct products**, not locations (fixes F2). |
 | R15 | PO cell and PO dialog count the **BRW pool location only** (not BRW-BB / BRW-AM), like On hand and SPO. History lines with no destination or a project destination are left out. |
+| R16 | "On hand" in reorder planning is the **site pool** (`segment <> 'project'`), never a project bin. The collapsed column reads "On hand BRW"; the lightbox lists EVERY site pool (BRW, DC1, MWH, RSW, WH3) pool-first by code, zeros included, and no project bin at all. Product-health "On hand" is pool-only too and reads "On hand: N in the pool". |
+| R17 | **No warehouse-segment derivation of a demand channel anywhere in reorder planning.** Project = `project_committed`, Retail = `retail_committed` (the sales order's own demand class), full stop. `channelOf` / `presentChannels` are deleted, and so is the ungrouped grid's segment-derived "Order type" chip and its filter. |
+| R18 | Cover "From stock" offers **site pools only**. A project bin is never a source, so the `cross_segment` concept goes with it. The panel's per-pool split is listed under the input when the take spans more than one location. |
 
 Removed from the page: Manual plan button, Upload data menu (moves to the list's Actions), the reset
 icon (R4), "Confirm decisions" wording, Select all in the modal, the "Live stock as of" line in the panel.
@@ -263,7 +268,48 @@ Everything below departs from section 5, with the reason. Nothing here changes a
   who has never opened the page - everyone else keeps theirs until they use Columns ->
   Reset columns. Not a defect, but it is why the widths look unchanged on a warm profile.
 
-## 11. Phase 3 review pass (28 Aug 2026)
+## 11. R16-R18: pool-only on hand, cover and channels (28 Aug 2026)
+
+Built as one pass after the Phase 3 review. What each ruling touched:
+
+- **R16.** `location_stock_for_product` no longer drops an all-zero SITE POOL (an empty
+  project bin is still dropped - fifty-five of them against five pools), and sorts pools
+  first then bins, each by code, so the dialog is walked in one order. The On hand
+  lightbox filters strictly to `is_pool` with NO fall-back to the whole list, and its
+  empty state says "No site pool holds this product." `product_economics_service`'s
+  `on_hand` joins `warehouses` and counts `COALESCE(segment,'dealer') <> 'project'`.
+- **R17.** `channelOf` / `presentChannels` are gone, their tests with them; the group
+  meta carries `PLAN_CHANNEL_ORDER`. The ungrouped grid's `side` ("Order type") column
+  and its Filters entry went too: they printed Project/Retail off the WAREHOUSE'S
+  segment, which is the derivation the ruling forbids, beside two columns that read the
+  demand class correctly.
+- **R18.** `cover_service._POSITIONS_SQL` excludes project locations, and
+  `sources_in_scope` (py) / `sourcesInScope` (ts) drop one whatever the scope says, so a
+  cached older payload cannot re-admit it. `cross_segment` and `propose_cover`'s
+  `line_segment` argument are deleted on both sides; sources now rank by size alone. The
+  panel lists the per-pool split under From stock once the take spans two locations.
+
+**Where the "Stock N" mixture is produced, and what fixed it.** It is NOT frozen on the
+recommendation: `coverForLine` composes it client-side per row, out of
+`GET /reorder-runs/{run}/cover-sources` -> `cover_service.free_stock_by_product`. That
+read joined `warehouses` on `counts_as_available` alone, and on the live book all 55
+project bins carry `counts_as_available = true`, so BRW-IB's 34 units were offered as
+free stock for a BRW row. The segment predicate in `_POSITIONS_SQL` is the plan-time fix;
+the two `sources_in_scope` guards make it hold for a payload already in a browser. The
+engine's own `covered_by_stock` row was never the problem: `_planning_rows` already zeroes
+a project bin's `on_hand`, so `covered_available` cannot name one.
+
+**Not done, and why (needs a ruling).** The COLLAPSED "On hand BRW" cell reads
+`rec.on_hand`, and on the `reorder_level` basis - which IS the live global policy -
+`_cell_full_on_hand` deliberately ADDS `project_on_hand` back ("the total across all
+locations", AC-R1 of `scm-reorder-level-basis-acceptance-criteria.md`, the fix for
+B2155-NL-BLUE reading 1 against 28,831). So on today's runs that number includes project
+bins while its new label says the pool. Making it pool-only changes `net` and therefore
+the SIZING, which is out of this lane's scope (section 6, G1: engine output byte-identical),
+so it is left for the captain: either R19 restates AC-R1, or the column keeps a name that
+does not claim the pool.
+
+## 12. Phase 3 review pass (28 Aug 2026)
 
 The review's findings, as applied. Each one flipped or added a test.
 

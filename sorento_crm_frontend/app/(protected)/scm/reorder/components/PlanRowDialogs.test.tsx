@@ -269,7 +269,33 @@ describe('PlanRowDialog - On hand (F4)', () => {
     expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
   });
 
-  it('falls back to every location it was given when NO row is flagged as the pool', () => {
+  it('lists EVERY site pool, zeros included (R16)', () => {
+    // "DC1 has none" is a fact a buyer choosing where to buy into needs to read; a
+    // missing row says only that nobody told them, and the two look the same on screen.
+    useLocationStock.mockReturnValue({
+      data: {
+        product_id: 'p1', as_of: null,
+        locations: [
+          ...locations,
+          { warehouse_id: 'w3', warehouse_code: 'DC1', on_hand: 0, reserved: 0, free: 0,
+            so_qty: 0, spo_qty: 0, available: 0, is_pool: true, po_qty: 0 },
+          { warehouse_id: 'w4', warehouse_code: 'MWH', on_hand: 0, reserved: 0, free: 0,
+            so_qty: 0, spo_qty: 0, available: 0, is_pool: true, po_qty: 0 },
+        ],
+      },
+      isLoading: false,
+    });
+    renderDialog('on_hand', line());
+
+    expect(screen.getByText('BRW')).toBeInTheDocument();
+    expect(screen.getByText('DC1')).toBeInTheDocument();
+    expect(screen.getByText('MWH')).toBeInTheDocument();
+    expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+  });
+
+  it('shows no project bin at all, even when every pool row is missing', () => {
+    // No fall-back to the whole list any more: a project bin's stock is claimed by an
+    // Order Inquiry, and the pool-only rule does not lapse because a payload is thin.
     useLocationStock.mockReturnValue({
       data: {
         product_id: 'p1', as_of: null,
@@ -279,8 +305,18 @@ describe('PlanRowDialog - On hand (F4)', () => {
     });
     renderDialog('on_hand', line());
 
-    expect(screen.getByText('BRW')).toBeInTheDocument();
-    expect(screen.getByText('BRW-BB')).toBeInTheDocument();
+    expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+    expect(screen.getByText('No site pool holds this product.')).toBeInTheDocument();
+  });
+
+  it('the dialog title names the pool it counts (R16)', () => {
+    useLocationStock.mockReturnValue({
+      data: { product_id: 'p1', as_of: null, locations },
+      isLoading: false,
+    });
+    renderDialog('on_hand', line());
+
+    expect(screen.getByRole('heading', { name: /On hand BRW/ })).toBeInTheDocument();
   });
 
   it('states "Stock as of" using the response\'s own as_of (R7), not the request time', () => {
@@ -304,7 +340,7 @@ describe('PlanRowDialog - On hand (F4)', () => {
   it('a product with no stock rows at all says so', () => {
     useLocationStock.mockReturnValue({ data: { product_id: 'p1', as_of: null, locations: [] }, isLoading: false });
     renderDialog('on_hand', line());
-    expect(screen.getByText('No stock rows for this product.')).toBeInTheDocument();
+    expect(screen.getByText('No site pool holds this product.')).toBeInTheDocument();
   });
 });
 

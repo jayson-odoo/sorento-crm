@@ -88,11 +88,26 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
 
+// A site pool: after R18 a project bin is never offered as a cover source at all.
 const cover: CoverProposal = {
   coverQty: 5,
   buyQty: 18,
-  sources: [{ warehouse_id: 'w2', warehouse_code: 'BRW-BB', qty: 5, segment: 'project', offered: 5 }],
-  offered: [{ warehouse_id: 'w2', warehouse_code: 'BRW-BB', qty: 5 }],
+  sources: [{ warehouse_id: 'w2', warehouse_code: 'DC1', qty: 5, segment: 'dealer', offered: 5 }],
+  offered: [{ warehouse_id: 'w2', warehouse_code: 'DC1', qty: 5 }],
+} as unknown as CoverProposal;
+
+/** Two pools between them covering the shortage - what a split take looks like. */
+const twoPoolCover: CoverProposal = {
+  coverQty: 9,
+  buyQty: 14,
+  sources: [
+    { warehouse_id: 'w2', warehouse_code: 'DC1', qty: 6, segment: 'dealer' },
+    { warehouse_id: 'w3', warehouse_code: 'MWH', qty: 3, segment: 'dealer' },
+  ],
+  offered: [
+    { warehouse_id: 'w2', warehouse_code: 'DC1', qty: 6 },
+    { warehouse_id: 'w3', warehouse_code: 'MWH', qty: 3 },
+  ],
 } as unknown as CoverProposal;
 
 const poReceipts: PoReceipt[] = [
@@ -185,6 +200,16 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     const { onEdit } = renderPanel({ edit: { moq: 40 } });
     fireEvent.change(screen.getByLabelText('MOQ'), { target: { value: '' } });
     expect(onEdit).toHaveBeenCalledWith({ moq: null });
+  });
+
+  it('names the pools the From-stock units come out of when there is more than one (R18)', () => {
+    renderPanel({ cover: twoPoolCover });
+    expect(screen.getByText('DC1 6 + MWH 3')).toBeInTheDocument();
+  });
+
+  it('states no split for a single source - the hint already says how many, and where', () => {
+    renderPanel({ cover });
+    expect(screen.queryByText(/DC1 5/)).not.toBeInTheDocument();
   });
 
   it('From stock is capped at the pool available quantity, never past it', () => {

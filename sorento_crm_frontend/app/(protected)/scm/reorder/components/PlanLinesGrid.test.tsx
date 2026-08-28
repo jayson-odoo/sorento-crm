@@ -187,8 +187,16 @@ describe('PlanLinesGrid - the collapsed row (C4)', () => {
     renderGrid([line()]);
     expect(headerNames()).toEqual([
       '#', 'Product', 'Location', 'Suggested qty', 'Reorder level', 'Reorder qty',
-      'Project', 'Retail', 'On hand', 'SPO', 'PO', 'Decision',
+      'Project', 'Retail', 'On hand BRW', 'SPO', 'PO', 'Decision',
     ]);
+  });
+
+  it('keeps the Project column on a run whose every row is retail (28 Aug: "where is my project quantity column")', () => {
+    renderGrid([line({ segment: 'dealer' }), line({ id: 'r2', segment: 'dealer' })]);
+    const names = headerNames();
+    expect(names).toContain('Project');
+    expect(names).toContain('Retail');
+    expect(names.indexOf('Project')).toBeLessThan(names.indexOf('Retail'));
   });
 
   it('has no MOQ, price, supplier, level or health column - they moved into the panel', () => {
@@ -321,9 +329,9 @@ describe('PlanLinesGrid - the six lightboxes (F1)', () => {
 
   it('On hand opens the site pool stock, with the documents under each location', () => {
     renderGrid([line({ on_hand: 5431 })]);
-    openNumber(/^On hand - open the stock by location$/);
+    openNumber(/^On hand in the site pool - open the stock by location$/);
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('On hand - SKU-1');
+    expect(dialog).toHaveTextContent('On hand BRW - SKU-1');
     expect(within(dialog).getByText('BRW')).toBeInTheDocument();
     expect(within(dialog).getByText(/Stock as of/)).toBeInTheDocument();
   });

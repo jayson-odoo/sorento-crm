@@ -63,7 +63,7 @@ describe('healthVerdict', () => {
     expect(v.factors).toEqual([
       'Sold: 50 delivered in the last 3 months.',
       'Bought: 30 received in the last 6 months.',
-      'On hand: 40 across every location.',
+      'On hand: 40 in the pool.',
     ]);
   });
 
