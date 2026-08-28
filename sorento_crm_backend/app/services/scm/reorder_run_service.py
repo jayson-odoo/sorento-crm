@@ -1476,21 +1476,6 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     return recs
 
 
-def _cell_full_on_hand(c: dict) -> float:
-    """Everything the company holds of this item AT THIS LOCATION.
-
-    `on_hand` is the pool-only reading (captain, 20 Aug: a project bin's stock is not
-    freely usable), with the rest parked in `project_on_hand`. The per-product basis asks
-    "how much do we have", not "how much may this site sell", so it reads both (AC-R1).
-    """
-    return float(c.get("on_hand") or 0.0) + float(c.get("project_on_hand") or 0.0)
-
-
-def _cell_full_net(c: dict) -> float:
-    """The cell's net with the group-bin stock added back - see `_cell_full_on_hand`."""
-    return float(c.get("net") or 0.0) + float(c.get("project_on_hand") or 0.0)
-
-
 def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) -> bool:
     """Whether this product is planned on the buyer's level rather than on a forecast.
 
@@ -1542,14 +1527,15 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                   # rather than added on top of a retail-only sizing, because there is one
                   # net now and the level is measured against all of it (AC-R2).
                   #
-                  # `project_on_hand` is ADDED BACK (AC-R1, "the total across all
-                  # locations"). Every other planning path drops it, because a project bin
-                  # holds stock a site cannot freely sell (captain, 20 Aug) - but this
-                  # basis asks a different question, "how much of this item does the
-                  # company have", and the answer is every `stock` row whatever segment the
-                  # bin was sorted into. Without it B2155-NL-BLUE read 1 on hand against
-                  # 28,831 in the warehouses, and SRTWT7408 read 1,296 against 5,498.
-                  "net": _cell_full_net(c)}
+                  # POOL-ONLY, as every other planning path reads it (captain, 20 Aug: a
+                  # project bin holds stock a site cannot freely sell; R16; R19 of 28 Aug,
+                  # "R16 wins"). AC-R1 as first written added `project_on_hand` back here
+                  # ("the total across all locations"), which sized SRTWT7445-LV's buy at
+                  # 138 against 68 sitting in four BRW project bins and nothing at the pool
+                  # root, under a column titled "On hand BRW". The bins are still stated -
+                  # `project_on_hand` on the row and on every location - they just no
+                  # longer count.
+                  "net": float(c.get("net") or 0.0)}
                  for r, c in zip(prows, cells)]
     agg = eng.aggregate_product(wh_inputs, level=level, moq=moq,
                                 order_multiple=order_multiple)
@@ -1587,14 +1573,11 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                              last_cost=last_cost)
     # A location has no level of its own any more, so its own "retail need" is what it is
     # SHORT by beyond its firm project demand - a statement about that place. The group's
-    # netted figure is the one that sized the buy, and it is stated once, above.
-    # Each location's `on_hand` is its WHOLE stock for the same reason the net is: a bin
-    # reading 0 beside a `project_on_hand` of 5,290 is the number that made the product
-    # look empty. The split is not lost - `project_on_hand` still says how much of it sits
-    # at a project-held bin.
+    # netted figure is the one that sized the buy, and it is stated once, above. Each
+    # location's `on_hand` is its pool-only reading (R19), with its bin stock beside it in
+    # `project_on_hand` - a bin reading 0 next to 5,290 of its own is the honest pair.
     loc_cells = [dict(c,
-                      on_hand=_cell_full_on_hand(c),
-                      retail_need=max(max(-_cell_full_net(c), 0.0)
+                      retail_need=max(max(-float(c.get("net") or 0.0), 0.0)
                                       - float(c.get("project_need") or 0.0), 0.0))
                  for c in cells]
     basis = _plan_basis(pid, "product", prows, loc_cells, split,
@@ -1673,9 +1656,9 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         last_cost or {}, str(prows[0]["product_id"]), None,
         pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     cell.update({
-        # The product's WHOLE stock, group bins included (AC-R1). `project_on_hand` stays
-        # beside it saying how much of that total sits at a project-held bin.
-        "on_hand": _total("on_hand") + _total("project_on_hand"),
+        # The product's POOL stock (R16 / R19). `project_on_hand` stays beside it saying
+        # how much more sits at a project-held bin, which the plan does not count.
+        "on_hand": _total("on_hand"),
         "project_on_hand": _total("project_on_hand"),
         "on_order": _total("on_order"),
         "po_ordered": _total("po_ordered"),

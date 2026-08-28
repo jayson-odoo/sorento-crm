@@ -299,7 +299,9 @@ the two `sources_in_scope` guards make it hold for a payload already in a browse
 engine's own `covered_by_stock` row was never the problem: `_planning_rows` already zeroes
 a project bin's `on_hand`, so `covered_available` cannot name one.
 
-**Not done, and why (needs a ruling).** The COLLAPSED "On hand BRW" cell reads
+**R19 (captain, 28 Aug 2026: "R16 wins").** The product basis now reads the pool only: `_cell_full_on_hand` / `_cell_full_net` are gone, `on_hand` and `net` on the product row and on every location are the pool-only reading, and `project_on_hand` states the bin stock beside them without counting it. SRTWT7445-LV: 68 in four BRW project bins, 0 at the root, 106 owed, level 100 - was Buy 138, is Buy 206. Tests: `test_stock_at_a_group_bin_is_shown_but_never_netted_on_the_product_basis`, `test_a_product_held_only_in_project_bins_buys_the_whole_gap`. The paragraph below is the state it replaced.
+
+**Was: not done, and why (needed a ruling).** The COLLAPSED "On hand BRW" cell reads
 `rec.on_hand`, and on the `reorder_level` basis - which IS the live global policy -
 `_cell_full_on_hand` deliberately ADDS `project_on_hand` back ("the total across all
 locations", AC-R1 of `scm-reorder-level-basis-acceptance-criteria.md`, the fix for

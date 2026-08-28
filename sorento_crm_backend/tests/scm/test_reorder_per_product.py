@@ -447,14 +447,16 @@ def _segment(db, wid: str, segment: str) -> None:
     db.flush()
 
 
-def test_stock_at_a_group_bin_counts_toward_the_products_own_net(scm_app):
-    """AC-R1 as the lane run found it: "every location" is every `stock` row.
+def test_stock_at_a_group_bin_is_shown_but_never_netted_on_the_product_basis(scm_app):
+    """R19 (captain, 28 Aug 2026: "R16 wins"). The product basis read "every location" as
+    every `stock` row (AC-R1 as first written), so a project bin's stock was added back into
+    the net - while every other planning path, and the column's own title "On hand BRW",
+    say the usable stock is the site pool (captain, 20 Aug; R16). SRTWT7445-LV: 68 in the
+    BRW project bins, 0 at the pool root, and the plan netted the 68 against 106 owed.
 
-    SRTWT7408 holds 5,498 across the warehouses, but the plan counted 1,296 - the group
-    bins are `segment = 'project'`, and every other planning path deliberately drops their
-    stock (captain, 20 Aug: a project bin's quantity is not freely usable). This basis asks
-    a different question - how much of this item does the company have - so the bins count,
-    and the row still says how much of the total is sitting in one.
+    The bins are still SHOWN - `project_on_hand` on the product row and on each location -
+    but they no longer size the buy: the product's on hand is the pool's, and the net is the
+    pool's.
     """
     _, db, _, _ = scm_app
     _use_level_basis(db)
@@ -473,15 +475,46 @@ def test_stock_at_a_group_bin_counts_toward_the_products_own_net(scm_app):
 
     rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
 
-    assert not _buys(rows), "5,491 against a level of 500 is not a shortage"
+    assert not _buys(rows), "1,289 against a level of 500 is not a shortage"
     inputs = _sizing_row(rows)["inputs"]
-    assert float(inputs["on_hand"]) == 5498.0, "the whole stock, both bins"
-    assert float(inputs["project_on_hand"]) == 4202.0, "and how much of it sits in a bin"
-    assert float(inputs["net"]) == 5491.0
+    assert float(inputs["on_hand"]) == 1296.0, "the pool's stock, and only the pool's"
+    assert float(inputs["project_on_hand"]) == 4202.0, "the bin's stock, stated beside it"
+    assert float(inputs["net"]) == 1289.0
     by_code = {loc["warehouse_code"]: loc for loc in inputs["plan_basis"]["locations"]}
-    assert float(by_code[bin_code]["on_hand"]) == 4202.0, (
-        "a bin reading 0 beside 4,202 of its own stock is what made the product look empty"
-    )
+    assert float(by_code[bin_code]["on_hand"]) == 0.0
+    assert float(by_code[bin_code]["project_on_hand"]) == 4202.0
+
+
+def test_a_product_held_only_in_project_bins_buys_the_whole_gap(scm_app):
+    """The live row behind R19: SRTWT7445-LV, 68 across four BRW project bins, nothing at
+    the pool root, 106 owed (47 project, 59 retail), level 100. The plan said Buy 138 (net
+    68 - 106 = -38) beside a column reading "On hand BRW" and a health chip reading "On
+    hand: nothing in the pool". Pool-only, the net is -106 and the buy is 206."""
+    _, db, _, _ = scm_app
+    _use_level_basis(db)
+    root, root_code = _wh(db, "PBR")
+    bin_, bin_code = _wh(db, "PBB")
+    _segment(db, root, "dealer")
+    _segment(db, bin_, "project")
+    pid, code = _product(db, master_level=100)
+    _mk_stock(db, pid, bin_, 68)
+    _mk_demand(db, pid, root, 0.0)
+    _mk_demand(db, pid, bin_, 0.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} PB"), moq=None, mult=None)
+    # 106 owed at the pool root, as retail: firm project demand reaches `committed` only
+    # through an acknowledged order-inquiry row (migration 424), which is not the point here.
+    _core_line_for_run(db, pid, root, qty=106, demand_class="retail")
+    db.flush()
+
+    rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
+
+    buys = _buys(rows)
+    assert len(buys) == 1
+    inputs = buys[0]["inputs"]
+    assert float(inputs["on_hand"]) == 0.0
+    assert float(inputs["project_on_hand"]) == 68.0
+    assert float(inputs["net"]) == -106.0
+    assert float(buys[0]["recommended_qty"]) == 206.0
 
 
 def test_an_autocount_mirror_of_zero_is_not_a_buyers_level(scm_app):
