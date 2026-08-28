@@ -55,19 +55,19 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
   // now satisfied INSIDE one product row via channel columns, not by a row per channel.
   const retail = line({
     id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
-    segment: 'dealer', rank: 1, on_hand: 4, project_on_hand: 0, incoming_spo: 1, outstanding_po: 0,
+    segment: 'dealer', rank: 1, on_hand: 4, incoming_spo: 1, outstanding_po: 0,
     outstanding_sales: 6, order_qty: 3, net_position: -3, forecast_daily_demand: 1,
     retail_committed: 6, project_committed: 0, project_need: 0,
   });
   const projectIb = line({
     id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
-    segment: 'project', rank: 2, on_hand: 2, project_on_hand: 3, incoming_spo: 0, outstanding_po: 1,
+    segment: 'project', rank: 2, on_hand: 0, incoming_spo: 0, outstanding_po: 1,
     outstanding_sales: 5, order_qty: 4, net_position: -4, forecast_daily_demand: 2,
     retail_committed: 0, project_committed: 5, project_need: 3,
   });
   const projectIr = line({
     id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
-    segment: 'project', rank: 4, on_hand: 1, project_on_hand: 1, incoming_spo: 0, outstanding_po: 0,
+    segment: 'project', rank: 4, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
     outstanding_sales: 2, order_qty: 5, net_position: -5, forecast_daily_demand: 1,
     retail_committed: 0, project_committed: 2, project_need: 1,
   });
@@ -116,11 +116,9 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
 
   it('sums the shared numeric facts across the group\'s warehouses', () => {
     const [group] = groupPlanLinesByChannel([retail, projectIb, projectIr]);
-    expect(group.rec.on_hand).toBe(7); // 4 + 2 + 1
-    // Pool-only supply (`on_hand`) and project-held supply (`project_on_hand`) are two
-    // separate sums of two separate per-location facts (captain, 20 Aug) - summing the
-    // group never mixes the two back together.
-    expect(group.rec.project_on_hand).toBe(4); // 0 + 3 + 1
+    // Pool-only supply, every member (R19): the two project bins arrive holding 0 on hand
+    // whatever sits in them, so the group's total is the pool's 4 and nothing else.
+    expect(group.rec.on_hand).toBe(4); // 4 + 0 + 0
     expect(group.rec.incoming_spo).toBe(1);
     expect(group.rec.outstanding_po).toBe(1);
     expect(group.rec.outstanding_sales).toBe(13); // 6 + 5 + 2
@@ -272,7 +270,7 @@ describe('groupPlanLinesByChannel - the product row IS the group row', () => {
     warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
     policy_type: 'reorder_level', reorder_level: 500,
     order_qty: 7, recommended_qty: 0, net_position: 5758,
-    on_hand: 5495, project_on_hand: 4201, incoming_spo: 0, outstanding_po: 263,
+    on_hand: 5495, incoming_spo: 0, outstanding_po: 263,
     outstanding_sales: 7, project_committed: 0, retail_committed: 7, project_need: 0,
     rank: null,
   });

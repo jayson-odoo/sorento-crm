@@ -433,10 +433,12 @@ function DemandBlock({
 /**
  * Where the on-hand figure actually sits (AC-R8).
  *
- * The buy is one net across every location, so the total is the number that decides - and
- * the first question it raises is "where is it". Fetched only once the reader asks, and
- * LIVE rather than frozen, which is the same reading the On hand lightbox shows
- * (`useLocationStock`). Site pools only, like the figure it breaks down (R16).
+ * The buy is one net across the product's site pools, so the total is the number that
+ * decides - and the first question it raises is "where is it". Fetched only once the reader
+ * asks, and LIVE rather than frozen, which is the same reading the On hand lightbox shows
+ * (`useLocationStock`). Site pools only, like the figure it breaks down (R16, R19), which
+ * is why the toggle says "by site pool" rather than "by location": a project bin is not
+ * one of the places this number can be sitting in.
  */
 function LocationStockRows({ productId }: { productId: string | null }) {
   const { data, isLoading, isError } = useLocationStock(productId, Boolean(productId));
@@ -767,7 +769,7 @@ export function OrderQtyLedger({
                   <ChevronRight className="size-3" aria-hidden />
                 )}
                 <span>On hand</span>
-                <span className="text-2xs">by location</span>
+                <span className="text-2xs">by site pool</span>
               </button>
               <span className="tabular-nums text-xs">{fmtInt(rec.on_hand ?? 0)}</span>
             </div>

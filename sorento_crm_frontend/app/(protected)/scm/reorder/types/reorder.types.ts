@@ -305,12 +305,9 @@ export interface ReorderRecommendation {
   /** The weekly checklist, frozen with the row so it still reads true next month.
    *  `incoming_spo` is stock on the water; `outstanding_po` is the ordered-not-received
    *  purchase book. Two different questions, kept apart. */
+  /** The SITE POOL's stock (R19, captain 28 Aug): a project bin's quantity is never part
+   *  of it, on any basis, because it is not stock the site may sell. */
   on_hand?: number | null;
-  /** Stock sitting at a project-held bin this location's pool feeds - visible, but NOT
-   *  part of `on_hand` (captain, 20 Aug: "the on hand need to consider pool quantity
-   *  only ... project on hand quantity is not really an actual usable quantity"). 0 at
-   *  a pool root, the bin's own stock at a bin. Never silently dropped from the screen. */
-  project_on_hand?: number | null;
   incoming_spo?: number | null;
   outstanding_po?: number | null;
   outstanding_sales?: number | null;
