@@ -38,6 +38,7 @@ import {
   useUsageByDay,
   useUsageSummary,
 } from '../hooks/useAIUsage';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const FEATURE_ALL = 'all';
 const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -293,26 +294,29 @@ export default function AIUsagePage() {
               ) : (topUsersQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No user activity yet.</p>
               ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-xs text-muted-foreground">
-                      <th className="py-2 text-left font-medium">#</th>
-                      <th className="py-2 text-left font-medium">Name</th>
-                      <th className="py-2 text-right font-medium">Messages</th>
-                      <th className="py-2 text-right font-medium">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(topUsersQuery.data || []).map((u, i) => (
-                      <tr key={u.user_id} className="border-b last:border-0">
-                        <td className="py-2 text-muted-foreground">{i + 1}</td>
-                        <td className="py-2">{u.name || u.user_id}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(u.messages)}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(u.tokens)}</td>
+                <ScrollArea>
+                  <table className="w-auto min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="py-2 text-left font-medium">#</th>
+                        <th className="py-2 text-left font-medium">Name</th>
+                        <th className="py-2 text-right font-medium">Messages</th>
+                        <th className="py-2 text-right font-medium">Tokens</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(topUsersQuery.data || []).map((u, i) => (
+                        <tr key={u.user_id} className="border-b last:border-0">
+                          <td className="py-2 text-muted-foreground">{i + 1}</td>
+                          <td className="py-2">{u.name || u.user_id}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(u.messages)}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(u.tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
               )}
             </CardContent>
           </Card>
@@ -335,28 +339,31 @@ export default function AIUsagePage() {
                   No portal contact activity in range.
                 </p>
               ) : (
-                <table className="w-full text-sm" data-testid="ai-usage-top-contacts">
-                  <thead>
-                    <tr className="border-b text-xs text-muted-foreground">
-                      <th className="py-2 text-left font-medium">#</th>
-                      <th className="py-2 text-left font-medium">Phone</th>
-                      <th className="py-2 text-left font-medium">Name</th>
-                      <th className="py-2 text-right font-medium">Calls</th>
-                      <th className="py-2 text-right font-medium">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(topContactsQuery.data || []).map((c, i) => (
-                      <tr key={c.contact_id} className="border-b last:border-0">
-                        <td className="py-2 text-muted-foreground">{i + 1}</td>
-                        <td className="py-2 font-mono text-xs">{c.phone_number || '-'}</td>
-                        <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
+                <ScrollArea>
+                  <table className="w-auto min-w-full text-sm" data-testid="ai-usage-top-contacts">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="py-2 text-left font-medium">#</th>
+                        <th className="py-2 text-left font-medium">Phone</th>
+                        <th className="py-2 text-left font-medium">Name</th>
+                        <th className="py-2 text-right font-medium">Calls</th>
+                        <th className="py-2 text-right font-medium">Tokens</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(topContactsQuery.data || []).map((c, i) => (
+                        <tr key={c.contact_id} className="border-b last:border-0">
+                          <td className="py-2 text-muted-foreground">{i + 1}</td>
+                          <td className="py-2 font-mono text-xs">{c.phone_number || '-'}</td>
+                          <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
               )}
             </CardContent>
           </Card>
@@ -379,142 +386,145 @@ export default function AIUsagePage() {
                 <p className="text-sm text-muted-foreground">No recent queries in range.</p>
               ) : (
                 <div className="max-h-[420px] overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-background">
-                      <tr className="border-b text-xs text-muted-foreground">
-                        <th className="w-6 py-2"></th>
-                        <th className="py-2 text-left font-medium">Time</th>
-                        <th className="py-2 text-left font-medium">Feature</th>
-                        <th className="py-2 text-left font-medium">Principal</th>
-                        <th className="py-2 text-left font-medium">Query</th>
-                        <th className="py-2 text-right font-medium">ms</th>
-                        <th className="py-2 text-right font-medium">Tokens</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(recentQueriesQuery.data || []).map((q) => {
-                        // message_id is null for ai_extract rows; key on a stable composite.
-                        const rowKey = q.message_id ?? `${q.created_at}-${q.contact_phone ?? q.user_name ?? ''}`;
-                        const isExpanded = q.message_id != null && expandedId === q.message_id;
-                        const featureLabel = (q.feature && FEATURE_LABELS[q.feature]) || '-';
-                        const principal =
-                          q.contact_phone || q.contact_name
-                            ? `${q.contact_name ?? 'unknown'} · ${q.contact_phone ?? ''}`.trim()
-                            : q.user_name || '-';
-                        return (
-                          <Fragment key={rowKey}>
-                            <tr
-                              className={cn(
-                                'border-b hover:bg-muted/40',
-                                q.message_id ? 'cursor-pointer' : '',
-                              )}
-                              onClick={() =>
-                                q.message_id &&
-                                setExpandedId(isExpanded ? null : q.message_id)
-                              }
-                            >
-                              <td className="py-2 align-top">
-                                {q.message_id ? (
-                                  isExpanded ? (
-                                    <ChevronDown className="size-3.5 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronRight className="size-3.5 text-muted-foreground" />
-                                  )
-                                ) : null}
-                              </td>
-                              <td className="py-2 align-top text-xs whitespace-nowrap text-muted-foreground">
-                                {formatDateTime(q.created_at)}
-                              </td>
-                              <td className="py-2 align-top text-xs">{featureLabel}</td>
-                              <td className="py-2 align-top" title={principal}>
-                                {principal}
-                              </td>
-                              <td
-                                className="max-w-[240px] truncate py-2 align-top"
-                                title={q.query_preview}
+                  <ScrollArea>
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-background">
+                        <tr className="border-b text-xs text-muted-foreground">
+                          <th className="w-6 py-2"></th>
+                          <th className="py-2 text-left font-medium">Time</th>
+                          <th className="py-2 text-left font-medium">Feature</th>
+                          <th className="py-2 text-left font-medium">Principal</th>
+                          <th className="py-2 text-left font-medium">Query</th>
+                          <th className="py-2 text-right font-medium">ms</th>
+                          <th className="py-2 text-right font-medium">Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(recentQueriesQuery.data || []).map((q) => {
+                          // message_id is null for ai_extract rows; key on a stable composite.
+                          const rowKey = q.message_id ?? `${q.created_at}-${q.contact_phone ?? q.user_name ?? ''}`;
+                          const isExpanded = q.message_id != null && expandedId === q.message_id;
+                          const featureLabel = (q.feature && FEATURE_LABELS[q.feature]) || '-';
+                          const principal =
+                            q.contact_phone || q.contact_name
+                              ? `${q.contact_name ?? 'unknown'} · ${q.contact_phone ?? ''}`.trim()
+                              : q.user_name || '-';
+                          return (
+                            <Fragment key={rowKey}>
+                              <tr
+                                className={cn(
+                                  'border-b hover:bg-muted/40',
+                                  q.message_id ? 'cursor-pointer' : '',
+                                )}
+                                onClick={() =>
+                                  q.message_id &&
+                                  setExpandedId(isExpanded ? null : q.message_id)
+                                }
                               >
-                                {q.query_preview}
-                              </td>
-                              <td className="py-2 text-right align-top tabular-nums">
-                                {formatNumber(q.response_time_ms)}
-                              </td>
-                              <td className="py-2 text-right align-top tabular-nums">
-                                {formatNumber(q.tokens)}
-                              </td>
-                            </tr>
-                            {isExpanded ? (
-                              <tr className="border-b bg-muted/20">
-                                <td></td>
-                                <td colSpan={6} className="space-y-2 py-3 pe-3">
-                                  {queryDetail.isLoading ? (
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                      <Loader2 className="size-3 animate-spin" /> Loading detail...
-                                    </div>
-                                  ) : queryDetail.isError ? (
-                                    <p className="text-xs text-destructive">
-                                      {(queryDetail.error as Error)?.message ||
-                                        'Failed to load query detail.'}
-                                    </p>
-                                  ) : queryDetail.data ? (
-                                    <>
-                                      {q.feature !== 'ai_extract' && q.message_id ? (
-                                        <div>
-                                          <Link
-                                            href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(q.message_id)}`}
-                                            className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
-                                            data-testid="view-trace-link"
-                                          >
-                                            <GitBranch className="size-3" />
-                                            View full trace
-                                          </Link>
-                                        </div>
-                                      ) : null}
-                                      <div>
-                                        <p className="text-xs font-medium text-muted-foreground">
-                                          Reply
-                                        </p>
-                                        <p className="mt-1 whitespace-pre-wrap text-xs">
-                                          {queryDetail.data.reply || (
-                                            <span className="italic text-muted-foreground">
-                                              (empty reply)
-                                            </span>
-                                          )}
-                                        </p>
-                                      </div>
-                                      <div>
-                                        <p className="text-xs font-medium text-muted-foreground">
-                                          Tools used
-                                        </p>
-                                        {queryDetail.data.tools_used.length === 0 ? (
-                                          <p className="mt-1 text-xs italic text-muted-foreground">
-                                            None
-                                          </p>
-                                        ) : (
-                                          <ul className="mt-1 list-disc ps-4 text-xs">
-                                            {queryDetail.data.tools_used.map((t, i) => (
-                                              <li
-                                                key={`${t.name}-${i}`}
-                                                className={cn(
-                                                  t.ok ? '' : 'text-destructive',
-                                                )}
-                                              >
-                                                <span className="font-mono">{t.name}</span>{' '}
-                                                {t.ok ? '' : '(failed)'}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        )}
-                                      </div>
-                                    </>
+                                <td className="py-2 align-top">
+                                  {q.message_id ? (
+                                    isExpanded ? (
+                                      <ChevronDown className="size-3.5 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronRight className="size-3.5 text-muted-foreground" />
+                                    )
                                   ) : null}
                                 </td>
+                                <td className="py-2 align-top text-xs whitespace-nowrap text-muted-foreground">
+                                  {formatDateTime(q.created_at)}
+                                </td>
+                                <td className="py-2 align-top text-xs">{featureLabel}</td>
+                                <td className="py-2 align-top" title={principal}>
+                                  {principal}
+                                </td>
+                                <td
+                                  className="max-w-[240px] truncate py-2 align-top"
+                                  title={q.query_preview}
+                                >
+                                  {q.query_preview}
+                                </td>
+                                <td className="py-2 text-right align-top tabular-nums">
+                                  {formatNumber(q.response_time_ms)}
+                                </td>
+                                <td className="py-2 text-right align-top tabular-nums">
+                                  {formatNumber(q.tokens)}
+                                </td>
                               </tr>
-                            ) : null}
-                          </Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              {isExpanded ? (
+                                <tr className="border-b bg-muted/20">
+                                  <td></td>
+                                  <td colSpan={6} className="space-y-2 py-3 pe-3">
+                                    {queryDetail.isLoading ? (
+                                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                        <Loader2 className="size-3 animate-spin" /> Loading detail...
+                                      </div>
+                                    ) : queryDetail.isError ? (
+                                      <p className="text-xs text-destructive">
+                                        {(queryDetail.error as Error)?.message ||
+                                          'Failed to load query detail.'}
+                                      </p>
+                                    ) : queryDetail.data ? (
+                                      <>
+                                        {q.feature !== 'ai_extract' && q.message_id ? (
+                                          <div>
+                                            <Link
+                                              href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(q.message_id)}`}
+                                              className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
+                                              data-testid="view-trace-link"
+                                            >
+                                              <GitBranch className="size-3" />
+                                              View full trace
+                                            </Link>
+                                          </div>
+                                        ) : null}
+                                        <div>
+                                          <p className="text-xs font-medium text-muted-foreground">
+                                            Reply
+                                          </p>
+                                          <p className="mt-1 whitespace-pre-wrap text-xs">
+                                            {queryDetail.data.reply || (
+                                              <span className="italic text-muted-foreground">
+                                                (empty reply)
+                                              </span>
+                                            )}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-medium text-muted-foreground">
+                                            Tools used
+                                          </p>
+                                          {queryDetail.data.tools_used.length === 0 ? (
+                                            <p className="mt-1 text-xs italic text-muted-foreground">
+                                              None
+                                            </p>
+                                          ) : (
+                                            <ul className="mt-1 list-disc ps-4 text-xs">
+                                              {queryDetail.data.tools_used.map((t, i) => (
+                                                <li
+                                                  key={`${t.name}-${i}`}
+                                                  className={cn(
+                                                    t.ok ? '' : 'text-destructive',
+                                                  )}
+                                                >
+                                                  <span className="font-mono">{t.name}</span>{' '}
+                                                  {t.ok ? '' : '(failed)'}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          )}
+                                        </div>
+                                      </>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
                 </div>
               )}
             </CardContent>

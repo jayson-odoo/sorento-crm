@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal } from '../../lib/format';
 import { fmtQty } from '../lib/qtyPrecision';
 import { useOrderSummaryLocations } from '../hooks/useSummaryOrder';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * The locations behind one product row (AC-F08).
@@ -118,87 +119,90 @@ export function ProductLocationsPopover({
           ) : (
             <>
               <div className="max-h-72 overflow-y-auto" data-testid="location-rows">
-                <table className="w-full text-2xs">
-                  <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
-                    <tr>
-                      <th className="px-2 py-1.5 text-start font-medium">Location</th>
-                      {/* These two are the row's `_need` figures - the confirmed-for-buy
-                          / already-netted leg (same fields PlanLinesGrid's ungrouped grid
-                          labels "Project need" / "Retail need"), NOT
-                          a per-location split of a grouped row's channel columns (those read
-                          `*_committed`, the channel's WHOLE open demand, and this endpoint
-                          does not carry a location-level committed split at all - see
-                          `app/services/scm/summary_order_service.py::locations` and
-                          `OrderSummaryLocationRowOut` in `app/schemas/scm_order_summary.py`,
-                          backend). Captain caught this exact mislabel on SRT-H3005: a bare
-                          "Project"/"Retail" header here reads as the same fact as the group
-                          row's channel cell, and it is not. */}
-                      <th
-                        className="px-2 py-1.5 text-end font-medium"
-                        title="What CS asked for, less what is already on a PO or SPO. Firm: Retail netting never reduces it"
-                      >
-                        Project need
-                      </th>
-                      <th
-                        className="px-2 py-1.5 text-end font-medium"
-                        title="Retail-class need, after the normal netting of free supply"
-                      >
-                        Retail need
-                      </th>
-                      <th className="px-2 py-1.5 text-end font-medium">Stock</th>
-                      <th className="px-2 py-1.5 text-end font-medium">SPO</th>
-                      <th className="px-2 py-1.5 text-end font-medium">PO</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Level</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Split</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.locations.map((l) => (
-                      <tr key={l.warehouse_code} className="border-b last:border-b-0">
-                        <td className="px-2 py-1.5">
-                          <div className="truncate font-medium" title={l.warehouse_name}>
-                            {l.warehouse_code}
-                          </div>
-                          <div className="truncate text-muted-foreground" title={l.warehouse_name}>
-                            {l.avg_daily_demand === null
-                              ? 'no demand rate'
-                              : `${fmtDecimal(l.avg_daily_demand)}/day`}
-                          </div>
-                        </td>
-                        <Channel value={l.project_need} dp={decimalPlaces} />
-                        <Channel value={l.retail_need} dp={decimalPlaces} />
-                        {/* Shared supply, once. It carries no channel dimension. */}
-                        <td className="px-2 py-1.5 text-end tabular-nums">
-                          {fmtQty(l.on_hand, decimalPlaces)}
-                        </td>
-                        <td className="px-2 py-1.5 text-end tabular-nums">
-                          {fmtQty(l.incoming_spo, decimalPlaces)}
-                        </td>
-                        <td className="px-2 py-1.5 text-end tabular-nums">
-                          {fmtQty(l.on_order_po, decimalPlaces)}
-                        </td>
-                        <td className="px-2 py-1.5 text-end tabular-nums">
-                          {l.reorder_level === null ? (
-                            <span className="text-muted-foreground" title="No level set here">
-                              {EM_DASH}
-                            </span>
-                          ) : (
-                            fmtQty(l.reorder_level, decimalPlaces)
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5 text-end tabular-nums">
-                          {l.allocated_qty === null ? (
-                            <span className="text-muted-foreground">{EM_DASH}</span>
-                          ) : (
-                            <span className="font-medium">
-                              {fmtQty(l.allocated_qty, decimalPlaces)}
-                            </span>
-                          )}
-                        </td>
+                <ScrollArea>
+                  <table className="w-auto min-w-full text-2xs">
+                    <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
+                      <tr>
+                        <th className="px-2 py-1.5 text-start font-medium">Location</th>
+                        {/* These two are the row's `_need` figures - the confirmed-for-buy
+                            / already-netted leg (same fields PlanLinesGrid's ungrouped grid
+                            labels "Project need" / "Retail need"), NOT
+                            a per-location split of a grouped row's channel columns (those read
+                            `*_committed`, the channel's WHOLE open demand, and this endpoint
+                            does not carry a location-level committed split at all - see
+                            `app/services/scm/summary_order_service.py::locations` and
+                            `OrderSummaryLocationRowOut` in `app/schemas/scm_order_summary.py`,
+                            backend). Captain caught this exact mislabel on SRT-H3005: a bare
+                            "Project"/"Retail" header here reads as the same fact as the group
+                            row's channel cell, and it is not. */}
+                        <th
+                          className="px-2 py-1.5 text-end font-medium"
+                          title="What CS asked for, less what is already on a PO or SPO. Firm: Retail netting never reduces it"
+                        >
+                          Project need
+                        </th>
+                        <th
+                          className="px-2 py-1.5 text-end font-medium"
+                          title="Retail-class need, after the normal netting of free supply"
+                        >
+                          Retail need
+                        </th>
+                        <th className="px-2 py-1.5 text-end font-medium">Stock</th>
+                        <th className="px-2 py-1.5 text-end font-medium">SPO</th>
+                        <th className="px-2 py-1.5 text-end font-medium">PO</th>
+                        <th className="px-2 py-1.5 text-end font-medium">Level</th>
+                        <th className="px-2 py-1.5 text-end font-medium">Split</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.locations.map((l) => (
+                        <tr key={l.warehouse_code} className="border-b last:border-b-0">
+                          <td className="px-2 py-1.5">
+                            <div className="truncate font-medium" title={l.warehouse_name}>
+                              {l.warehouse_code}
+                            </div>
+                            <div className="truncate text-muted-foreground" title={l.warehouse_name}>
+                              {l.avg_daily_demand === null
+                                ? 'no demand rate'
+                                : `${fmtDecimal(l.avg_daily_demand)}/day`}
+                            </div>
+                          </td>
+                          <Channel value={l.project_need} dp={decimalPlaces} />
+                          <Channel value={l.retail_need} dp={decimalPlaces} />
+                          {/* Shared supply, once. It carries no channel dimension. */}
+                          <td className="px-2 py-1.5 text-end tabular-nums">
+                            {fmtQty(l.on_hand, decimalPlaces)}
+                          </td>
+                          <td className="px-2 py-1.5 text-end tabular-nums">
+                            {fmtQty(l.incoming_spo, decimalPlaces)}
+                          </td>
+                          <td className="px-2 py-1.5 text-end tabular-nums">
+                            {fmtQty(l.on_order_po, decimalPlaces)}
+                          </td>
+                          <td className="px-2 py-1.5 text-end tabular-nums">
+                            {l.reorder_level === null ? (
+                              <span className="text-muted-foreground" title="No level set here">
+                                {EM_DASH}
+                              </span>
+                            ) : (
+                              fmtQty(l.reorder_level, decimalPlaces)
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-end tabular-nums">
+                            {l.allocated_qty === null ? (
+                              <span className="text-muted-foreground">{EM_DASH}</span>
+                            ) : (
+                              <span className="font-medium">
+                                {fmtQty(l.allocated_qty, decimalPlaces)}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
               </div>
 
               {/* What the product row decided, restated so the split reconciles to it. */}

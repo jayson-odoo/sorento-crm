@@ -42,6 +42,7 @@ import {
   SAFETY_STOCK_HINT,
   StateChip,
 } from './HealthIndicators';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const PAGE_SIZE = 50;
 
@@ -425,125 +426,128 @@ export function ProductListDialog({
               </div>
             </div>
           ) : (
-            <table className={cn('w-full text-sm', isLowDrill ? 'min-w-[980px]' : 'min-w-[880px]')}>
-              <thead className="sticky top-0 z-10 bg-background">
-                <tr className="text-2xs text-muted-foreground">
-                  {columns.map((col) => {
-                    const active = sort?.field === col.id;
-                    const alignCls =
-                      col.align === 'right'
-                        ? 'text-right'
-                        : col.align === 'center'
-                          ? 'text-center'
-                          : 'text-left';
+            <ScrollArea>
+              <table className={cn('w-full text-sm', isLowDrill ? 'min-w-[980px]' : 'min-w-[880px]')}>
+                <thead className="sticky top-0 z-10 bg-background">
+                  <tr className="text-2xs text-muted-foreground">
+                    {columns.map((col) => {
+                      const active = sort?.field === col.id;
+                      const alignCls =
+                        col.align === 'right'
+                          ? 'text-right'
+                          : col.align === 'center'
+                            ? 'text-center'
+                            : 'text-left';
+                      return (
+                        <th
+                          key={col.id}
+                          className={cn(
+                            'py-2 font-medium',
+                            alignCls,
+                            col.id === 'sku' ? 'pr-2' : 'px-2',
+                          )}
+                        >
+                          {col.sortable ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(col.id)}
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                col.align === 'right' && 'flex-row-reverse',
+                                active && 'text-foreground',
+                              )}
+                            >
+                              {col.label}
+                              {active ? (
+                                sort?.dir === 'asc' ? (
+                                  <ArrowUp className="size-3" />
+                                ) : (
+                                  <ArrowDown className="size-3" />
+                                )
+                              ) : (
+                                <ChevronsUpDown className="size-3 opacity-40" />
+                              )}
+                            </button>
+                          ) : (
+                            <span>{col.label}</span>
+                          )}
+                          {col.info ? <NetPositionInfo className="ms-1 align-middle" /> : null}
+                          {col.docInfo ? <DaysOfCoverInfo className="ms-1 align-middle" /> : null}
+                          {col.demandInfo ? <AvgDemandInfo className="ms-1 align-middle" /> : null}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className={cn(isFetching && 'opacity-60')}>
+                  {rows.map((p, i) => {
+                    // ∞ cover = stock on hand but no forward demand; deficit → "-".
+                    const docInfinite =
+                      (p.avg_daily_demand === null || p.avg_daily_demand === 0) &&
+                      p.net_position > 0;
                     return (
-                      <th
-                        key={col.id}
+                    <tr
+                      key={`${p.sku}-${p.warehouse_code}-${i}`}
+                      className="border-t border-border/60"
+                    >
+                      <td className="py-2 pr-2">
+                        <div className="font-medium">{p.sku}</div>
+                        <div
+                          className="truncate text-xs text-muted-foreground"
+                          title={`${p.product_name} · ${p.warehouse_name}`}
+                        >
+                          {p.product_name} · {p.warehouse_name}
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StateChip state={p.status} />
+                          {p.stockout_with_committed ? <CommittedStockoutPill /> : null}
+                        </div>
+                      </td>
+                      <td
                         className={cn(
-                          'py-2 font-medium',
-                          alignCls,
-                          col.id === 'sku' ? 'pr-2' : 'px-2',
+                          'px-2 py-2 text-right font-semibold tabular-nums',
+                          p.net_position < 0 && 'text-scm-stockout',
                         )}
                       >
-                        {col.sortable ? (
-                          <button
-                            type="button"
-                            onClick={() => toggleSort(col.id)}
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                              col.align === 'right' && 'flex-row-reverse',
-                              active && 'text-foreground',
-                            )}
-                          >
-                            {col.label}
-                            {active ? (
-                              sort?.dir === 'asc' ? (
-                                <ArrowUp className="size-3" />
-                              ) : (
-                                <ArrowDown className="size-3" />
-                              )
-                            ) : (
-                              <ChevronsUpDown className="size-3 opacity-40" />
-                            )}
-                          </button>
-                        ) : (
-                          <span>{col.label}</span>
+                        {fmtSigned(p.net_position)}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.on_hand)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.on_order)}</td>
+                      <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.committed)}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-muted-foreground">
+                        {p.stock_valuation === null ? EM_DASH : fmtMoney(p.stock_valuation)}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
+                        <AvgDemandCell row={p} />
+                      </td>
+                      <td
+                        className={cn(
+                          'px-2 py-2 text-right tabular-nums',
+                          docInfinite && 'text-scm-overstock',
                         )}
-                        {col.info ? <NetPositionInfo className="ms-1 align-middle" /> : null}
-                        {col.docInfo ? <DaysOfCoverInfo className="ms-1 align-middle" /> : null}
-                        {col.demandInfo ? <AvgDemandInfo className="ms-1 align-middle" /> : null}
-                      </th>
+                      >
+                        {fmtDoc(p.days_of_cover, docInfinite)}
+                      </td>
+                      {isLowDrill ? (
+                        <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
+                          <ReorderPointCell row={p} />
+                        </td>
+                      ) : null}
+                      <td className="px-2 py-2 text-center">
+                        <ClassChip value={p.abc_class} kind="abc" />
+                      </td>
+                      <td className="px-2 py-2 text-center">
+                        <ClassChip value={p.xyz_class} kind="xyz" />
+                      </td>
+                    </tr>
                     );
                   })}
-                </tr>
-              </thead>
-              <tbody className={cn(isFetching && 'opacity-60')}>
-                {rows.map((p, i) => {
-                  // ∞ cover = stock on hand but no forward demand; deficit → "-".
-                  const docInfinite =
-                    (p.avg_daily_demand === null || p.avg_daily_demand === 0) &&
-                    p.net_position > 0;
-                  return (
-                  <tr
-                    key={`${p.sku}-${p.warehouse_code}-${i}`}
-                    className="border-t border-border/60"
-                  >
-                    <td className="py-2 pr-2">
-                      <div className="font-medium">{p.sku}</div>
-                      <div
-                        className="truncate text-xs text-muted-foreground"
-                        title={`${p.product_name} · ${p.warehouse_name}`}
-                      >
-                        {p.product_name} · {p.warehouse_name}
-                      </div>
-                    </td>
-                    <td className="px-2 py-2">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <StateChip state={p.status} />
-                        {p.stockout_with_committed ? <CommittedStockoutPill /> : null}
-                      </div>
-                    </td>
-                    <td
-                      className={cn(
-                        'px-2 py-2 text-right font-semibold tabular-nums',
-                        p.net_position < 0 && 'text-scm-stockout',
-                      )}
-                    >
-                      {fmtSigned(p.net_position)}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.on_hand)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.on_order)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.committed)}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-muted-foreground">
-                      {p.stock_valuation === null ? EM_DASH : fmtMoney(p.stock_valuation)}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
-                      <AvgDemandCell row={p} />
-                    </td>
-                    <td
-                      className={cn(
-                        'px-2 py-2 text-right tabular-nums',
-                        docInfinite && 'text-scm-overstock',
-                      )}
-                    >
-                      {fmtDoc(p.days_of_cover, docInfinite)}
-                    </td>
-                    {isLowDrill ? (
-                      <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
-                        <ReorderPointCell row={p} />
-                      </td>
-                    ) : null}
-                    <td className="px-2 py-2 text-center">
-                      <ClassChip value={p.abc_class} kind="abc" />
-                    </td>
-                    <td className="px-2 py-2 text-center">
-                      <ClassChip value={p.xyz_class} kind="xyz" />
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           )}
         </DialogBody>
 

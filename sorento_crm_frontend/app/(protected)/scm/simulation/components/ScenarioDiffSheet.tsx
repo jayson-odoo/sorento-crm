@@ -17,6 +17,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { EM_DASH } from '../../lib/format';
 import { useScenarioDiff } from '../hooks/useSimulation';
 import type { ScenarioStatus } from '../types/simulation.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const STATUS_PILL_CODE: Record<ScenarioStatus, string> = {
   SAME: 'new',
@@ -112,32 +113,35 @@ export function ScenarioDiffSheet({ code, onOpenChange, simDbActive = false }: S
                   </p>
                 ) : (
                   <div className="overflow-hidden rounded-lg border">
-                    <table className="w-full text-2xs">
-                      <thead className="bg-muted/40 text-muted-foreground">
-                        <tr>
-                          <th className="px-2 py-1.5 text-start font-medium">Group</th>
-                          <th className="px-2 py-1.5 text-start font-medium">Field</th>
-                          <th className="px-2 py-1.5 text-start font-medium">Baseline</th>
-                          <th className="px-2 py-1.5 text-start font-medium">Current</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.diffs.map((d) => (
-                          <tr key={d.path} className="border-t">
-                            <td className="px-2 py-1.5 text-muted-foreground">{d.group}</td>
-                            <td className="max-w-40 truncate px-2 py-1.5 font-mono" title={d.path}>
-                              {d.path}
-                            </td>
-                            <td className="max-w-32 truncate px-2 py-1.5" title={fmtDiffValue(d.old)}>
-                              {fmtDiffValue(d.old)}
-                            </td>
-                            <td className="max-w-32 truncate px-2 py-1.5 font-medium" title={fmtDiffValue(d.new)}>
-                              {fmtDiffValue(d.new)}
-                            </td>
+                    <ScrollArea>
+                      <table className="w-auto min-w-full text-2xs">
+                        <thead className="bg-muted/40 text-muted-foreground">
+                          <tr>
+                            <th className="px-2 py-1.5 text-start font-medium">Group</th>
+                            <th className="px-2 py-1.5 text-start font-medium">Field</th>
+                            <th className="px-2 py-1.5 text-start font-medium">Baseline</th>
+                            <th className="px-2 py-1.5 text-start font-medium">Current</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {data.diffs.map((d) => (
+                            <tr key={d.path} className="border-t">
+                              <td className="px-2 py-1.5 text-muted-foreground">{d.group}</td>
+                              <td className="max-w-40 truncate px-2 py-1.5 font-mono" title={d.path}>
+                                {d.path}
+                              </td>
+                              <td className="max-w-32 truncate px-2 py-1.5" title={fmtDiffValue(d.old)}>
+                                {fmtDiffValue(d.old)}
+                              </td>
+                              <td className="max-w-32 truncate px-2 py-1.5 font-medium" title={fmtDiffValue(d.new)}>
+                                {fmtDiffValue(d.new)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <ScrollBar orientation="horizontal" />
+                    </ScrollArea>
                   </div>
                 )}
               </section>
