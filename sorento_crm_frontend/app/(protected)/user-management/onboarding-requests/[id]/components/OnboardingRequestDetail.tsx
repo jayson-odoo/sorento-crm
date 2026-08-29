@@ -17,8 +17,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Copy, KeyRound, Link2Off, Loader2, Send, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import {
   Breadcrumb,
@@ -37,14 +36,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
+import { useOnboardingRequestActions } from '../../actions';
 import {
   Toolbar,
   ToolbarActions,
@@ -56,7 +53,6 @@ import {
   ONBOARDING_STATUS_LABELS,
   ONBOARDING_STATUS_PILL_CODES,
 } from '@/components/common/onboarding/types';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
@@ -134,10 +130,24 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   const backHref = useBackToListHref(BASE_PATH);
   const [rejecting, setRejecting] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const requestQuery = useOnboardingRequest(requestId);
   const request = requestQuery.data;
+
+  // The set the list row renders too (D15). Delete brings its own confirmation.
+  const { actions, dialogs: actionDialogs } = useOnboardingRequestActions(
+    request
+      ? {
+          id: request.id,
+          title: request.title,
+          status: request.status,
+          revoked_at: request.revoked_at,
+          intake_url: request.intake_url,
+          people_count: request.people_count,
+        }
+      : null,
+    { onDeleted: () => router.push(backHref) },
+  );
 
   const {
     patchPerson,
@@ -146,14 +156,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     startReview,
     approveRequest,
     send,
-    revoke,
-    regenerate,
-    remove,
   } = useOnboardingRequestMutations(requestId);
-
-  const { copyToClipboard } = useCopyToClipboard({
-    onCopy: () => toast.success('Link copied'),
-  });
 
   const people = useMemo(() => request?.people ?? [], [request]);
   const counts = useMemo(
@@ -206,8 +209,6 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
 
   const canStartReview = request.status === 'submitted';
   const canApprove = request.status === 'in_review';
-  const linkLive = !request.revoked_at;
-  const canAdministerLink = ['draft', 'sent'].includes(request.status);
 
   return (
     <>
@@ -245,50 +246,8 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                   currentId: requestId,
                   ariaLabel: 'onboarding request',
                 }}
-                gear={
-                  <DetailActionsMenu ariaLabel="Request actions">
-                    <DropdownMenuItem
-                      disabled={!request.intake_url || !linkLive}
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        if (request.intake_url) copyToClipboard(request.intake_url);
-                      }}
-                    >
-                      <Copy className="size-4" />
-                      Copy link
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!linkLive || !canAdministerLink || revoke.isPending}
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        revoke.mutate();
-                      }}
-                    >
-                      <Link2Off className="size-4" />
-                      Revoke link
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={!canAdministerLink || regenerate.isPending}
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        regenerate.mutate();
-                      }}
-                    >
-                      <KeyRound className="size-4" />
-                      Issue a new link
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={(e) => {
-                        e.preventDefault();
-                        setDeleteOpen(true);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DetailActionsMenu>
-                }
+                actions={actions}
+                gearLabel="Request actions"
                 primary={
                   <>
                   {canStartReview ? (
@@ -469,24 +428,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        description={
-          <>
-            Delete <strong>{request.title}</strong> and its {counts.total}{' '}
-            {counts.total === 1 ? 'person' : 'people'}? This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          await remove.mutateAsync();
-        }}
-        queryKeysToInvalidate={[['onboarding-requests']]}
-        successMessage="Onboarding request deleted"
-        onSuccess={() => {
-          router.push(backHref);
-        }}
-      />
+      {actionDialogs}
     </>
   );
 }

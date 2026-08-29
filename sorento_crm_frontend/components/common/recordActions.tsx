@@ -21,7 +21,7 @@
  * action + countdown and neither call site changes.
  */
 
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   DropdownMenuItem,
@@ -57,34 +57,37 @@ export function orderRecordActions(actions: RecordAction[]): {
   };
 }
 
+/**
+ * The items as an ARRAY, not a fragment.
+ *
+ * A gear whose other items are a workflow (the SLA tracking one, say) splices
+ * these in among its own children, and `DetailActionsMenu` can only see a
+ * destructive item, and move it last, if the array is flattened into its
+ * children rather than hidden inside one fragment.
+ */
+export function recordActionItems(actions: RecordAction[]): ReactElement[] {
+  return actions.map((action) => (
+    <DropdownMenuItem
+      key={action.key}
+      variant={action.kind === 'destructive' ? 'destructive' : undefined}
+      disabled={action.disabled}
+      onSelect={() => action.run()}
+    >
+      {action.icon && <action.icon className="size-4" />}
+      {action.label}
+    </DropdownMenuItem>
+  ));
+}
+
 /** The menu items themselves, so the gear and the row "..." render one list. */
 export function RecordActionMenuItems({ actions }: { actions: RecordAction[] }) {
   const { secondary, destructive } = orderRecordActions(actions);
 
   return (
     <>
-      {secondary.map((action) => (
-        <DropdownMenuItem
-          key={action.key}
-          disabled={action.disabled}
-          onSelect={() => action.run()}
-        >
-          {action.icon && <action.icon className="size-4" />}
-          {action.label}
-        </DropdownMenuItem>
-      ))}
+      {recordActionItems(secondary)}
       {secondary.length > 0 && destructive.length > 0 && <DropdownMenuSeparator />}
-      {destructive.map((action) => (
-        <DropdownMenuItem
-          key={action.key}
-          variant="destructive"
-          disabled={action.disabled}
-          onSelect={() => action.run()}
-        >
-          {action.icon && <action.icon className="size-4" />}
-          {action.label}
-        </DropdownMenuItem>
-      ))}
+      {recordActionItems(destructive)}
     </>
   );
 }

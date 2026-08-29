@@ -18,14 +18,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
+import { useConversationSLATrackingDetail, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import DetailActions from '@/components/common/DetailActions';
 import { useBackToListHref } from '@/components/common/BackToList';
+import { recordActionItems } from '@/components/common/recordActions';
+import { useConversationSlaActions } from '../actions';
 import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -101,13 +103,16 @@ export default function ConversationSLATrackingDetail({
   // Delete lands where Back lands: the list page, sort, search and filters the
   // reader left, which the row click wrote into this URL.
   const backListHref = useBackToListHref(backHref);
+  // Everything a list row can do too, declared once (D15). Delete brings its own
+  // confirmation dialog, mounted with the actions below.
+  const { actions: sharedActions, dialogs: sharedDialogs } = useConversationSlaActions(
+    tracking,
+    { onDeleted: () => router.push(backListHref) },
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [responseOpen, setResponseOpen] = useState(false);
   const [resolutionOpen, setResolutionOpen] = useState(false);
-  const deleteMutation = useDeleteConversationSLATracking();
-  const syncAssigneeMutation = useSyncAssigneeFromRespond();
   const testOverrideMutation = useConversationSLATestOverrides(trackingId);
   const escalateMutation = useMutation({
     mutationFn: (reason: string) => escalateConversationSLATracking(trackingId, reason),
@@ -196,14 +201,6 @@ export default function ConversationSLATrackingDetail({
     } finally {
       setIsRefreshing(false);
     }
-  };
-
-  const handleDelete = () => {
-    deleteMutation.mutate(trackingId, {
-      onSuccess: () => {
-        router.push(backListHref);
-      },
-    });
   };
 
   if (isLoading) {
@@ -360,6 +357,7 @@ export default function ConversationSLATrackingDetail({
               : undefined
           }
           gearLabel="Conversation SLA options"
+          dialogs={sharedDialogs}
           gear={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -375,21 +373,10 @@ export default function ConversationSLATrackingDetail({
                 <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => syncAssigneeMutation.mutate(trackingId)}
-                disabled={syncAssigneeMutation.isPending}
-              >
-                <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
-                Sync assignee
-              </DropdownMenuItem>
-              {respondInboxUrl && (
-                <DropdownMenuItem
-                  onSelect={() => window.open(respondInboxUrl, '_blank', 'noopener,noreferrer')}
-                >
-                  <ExternalLink className="size-4 mr-2" />
-                  Open conversation
-                </DropdownMenuItem>
-              )}
+              {/* The set the list row renders too (D15) - Sync assignee, Open
+                  conversation, Delete tracking. Spliced in as an array so the menu
+                  can see the destructive one and move it last by itself. */}
+              {recordActionItems(sharedActions)}
               {contactId && (
                 <PortalLinkButton
                   contactId={contactId}
@@ -443,16 +430,6 @@ export default function ConversationSLATrackingDetail({
                   </DropdownMenuItem>
                 </>
               )}
-              {/* The one irreversible action: last, in red, behind a separator (D6). */}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setDeleteDialogOpen(true)}
-                disabled={deleteMutation.isPending}
-              >
-                <Trash2 className="size-4 mr-2" />
-                Delete tracking
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           }
@@ -778,25 +755,6 @@ export default function ConversationSLATrackingDetail({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Conversation SLA Tracking</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this conversation SLA tracking record? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList variant="default">

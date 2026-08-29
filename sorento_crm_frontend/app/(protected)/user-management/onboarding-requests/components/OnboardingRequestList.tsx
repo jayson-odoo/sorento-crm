@@ -18,7 +18,9 @@ import {
   type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
-import { ChevronRight, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useOnboardingRequestActions } from '../actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -56,6 +58,21 @@ const STATUS_OPTIONS = [
 /** Stored naive UTC, read as Malaysia wall-clock, never as the browser's zone. */
 function day(value: string | null): string {
   return value ? formatDateInMalaysia(value) : '-';
+}
+
+/**
+ * The row's "..." (D15): the same set the record's gear renders, so a captain can
+ * revoke a link that is already out without opening the request first. Its own
+ * component because the action set is a hook.
+ */
+function OnboardingRowActions({ request }: { request: OnboardingRequestSummary }) {
+  const { actions, dialogs } = useOnboardingRequestActions(request);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="onboarding request" actions={actions} />
+      {dialogs}
+    </>
+  );
 }
 
 export function OnboardingRequestList() {
@@ -202,11 +219,11 @@ export function OnboardingRequestList() {
       },
       {
         id: 'actions',
-        header: '',
-        size: 40,
+        header: () => <span className="sr-only">Actions</span>,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <OnboardingRowActions request={row.original} />,
       },
     ],
     [],

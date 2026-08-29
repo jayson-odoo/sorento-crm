@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle, Clock, Search, UserRound, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,7 +30,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
-import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
+import { useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
@@ -39,6 +39,26 @@ import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 import { slaHandler } from '../lib/slaHandler';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useConversationSlaActions } from '../actions';
+
+/**
+ * The row's "..." (D15): the same set the record's gear renders, minus the verbs
+ * that need the fetched tracking. Its own component because the action set is a
+ * hook, and a hook cannot be called inside a `cell` callback.
+ */
+function ConversationRowActions({
+  tracking,
+}: {
+  tracking: { id: string; respond_io_id?: string | null; contact?: { respond_io_id?: string | null } | null };
+}) {
+  const { actions, dialogs } = useConversationSlaActions(tracking);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="conversation" actions={actions} />
+      {dialogs}
+    </>
+  );
+}
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -112,7 +132,6 @@ export default function ConversationSLATrackingList() {
     await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail'] });
   };
 
-  const syncAssigneeMutation = useSyncAssigneeFromRespond();
 
   // The whole row opens the record, carrying the list query the pager rebuilds
   // its key from.
@@ -463,28 +482,12 @@ export default function ConversationSLATrackingList() {
       {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          // The record's gear also carries the tier verbs (escalate, mark
-          // responded/resolved, the test overrides), which read the tracking
-          // detail the row does not hold. What a row can do, it does here.
-          <RowActionsMenu
-            ariaLabel="conversation"
-            actions={[
-              {
-                key: 'conversation_sla.sync_assignee',
-                label: 'Sync assignee',
-                icon: UserRound,
-                disabled: syncAssigneeMutation.isPending,
-                run: () => syncAssigneeMutation.mutate(row.original.id),
-              },
-            ]}
-          />
-        ),
+        cell: ({ row }) => <ConversationRowActions tracking={row.original} />,
         size: 60,
         enableHiding: false,
       },
     ],
-    [syncAssigneeMutation],
+    [],
   );
 
   const table = useReactTable({
