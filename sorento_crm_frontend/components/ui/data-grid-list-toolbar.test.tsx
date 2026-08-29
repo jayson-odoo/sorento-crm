@@ -253,6 +253,33 @@ describe('DataGridListToolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: /clear filter: responded/i }));
     expect(onClear).toHaveBeenCalledTimes(1);
   });
+  it('S1-11: a control the list puts in the search slot wraps too', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          searchSlot: (
+            <div className="flex items-center gap-2">
+              <input aria-label="Search" />
+              <button type="button">Quick filters</button>
+            </div>
+          ),
+        }}
+      />,
+    );
+
+    const slot = document.querySelector('[data-slot="data-grid-list-toolbar-search"]') as HTMLElement;
+    expect(slot).not.toBeNull();
+
+    // Promotions and SPO Allocations both hand the toolbar a NESTED flex row -
+    // search box plus "Quick filters" / "Group by" - with no wrap of its own, so
+    // at 375 it ran past the viewport edge and took the page sideways with it.
+    // The list should not have to remember; the slot makes its own children wrap.
+    expect(slot).toHaveClass('flex-wrap');
+    expect(slot.className).toContain('[&>*]:flex-wrap');
+    expect(slot.className).toContain('[&>*]:min-w-0');
+  });
+
   it('S1-11: its controls wrap instead of running past the viewport edge', () => {
     render(<Harness toolbarProps={{ exportConfig: { filename: 'x.xlsx' } }} />);
 

@@ -451,7 +451,20 @@ export function DataGridListToolbar<TData extends object>({
           // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
           // the row is genuinely full - the item still shrinks to min-content and wraps.
           <div className="flex grow flex-wrap items-center gap-2">
-            {searchSlot}
+            {/*
+              The slot's OWN children have to wrap, not just sit in a wrapping row.
+              Promotions and SPO Allocations both hand the toolbar a nested flex -
+              search box plus "Quick filters" / "Group by" - with no wrap of its
+              own, so at 375 it ran past the viewport edge and took the page
+              sideways with it. `[&>*]` reaches whatever the list put here, and is
+              inert on a child that is not a flex row.
+            */}
+            <div
+              data-slot="data-grid-list-toolbar-search"
+              className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
+            >
+              {searchSlot}
+            </div>
             {filters ? (
               filters.kind === 'listQuery' ? (
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
