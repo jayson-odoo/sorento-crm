@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   annotateSalesAgent,
   bulkAnnotateSalesAgents,
@@ -12,15 +13,43 @@ import type {
   SalesAgentBulkAnnotatePayload,
 } from '../types/salesAgent.types';
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function salesAgentsListQueryKey(params: DataGridApiFetchParams): QueryKey {
+  return [
+    'sales-agents',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function salesAgentsListParamsFromUrl(
+  params: ListPagerParams,
+): DataGridApiFetchParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+  };
+}
+
+/** The pager's two hooks into the sales agents list. */
+export const salesAgentsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    salesAgentsListQueryKey(salesAgentsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getSalesAgents(salesAgentsListParamsFromUrl(params)),
+};
+
 export function useSalesAgents(params: DataGridApiFetchParams) {
   return useQuery({
-    queryKey: [
-      'sales-agents',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-    ],
+    queryKey: salesAgentsListQueryKey(params),
     queryFn: () => getSalesAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

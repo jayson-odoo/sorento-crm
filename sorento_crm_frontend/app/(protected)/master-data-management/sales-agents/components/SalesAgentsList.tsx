@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -84,7 +83,6 @@ export default function SalesAgentsList() {
     searchQuery: debouncedSearch,
   });
   const bulkAnnotate = useBulkAnnotateSalesAgents();
-  const router = useRouter();
 
   const rows = useMemo<SalesAgent[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
@@ -290,7 +288,7 @@ export default function SalesAgentsList() {
         emptyMessage="No sales agents found."
         // The whole row opens the record. The agent-code link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           <CardHeader className="block">
