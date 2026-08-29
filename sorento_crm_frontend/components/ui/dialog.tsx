@@ -133,12 +133,17 @@ function DialogContent({
   );
 
   const restoreFocusToOpener = (event: Event) => {
-    // The caller decides first; if it took over, leave focus alone.
+    // Released FIRST, before anything can return early. This open is over either
+    // way, and a held opener makes the capture guard skip the next one - so the
+    // dialog after a caller-handled close would hand focus back to the button
+    // that opened the dialog before it.
+    const opener = openerRef.current;
+    openerRef.current = null;
+
+    // The caller decides next; if it took over, leave focus alone.
     onCloseAutoFocus?.(event);
     if (event.defaultPrevented) return;
 
-    const opener = openerRef.current;
-    openerRef.current = null;
     // Gone from the DOM - the row that opened this dialog was just deleted - so
     // let Radix do whatever it would have done.
     if (!opener || !opener.isConnected) return;

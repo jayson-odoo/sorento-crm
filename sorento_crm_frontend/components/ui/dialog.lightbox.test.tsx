@@ -72,6 +72,11 @@ function StateOpenedHarness({ onCloseAutoFocus }: { onCloseAutoFocus?: (e: Event
       <button type="button" onClick={() => setOpen(true)}>
         Create Category
       </button>
+      {/* A second way in, so a test can prove the SECOND open is restored to the
+          button that opened it and not to the one before it. */}
+      <button type="button" onClick={() => setOpen(true)}>
+        Create Category from copy
+      </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <DialogTitle>Create Category</DialogTitle>
@@ -111,17 +116,31 @@ describe('Focus comes back to where it left (S1-01)', () => {
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
-  it('S1-01: a caller that wants focus somewhere else still wins', async () => {
-    const onCloseAutoFocus = vi.fn((event: Event) => event.preventDefault());
+  it('S1-01: a caller that wants focus somewhere else still wins, and does not poison the next open', async () => {
+    // Takes over the FIRST close only. The second open then proves the opener
+    // from the first was not still being held: if it were, the capture guard
+    // would skip the new one and focus would go back to the wrong button.
+    let takeOver = true;
+    const onCloseAutoFocus = vi.fn((event: Event) => {
+      if (takeOver) event.preventDefault();
+    });
     render(<StateOpenedHarness onCloseAutoFocus={onCloseAutoFocus} />);
 
-    const opener = screen.getByRole('button', { name: 'Create Category' });
-    opener.focus();
-    fireEvent.click(opener);
+    const first = screen.getByRole('button', { name: 'Create Category' });
+    first.focus();
+    fireEvent.click(first);
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalled());
     await waitFor(() => expect(document.activeElement).toBe(document.body));
+
+    takeOver = false;
+    const second = screen.getByRole('button', { name: 'Create Category from copy' });
+    second.focus();
+    fireEvent.click(second);
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(document.activeElement).toBe(second));
   });
 });
 
