@@ -1,6 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
@@ -47,9 +48,54 @@ export function usePromotionNeighbours(
   return useRecordNeighbours(PROMOTION_NEIGHBOURS_PATH, promotionId, params);
 }
 
-export function usePromotions(params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string }) {
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function promotionsListQueryKey(params: PromotionsListParams): QueryKey {
+  return [
+    'promotions',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.status,
+    params.date_from,
+    params.date_to,
+    params.user_type,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function promotionsListParamsFromUrl(
+  params: ListPagerParams,
+): PromotionsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status,
+    date_from: params.filters.date_from,
+    date_to: params.filters.date_to,
+    user_type: params.filters.user_type,
+    expiry_notify_batch_id: params.filters.expiry_notify_batch_id,
+    attachment_state: params.filters
+      .attachment_state as PromotionsListParams['attachment_state'],
+  };
+}
+
+/** The pager's two hooks into the promotions list. */
+export const promotionsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    promotionsListQueryKey(promotionsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getPromotions(promotionsListParamsFromUrl(params)),
+};
+
+export function usePromotions(params: PromotionsListParams) {
   return useQuery({
-    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status, params.date_from, params.date_to, params.user_type],
+    queryKey: promotionsListQueryKey(params),
     queryFn: () => getPromotions(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

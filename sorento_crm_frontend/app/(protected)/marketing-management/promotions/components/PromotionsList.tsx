@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
+import { Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -36,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { PromotionRowActions } from '../actions';
 import { getPromotions } from '../services/promotionService';
 import { useCompilePromotionsPdf } from '../hooks/usePromotions';
 import type { Promotion } from '../types/promotion.types';
@@ -295,7 +296,7 @@ export default function PromotionsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <PromotionRowActions promotionId={row.original.id} />,
         size: 40,
         enableHiding: false,
       },
@@ -303,12 +304,9 @@ export default function PromotionsList() {
     [accessLevelNameMap],
   );
 
-  const handleRowClick = (row: Promotion) => {
-    const promotionId = row.id;
-    // Carry the active list query (search/sort/filters) into the detail URL so the
-    // detail page's prev/next pager walks the same filtered+sorted set. Advanced
-    // (list-query) filters are not threaded - the neighbours endpoint mirrors the
-    // standard list GET params only.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: Promotion) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -323,9 +321,7 @@ export default function PromotionsList() {
           filterAttachmentState !== 'all' ? filterAttachmentState : undefined,
       },
     );
-    router.push(
-      `/marketing-management/promotions/${promotionId}${search ? `?${search}` : ''}`,
-    );
+    return `/marketing-management/promotions/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const table = useReactTable({
@@ -370,7 +366,7 @@ export default function PromotionsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
     >
       <Card>
