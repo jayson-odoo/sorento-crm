@@ -39,7 +39,8 @@ import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import PurchaseRequestNavigation from './PurchaseRequestNavigation';
+import ListPager from '@/components/common/ListPager';
+import { purchaseRequestsPagerQuery } from '../hooks/usePurchaseRequests';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
@@ -505,6 +506,12 @@ export default function PurchaseRequestDetail({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          <ListPager
+            {...purchaseRequestsPagerQuery}
+            detailPath={basePath}
+            currentId={requestId}
+            ariaLabel={requestTypeLabelLower(request.request_type)}
+          />
           {/* Business CTAs HIDE (not disable) while the handling lock is held by
               someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
@@ -783,11 +790,7 @@ export default function PurchaseRequestDetail({
             label={request.request_number ?? undefined}
             className="h-8 border border-border"
           />
-          <PurchaseRequestNavigation
-            basePath={basePath}
-            requestId={requestId}
-            ariaLabel={requestTypeLabelLower(request.request_type)}
-          />
+
           {/* Edit and Delete are NOT handling-lock gated (deliberate - see businessCtasEnabled),
               but a pending form action DOES block them: the action must commit against the
               state it was requested on, so nothing may mutate the row mid-window (AC-D-10).

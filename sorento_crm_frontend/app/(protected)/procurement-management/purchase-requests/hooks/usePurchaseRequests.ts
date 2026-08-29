@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
@@ -27,6 +27,7 @@ import type {
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 /**
  * Prev/next neighbours of a purchase request / sponsorship form within the active
@@ -52,24 +53,57 @@ export function usePurchaseRequestNeighbours(
   );
 }
 
-export function usePurchaseRequests(
-  params: DataGridApiFetchParams & {
-    requestType?: string;
-    approvalStatus?: string;
-    assignedTo?: string;
-  },
-) {
+export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
+  requestType?: string;
+  approvalStatus?: string;
+  assignedTo?: string;
+};
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function purchaseRequestsListQueryKey(
+  params: PurchaseRequestsListQueryParams,
+): QueryKey {
+  return [
+    'purchase-requests',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.requestType,
+    params.approvalStatus,
+    params.assignedTo,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function purchaseRequestsListParamsFromUrl(
+  params: ListPagerParams,
+): PurchaseRequestsListQueryParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    requestType: params.filters.request_type,
+    approvalStatus: params.filters.approval_status,
+    assignedTo: params.filters.assigned_to,
+  };
+}
+
+/** The pager's two hooks into the purchase requests list. */
+export const purchaseRequestsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    purchaseRequestsListQueryKey(purchaseRequestsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getPurchaseRequests(purchaseRequestsListParamsFromUrl(params)),
+};
+
+export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
   return useQuery({
-    queryKey: [
-      'purchase-requests',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.requestType,
-      params.approvalStatus,
-      params.assignedTo,
-    ],
+    queryKey: purchaseRequestsListQueryKey(params),
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

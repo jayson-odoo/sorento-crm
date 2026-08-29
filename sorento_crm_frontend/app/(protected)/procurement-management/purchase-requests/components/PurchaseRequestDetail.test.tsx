@@ -149,7 +149,14 @@ vi.mock('../services/purchaseRequestService', () => ({
 }));
 
 const usePurchaseRequestMock = vi.fn();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/usePurchaseRequests', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  purchaseRequestsPagerQuery: {
+    listQueryKey: () => ['purchase-requests'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   usePurchaseRequest: (...a: unknown[]) => usePurchaseRequestMock(...a),
   usePurchaseRequestNeighbours: () => ({ prevId: null, nextId: null, index: null, total: 0, isLoading: false }),
   useDeletePurchaseRequestAttachment: () => ({ mutateAsync: vi.fn(), isPending: false }),
