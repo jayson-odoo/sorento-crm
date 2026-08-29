@@ -46,7 +46,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -345,132 +345,138 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
       {/* The plan's own actions: pager, gear, primary (D6). They sit under the
           toolbar rather than on it, and wrap at 375. */}
-      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-          <ListPager
-            {...loadingPlanPagerQuery}
-            detailPath="/scm/loading-plan"
-            currentId={planId}
-            ariaLabel="loading plan"
-          />
-
-          {/* Everything that is not the errand. ONE gear on this screen (R5): the card below
-              used to carry a second one, which made "the plan's actions" two menus deep. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="Plan actions"
-                data-testid="plan-actions"
-              >
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {stockListFile.data?.attachment_id ? (
-                <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
-                  <Eye className="size-4" />
-                  View uploaded list
+      <DetailActions
+        className="mb-4"
+        pager={{
+          ...loadingPlanPagerQuery,
+          detailPath: '/scm/loading-plan',
+          currentId: planId,
+          ariaLabel: 'loading plan',
+        }}
+        gear={
+          <>
+            {/* Everything that is not the errand. ONE gear on this screen (R5): the card below
+                used to carry a second one, which made "the plan's actions" two menus deep. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Plan actions"
+                  data-testid="plan-actions"
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {stockListFile.data?.attachment_id ? (
+                  <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
+                    <Eye className="size-4" />
+                    View uploaded list
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  disabled={rematch.isPending}
+                  onSelect={() => rematch.mutate({ supplier_id: supplierId })}
+                  data-testid="refresh-matching-item"
+                >
+                  <RefreshCw className="size-4" />
+                  Refresh matching
                 </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem
-                disabled={rematch.isPending}
-                onSelect={() => rematch.mutate({ supplier_id: supplierId })}
-                data-testid="refresh-matching-item"
-              >
-                <RefreshCw className="size-4" />
-                Refresh matching
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={build.isFetching}
-                onSelect={() => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch())}
-              >
-                <RefreshCw className="size-4" />
-                Refresh suggestion
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!liveLinkNotice}
-                title={liveLinkNotice ? undefined : 'No link sent yet'}
-                onSelect={() => void copyPublicLink(liveLinkNotice?.public_url)}
-              >
-                <Link2 className="size-4" />
-                Copy link
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={lines.length === 0 || download.isPending}
-                onSelect={() => download.mutate({ lines, format: 'xlsx' })}
-              >
-                <Download className="size-4" />
-                Download XLSX
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={lines.length === 0 || download.isPending}
-                onSelect={() => download.mutate({ lines, format: 'pdf' })}
-              >
-                <FileText className="size-4" />
-                Download PDF
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={readOnly}
-                onSelect={() => {
-                  setCutOffDraft(plan.plan_horizon_date ?? '');
-                  setCutOffOpen(true);
-                }}
-              >
-                <CalendarDays className="size-4" />
-                Change cut-off
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={readOnly}
-                onSelect={() => setCancelOpen(true)}
-              >
-                <Ban className="size-4" />
-                Cancel plan
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={!!plan.sent_at}
-                title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
-                onSelect={() => setDeleteOpen(true)}
-              >
-                <Trash2 className="size-4" />
-                Delete plan
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <DropdownMenuItem
+                  disabled={build.isFetching}
+                  onSelect={() => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch())}
+                >
+                  <RefreshCw className="size-4" />
+                  Refresh suggestion
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!liveLinkNotice}
+                  title={liveLinkNotice ? undefined : 'No link sent yet'}
+                  onSelect={() => void copyPublicLink(liveLinkNotice?.public_url)}
+                >
+                  <Link2 className="size-4" />
+                  Copy link
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={lines.length === 0 || download.isPending}
+                  onSelect={() => download.mutate({ lines, format: 'xlsx' })}
+                >
+                  <Download className="size-4" />
+                  Download XLSX
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={lines.length === 0 || download.isPending}
+                  onSelect={() => download.mutate({ lines, format: 'pdf' })}
+                >
+                  <FileText className="size-4" />
+                  Download PDF
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={readOnly}
+                  onSelect={() => {
+                    setCutOffDraft(plan.plan_horizon_date ?? '');
+                    setCutOffOpen(true);
+                  }}
+                >
+                  <CalendarDays className="size-4" />
+                  Change cut-off
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={readOnly}
+                  onSelect={() => setCancelOpen(true)}
+                >
+                  <Ban className="size-4" />
+                  Cancel plan
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={!!plan.sent_at}
+                  title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
+                  onSelect={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                  Delete plan
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+        primary={
+          <>
+            <Button
+              variant="outline"
+              disabled={readOnly || unsavedCount === 0 || save.isPending}
+              title={readOnly ? 'This plan is cancelled.' : undefined}
+              onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
+              data-testid="save-plan-edits"
+            >
+              {save.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Save className="size-4" />
+              )}
+              Save ({unsavedCount})
+            </Button>
 
-          <Button
-            variant="outline"
-            disabled={readOnly || unsavedCount === 0 || save.isPending}
-            title={readOnly ? 'This plan is cancelled.' : undefined}
-            onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
-            data-testid="save-plan-edits"
-          >
-            {save.isPending ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save ({unsavedCount})
-          </Button>
-
-          <Button
-            disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
-            title={readOnly ? 'This plan is cancelled.' : undefined}
-            onClick={() => setSendOpen(true)}
-            data-testid="send-to-supplier"
-          >
-            {send.isPending ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Send className="size-4" />
-            )}
-            Send to supplier
-          </Button>
-
-      </div>
+            <Button
+              disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+              title={readOnly ? 'This plan is cancelled.' : undefined}
+              onClick={() => setSendOpen(true)}
+              data-testid="send-to-supplier"
+            >
+              {send.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+              Send to supplier
+            </Button>
+          </>
+        }
+      />
 
       {/* The queue of codes this supplier's file names and our catalogue does not - the stock
           behind them is invisible to the plan below until somebody answers them. */}

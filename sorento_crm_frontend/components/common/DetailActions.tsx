@@ -10,6 +10,13 @@ export interface DetailActionsProps {
   /** Prev/next across the list page the record was opened from. */
   pager?: ListPagerProps;
   /**
+   * The two records whose whole list is already in memory (a project's delivery
+   * schedules, the series list) step through it without a query of their own, so
+   * they hand over a presentational `RecordNavigation` instead. Same slot, same
+   * position; `pager` and `pagerNode` are exclusive.
+   */
+  pagerNode?: ReactNode;
+  /**
    * The entity's action set (D15) - the same array the list row's "..." renders.
    * Secondary items first, then a separator, then Delete in red, last.
    */
@@ -43,6 +50,7 @@ export interface DetailActionsProps {
  */
 export default function DetailActions({
   pager,
+  pagerNode,
   actions,
   gear,
   primary,
@@ -53,6 +61,7 @@ export default function DetailActions({
   return (
     <div className={cn('flex flex-wrap items-center justify-end gap-2', className)}>
       {pager && <ListPager {...pager} />}
+      {!pager && pagerNode}
       {actions && actions.length > 0 && (
         <DetailActionsMenu actions={actions} trigger="gear" ariaLabel={gearLabel} />
       )}

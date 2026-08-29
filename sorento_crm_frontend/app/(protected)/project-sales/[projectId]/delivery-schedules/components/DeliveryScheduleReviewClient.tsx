@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -441,54 +442,64 @@ export function DeliveryScheduleReviewClient({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* The project's schedules, each at its latest version, walked one after another
-              rather than through the project tab between each. */}
-          <RecordNavigation
-            index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
-            total={scheduleRows.length}
-            hasPrevious={scheduleIndex > 0}
-            hasNext={scheduleIndex >= 0 && scheduleIndex < scheduleRows.length - 1}
-            onPrevious={() => goToSchedule(scheduleRows[scheduleIndex - 1])}
-            onNext={() => goToSchedule(scheduleRows[scheduleIndex + 1])}
-            isLoading={schedules.isLoading}
-            ariaLabel="schedule"
-          />
-          {/* Everything that only takes you somewhere lives behind the gear. The header used
-              to carry a button per destination, and the row of them competed with Confirm,
-              which is the one thing this screen is for. Both open in a new tab: the reviewer
-              is mid-reconciliation and leaving the page loses the cells they have typed. */}
-          {(poHref || version.document_url) && (
-            <DetailActionsMenu ariaLabel="Schedule actions">
-              {poHref && (
-                <DropdownMenuItem asChild>
-                  <a href={poHref} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="size-4" aria-hidden />
-                    View PO
-                  </a>
-                </DropdownMenuItem>
-              )}
-              {version.document_url && (
-                <DropdownMenuItem asChild>
-                  <a href={version.document_url} target="_blank" rel="noopener noreferrer">
-                    <FileText className="size-4" aria-hidden />
-                    View document
-                  </a>
-                </DropdownMenuItem>
-              )}
-            </DetailActionsMenu>
-          )}
-          {!version.confirmed_at && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={!canEdit || readingNow || columns.length === 0}
-              onClick={() => setConfirming(true)}
-            >
-              Confirm
-            </Button>
-          )}
-        </div>
+        {/* The project's schedules, each at its latest version, walked one after
+            another rather than through the project tab between each. */}
+        <DetailActions
+          pagerNode={
+            <RecordNavigation
+              index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
+              total={scheduleRows.length}
+              hasPrevious={scheduleIndex > 0}
+              hasNext={scheduleIndex >= 0 && scheduleIndex < scheduleRows.length - 1}
+              onPrevious={() => goToSchedule(scheduleRows[scheduleIndex - 1])}
+              onNext={() => goToSchedule(scheduleRows[scheduleIndex + 1])}
+              isLoading={schedules.isLoading}
+              ariaLabel="schedule"
+            />
+          }
+          gear={
+            <>
+            {/* Everything that only takes you somewhere lives behind the gear. The header used
+                to carry a button per destination, and the row of them competed with Confirm,
+                which is the one thing this screen is for. Both open in a new tab: the reviewer
+                is mid-reconciliation and leaving the page loses the cells they have typed. */}
+            {(poHref || version.document_url) && (
+              <DetailActionsMenu ariaLabel="Schedule actions">
+                {poHref && (
+                  <DropdownMenuItem asChild>
+                    <a href={poHref} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="size-4" aria-hidden />
+                      View PO
+                    </a>
+                  </DropdownMenuItem>
+                )}
+                {version.document_url && (
+                  <DropdownMenuItem asChild>
+                    <a href={version.document_url} target="_blank" rel="noopener noreferrer">
+                      <FileText className="size-4" aria-hidden />
+                      View document
+                    </a>
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            )}
+            </>
+          }
+          primary={
+            <>
+            {!version.confirmed_at && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canEdit || readingNow || columns.length === 0}
+                onClick={() => setConfirming(true)}
+              >
+                Confirm
+              </Button>
+            )}
+            </>
+          }
+        />
       </header>
 
       {version.confirmed_at && (

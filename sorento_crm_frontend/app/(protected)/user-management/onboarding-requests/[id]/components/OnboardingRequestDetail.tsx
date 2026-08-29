@@ -44,6 +44,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import {
   Toolbar,
   ToolbarActions,
@@ -62,7 +63,6 @@ import {
   useOnboardingRequest,
   useOnboardingRequestMutations,
 } from '../../hooks/useOnboardingRequests';
-import ListPager from '@/components/common/ListPager';
 import { onboardingPagerQuery } from '../../hooks/useOnboardingRequests';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
@@ -213,73 +213,6 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     <>
       <DetailShell>
         <ToolbarActions>
-          <ListPager
-            {...onboardingPagerQuery}
-            detailPath="/user-management/onboarding-requests"
-            currentId={requestId}
-            ariaLabel="onboarding request"
-          />
-          {canStartReview ? (
-            <Button
-              variant="outline"
-              onClick={() => startReview.mutate()}
-              disabled={startReview.isPending}
-            >
-              Start review
-            </Button>
-          ) : null}
-          {canApprove ? (
-            <Button onClick={() => approveRequest.mutate()} disabled={approveRequest.isPending}>
-              {approveRequest.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="size-4" />
-              )}
-              Approve and provision
-            </Button>
-          ) : null}
-          <DetailActionsMenu ariaLabel="Request actions">
-            <DropdownMenuItem
-              disabled={!request.intake_url || !linkLive}
-              onSelect={(e) => {
-                e.preventDefault();
-                if (request.intake_url) copyToClipboard(request.intake_url);
-              }}
-            >
-              <Copy className="size-4" />
-              Copy link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!linkLive || !canAdministerLink || revoke.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                revoke.mutate();
-              }}
-            >
-              <Link2Off className="size-4" />
-              Revoke link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!canAdministerLink || regenerate.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                regenerate.mutate();
-              }}
-            >
-              <KeyRound className="size-4" />
-              Issue a new link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={(e) => {
-                e.preventDefault();
-                setDeleteOpen(true);
-              }}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
-          </DetailActionsMenu>
           <BackToQueue />
         </ToolbarActions>
       </DetailShell>
@@ -289,8 +222,8 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           {/* Meta: the record's own identity plus the read-only facts that have
               no edit counterpart, so they never sit inside a section body. */}
           <Card>
-            <CardHeader>
-              <CardHeading>
+            <CardHeader className="flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <CardHeading className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <CardTitle className="break-words">{request.title}</CardTitle>
                   <span
@@ -305,6 +238,81 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                   {request.company_name} · from {request.requester_name}
                 </p>
               </CardHeading>
+              <DetailActions
+                pager={{
+                  ...onboardingPagerQuery,
+                  detailPath: BASE_PATH,
+                  currentId: requestId,
+                  ariaLabel: 'onboarding request',
+                }}
+                gear={
+                  <DetailActionsMenu ariaLabel="Request actions">
+                    <DropdownMenuItem
+                      disabled={!request.intake_url || !linkLive}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        if (request.intake_url) copyToClipboard(request.intake_url);
+                      }}
+                    >
+                      <Copy className="size-4" />
+                      Copy link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!linkLive || !canAdministerLink || revoke.isPending}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        revoke.mutate();
+                      }}
+                    >
+                      <Link2Off className="size-4" />
+                      Revoke link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canAdministerLink || regenerate.isPending}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        regenerate.mutate();
+                      }}
+                    >
+                      <KeyRound className="size-4" />
+                      Issue a new link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setDeleteOpen(true);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DetailActionsMenu>
+                }
+                primary={
+                  <>
+                  {canStartReview ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => startReview.mutate()}
+                      disabled={startReview.isPending}
+                    >
+                      Start review
+                    </Button>
+                  ) : null}
+                  {canApprove ? (
+                    <Button onClick={() => approveRequest.mutate()} disabled={approveRequest.isPending}>
+                      {approveRequest.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="size-4" />
+                      )}
+                      Approve and provision
+                    </Button>
+                  ) : null}
+                  </>
+                }
+              />
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

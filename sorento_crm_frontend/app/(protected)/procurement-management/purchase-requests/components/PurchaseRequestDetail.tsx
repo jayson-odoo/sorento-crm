@@ -40,9 +40,9 @@ import { formatDate, formatCurrency } from '@/lib/helpers';
 import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import ListPager from '@/components/common/ListPager';
 import { purchaseRequestsPagerQuery } from '../hooks/usePurchaseRequests';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
@@ -191,6 +191,7 @@ export default function PurchaseRequestDetail({
   });
   const currencyFormat = useCurrencyFormat();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
@@ -507,312 +508,331 @@ export default function PurchaseRequestDetail({
             · {typeLabel}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <ListPager
-            {...purchaseRequestsPagerQuery}
-            detailPath={basePath}
-            currentId={requestId}
-            ariaLabel={requestTypeLabelLower(request.request_type)}
-          />
-          {/* Business CTAs HIDE (not disable) while the handling lock is held by
-              someone else / unclaimed - keeps the header uncluttered. When the lock
-              does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
-              true and they render on their normal status+permission gates. */}
-          {businessCtasEnabled && showPrimaryChangeToPending && (
-            <Button
-              disabled={changeToPending.running}
-              onClick={() => changeToPending.run()}
-              data-guide-target="procurement.approvals.change-to-pending-approval-button"
-            >
-              <Clock className="size-4" />
-              {changeToPending.running ? 'Updating…' : 'Change to pending approval'}
-            </Button>
-          )}
-          {businessCtasEnabled && showRejectSubmitted && (
-            <Button
-              variant="outline"
-              className="border-destructive text-destructive hover:bg-destructive/10"
-              disabled={rejecting}
-              onClick={() => {
-                setRejectReason('');
-                setRejectDialogOpen(true);
-              }}
-            >
-              <Trash2 className="size-4" />
-              Reject
-            </Button>
-          )}
-          {/* "Send for approval" email button retired: moving to pending approval
-              fires the SLA assignment, which notifies the approver, who then uses
-              the in-system Approve/Reject below. The emailed link survives as an
-              optional external fallback under the gear ("Copy approval link"). */}
-          {/* In-system approver decision - same effect as the emailed approval link,
-              so the approver can decide without leaving the system. */}
-          {businessCtasEnabled && isPendingApproval && canApprove && (
-            <>
-              <Button
-                data-guide-target="procurement.purchase-requests.approve-button"
-                className="bg-emerald-600 text-white hover:bg-emerald-700"
-                disabled={approving}
-                onClick={async () => {
-                  setApproving(true);
-                  try {
-                    const result = await submitApprovalDecision(requestId, 'approved');
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    // A deferred decision has written nothing and sent nothing, so
-                    // saying "approved" would be a lie. Refresh the form-action read
-                    // instead so the countdown + Undo appear.
-                    if (isDeferredDecision(result)) {
-                      formAction.refresh();
-                      toast.success('Approving - you can still undo.');
-                    } else {
-                      toast.success('Request approved');
-                    }
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : 'Failed to approve');
-                  } finally {
-                    setApproving(false);
-                  }
-                }}
-              >
-                <ThumbsUp className="size-4" />
-                {approving ? 'Approving…' : 'Approve'}
-              </Button>
-              <Button
-                data-guide-target="procurement.purchase-requests.reject-button"
-                variant="outline"
-                className="border-destructive text-destructive hover:bg-destructive/10"
-                disabled={decisionRejecting}
-                onClick={() => {
-                  setDecisionRejectReason('');
-                  setDecisionRejectOpen(true);
-                }}
-              >
-                <ThumbsDown className="size-4" />
-                Reject
-              </Button>
-            </>
-          )}
-          {businessCtasEnabled && showCsActions && canProcess && (
-            <Button
-              disabled={finalizing}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-              onClick={() => {
-                setFinalizeNote('');
-                setProcessDialogOpen(true);
-              }}
-            >
-              <BadgeCheck className="size-4" />
-              Processed by CS
-            </Button>
-          )}
-          <DetailActionsMenu ariaLabel="Request actions">
-            {/* Post-grace Undo. Rendered only when the server says the last committed
-                action is reversible - eligibility is a server read, never a client
-                guess, and it is re-checked at execute time (AC-PG-6/7). */}
-            {formAction.view.kind === 'undoable' && (
+        <DetailActions
+          pager={{
+            ...purchaseRequestsPagerQuery,
+            detailPath: basePath,
+            currentId: requestId,
+            ariaLabel: requestTypeLabelLower(request.request_type),
+          }}
+          gear={
+            <DetailActionsMenu ariaLabel="Request actions">
+              {/* The download history is an action, so it sits in the gear with the rest.
+                  Edit is the record's primary button and Delete is the last item here; the
+                  card carries the pager, the gear and the workflow CTAs, nothing else. */}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
-                  setUndoDialogOpen(true);
-                }}
-                data-testid="undo-action-menu-item"
-              >
-                <Undo2 className="size-4" />
-                Undo last action
-              </DropdownMenuItem>
-            )}
-            {activeTracker && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setEscalateReason('');
-                  setEscalateOpen(true);
+                  setDownloadsOpen(true);
                 }}
               >
-                <ArrowUpCircle className="size-4" />
-                Escalate SLA
+                <Printer className="size-4" />
+                Download history
               </DropdownMenuItem>
-            )}
-            <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
-            {canReassign && activeTracker && !isVoided && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setReassignOpen(true);
-                }}
-              >
-                <UserRoundCog className="size-4" />
-                Reassign
-              </DropdownMenuItem>
-            )}
-            <HandlingLockReleaseMenuItem
-              state={handlingLock.state}
-              onRelease={handlingLock.release}
-            />
-            {businessCtasEnabled && showCsActions && canClose && (
-              <DropdownMenuItem
-                disabled={finalizing}
-                onClick={() => {
-                  setFinalizeNote('');
-                  setCloseCsDialogOpen(true);
-                }}
-              >
-                <XCircle className="size-4" />
-                Mark as closed
-              </DropdownMenuItem>
-            )}
-            {showPrimarySendForApproval && (
-              <DropdownMenuItem
-                disabled={approvalLinkCopying}
-                onClick={async (e) => {
-                  e.preventDefault();
-                  if (!requestId) return;
-                  const approverUserId =
-                    request.approver_user_id ?? configuredDefaultApproverUserId ?? undefined;
-                  const approverEmail =
-                    request.approver_email ?? configuredDefaultApproverEmail ?? undefined;
-                  setApprovalLinkCopying(true);
-                  try {
-                    const baseUrl =
-                      typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const res = await sendApprovalLink(requestId, {
-                      approver_email: approverEmail,
-                      approver_user_id: approverUserId,
-                      expires_hours: 24,
-                      send_email: false,
-                      base_url: baseUrl,
-                    });
-                    if (res.approval_url) {
-                      await navigator.clipboard.writeText(res.approval_url);
-                      toast.success('Approval link copied to clipboard');
-                    } else {
-                      toast.error('Could not generate approval link');
-                    }
-                  } catch (err) {
-                    toast.error(
-                      err instanceof Error ? err.message : 'Could not generate approval link',
-                    );
-                  } finally {
-                    setApprovalLinkCopying(false);
-                  }
-                }}
-              >
-                <Link2 className="size-4" />
-                {approvalLinkCopying ? 'Generating…' : 'Copy approval link'}
-              </DropdownMenuItem>
-            )}
-            {publicViewLinksEnabled && (
-              <DropdownMenuItem
-                disabled={viewLinkCopying}
-                onClick={async (e) => {
-                  e.preventDefault();
-                  if (!requestId) return;
-                  setViewLinkCopying(true);
-                  try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                    if (view_url) {
-                      await navigator.clipboard.writeText(view_url);
-                      toast.success('View link copied to clipboard');
-                    } else {
-                      toast.error('Could not generate view link');
-                    }
-                  } catch {
-                    toast.error('Could not generate view link');
-                  } finally {
-                    setViewLinkCopying(false);
-                  }
-                }}
-              >
-                <Link2 className="size-4" />
-                {viewLinkCopying ? 'Generating…' : 'Copy view link'}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              disabled={exportingExcel}
-              onClick={async (e) => {
-                e.preventDefault();
-                await handleExportExcel();
-              }}
-            >
-              <FileDown className="size-4" />
-              {exportingExcel ? 'Exporting…' : 'Export to Excel'}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-guide-target="procurement.purchase-requests.download-pdf"
-              disabled={exportPdfMutation.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                handleExportPdf();
-              }}
-            >
-              <Printer className="size-4" />
-              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
-            </DropdownMenuItem>
-            {request.respond_inbox_url && (
-              <>
-                <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
-                  <ScrollText className="size-4" />
-                  Chat records
-                </DropdownMenuItem>
-                {businessCtasEnabled && (
+              {/* Post-grace Undo. Rendered only when the server says the last committed
+                  action is reversible - eligibility is a server read, never a client
+                  guess, and it is re-checked at execute time (AC-PG-6/7). */}
+              {formAction.view.kind === 'undoable' && (
                 <DropdownMenuItem
-                  disabled={openingReplySheet}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setUndoDialogOpen(true);
+                  }}
+                  data-testid="undo-action-menu-item"
+                >
+                  <Undo2 className="size-4" />
+                  Undo last action
+                </DropdownMenuItem>
+              )}
+              {activeTracker && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setEscalateReason('');
+                    setEscalateOpen(true);
+                  }}
+                >
+                  <ArrowUpCircle className="size-4" />
+                  Escalate SLA
+                </DropdownMenuItem>
+              )}
+              <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+              {canReassign && activeTracker && !isVoided && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setReassignOpen(true);
+                  }}
+                >
+                  <UserRoundCog className="size-4" />
+                  Reassign
+                </DropdownMenuItem>
+              )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
+              {businessCtasEnabled && showCsActions && canClose && (
+                <DropdownMenuItem
+                  disabled={finalizing}
+                  onClick={() => {
+                    setFinalizeNote('');
+                    setCloseCsDialogOpen(true);
+                  }}
+                >
+                  <XCircle className="size-4" />
+                  Mark as closed
+                </DropdownMenuItem>
+              )}
+              {showPrimarySendForApproval && (
+                <DropdownMenuItem
+                  disabled={approvalLinkCopying}
                   onClick={async (e) => {
                     e.preventDefault();
-                    setOpeningReplySheet(true);
+                    if (!requestId) return;
+                    const approverUserId =
+                      request.approver_user_id ?? configuredDefaultApproverUserId ?? undefined;
+                    const approverEmail =
+                      request.approver_email ?? configuredDefaultApproverEmail ?? undefined;
+                    setApprovalLinkCopying(true);
                     try {
-                      await openUpdateAndReplyInChat();
+                      const baseUrl =
+                        typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const res = await sendApprovalLink(requestId, {
+                        approver_email: approverEmail,
+                        approver_user_id: approverUserId,
+                        expires_hours: 24,
+                        send_email: false,
+                        base_url: baseUrl,
+                      });
+                      if (res.approval_url) {
+                        await navigator.clipboard.writeText(res.approval_url);
+                        toast.success('Approval link copied to clipboard');
+                      } else {
+                        toast.error('Could not generate approval link');
+                      }
+                    } catch (err) {
+                      toast.error(
+                        err instanceof Error ? err.message : 'Could not generate approval link',
+                      );
                     } finally {
-                      setOpeningReplySheet(false);
+                      setApprovalLinkCopying(false);
                     }
                   }}
                 >
-                  <Send className="size-4" />
-                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                  <Link2 className="size-4" />
+                  {approvalLinkCopying ? 'Generating…' : 'Copy approval link'}
                 </DropdownMenuItem>
-                )}
+              )}
+              {publicViewLinksEnabled && (
+                <DropdownMenuItem
+                  disabled={viewLinkCopying}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    if (!requestId) return;
+                    setViewLinkCopying(true);
+                    try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                      if (view_url) {
+                        await navigator.clipboard.writeText(view_url);
+                        toast.success('View link copied to clipboard');
+                      } else {
+                        toast.error('Could not generate view link');
+                      }
+                    } catch {
+                      toast.error('Could not generate view link');
+                    } finally {
+                      setViewLinkCopying(false);
+                    }
+                  }}
+                >
+                  <Link2 className="size-4" />
+                  {viewLinkCopying ? 'Generating…' : 'Copy view link'}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                disabled={exportingExcel}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  await handleExportExcel();
+                }}
+              >
+                <FileDown className="size-4" />
+                {exportingExcel ? 'Exporting…' : 'Export to Excel'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-guide-target="procurement.purchase-requests.download-pdf"
+                disabled={exportPdfMutation.isPending}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  handleExportPdf();
+                }}
+              >
+                <Printer className="size-4" />
+                {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
+              </DropdownMenuItem>
+              {request.respond_inbox_url && (
+                <>
+                  <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
+                    <ScrollText className="size-4" />
+                    Chat records
+                  </DropdownMenuItem>
+                  {businessCtasEnabled && (
+                  <DropdownMenuItem
+                    disabled={openingReplySheet}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      setOpeningReplySheet(true);
+                      try {
+                        await openUpdateAndReplyInChat();
+                      } finally {
+                        setOpeningReplySheet(false);
+                      }
+                    }}
+                  >
+                    <Send className="size-4" />
+                    {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                  </DropdownMenuItem>
+                  )}
+                </>
+              )}
+              {canVoid && !isVoided && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setVoidDialogOpen(true)}
+                >
+                  <Ban className="size-4" />
+                  Void
+                </DropdownMenuItem>
+              )}
+              {!isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => setDeleteDialogOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
+          }
+          primary={
+            <>
+            {/* Business CTAs HIDE (not disable) while the handling lock is held by
+                someone else / unclaimed - keeps the header uncluttered. When the lock
+                does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
+                true and they render on their normal status+permission gates. */}
+            {businessCtasEnabled && showPrimaryChangeToPending && (
+              <Button
+                disabled={changeToPending.running}
+                onClick={() => changeToPending.run()}
+                data-guide-target="procurement.approvals.change-to-pending-approval-button"
+              >
+                <Clock className="size-4" />
+                {changeToPending.running ? 'Updating…' : 'Change to pending approval'}
+              </Button>
+            )}
+            {businessCtasEnabled && showRejectSubmitted && (
+              <Button
+                variant="outline"
+                className="border-destructive text-destructive hover:bg-destructive/10"
+                disabled={rejecting}
+                onClick={() => {
+                  setRejectReason('');
+                  setRejectDialogOpen(true);
+                }}
+              >
+                <Trash2 className="size-4" />
+                Reject
+              </Button>
+            )}
+            {/* "Send for approval" email button retired: moving to pending approval
+                fires the SLA assignment, which notifies the approver, who then uses
+                the in-system Approve/Reject below. The emailed link survives as an
+                optional external fallback under the gear ("Copy approval link"). */}
+            {/* In-system approver decision - same effect as the emailed approval link,
+                so the approver can decide without leaving the system. */}
+            {businessCtasEnabled && isPendingApproval && canApprove && (
+              <>
+                <Button
+                  data-guide-target="procurement.purchase-requests.approve-button"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
+                  disabled={approving}
+                  onClick={async () => {
+                    setApproving(true);
+                    try {
+                      const result = await submitApprovalDecision(requestId, 'approved');
+                      queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                      queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
+                      // A deferred decision has written nothing and sent nothing, so
+                      // saying "approved" would be a lie. Refresh the form-action read
+                      // instead so the countdown + Undo appear.
+                      if (isDeferredDecision(result)) {
+                        formAction.refresh();
+                        toast.success('Approving - you can still undo.');
+                      } else {
+                        toast.success('Request approved');
+                      }
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : 'Failed to approve');
+                    } finally {
+                      setApproving(false);
+                    }
+                  }}
+                >
+                  <ThumbsUp className="size-4" />
+                  {approving ? 'Approving…' : 'Approve'}
+                </Button>
+                <Button
+                  data-guide-target="procurement.purchase-requests.reject-button"
+                  variant="outline"
+                  className="border-destructive text-destructive hover:bg-destructive/10"
+                  disabled={decisionRejecting}
+                  onClick={() => {
+                    setDecisionRejectReason('');
+                    setDecisionRejectOpen(true);
+                  }}
+                >
+                  <ThumbsDown className="size-4" />
+                  Reject
+                </Button>
               </>
             )}
-            {canVoid && !isVoided && (
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => setVoidDialogOpen(true)}
+            {businessCtasEnabled && showCsActions && canProcess && (
+              <Button
+                disabled={finalizing}
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                onClick={() => {
+                  setFinalizeNote('');
+                  setProcessDialogOpen(true);
+                }}
               >
-                <Ban className="size-4" />
-                Void
-              </DropdownMenuItem>
+                <BadgeCheck className="size-4" />
+                Processed by CS
+              </Button>
             )}
-          </DetailActionsMenu>
-          <EntityDownloadsButton
-            entityType="purchase_request"
-            entityId={requestId}
-            label={request.request_number ?? undefined}
-            className="h-8 border border-border"
-          />
-
-          {/* Edit and Delete are NOT handling-lock gated (deliberate - see businessCtasEnabled),
-              but a pending form action DOES block them: the action must commit against the
-              state it was requested on, so nothing may mutate the row mid-window (AC-D-10).
-              The backend enforces the same rule; this only keeps the UI honest. */}
-          {!isVoided && !formAction.ctasDisabled && (
-            <Button
-              variant="outline"
-              onClick={() => router.push(`${basePath}/${requestId}/edit`)}
-            >
-              <Edit className="size-4" />
-              Edit
-            </Button>
-          )}
-          {!isVoided && !formAction.ctasDisabled && (
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="size-4" />
-              Delete
-            </Button>
-          )}
-        </div>
+              {!isVoided && !formAction.ctasDisabled && (
+                <Button
+                  variant="outline"
+                  onClick={() => router.push(`${basePath}/${requestId}/edit`)}
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              )}
+            </>
+          }
+          dialogs={
+            <EntityDownloadsButton
+              entityType="purchase_request"
+              entityId={requestId}
+              label={request.request_number ?? undefined}
+              open={downloadsOpen}
+              onOpenChange={setDownloadsOpen}
+            />
+          }
+        />
       </div>
 
       <ExportWithRevisionsDialog

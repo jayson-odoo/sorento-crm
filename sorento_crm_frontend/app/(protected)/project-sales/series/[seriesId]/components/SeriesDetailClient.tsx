@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Settings2, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Breadcrumb,
@@ -18,12 +18,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Container } from '@/components/common/container';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -43,6 +37,7 @@ import type { ProjectSeries } from '../../../_shared/types/project.types';
 import { SeriesProductsTable } from './SeriesProductsTable';
 import { SeriesSheetLoader } from './SeriesSheetLoader';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 
 const NEW = 'new';
 
@@ -185,46 +180,38 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
           series list is already in memory here, so the pager is presentational and
           asks the server for nothing. Delete lives behind the gear, not beside Back. */}
       {!isNew && row ? (
-        <div className="mb-5 flex flex-wrap items-center justify-end gap-2">
-          {(series.data ?? []).length > 1 ? (
-            <RecordNavigation
-              index={seriesIndex >= 0 ? seriesIndex + 1 : null}
-              total={(series.data ?? []).length}
-              hasPrevious={seriesIndex > 0}
-              hasNext={
-                seriesIndex >= 0 && seriesIndex < (series.data ?? []).length - 1
-              }
-              onPrevious={() =>
-                router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex - 1].id}`)
-              }
-              onNext={() =>
-                router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex + 1].id}`)
-              }
-              ariaLabel="series"
-            />
-          ) : null}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" mode="icon" aria-label="Series actions">
-                <Settings2 className="size-4" aria-hidden />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={(event) => {
-                  // The menu closes on select and would unmount the dialog's trigger
-                  // context mid-open; defer so the confirmation actually appears.
-                  event.preventDefault();
-                  setConfirmingDelete(true);
-                }}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Delete series
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <DetailActions
+          className="mb-5"
+          pagerNode={
+            (series.data ?? []).length > 1 ? (
+              <RecordNavigation
+                index={seriesIndex >= 0 ? seriesIndex + 1 : null}
+                total={(series.data ?? []).length}
+                hasPrevious={seriesIndex > 0}
+                hasNext={
+                  seriesIndex >= 0 && seriesIndex < (series.data ?? []).length - 1
+                }
+                onPrevious={() =>
+                  router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex - 1].id}`)
+                }
+                onNext={() =>
+                  router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex + 1].id}`)
+                }
+                ariaLabel="series"
+              />
+            ) : null
+          }
+          gearLabel="Series actions"
+          actions={[
+            {
+              key: 'series.delete',
+              label: 'Delete series',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setConfirmingDelete(true),
+            },
+          ]}
+        />
       ) : null}
 
       <div className="space-y-6">
