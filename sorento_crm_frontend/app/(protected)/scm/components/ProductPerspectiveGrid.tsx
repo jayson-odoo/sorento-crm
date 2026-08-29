@@ -362,12 +362,17 @@ export function ProductPerspectiveGrid({
                   Couldn&apos;t load net position. Retry from the toolbar.
                 </div>
               ) : (
-                <>
-                  <DataGridTable />
-                  {!isLoading && rows.length > 0 ? (
-                    <ProductTotalsRow table={table} rows={rows} />
-                  ) : null}
-                </>
+                // The totals row goes INSIDE the grid's scroller, not beside
+                // it: it is sized by `table.getTotalSize()`, so a second
+                // scroll box left the figures drifting out from under the
+                // columns they total the moment the grid scrolled sideways.
+                <DataGridTable
+                  belowTable={
+                    !isLoading && rows.length > 0 ? (
+                      <ProductTotalsRow table={table} rows={rows} />
+                    ) : null
+                  }
+                />
               )}
               <ScrollBar orientation="horizontal" />
             </ScrollArea>

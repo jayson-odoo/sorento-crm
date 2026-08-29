@@ -37,10 +37,47 @@ function sourceFiles(): string[] {
 }
 
 /**
- * The shared grid owns its own scroller (`DataGridScroller`), so it is the one
- * `<table>` in the tree that is allowed to stand unwrapped.
+ * Tables whose scroll container is real but out of this scan's reach, with the
+ * reason. Each is re-checked below, so an entry cannot quietly become a lie.
  */
-const OWNS_ITS_SCROLLER = new Set(['components/ui/data-grid-table.tsx']);
+const SCROLLER_OUT_OF_REACH = new Map<string, string>([
+  ['components/ui/data-grid-table.tsx', 'the shared grid IS the scroller'],
+  [
+    'app/(protected)/scm/components/ProductListDialog.tsx',
+    'DialogBody is the scroller, past the loading and empty branches',
+  ],
+  [
+    'app/(protected)/scm/components/ProductPerspectiveGrid.tsx',
+    'the totals row rides in DataGridTable belowTable, so its scroller is in another file',
+  ],
+]);
+
+/**
+ * Is the element on line `i` inside a scroll container?
+ *
+ * A window of preceding lines is not enough, and got this wrong twice. A
+ * `</ScrollArea>` closing the PREVIOUS sibling reads as a scroller if you only
+ * grep the window, which is how AIExtractDialog's second table passed while
+ * standing bare. So `<ScrollArea>` is matched by depth walking backwards: an
+ * opener with no matching close below it is a real ancestor.
+ *
+ * An `overflow` class still uses a window, because it can be on any wrapper and
+ * carries no closing tag to count. Fourteen lines is what the tree needs.
+ */
+function insideScroller(lines: string[], i: number): boolean {
+  let closes = 0;
+  for (let k = i - 1; k >= 0; k--) {
+    const line = lines[k];
+    closes += (line.match(/<\/ScrollArea>/g) ?? []).length;
+    const opens = (line.match(/<ScrollArea[\s>]/g) ?? []).length;
+    for (let n = 0; n < opens; n += 1) {
+      if (closes > 0) closes -= 1;
+      else return true; // an opener still standing open above us
+    }
+    if (i - k <= 14 && /overflow-(x-)?(auto|scroll)/.test(line)) return true;
+  }
+  return false;
+}
 
 describe('Mobile one-offs (S4-04)', () => {
   it('S4-04: Product Categories scrolls sideways and pins the Name column', () => {
@@ -117,18 +154,29 @@ describe('Mobile one-offs (S4-04)', () => {
     expect(src).toContain('break-words text-sm font-medium');
   });
 
+  it('S4-04: the out-of-reach scrollers named above are still there', () => {
+    // Without this the allowlist is just three files nobody checks.
+    const dialog = read('app/(protected)/scm/components/ProductListDialog.tsx');
+    expect(dialog).toContain('<DialogBody className="max-h-[55dvh] overflow-auto">');
+
+    const perspective = read('app/(protected)/scm/components/ProductPerspectiveGrid.tsx');
+    expect(perspective).toContain('belowTable=');
+
+    const grid = read('components/ui/data-grid-table.tsx');
+    expect(grid).toContain('data-slot="data-grid-scroller"');
+  });
+
   it('S4-04: every raw table sits in its own horizontal scroller', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
-      if (OWNS_ITS_SCROLLER.has(file)) continue;
+      if (SCROLLER_OUT_OF_REACH.has(file)) continue;
       const lines = read(file).split('\n');
       lines.forEach((line, i) => {
-        // `<table` inside a prose comment is not markup.
-        if (!/^\s*<table[\s>]/.test(line)) return;
-        const before = lines.slice(Math.max(0, i - 14), i).join('\n');
-        if (!/ScrollArea|overflow-x-auto|overflow-auto|overflow-x-scroll/.test(before)) {
-          offenders.push(`${file}:${i + 1}`);
-        }
+        // `<table` inside a prose comment is not markup. The `$` alternative
+        // matters: Prettier breaks a tag with three or more attributes onto
+        // its own line, and `[\s>]` walked past three tables because of it.
+        if (!/^\s*<table(\s|>|$)/.test(line)) return;
+        if (!insideScroller(lines, i)) offenders.push(`${file}:${i + 1}`);
       });
     }
     expect(offenders).toEqual([]);

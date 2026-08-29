@@ -816,7 +816,14 @@ function DataGridScroller({ children }: { children: ReactNode }) {
   );
 }
 
-function DataGridTable<TData>() {
+/**
+ * `belowTable` renders INSIDE the grid's own horizontal scroller, under the
+ * table. A totals row sized by `table.getTotalSize()` has to share that
+ * scroller or it does not track the columns it is totalling: rendered as a
+ * sibling it sat in a second, independently scrolled box, so on a phone the
+ * figures drifted out from under their headings.
+ */
+function DataGridTable<TData>({ belowTable }: { belowTable?: ReactNode } = {}) {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const isUnderSm = useIsUnderSm();
@@ -873,6 +880,7 @@ function DataGridTable<TData>() {
     return (
       <DataGridScroller>
         <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
+        {belowTable}
       </DataGridScroller>
     );
   }
@@ -988,6 +996,7 @@ function DataGridTable<TData>() {
           </DataGridTableFoot>
         )}
       </DataGridTableBase>
+      {belowTable}
     </DataGridScroller>
   );
 }

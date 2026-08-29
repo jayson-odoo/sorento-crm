@@ -488,43 +488,46 @@ export function AIExtractDialog({
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
                     Line items ({result.products.length}) - will be applied to the items list
                   </div>
-                  <table
-                    className="w-full text-sm"
-                    data-testid="ai-extract-products-table"
-                  >
-                    <thead className="text-xs text-muted-foreground">
-                      <tr className="border-b border-border">
-                        <th className="px-3 py-1.5 text-left font-normal">Product code</th>
-                        <th className="px-3 py-1.5 text-right font-normal">Qty</th>
-                        {kind !== 'complaint' && (
-                          <>
-                            <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
-                            <th className="px-3 py-1.5 text-right font-normal">Total</th>
-                            <th className="px-3 py-1.5 text-left font-normal">Notes</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.products.map((p, i) => (
-                        <tr
-                          key={i}
-                          className="border-b border-border last:border-b-0"
-                          data-testid={`ai-extract-product-row-${i}`}
-                        >
-                          <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
-                          <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
+                  <ScrollArea>
+                    <table
+                      className="w-full text-sm"
+                      data-testid="ai-extract-products-table"
+                    >
+                      <thead className="text-xs text-muted-foreground">
+                        <tr className="border-b border-border">
+                          <th className="px-3 py-1.5 text-left font-normal">Product code</th>
+                          <th className="px-3 py-1.5 text-right font-normal">Qty</th>
                           {kind !== 'complaint' && (
                             <>
-                              <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
-                              <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
-                              <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                              <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
+                              <th className="px-3 py-1.5 text-right font-normal">Total</th>
+                              <th className="px-3 py-1.5 text-left font-normal">Notes</th>
                             </>
                           )}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {result.products.map((p, i) => (
+                          <tr
+                            key={i}
+                            className="border-b border-border last:border-b-0"
+                            data-testid={`ai-extract-product-row-${i}`}
+                          >
+                            <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
+                            <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
+                            {kind !== 'complaint' && (
+                              <>
+                                <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
+                                <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
+                                <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
                 </div>
               )}
 
