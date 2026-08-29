@@ -14,11 +14,28 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-def test_trailing_slash_redirect_location_is_path_only():
+def test_own_host_redirect_location_becomes_path_only():
+    from starlette.applications import Starlette
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Route
+
+    from app.middleware.relative_redirect_middleware import RelativeRedirectMiddleware
+
+    async def home(request):
+        return RedirectResponse("http://localhost:8000/api/v1/x/?page=1", status_code=307)
+
+    inner = Starlette(routes=[Route("/go", home)])
+    client = TestClient(RelativeRedirectMiddleware(inner), base_url="http://localhost:8000")
+    response = client.get("/go", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/api/v1/x/?page=1"
+
+
+def test_app_no_longer_redirects_a_slashless_list_route():
+    """The slash fix-up in front of the router means the 307 never fires."""
     client = TestClient(app, base_url="http://localhost:8000")
     response = client.get("/api/v1/inventory/warehouses", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/api/v1/inventory/warehouses/"
+    assert response.status_code == 401
 
 
 def test_redirect_to_another_host_is_left_alone():
