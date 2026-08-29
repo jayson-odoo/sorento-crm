@@ -18,7 +18,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -45,6 +44,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useSalesOrderActions } from '../actions';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
@@ -61,7 +62,6 @@ import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
 import {
   useCreateSalesOrder,
-  useDeleteSalesOrder,
   useResetSalesOrderPlanning,
   useSalesOrders,
 } from '../../hooks/useSalesOrders';
@@ -226,6 +226,20 @@ export interface SalesOrdersGridProps {
   listingKey?: string;
 }
 
+/**
+ * The row's "..." (D15): the same set the record's gear renders. Its own
+ * component because the action set is a hook.
+ */
+function SalesOrderRowActions({ order }: { order: SalesOrder }) {
+  const { actions, dialogs } = useSalesOrderActions(order);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="sales order" actions={actions} />
+      {dialogs}
+    </>
+  );
+}
+
 export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrdersGridProps = {}) {
   // One agent's orders, inside that agent's record. What it turns off is listed on the prop.
   const pinnedToAgent = !!salesAgentId;
@@ -269,7 +283,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
   // project sales order screen, and the row click is the way there.
   const [formOpen, setFormOpen] = useState(false);
-  const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   // Reset planning (the captain, 27 Aug): a UAT walk has to be repeatable from the screen.
   const [resetOpen, setResetOpen] = useState(false);
   const [rewindBook, setRewindBook] = useState(false);
@@ -306,7 +319,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const router = useRouter();
 
   const createMut = useCreateSalesOrder();
-  const deleteMut = useDeleteSalesOrder();
   const resetMut = useResetSalesOrderPlanning();
 
   useEffect(() => {
@@ -693,28 +705,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       },
       {
         id: 'actions',
-        header: '',
-        // Delete only. Editing is the detail page's job - the row already opens it, and a
-        // pencil beside a clickable row is a second door to the same screen. Creating a
-        // delivery order is a delivery decision, not a list one.
-        cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 text-destructive"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeleting(row.original);
-              }}
-              aria-label="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
-        ),
-        size: 70,
+        header: () => <span className="sr-only">Actions</span>,
+        // The same set the record's gear renders (D15). Editing is the detail page's
+        // job - the row already opens it, and a pencil beside a clickable row is a
+        // second door to the same screen.
+        cell: ({ row }) => <SalesOrderRowActions order={row.original} />,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
       },
@@ -1097,21 +1093,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         />
       )}
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        description={
-          <>
-            Delete sales order <span className="font-medium">{deleting?.so_number}</span> for{' '}
-            {deleting?.customer_name}? This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          if (deleting) await deleteMut.mutateAsync(deleting.id);
-        }}
-        successMessage="Sales order deleted"
-        onSuccess={() => setDeleting(null)}
-      />
 
       {/* Back to never-planned, for a walk to be redone. Confirmed like a delete, because it
           is one: the inquiries, links, allocations, transfers and decisions go for good. */}

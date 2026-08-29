@@ -6,7 +6,7 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Download, ExternalLink, Eye, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { ExternalLink, Eye } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -21,16 +21,13 @@ import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import {
   useDeleteAttachment,
-  useDownloadAttachment,
-  useResubmitAttachmentWebhook,
-  useRestoreAttachment,
   useUpdateAttachment,
   attachmentsPagerQuery,
 } from '../hooks/useAttachments';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
-import AttachmentDeleteDialog from './attachment-delete-dialog';
+import { useAttachmentActions } from '../actions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 const ENTITY_ROUTES = {
@@ -194,7 +191,6 @@ export default function AttachmentDetail({
 }: AttachmentDetailProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
@@ -202,9 +198,6 @@ export default function AttachmentDetail({
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   const codeToName = Object.fromEntries(accessTypeOptions.map((o) => [o.code, o.name || o.code]));
   const deleteMutation = useDeleteAttachment();
-  const downloadMutation = useDownloadAttachment();
-  const resubmitMutation = useResubmitAttachmentWebhook();
-  const restoreMutation = useRestoreAttachment();
   const updateMutation = useUpdateAttachment();
 
   const { data: attachment, isLoading } = useQuery({
@@ -212,6 +205,12 @@ export default function AttachmentDetail({
     queryFn: () => getAttachmentMetadata(attachmentId),
     enabled: !!attachmentId,
     retry: 1,
+  });
+
+  // The set the browser's row menu renders too (D15); Rename and Delete bring
+  // their own dialogs. Preview stays the primary button below.
+  const { actions, dialogs } = useAttachmentActions(attachment, {
+    onDeleted: () => router.push(listPath),
   });
 
   const previewItems = useMemo<AttachmentPreviewItem[]>(() => {
@@ -237,22 +236,6 @@ export default function AttachmentDetail({
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
-
-  const handleDownload = async (file: Attachment) => {
-    try {
-      const blob = await downloadMutation.mutateAsync(file.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.original_filename || 'download';
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      // handled by toast in mutation
-    }
   };
 
   if (isLoading) {
@@ -299,40 +282,8 @@ export default function AttachmentDetail({
             currentId: attachmentId,
             ariaLabel: 'attachment',
           }}
-          actions={[
-            {
-              key: 'attachment.download',
-              label: 'Download',
-              icon: Download,
-              disabled: downloadMutation.isPending,
-              run: () => handleDownload(attachment),
-            },
-            {
-              key: 'attachment.resubmit',
-              label: 'Resubmit',
-              icon: RefreshCw,
-              disabled: resubmitMutation.isPending || attachment.is_deleted,
-              run: () => resubmitMutation.mutate(attachment.id),
-            },
-            ...(attachment.is_deleted
-              ? [
-                  {
-                    key: 'attachment.restore',
-                    label: 'Restore',
-                    icon: RotateCcw,
-                    disabled: restoreMutation.isPending,
-                    run: () => restoreMutation.mutate(attachment.id),
-                  },
-                ]
-              : []),
-            {
-              key: 'attachment.delete',
-              label: attachment.is_deleted ? 'Permanently delete' : 'Move to trash',
-              icon: Trash2,
-              kind: 'destructive' as const,
-              run: () => setDeleteDialogOpen(true),
-            },
-          ]}
+          actions={actions}
+          dialogs={dialogs}
           gearLabel="Attachment options"
           primary={
             <Button onClick={() => setPreviewOpen(true)}>
@@ -504,12 +455,6 @@ export default function AttachmentDetail({
         </CardContent>
       </Card>
 
-      <AttachmentDeleteDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        attachment={attachment}
-        permanent={attachment.is_deleted}
-      />
 
       <AttachmentPreviewModal
         open={previewOpen}

@@ -86,7 +86,9 @@ import type {
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { lateDaysOf } from '../../../../project-sales/_shared/lib/orderInquiryWorklist';
-import BackToList from '@/components/common/BackToList';
+import { useRouter } from 'next/navigation';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { useSalesOrderActions } from '../../actions';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -339,7 +341,15 @@ function SupplyText({
 }
 
 export function SalesOrderDetail({ id }: { id: string }) {
+  const router = useRouter();
   const { data, isLoading, isError } = useSalesOrder(id);
+  const backHref = useBackToListHref('/scm/sales-orders');
+  // The set the list row's "..." renders too (D15). Delete used to be a red icon
+  // in the list and nothing at all here, so a record could only be removed by
+  // finding it again in the list.
+  const { actions, dialogs } = useSalesOrderActions(data, {
+    onDeleted: () => router.push(backHref),
+  });
   const searchParams = useSearchParams();
 
   const updateMut = useUpdateSalesOrder();
@@ -1167,6 +1177,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   currentId: id,
                   ariaLabel: 'sales order',
                 }}
+                actions={actions}
+                dialogs={dialogs}
                 gearLabel="Sales order options"
                 primary={
                   <>
