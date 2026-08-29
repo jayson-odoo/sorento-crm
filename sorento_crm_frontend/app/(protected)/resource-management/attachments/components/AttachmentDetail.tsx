@@ -120,7 +120,7 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
 
   return (
     <Tabs defaultValue="products" className="w-full">
-      <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
+      <TabsList variant="default" className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
         <TabsTrigger value="products">
           Products {products.length > 0 && `(${products.length})`}
         </TabsTrigger>

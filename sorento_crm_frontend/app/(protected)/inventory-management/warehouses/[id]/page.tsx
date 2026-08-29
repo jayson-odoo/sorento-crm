@@ -207,7 +207,7 @@ export default function WarehouseDetailPage({
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
           <Tabs defaultValue="basic">
-            <TabsList>
+            <TabsList variant="default">
               <TabsTrigger value="basic">Basic Information</TabsTrigger>
               <TabsTrigger value="planning">Planning</TabsTrigger>
             </TabsList>

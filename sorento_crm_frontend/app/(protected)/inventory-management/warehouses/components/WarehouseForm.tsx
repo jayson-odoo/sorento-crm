@@ -137,7 +137,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
           <CardContent>
             {/* Same tab set, same field order, and the same grid spans as the read view. */}
             <Tabs defaultValue="basic">
-              <TabsList>
+              <TabsList variant="default">
                 <TabsTrigger value="basic">Basic Information</TabsTrigger>
                 <TabsTrigger value="planning">Planning</TabsTrigger>
               </TabsList>

@@ -4,9 +4,17 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Tabs as TabsPrimitive } from 'radix-ui';
+import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 
 // Variants for TabsList
-const tabsListVariants = cva('flex items-center shrink-0', {
+const tabsListVariants = cva(
+  // The list owns its scroller. Without one, Settings hid 7 of its 10 tabs at
+  // 375 and the Product create strip overlapped five pills; with `max-w-full` +
+  // `min-w-0` the strip scrolls instead of widening the page. The scrollbar is
+  // hidden because it would sit on top of the tab labels, so the right-edge mask
+  // (driven by `data-fade`) is what says there is more to the right.
+  'flex items-center shrink-0 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[fade=true]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]',
+  {
   variants: {
     variant: {
       default: 'bg-accent p-1',
@@ -71,11 +79,12 @@ const tabsListVariants = cva('flex items-center shrink-0', {
       className: 'rounded-full [&_[role=tab]]:rounded-full',
     },
   ],
-  defaultVariants: {
-    variant: 'default',
-    size: 'md',
+    defaultVariants: {
+      variant: 'line',
+      size: 'md',
+    },
   },
-});
+);
 
 // Variants for TabsTrigger
 const tabsTriggerVariants = cva(
@@ -113,7 +122,7 @@ const tabsTriggerVariants = cva(
       { variant: 'line', size: 'xs', className: 'py-1.5' },
     ],
     defaultVariants: {
-      variant: 'default',
+      variant: 'line',
       size: 'md',
     },
   },
@@ -140,7 +149,7 @@ type TabsContextType = {
   size?: 'lg' | 'sm' | 'xs' | 'md';
 };
 const TabsContext = React.createContext<TabsContextType>({
-  variant: 'default',
+  variant: 'line',
   size: 'md',
 });
 
@@ -151,17 +160,21 @@ function Tabs({ className, ...props }: React.ComponentProps<typeof TabsPrimitive
 
 function TabsList({
   className,
-  variant = 'default',
+  variant = 'line',
   shape = 'default',
   size = 'md',
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
+  const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
+
   return (
-    <TabsContext.Provider value={{ variant: variant || 'default', size: size || 'md' }}>
+    <TabsContext.Provider value={{ variant: variant || 'line', size: size || 'md' }}>
       <TabsPrimitive.List
         data-slot="tabs-list"
+        data-fade={isFading}
         className={cn(tabsListVariants({ variant, shape, size }), className)}
         {...props}
+        ref={ref}
       />
     </TabsContext.Provider>
   );

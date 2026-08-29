@@ -282,7 +282,7 @@ export function ProjectRetailTabs({
 
   return (
     <Tabs defaultValue={initialTab}>
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">{openLabel}</TabsTrigger>
         <TabsTrigger value="history">12-month history</TabsTrigger>
       </TabsList>
@@ -561,7 +561,7 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
 
   return (
     <Tabs defaultValue="open">
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">{`Open to pools (${fmtInt(open.length)})`}</TabsTrigger>
         <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
       </TabsList>
@@ -717,7 +717,7 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
 
   return (
     <Tabs defaultValue="open">
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">{`Open (${fmtInt(open.length)})`}</TabsTrigger>
         <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
       </TabsList>

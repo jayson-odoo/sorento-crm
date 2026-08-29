@@ -325,7 +325,7 @@ export function ProductPickerDialog({
         </DialogHeader>
 
         <Tabs defaultValue="rule">
-          <TabsList>
+          <TabsList variant="default">
             <TabsTrigger value="rule">By rule</TabsTrigger>
             <TabsTrigger value="manual">By hand</TabsTrigger>
           </TabsList>

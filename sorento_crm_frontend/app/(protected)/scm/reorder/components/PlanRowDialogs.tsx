@@ -204,7 +204,7 @@ function DemandTabs({
 
   return (
     <Tabs defaultValue="open">
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">{openLabel}</TabsTrigger>
         <TabsTrigger value="history">
           {`SO history (${fmtInt(history.data?.history_total ?? historyLines.length)})`}
@@ -460,7 +460,7 @@ function SpoTabs({ line, runId }: { line: PlanLine; runId: string | null }) {
 
   return (
     <Tabs defaultValue="open">
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">{`Open${toPool(pool)} (${fmtInt(open.length)})`}</TabsTrigger>
         <TabsTrigger value="history">
           {`History${toPool(pool)} (${fmtInt(history.length)})`}
@@ -502,7 +502,7 @@ function PoTabs({
 
   return (
     <Tabs defaultValue="open">
-      <TabsList>
+      <TabsList variant="default">
         <TabsTrigger value="open">
           {`Open${toPool(pool)} (${fmtInt(poReceipts.length)})`}
         </TabsTrigger>

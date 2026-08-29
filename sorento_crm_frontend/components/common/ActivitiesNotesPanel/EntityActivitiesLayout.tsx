@@ -196,7 +196,7 @@ export default function EntityActivitiesLayout({
           className="flex-1 flex flex-col overflow-hidden"
         >
           <div className="px-3 pt-3">
-            <TabsList className="grid grid-cols-3 w-full">
+            <TabsList variant="default" className="grid grid-cols-3 w-full">
               <TabsTrigger value="activities" aria-label="Activities">
                 <Activity className="size-4" />
               </TabsTrigger>

@@ -397,7 +397,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
       </Card>
 
       <Tabs defaultValue="form">
-        <TabsList className="flex flex-wrap h-auto gap-1">
+        <TabsList variant="default" className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="form">Form fields</TabsTrigger>
           <TabsTrigger value="workflow">States &amp; transitions</TabsTrigger>
           <TabsTrigger value="notify">Notifications</TabsTrigger>
