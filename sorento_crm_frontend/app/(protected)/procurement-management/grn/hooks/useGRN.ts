@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
@@ -16,19 +16,49 @@ import {
   type GRNListParams,
 } from '../services/grnService';
 import type { GRNFormData } from '../types/grn.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function grnListQueryKey(params: GRNListParams): QueryKey {
+  return [
+    'grn',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.picking_status,
+    params.inspection_status,
+    params.spo_allocation_id,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function grnListParamsFromUrl(params: ListPagerParams): GRNListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    picking_status: params.filters.picking_status,
+    inspection_status: params.filters.inspection_status,
+    spo_allocation_id: params.filters.spo_allocation_id,
+  };
+}
+
+/** The pager's two hooks into the GRN list. */
+export const grnPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    grnListQueryKey(grnListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getGRNs(grnListParamsFromUrl(params)),
+};
 
 export function useGRNs(params: GRNListParams) {
   return useQuery({
-    queryKey: [
-      'grn',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.picking_status,
-      params.inspection_status,
-      params.spo_allocation_id,
-    ],
+    queryKey: grnListQueryKey(params),
     queryFn: () => getGRNs(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

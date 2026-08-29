@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -27,6 +27,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useGRNs } from '../hooks/useGRN';
+import { GrnRowActions } from '../actions';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
@@ -72,10 +73,9 @@ export default function GRNList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery, statusFilter, spoAllocationId]);
 
-  const handleRowClick = (row: GRN) => {
-    const grnId = row.id;
-    // Carry the active list query (search/sort/status filters) into the detail
-    // URL so the detail pager walks the exact same filtered+sorted set.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: GRN) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -87,9 +87,7 @@ export default function GRNList() {
         picking_status: statusFilter === 'all' ? undefined : statusFilter,
       },
     );
-    router.push(
-      `/procurement-management/grn/${grnId}${search ? `?${search}` : ''}`,
-    );
+    return `/procurement-management/grn/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const columns = useMemo<ColumnDef<GRN>[]>(
@@ -153,11 +151,11 @@ export default function GRNList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
-        size: 40,
+        cell: ({ row }) => <GrnRowActions grn={row.original} />,
+        size: 60,
+        enableSorting: false,
         enableHiding: false,
+        enableResizing: false,
       },
     ],
     [],
@@ -186,7 +184,7 @@ export default function GRNList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
     >
