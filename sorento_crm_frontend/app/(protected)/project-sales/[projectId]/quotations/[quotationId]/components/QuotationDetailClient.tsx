@@ -10,6 +10,7 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import {
   useProject,
   useQuotationMutations,
@@ -92,21 +93,32 @@ export function QuotationDetailClient({
         </div>
 
         {canEdit && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" onClick={() => setDeciding(true)}>
-              {quotation.outcome === 'open' ? 'Record outcome' : 'Change outcome'}
-            </Button>
-            <DetailActionsMenu ariaLabel="Quotation actions">
-              <DropdownMenuItem onSelect={() => setEditing(true)}>Edit scope</DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Delete scope
-              </DropdownMenuItem>
-            </DetailActionsMenu>
-          </div>
+          /* Gear then primary (D6), through the shared group rather than a
+             hand-rolled row: the primary sat first here, which is the one order
+             the standard does not allow. No pager: a scope is opened from its
+             project's Quotations tab, which is a panel over the project's own
+             rows, not a paged list with a cache entry to walk. */
+          <DetailActions
+            gear={
+              <DetailActionsMenu ariaLabel="Quotation actions">
+                <DropdownMenuItem onSelect={() => setEditing(true)}>
+                  Edit scope
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete scope
+                </DropdownMenuItem>
+              </DetailActionsMenu>
+            }
+            primary={
+              <Button type="button" onClick={() => setDeciding(true)}>
+                {quotation.outcome === 'open' ? 'Record outcome' : 'Change outcome'}
+              </Button>
+            }
+          />
         )}
       </header>
 
