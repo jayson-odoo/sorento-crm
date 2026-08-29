@@ -29,6 +29,52 @@
   --radius: 0.5rem;
 
   /**
+   * Semantic ink. `--mono` is the strong ink page titles and emphasis use; it is
+   * referenced by 250+ files and, until now, defined nowhere, so every `text-mono`
+   * silently inherited body colour. `-foreground` is the ink that sits ON the solid
+   * fill (never on a tint).
+   */
+  --mono: var(--color-zinc-950);
+  --mono-foreground: var(--color-white);
+  --success: var(--color-green-500);
+  --success-foreground: var(--color-white);
+  --info: var(--color-violet-600);
+  --info-foreground: var(--color-white);
+  --warning: var(--color-yellow-500);
+  --warning-foreground: var(--color-white);
+
+  /**
+   * Materials. A translucent surface tinted by whatever is behind it, paired with a
+   * blur in the `.material-*` utilities (css/styles.css). `--scrim` is the lightbox
+   * backdrop; the preference blocks raise it to 72% and drop the blur.
+   */
+  --material-thin: color-mix(in oklab, var(--background) 55%, transparent);
+  --material-regular: color-mix(in oklab, var(--background) 72%, transparent);
+  --material-thick: color-mix(in oklab, var(--background) 88%, transparent);
+  --material-blur: 24px;
+  --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
+  --scrim: color-mix(in oklab, black 50%, transparent);
+  --elev-1: 0 1px 2px 0 color-mix(in oklab, black 5%, transparent);
+  --elev-3: 0 12px 32px -12px color-mix(in oklab, black 22%, transparent);
+
+  /**
+   * Named z-scale. Every fixed layer of the shell names its step here instead of
+   * inventing a `z-[N]`, so "what covers what" is answered in one place.
+   */
+  --z-header: 10;
+  --z-sidebar: 20;
+  --z-banner: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+
+  /** Motion. One curve, three steps; every components/ui transition uses them. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+
+  /**
    * SCM health-state ramp (light) — diverging, accessible, NEVER hue-alone.
    * Every state is always paired in the UI with an icon + label + the sign of
    * net position; colour is a secondary cue. `-solid` = accent bar / icon / number
@@ -54,9 +100,9 @@
 .dark {
   --background: var(--color-zinc-950);
   --foreground: var(--color-zinc-50);
-  --card: var(--color-zinc-950);
+  --card: var(--color-zinc-900);
   --card-foreground: var(--color-zinc-50);
-  --popover: var(--color-zinc-950);
+  --popover: var(--color-zinc-800);
   --popover-foreground: var(--color-zinc-50);
   --primary: var(--color-blue-600);
   --primary-foreground: var(--color-white);
@@ -64,7 +110,7 @@
   --secondary-foreground: var(--color-zinc-50);
   --muted: var(--color-zinc-900);
   --muted-foreground: var(--color-zinc-500);
-  --accent: var(--color-zinc-900);
+  --accent: var(--color-zinc-800);
   --accent-foreground: var(--color-zinc-50);
   --destructive: var(--color-red-600);
   --destructive-foreground: var(--color-white);
@@ -76,6 +122,24 @@
   --border: var(--color-zinc-800);
   --input: var(--color-zinc-800);
   --ring: var(--color-zinc-600);
+
+  --mono: var(--color-white);
+  --mono-foreground: var(--color-zinc-950);
+  --success: var(--color-green-600);
+  --success-foreground: var(--color-white);
+  --info: var(--color-violet-500);
+  --info-foreground: var(--color-white);
+  --warning: var(--color-yellow-600);
+  --warning-foreground: var(--color-zinc-950);
+
+  --material-thin: color-mix(in oklab, var(--background) 60%, transparent);
+  --material-regular: color-mix(in oklab, var(--background) 76%, transparent);
+  --material-thick: color-mix(in oklab, var(--background) 90%, transparent);
+  --material-blur: 24px;
+  --material-edge: color-mix(in oklab, var(--foreground) 12%, transparent);
+  --scrim: color-mix(in oklab, black 62%, transparent);
+  --elev-1: 0 1px 2px 0 color-mix(in oklab, black 45%, transparent);
+  --elev-3: 0 12px 32px -12px color-mix(in oklab, black 60%, transparent);
 
   /* SCM health-state ramp (dark) — brighter ink for contrast on zinc-950,
      soft tints are low-lightness tinted fills. Kept contrast-checked >=4.5:1. */
@@ -123,6 +187,13 @@
   --color-mono: var(--mono);
   --color-mono-foreground: var(--mono-foreground);
 
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
   /** SCM health-state ramp → Tailwind utilities (bg-scm-*, text-scm-*, border-scm-*) **/
   --color-scm-stockout: var(--scm-stockout);
   --color-scm-stockout-soft: var(--scm-stockout-soft);
@@ -148,11 +219,35 @@
   --radius-sm: calc(var(--radius) - 4px);
 }
 
-/** Custom Font Size **/
+/**
+ * Typeface and type scale.
+ *
+ * Inter arrives from next/font as --font-inter, set on <html> in app/layout.tsx.
+ * Tracking and leading are baked per step, so a heading never needs a hand-tuned
+ * `tracking-tight` beside it: large text tightens, small text opens up.
+ */
 @theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
   --text-2sm: 0.8125rem;
   --text-2sm--line-height: calc(1.075 / 0.8125);
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: calc(0.825 / 0.6875);
+
+  --text-2xl--letter-spacing: -0.02em;
+  --text-2xl--line-height: 1.15;
+
+  --text-xl--letter-spacing: -0.015em;
+  --text-xl--line-height: 1.2;
+
+  --text-lg--letter-spacing: -0.01em;
+  --text-lg--line-height: 1.3;
+
+  --text-base--letter-spacing: 0em;
+  --text-base--line-height: 1.5;
+
+  --text-xs--letter-spacing: 0.01em;
+
+  --text-2xs--letter-spacing: 0.02em;
 }

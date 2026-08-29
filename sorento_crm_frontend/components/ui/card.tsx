@@ -26,7 +26,7 @@ const useCardContext = () => {
 const cardVariants = cva('flex flex-col items-stretch text-card-foreground rounded-xl', {
   variants: {
     variant: {
-      default: 'bg-card border border-border shadow-xs black/5',
+      default: 'bg-card border border-border shadow-xs shadow-black/5',
       accent: 'bg-muted shadow-xs p-1',
     },
   },
@@ -141,7 +141,7 @@ function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElem
   return (
     <h3
       data-slot="card-title"
-      className={cn('text-base font-semibold leading-none tracking-tight', className)}
+      className={cn('text-base font-semibold leading-tight tracking-normal', className)}
       {...props}
     />
   );

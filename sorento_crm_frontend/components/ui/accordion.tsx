@@ -44,7 +44,7 @@ const accordionTriggerVariants = cva(
       },
       indicator: {
         arrow: '',
-        plus: '[&>svg>path:last-child]:origin-center [&>svg>path:last-child]:transition-all [&>svg>path:last-child]:duration-200 [&[data-state=open]>svg>path:last-child]:rotate-90 [&[data-state=open]>svg>path:last-child]:opacity-0 [&[data-state=open]>svg]:rotate-180',
+        plus: '[&>svg>path:last-child]:origin-center [&>svg>path:last-child]:transition-all [&>svg>path:last-child]:duration-(--duration-base) [&[data-state=open]>svg>path:last-child]:rotate-90 [&[data-state=open]>svg>path:last-child]:opacity-0 [&[data-state=open]>svg]:rotate-180',
         none: '',
       },
     },
@@ -131,9 +131,9 @@ function AccordionTrigger(props: React.ComponentProps<typeof AccordionPrimitive.
         {...rest}
       >
         {children}
-        {indicator === 'plus' && <Plus className="size-4 shrink-0 transition-transform duration-200" strokeWidth={1} />}
+        {indicator === 'plus' && <Plus className="size-4 shrink-0 transition-transform duration-(--duration-base) ease-(--ease-standard)" strokeWidth={1} />}
         {indicator === 'arrow' && (
-          <ChevronDown className="size-4 shrink-0 transition-transform duration-200" strokeWidth={1} />
+          <ChevronDown className="size-4 shrink-0 transition-transform duration-(--duration-base) ease-(--ease-standard)" strokeWidth={1} />
         )}
       </AccordionPrimitive.Trigger>
     </AccordionPrimitive.Header>

@@ -13,6 +13,12 @@
   *:focus-visible {
     @apply outline-ring rounded-xs shadow-none outline-2 outline-offset-3 transition-none!;
   }
+
+  /* Inter is a variable font with an optical-size axis; letting the browser drive
+     it keeps small labels open and large titles tight without a second face. */
+  body {
+    font-optical-sizing: auto;
+  }
 }
 
 /* Metronic Components  */
@@ -64,4 +70,142 @@
 }
 .takeover-flash {
   animation: takeoverFlash 1.1s ease-in-out 3;
+}
+
+/**
+ * Materials - a translucent surface tinted by what is behind it. Thin is the most
+ * see-through, thick the most opaque; every one of them collapses to a flat surface
+ * under the reduced-transparency and high-contrast preferences at the bottom of this
+ * file. Tokens live in config.reui.css.
+ */
+@utility material-thin {
+  background-color: var(--material-thin);
+  -webkit-backdrop-filter: saturate(180%) blur(var(--material-blur));
+  backdrop-filter: saturate(180%) blur(var(--material-blur));
+}
+
+@utility material-regular {
+  background-color: var(--material-regular);
+  -webkit-backdrop-filter: saturate(180%) blur(var(--material-blur));
+  backdrop-filter: saturate(180%) blur(var(--material-blur));
+}
+
+@utility material-thick {
+  background-color: var(--material-thick);
+  -webkit-backdrop-filter: saturate(180%) blur(var(--material-blur));
+  backdrop-filter: saturate(180%) blur(var(--material-blur));
+}
+
+/* The hairline that separates a material from the content scrolling under it. */
+@utility material-edge {
+  border-color: var(--material-edge);
+}
+
+/**
+ * Accessibility preferences.
+ *
+ * These three blocks are the whole story for motion, transparency and contrast, so
+ * a component never has to carry its own `motion-reduce:` variant for the cases
+ * below. They live last so they win on equal specificity.
+ */
+
+/* Reduced motion: an overlay still fades, it just stops travelling. Zeroing the
+   tw-animate translate/scale variables leaves the enter/exit keyframes in place and
+   turns them into a plain 150ms opacity change. Spinners keep spinning - they report
+   that work is happening, and a frozen one reads as a hung screen. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot$='-content'],
+  [data-radix-popper-content-wrapper],
+  [data-radix-popper-content-wrapper] > * {
+    --tw-enter-translate-x: 0 !important;
+    --tw-enter-translate-y: 0 !important;
+    --tw-exit-translate-x: 0 !important;
+    --tw-exit-translate-y: 0 !important;
+    --tw-enter-scale: 1 !important;
+    --tw-exit-scale: 1 !important;
+    --tw-enter-rotate: 0 !important;
+    --tw-exit-rotate: 0 !important;
+    animation-duration: 150ms !important;
+    transition-duration: 150ms !important;
+  }
+
+  .animate-pulse,
+  .animate-bounce,
+  .guide-spotlight,
+  .takeover-flash {
+    animation: none !important;
+  }
+}
+
+/* Reduced transparency: no material, no scrim blur, and a heavier scrim so the
+   lightbox still separates from the page it covers. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  .dark {
+    --scrim: color-mix(in oklab, black 72%, transparent);
+    --material-thin: var(--background);
+    --material-regular: var(--background);
+    --material-thick: var(--background);
+  }
+
+  .material-thin,
+  .material-regular,
+  .material-thick,
+  [data-slot='dialog-overlay'],
+  [data-slot='alert-dialog-overlay'],
+  [data-slot='sheet-overlay'],
+  [data-slot='drawer-overlay'],
+  [data-pinned] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-slot='dialog-overlay'],
+  [data-slot='alert-dialog-overlay'],
+  [data-slot='sheet-overlay'],
+  [data-slot='drawer-overlay'] {
+    background-color: var(--scrim) !important;
+  }
+
+  /* A pinned grid column has rows sliding under it, so it has to be opaque. */
+  [data-pinned] {
+    background-color: var(--background) !important;
+  }
+}
+
+/* More contrast: the same flattening, plus firmer borders and secondary ink. */
+@media (prefers-contrast: more) {
+  :root {
+    --scrim: color-mix(in oklab, black 72%, transparent);
+    --border: var(--color-zinc-400);
+    --input: var(--color-zinc-400);
+    --muted-foreground: var(--color-zinc-700);
+    --material-thin: var(--background);
+    --material-regular: var(--background);
+    --material-thick: var(--background);
+    --material-edge: var(--color-zinc-400);
+  }
+
+  .dark {
+    --border: var(--color-zinc-500);
+    --input: var(--color-zinc-500);
+    --muted-foreground: var(--color-zinc-300);
+    --material-edge: var(--color-zinc-500);
+  }
+
+  .material-thin,
+  .material-regular,
+  .material-thick,
+  [data-slot='dialog-overlay'],
+  [data-slot='alert-dialog-overlay'],
+  [data-slot='sheet-overlay'],
+  [data-slot='drawer-overlay'],
+  [data-pinned] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-pinned] {
+    background-color: var(--background) !important;
+  }
 }
