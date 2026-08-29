@@ -1,13 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Edit } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCampaign } from '../../hooks/useCampaigns';
-import { useBackToListHref } from '@/components/common/BackToList';
+import { campaignsPagerQuery, useCampaign, useDeleteCampaign } from '../../hooks/useCampaigns';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import { formatDate } from '@/lib/helpers';
 import BudgetTracker from './BudgetTracker';
 
@@ -20,6 +24,8 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
   // The list wrote its page, sort, search and status into this URL when the row
   // was clicked; Back hands the same string back rather than a fresh page 1.
   const backHref = useBackToListHref('/marketing-management/campaigns');
+  const deleteCampaign = useDeleteCampaign();
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: campaign, isLoading } = useCampaign(campaignId);
 
   if (isLoading) {
@@ -45,20 +51,63 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push(backHref)}>
-            <ArrowLeft className="size-4" />
-          </Button>
-          <h1 className="text-2xl font-bold">{campaign.campaign_name}</h1>
-          <Badge variant="secondary">
+      {/* Toolbar row: title and breadcrumb left, ONE Back right (D6, S3-01).
+          The lone back-arrow button that used to sit beside the title said
+          nothing about where it went and carried none of the list's state. */}
+      <Toolbar>
+        <ToolbarHeading>
+          <ToolbarTitle>Campaign</ToolbarTitle>
+        </ToolbarHeading>
+        <ToolbarActions>
+          <BackToList listPath="/marketing-management/campaigns" label="Back to campaigns" />
+        </ToolbarActions>
+      </Toolbar>
+
+      {/* Record header: identity left, then pager, gear, primary. Wraps under
+          the identity at 375. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold break-words">{campaign.campaign_name}</h1>
+          <Badge status={campaign.status}>
             {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
           </Badge>
         </div>
-        <Button variant="outline" onClick={() => router.push(`/marketing-management/campaigns/${campaignId}/edit`)}>
-          <Edit className="size-4" />
-          Edit
-        </Button>
+        <DetailActions
+          pager={{
+            ...campaignsPagerQuery,
+            detailPath: '/marketing-management/campaigns',
+            currentId: campaignId,
+            ariaLabel: 'campaign',
+          }}
+          actions={[
+            {
+              key: 'campaign.delete',
+              label: 'Delete campaign',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setDeleteOpen(true),
+            },
+          ]}
+          gearLabel="Campaign options"
+          primary={
+            <Button onClick={() => router.push(`/marketing-management/campaigns/${campaignId}/edit`)}>
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+          dialogs={
+            <ConfirmDeleteDialog
+              open={deleteOpen}
+              onOpenChange={setDeleteOpen}
+              title="Delete campaign"
+              description={`Delete ${campaign.campaign_name}? This action cannot be undone.`}
+              onDelete={async () => {
+                await deleteCampaign.mutateAsync(campaignId);
+              }}
+              onSuccess={() => router.push(backHref)}
+            />
+          }
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
