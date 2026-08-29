@@ -187,7 +187,6 @@ export default function BrandDetailPage({
                 <h1 className="text-2xl font-bold">{brand.brand_name}</h1>
                 <Badge
                   variant={brand.is_active ? 'success' : 'secondary'}
-                  appearance="ghost"
                 >
                   {brand.is_active ? 'Active' : 'Inactive'}
                 </Badge>
@@ -262,7 +261,6 @@ export default function BrandDetailPage({
                   <p className="text-sm text-muted-foreground">Status</p>
                   <Badge
                     variant={brand.is_active ? 'success' : 'secondary'}
-                    appearance="ghost"
                   >
                     {brand.is_active ? 'Active' : 'Inactive'}
                   </Badge>

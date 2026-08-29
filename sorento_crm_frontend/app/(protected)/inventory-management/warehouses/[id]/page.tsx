@@ -158,7 +158,7 @@ export default function WarehouseDetailPage({
                 <h1 className="text-2xl font-bold break-words">
                   {warehouse.warehouse_name || warehouse.warehouse_code}
                 </h1>
-                <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                   {warehouse.is_active ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
@@ -227,7 +227,7 @@ export default function WarehouseDetailPage({
                     {warehouse.location || '-'}
                   </Field>
                   <Field label="Active Status" className="md:col-span-2">
-                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                       {warehouse.is_active ? 'Active' : 'Inactive'}
                     </Badge>
                   </Field>
@@ -241,7 +241,6 @@ export default function WarehouseDetailPage({
                   <Field label="Available for planning" className="md:col-span-2">
                     <Badge
                       variant={warehouse.counts_as_available === false ? 'secondary' : 'success'}
-                      appearance="ghost"
                     >
                       {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
                     </Badge>

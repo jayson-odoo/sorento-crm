@@ -175,7 +175,7 @@ export default function StockBalanceGrid() {
         cell: ({ row }) => {
           const status = row.original.status || 'normal';
           return (
-            <Badge status={status} appearance="ghost">
+            <Badge status={status}>
               {(status || '').charAt(0).toUpperCase() + (status || '').slice(1)}
             </Badge>
           );

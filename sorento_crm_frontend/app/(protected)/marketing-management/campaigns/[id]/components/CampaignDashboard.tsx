@@ -47,7 +47,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
             <ArrowLeft className="size-4" />
           </Button>
           <h1 className="text-2xl font-bold">{campaign.campaign_name}</h1>
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
           </Badge>
         </div>
@@ -103,7 +103,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
           <CardContent className="space-y-4">
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
               </Badge>
             </div>

@@ -119,7 +119,7 @@ export default function BatchesList() {
         cell: ({ row }) => {
           const status = row.original.status;
           return (
-            <Badge status={status} appearance="ghost">
+            <Badge status={status}>
               {status ? status.charAt(0).toUpperCase() + status.slice(1) : '-'}
             </Badge>
           );

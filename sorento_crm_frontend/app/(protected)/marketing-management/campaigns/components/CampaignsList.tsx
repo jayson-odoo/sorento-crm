@@ -128,7 +128,7 @@ export default function CampaignsList() {
         cell: ({ row }) => {
           const status = row.original.status;
           return (
-            <Badge status={status} appearance="ghost">
+            <Badge status={status}>
               {campaignStatusLabel(status)}
             </Badge>
           );

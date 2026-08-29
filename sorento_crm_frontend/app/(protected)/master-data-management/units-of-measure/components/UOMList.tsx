@@ -106,7 +106,6 @@ export default function UOMList() {
         cell: ({ row }) => (
           <Badge
             variant={row.original.is_active ? 'success' : 'secondary'}
-            appearance="ghost"
           >
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}

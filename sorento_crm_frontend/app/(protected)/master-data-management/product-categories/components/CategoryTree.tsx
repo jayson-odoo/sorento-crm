@@ -135,7 +135,6 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                   <Badge
                     variant={category.is_active ? 'success' : 'secondary'}
                     size="sm"
-                    appearance="ghost"
                     className="shrink-0"
                   >
                     <BadgeDot />

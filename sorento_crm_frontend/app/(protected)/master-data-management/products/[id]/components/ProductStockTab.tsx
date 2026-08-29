@@ -125,7 +125,6 @@ export default function ProductStockTab({ productId }: ProductStockTabProps) {
                   <TableCell>
                     <Badge
                       variant={statusVariants[status] || 'secondary'}
-                      appearance="ghost"
                     >
                       {status.charAt(0).toUpperCase() + status.slice(1)}
                     </Badge>

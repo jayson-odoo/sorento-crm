@@ -104,7 +104,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
         accessorKey: 'transaction_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.transaction_type}
           </Badge>
         ),
