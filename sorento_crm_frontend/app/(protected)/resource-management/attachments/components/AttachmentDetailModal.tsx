@@ -757,6 +757,10 @@ export default function AttachmentDetailModal({
   neighbourItems = [],
   onAttachmentChange,
 }: AttachmentDetailModalProps) {
+  // Where the open attachment sits in the page the modal was opened from.
+  const modalIndex = attachmentId
+    ? neighbourItems.findIndex((item) => item.id === attachmentId)
+    : -1;
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -850,11 +854,13 @@ export default function AttachmentDetailModal({
             </DialogTitle>
             {neighbourItems.length > 0 && onAttachmentChange && attachmentId && (
               <RecordNavigation
-                basePath=""
-                currentId={attachmentId}
-                items={neighbourItems}
+                index={modalIndex + 1}
+                total={neighbourItems.length}
+                hasPrevious={modalIndex > 0}
+                hasNext={modalIndex >= 0 && modalIndex < neighbourItems.length - 1}
+                onPrevious={() => onAttachmentChange!(neighbourItems[modalIndex - 1].id)}
+                onNext={() => onAttachmentChange!(neighbourItems[modalIndex + 1].id)}
                 ariaLabel="attachment"
-                onSelect={onAttachmentChange}
               />
             )}
           </DialogHeader>

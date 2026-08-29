@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { extractApiError } from '@/lib/api-client';
-import { useRouter } from 'next/navigation';
+
 import {
   ColumnDef,
   PaginationState,
@@ -11,23 +11,11 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import {
-  ChevronRight,
-  Copy,
-  LoaderCircleIcon,
-  MessageCircle,
-  MessageCircleOff,
-  Plus,
-  RefreshCw,
-  Search,
-  Trash2,
-  UserCog,
-  X,
-} from 'lucide-react';
+import { Copy, LoaderCircleIcon, MessageCircle, MessageCircleOff, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
@@ -61,6 +49,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { startContactImpersonation } from '@/services/contactImpersonationService';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
 
 interface ContactsListProps {
   pageIndex?: number;
@@ -70,7 +60,6 @@ interface ContactsListProps {
 }
 
 export default function ContactsList() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
@@ -85,24 +74,22 @@ export default function ContactsList() {
   const [impersonateStarting, setImpersonateStarting] = useState(false);
   const [bulkDisableOutboundOpen, setBulkDisableOutboundOpen] = useState(false);
 
-  const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
-    const sortField = sorting?.[0]?.id || 'created_at';
-    const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-    const params = new URLSearchParams({
-      page: String(pagination.pageIndex + 1),
-      limit: String(pagination.pageSize),
-      sort: sortField,
-      dir: sortDirection,
-      ...(searchQuery ? { query: searchQuery } : {}),
-    });
-    const response = await apiFetch(`/api/user-management/contacts?${params.toString()}`);
-    if (!response.ok) throw new Error('Failed to fetch contacts');
-    return response.json();
-  };
+  // The list query, built through the shared key + fetch so the detail shell's
+  // pager reads THIS cache entry instead of its own 100 newest contacts.
+  const listParams = useMemo(
+    () => ({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+      filters: {},
+    }),
+    [pagination, sorting, searchQuery],
+  );
 
   const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['respond-contacts', pagination, sorting, searchQuery],
-    queryFn: fetchContacts,
+    queryKey: contactsListQueryKey(listParams),
+    queryFn: () => fetchContactsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -184,8 +171,11 @@ export default function ContactsList() {
     bulkSyncMutation.mutate(selectedContactIds);
   };
 
-  const handleRowClick = (contact: RespondContact) => {
-    router.push(`/user-management/contacts/${contact.id}`);
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (contact: RespondContact) => {
+    const search = buildDetailSearch(listParams);
+    return `/user-management/contacts/${contact.id}${search ? `?${search}` : ''}`;
   };
 
   const handleDeleteClick = (e: React.MouseEvent, contact: RespondContact) => {
@@ -327,16 +317,6 @@ export default function ContactsList() {
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRowClick(row.original);
-              }}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
           </div>
         ),
         size: 90,
@@ -365,9 +345,6 @@ export default function ContactsList() {
     manualSorting: true,
     manualFiltering: true,
     enableRowSelection: true,
-    meta: {
-      onRowClick: handleRowClick,
-    },
   });
 
   const clearSelection = () => setRowSelection({});
@@ -384,6 +361,7 @@ export default function ContactsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      rowHref={rowHref}
     >
       <Card>
         <CardHeader className="block">
