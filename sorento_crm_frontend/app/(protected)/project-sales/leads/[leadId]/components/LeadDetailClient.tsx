@@ -14,12 +14,14 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../../_shared/components/PanelDataGrid';
 import { ProjectStatusPill } from '../../../[projectId]/components/ProjectStatusPill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
+  leadsPagerQuery,
   useCustomerPortfolio,
   useLead,
   useLeadMutations,
@@ -235,47 +237,56 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           />
         </div>
 
-        {/* ONE named action, and everything else behind the gear. Seven buttons across two
-            rows - Accept, Decline, Reassign, a stage dropdown, Qualify, Disqualify, Delete -
-            gave the commonest step no more weight than deleting the record, and the client's
-            words were "I don't really know what each button do". */}
-        <div
+        {/* Pager, gear, primary (D6). ONE named action, and everything else behind
+            the gear: seven buttons across two rows - Accept, Decline, Reassign, a
+            stage dropdown, Qualify, Disqualify, Delete - gave the commonest step no
+            more weight than deleting the record, and the client's words were "I
+            don't really know what each button do". */}
+        <DetailActions
           data-testid="lead-header-actions"
-          className="flex flex-wrap items-center gap-2"
-        >
-          {primaryAction && (
-            <Button
-              type="button"
-              disabled={primaryAction.pending}
-              onClick={primaryAction.run}
-            >
-              {primaryAction.icon}
-              {primaryAction.label}
-            </Button>
-          )}
-          {(secondaryActions.length > 0 || lead.can_edit) && (
-            <DetailActionsMenu ariaLabel="Lead actions">
-              {secondaryActions.map((action) => (
-                <DropdownMenuItem
-                  key={action.key}
-                  disabled={action.pending}
-                  onSelect={action.run}
-                >
-                  {action.label}
-                </DropdownMenuItem>
-              ))}
-              {lead.can_edit && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete lead
-                </DropdownMenuItem>
-              )}
-            </DetailActionsMenu>
-          )}
-        </div>
+          pager={{
+            ...leadsPagerQuery,
+            detailPath: '/project-sales/leads',
+            currentId: lead.id,
+            ariaLabel: 'lead',
+          }}
+          gear={
+            (secondaryActions.length > 0 || lead.can_edit) && (
+              <DetailActionsMenu ariaLabel="Lead actions">
+                {secondaryActions.map((action) => (
+                  <DropdownMenuItem
+                    key={action.key}
+                    disabled={action.pending}
+                    onSelect={action.run}
+                  >
+                    {action.label}
+                  </DropdownMenuItem>
+                ))}
+                {lead.can_edit && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete lead
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            )
+          }
+          primary={
+            primaryAction && (
+              <Button
+                type="button"
+                disabled={primaryAction.pending}
+                onClick={primaryAction.run}
+              >
+                {primaryAction.icon}
+                {primaryAction.label}
+              </Button>
+            )
+          }
+        />
       </header>
 
       {/* Above the strip, not inside a tab: it is true of the whole record, and somebody

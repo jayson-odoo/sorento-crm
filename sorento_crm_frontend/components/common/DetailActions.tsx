@@ -35,6 +35,8 @@ export interface DetailActionsProps {
   dialogs?: ReactNode;
   gearLabel?: string;
   className?: string;
+  /** For the two clients whose tests read the whole action group as one node. */
+  'data-testid'?: string;
 }
 
 /**
@@ -57,9 +59,13 @@ export default function DetailActions({
   dialogs,
   gearLabel = 'Actions',
   className,
+  'data-testid': testId,
 }: DetailActionsProps) {
   return (
-    <div className={cn('flex flex-wrap items-center justify-end gap-2', className)}>
+    <div
+      data-testid={testId}
+      className={cn('flex flex-wrap items-center justify-end gap-2', className)}
+    >
       {pager && <ListPager {...pager} />}
       {!pager && pagerNode}
       {actions && actions.length > 0 && (

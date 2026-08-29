@@ -34,6 +34,9 @@ const listingKeys: (string | null | undefined)[] = [];
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // The list restores its page, sort and filters from the query string Back hands
+  // it (S3-01), so it reads the URL on every render.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 vi.mock('next/link', () => ({

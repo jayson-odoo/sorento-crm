@@ -3,6 +3,8 @@
 import * as React from 'react';
 
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { QueryKey } from '@tanstack/react-query';
+import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from 'sonner';
 import {
   addStakeholder,
@@ -143,6 +145,38 @@ export const projectKey = (projectId: string) => [PROJECTS_KEY, 'detail', projec
 export const stakeholdersKey = (projectId: string) => [PROJECTS_KEY, 'stakeholders', projectId];
 export const collaboratorsKey = (projectId: string) => [PROJECTS_KEY, 'collaborators', projectId];
 export const takeoverKey = (projectId: string) => [PROJECTS_KEY, 'takeover', projectId];
+
+/**
+ * The pipeline list a detail URL describes, in the shape `PipelineClient` passes.
+ *
+ * Same object, same key: the record's pager then walks the page the reader was on,
+ * out of the cache the list already filled, without a request of its own.
+ */
+export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListParams {
+  return {
+    query: params.searchQuery || undefined,
+    developer_party_id: params.filters.developer_party_id
+      ? [params.filters.developer_party_id]
+      : undefined,
+    owner_user_id: params.filters.owner_user_id
+      ? [params.filters.owner_user_id]
+      : undefined,
+    type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
+    only_critical: params.filters.only_critical === 'true' || undefined,
+    page: params.pageIndex + 1,
+    limit: params.pageSize,
+    sort: params.sorting[0]?.id ?? 'created_at',
+    dir: (params.sorting[0]?.desc ?? true ? 'desc' : 'asc') as 'asc' | 'desc',
+  };
+}
+
+/** The pager's two hooks into the pipeline list. */
+export const projectsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    projectsListKey(projectsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listProjects(projectsListParamsFromUrl(params)),
+};
 
 export function useProjects(params: ProjectListParams) {
   return useQuery({
@@ -656,6 +690,27 @@ export const customerPortfolioKey = (customerId: string) => [
 export function useLeads(params: LeadListParams) {
   return useQuery({ queryKey: leadsListKey(params), queryFn: () => listLeads(params) });
 }
+
+/** The leads list a detail URL describes, in the shape `LeadsClient` passes. */
+export function leadsListParamsFromUrl(params: ListPagerParams): LeadListParams {
+  return {
+    query: params.searchQuery || undefined,
+    outcome: params.filters.outcome ? [params.filters.outcome] : undefined,
+    source: params.filters.source ? [params.filters.source] : undefined,
+    page: params.pageIndex + 1,
+    limit: params.pageSize,
+    sort: params.sorting[0]?.id ?? 'created_at',
+    dir: (params.sorting[0]?.desc ?? true ? 'desc' : 'asc') as 'asc' | 'desc',
+  };
+}
+
+/** The pager's two hooks into the leads list. */
+export const leadsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    leadsListKey(leadsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listLeads(leadsListParamsFromUrl(params)),
+};
 
 export function useLead(leadId: string | undefined) {
   return useQuery({

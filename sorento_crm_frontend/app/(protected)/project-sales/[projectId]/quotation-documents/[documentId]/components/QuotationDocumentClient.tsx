@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
   useQuotationApprovalGraph,
@@ -471,179 +472,190 @@ export function QuotationDocumentClient({
             In an edit session the header states ONE intent too, and it is a different one: Save
             and Cancel, with signing and issuing out of the way until the changes have landed. */}
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Step between this project's quotation documents without going back to the
-                list, the users-detail pattern. List mode off the cached documents query -
-                the list screen the user came from already fetched it, so the neighbours
-                cost nothing. Hidden while editing: stepping away mid-session would look
-                like it discarded the staged lines (it would not - they live in the shell -
-                but a control that LOOKS destructive is one nobody should have to trust).
-                Rendered from two documents up, since with one there is nowhere to go. */}
-            {!edit.isEditing && (siblingDocuments.data ?? []).length > 1 && (
-              <RecordNavigation
-                index={documentIndex >= 0 ? documentIndex + 1 : null}
-                total={(siblingDocuments.data ?? []).length}
-                hasPrevious={documentIndex > 0}
-                hasNext={
-                  documentIndex >= 0 &&
-                  documentIndex < (siblingDocuments.data ?? []).length - 1
-                }
-                onPrevious={() =>
-                  router.push(
-                    `/project-sales/${projectId}/quotation-documents/${
-                      (siblingDocuments.data ?? [])[documentIndex - 1].id
-                    }`,
-                  )
-                }
-                onNext={() =>
-                  router.push(
-                    `/project-sales/${projectId}/quotation-documents/${
-                      (siblingDocuments.data ?? [])[documentIndex + 1].id
-                    }`,
-                  )
-                }
-                ariaLabel="quotation"
-              />
-            )}
-            {canEdit && edit.isEditing && (
+          {/* Pager, gear, primary (D6), through the shared group rather than a
+              hand-rolled row: the order is the same rule on all 39 detail pages,
+              and a copy of it here is a copy that can drift. */}
+          <DetailActions
+            pagerNode={
+              /* Step between this project's quotation documents without going back to the
+                  list, the users-detail pattern. List mode off the cached documents query -
+                  the list screen the user came from already fetched it, so the neighbours
+                  cost nothing. Hidden while editing: stepping away mid-session would look
+                  like it discarded the staged lines (it would not - they live in the shell -
+                  but a control that LOOKS destructive is one nobody should have to trust).
+                  Rendered from two documents up, since with one there is nowhere to go. */
+              !edit.isEditing && (siblingDocuments.data ?? []).length > 1 && (
+                <RecordNavigation
+                  index={documentIndex >= 0 ? documentIndex + 1 : null}
+                  total={(siblingDocuments.data ?? []).length}
+                  hasPrevious={documentIndex > 0}
+                  hasNext={
+                    documentIndex >= 0 &&
+                    documentIndex < (siblingDocuments.data ?? []).length - 1
+                  }
+                  onPrevious={() =>
+                    router.push(
+                      `/project-sales/${projectId}/quotation-documents/${
+                        (siblingDocuments.data ?? [])[documentIndex - 1].id
+                      }`,
+                    )
+                  }
+                  onNext={() =>
+                    router.push(
+                      `/project-sales/${projectId}/quotation-documents/${
+                        (siblingDocuments.data ?? [])[documentIndex + 1].id
+                      }`,
+                    )
+                  }
+                  ariaLabel="quotation"
+                />
+              )
+            }
+            gear={
+              <DetailActionsMenu ariaLabel="Quotation actions">
+                {/* Edit's ENTRY POINT lives here, not in the header: one primary CTA, everything
+                    else behind the gear. Only the way IN moved - once a session is open, Cancel
+                    and Save are the header's controls and they stay on screen. */}
+                {canEdit && !edit.isEditing && (
+                  <DropdownMenuItem onSelect={startEditing}>
+                    <SquarePen className="size-4" aria-hidden />
+                    Edit quotation
+                  </DropdownMenuItem>
+                )}
+                {canEdit && (
+                  <DropdownMenuItem onSelect={() => setSigning(true)}>
+                    <PenLine className="size-4" aria-hidden />
+                    {isSigned ? 'Sign again' : 'Sign quotation'}
+                  </DropdownMenuItem>
+                )}
+                {/* Disabled rather than absent: the client asked for both exports, and a menu that
+                    simply lacks them reads as "this system cannot do it". The subtext names where
+                    the file lands, because the click itself no longer produces one. */}
+                <DropdownMenuItem
+                  disabled={!record.is_issued || mutations.issuePdf.isPending}
+                  onSelect={() => void queueIssuePdf()}
+                >
+                  <Download className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Download PDF
+                    <span className="block text-xs text-muted-foreground">
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!record.is_issued || mutations.issueXlsx.isPending}
+                  onSelect={() => void queueIssueXlsx()}
+                >
+                  <Download className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Download Excel
+                    <span className="block text-xs text-muted-foreground">
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                {canEdit && (
+                  <DropdownMenuItem
+                    disabled={!record.is_issued || mutations.signLink.isPending}
+                    onSelect={() => void copyCounterSignLink()}
+                  >
+                    <Link2 className="size-4" aria-hidden />
+                    <span className="min-w-0">
+                      Copy counter-sign link
+                      {!record.is_issued && (
+                        <span className="block text-xs text-muted-foreground">
+                          Issue it first
+                        </span>
+                      )}
+                    </span>
+                  </DropdownMenuItem>
+                )}
+                {canEdit && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
+                      <Trash2 className="size-4" aria-hidden />
+                      Delete quotation
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DetailActionsMenu>
+            }
+            primary={
               <>
+              {canEdit && edit.isEditing && (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={isSaving}
+                    onClick={() => edit.cancel()}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={isSaving || !edit.isDirty}
+                    title={edit.isDirty ? undefined : 'Nothing has changed yet'}
+                    onClick={requestSave}
+                  >
+                    {isSaving ? 'Saving...' : 'Save'}
+                  </Button>
+                </>
+              )}
+              {canEdit && !edit.isEditing && !isSigned && (
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={isSaving}
-                  onClick={() => edit.cancel()}
+                  onClick={() => setSigning(true)}
                 >
-                  Cancel
+                  <PenLine className="size-4" aria-hidden />
+                  Sign
                 </Button>
+              )}
+              {canEdit && !edit.isEditing && (
                 <Button
                   type="button"
                   size="sm"
-                  disabled={isSaving || !edit.isDirty}
-                  title={edit.isDirty ? undefined : 'Nothing has changed yet'}
-                  onClick={requestSave}
+                  disabled={mutations.issue.isPending || !isSigned || needsApproval}
+                  title={
+                    needsApproval
+                      ? 'A manager has to approve the below-floor pricing first'
+                      : isSigned
+                        ? undefined
+                        : 'Sign it first'
+                  }
+                  onClick={() => mutations.issue.mutate(documentId)}
                 >
-                  {isSaving ? 'Saving...' : 'Save'}
+                  {`Issue R${nextIssueNo}`}
                 </Button>
-              </>
-            )}
-            {canEdit && !edit.isEditing && !isSigned && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setSigning(true)}
-              >
-                <PenLine className="size-4" aria-hidden />
-                Sign
-              </Button>
-            )}
-            {canEdit && !edit.isEditing && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={mutations.issue.isPending || !isSigned || needsApproval}
-                title={
-                  needsApproval
-                    ? 'A manager has to approve the below-floor pricing first'
-                    : isSigned
-                      ? undefined
-                      : 'Sign it first'
-                }
-                onClick={() => mutations.issue.mutate(documentId)}
-              >
-                {`Issue R${nextIssueNo}`}
-              </Button>
-            )}
-            {/* Where a queued export is actually collected. Rendered only once something has
-                been issued, because a download of a revision that does not exist yet cannot: the
-                gear already says "Issue it first", and a chip that can only ever read 0 is a
-                control with nothing behind it.
+              )}
+              {/* Where a queued export is actually collected. Rendered only once something has
+                  been issued, because a download of a revision that does not exist yet cannot: the
+                  gear already says "Issue it first", and a chip that can only ever read 0 is a
+                  control with nothing behind it.
 
-                Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
-                Earlier revisions' files are still in the My Downloads drawer. */}
-            {latestIssue && (
-              <EntityDownloadsButton
-                entityType="quotation_issue"
-                entityId={latestIssue.id}
-                label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
-                // The complaint header's own three classes, verbatim. It was always the same
-                // component; passing no className rendered it borderless beside two bordered
-                // buttons, which is why the client read it as not clickable ("the download
-                // should have border just like complaint").
-                className="h-8 border border-border"
-              />
-            )}
-            <DetailActionsMenu ariaLabel="Quotation actions">
-              {/* Edit's ENTRY POINT lives here, not in the header: one primary CTA, everything
-                  else behind the gear. Only the way IN moved - once a session is open, Cancel
-                  and Save are the header's controls and they stay on screen. */}
-              {canEdit && !edit.isEditing && (
-                <DropdownMenuItem onSelect={startEditing}>
-                  <SquarePen className="size-4" aria-hidden />
-                  Edit quotation
-                </DropdownMenuItem>
+                  Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
+                  Earlier revisions' files are still in the My Downloads drawer. */}
+              {latestIssue && (
+                <EntityDownloadsButton
+                  entityType="quotation_issue"
+                  entityId={latestIssue.id}
+                  label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
+                  // The complaint header's own three classes, verbatim. It was always the same
+                  // component; passing no className rendered it borderless beside two bordered
+                  // buttons, which is why the client read it as not clickable ("the download
+                  // should have border just like complaint").
+                  className="h-8 border border-border"
+                />
               )}
-              {canEdit && (
-                <DropdownMenuItem onSelect={() => setSigning(true)}>
-                  <PenLine className="size-4" aria-hidden />
-                  {isSigned ? 'Sign again' : 'Sign quotation'}
-                </DropdownMenuItem>
-              )}
-              {/* Disabled rather than absent: the client asked for both exports, and a menu that
-                  simply lacks them reads as "this system cannot do it". The subtext names where
-                  the file lands, because the click itself no longer produces one. */}
-              <DropdownMenuItem
-                disabled={!record.is_issued || mutations.issuePdf.isPending}
-                onSelect={() => void queueIssuePdf()}
-              >
-                <Download className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Download PDF
-                  <span className="block text-xs text-muted-foreground">
-                    {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!record.is_issued || mutations.issueXlsx.isPending}
-                onSelect={() => void queueIssueXlsx()}
-              >
-                <Download className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Download Excel
-                  <span className="block text-xs text-muted-foreground">
-                    {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
-                  </span>
-                </span>
-              </DropdownMenuItem>
-              {canEdit && (
-                <DropdownMenuItem
-                  disabled={!record.is_issued || mutations.signLink.isPending}
-                  onSelect={() => void copyCounterSignLink()}
-                >
-                  <Link2 className="size-4" aria-hidden />
-                  <span className="min-w-0">
-                    Copy counter-sign link
-                    {!record.is_issued && (
-                      <span className="block text-xs text-muted-foreground">
-                        Issue it first
-                      </span>
-                    )}
-                  </span>
-                </DropdownMenuItem>
-              )}
-              {canEdit && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onSelect={() => setConfirmDelete(true)}>
-                    <Trash2 className="size-4" aria-hidden />
-                    Delete quotation
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DetailActionsMenu>
-          </div>
+              </>
+            }
+          />
           {/* Why the screen is in the state it is in, and what to do about it, in one sentence.
               The old copy stated a fact and offered no move, which is what the client read and
               still could not act on: "i don't know when can i edit and when i cannot ... this
