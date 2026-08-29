@@ -2,7 +2,7 @@
 
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { KeyRound, MessageSquare, Route, Trash2, UserPen } from 'lucide-react';
+import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -28,6 +28,9 @@ import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import { ContactProvider } from './components/contact-context';
 import ContactHero from './components/contact-hero';
 import { useContactQuery } from './hooks/useContactQuery';
+import { contactActions } from '../actions';
+import { ContactImpersonateDialog } from '../components/ContactImpersonateDialog';
+import type { RespondContact } from '../types/contact.types';
 
 type NavRoutes = Record<
   string,
@@ -51,6 +54,9 @@ export default function ContactLayout({
   const pathname = usePathname();
   const router = useRouter();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // Impersonate is on the record now as well as the row (D15), through the one
+  // dialog both surfaces share.
+  const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
   const [activeTab, setActiveTab] = useState<string>('general');
 
   const navRoutes = useMemo<NavRoutes>(
@@ -160,15 +166,10 @@ export default function ContactLayout({
                   }}
                   actions={
                     contact
-                      ? [
-                          {
-                            key: 'contact.delete',
-                            label: 'Delete contact',
-                            icon: Trash2,
-                            kind: 'destructive' as const,
-                            run: () => setDeleteDialogOpen(true),
-                          },
-                        ]
+                      ? contactActions(contact, {
+                          impersonate: () => setImpersonateTarget(contact),
+                          remove: () => setDeleteDialogOpen(true),
+                        })
                       : []
                   }
                   gearLabel="Contact options"
@@ -200,6 +201,10 @@ export default function ContactLayout({
             {children}
           </>
         )}
+        <ContactImpersonateDialog
+          contact={impersonateTarget}
+          onClose={() => setImpersonateTarget(null)}
+        />
       </Container>
 
       <ContactDeleteDialog

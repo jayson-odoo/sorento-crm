@@ -116,6 +116,8 @@ const hooks = vi.hoisted(() => ({
   bulkDeleteAsync: vi.fn(),
 }));
 vi.mock('../hooks/useCertificates', () => ({
+  // The row's "..." carries the record's own Delete (D15).
+  useDeleteCertificate: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCertificates: (...a: unknown[]) => hooks.useCertificates(...a),
   useBulkDeleteCertificates: () => ({ mutateAsync: hooks.bulkDeleteAsync, isPending: false }),
   useCertificate: () => ({ data: undefined, isLoading: false }),

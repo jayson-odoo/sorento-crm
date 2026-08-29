@@ -58,7 +58,7 @@ import {
   searchSupplierOptions,
 } from '../../../services/scmOptionsService';
 import { getSalesOrderUoms } from '../../../services/salesOrderService';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PurchaseOrderAllocations } from './PurchaseOrderAllocations';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -896,13 +896,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <ListPager
-                  {...purchaseOrdersPagerQuery}
-                  detailPath="/scm/purchase-orders"
-                  currentId={id}
-                  ariaLabel="purchase order"
-                />
+              <DetailActions
+                pager={{
+                  ...purchaseOrdersPagerQuery,
+                  detailPath: '/scm/purchase-orders',
+                  currentId: id,
+                  ariaLabel: 'purchase order',
+                }}
+                gearLabel="Purchase order options"
+                primary={
+                  <>
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button
@@ -914,7 +917,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-              </div>
+                  </>
+                }
+              />
             )}
           </div>
           {isEditing && error ? (

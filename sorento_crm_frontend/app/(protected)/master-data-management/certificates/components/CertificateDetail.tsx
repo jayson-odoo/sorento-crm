@@ -3,33 +3,16 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CopyCheck,
-  FileText,
-  History,
-  Package,
-  Pencil,
-  Settings,
-  Split,
-  Trash2,
-} from 'lucide-react';
+import { AlertTriangle, CopyCheck, FileText, History, Package, Pencil, Split, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { certificatesPagerQuery } from '../hooks/useCertificates';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // The backend serializes datetimes as NAIVE UTC (no trailing Z), so `new
@@ -116,42 +99,36 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
             )}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <ListPager
-            {...certificatesPagerQuery}
-            detailPath={LIST_PATH}
-            currentId={certificate.id}
-            ariaLabel="certificate"
-          />
-          <Button variant="outline" size="sm" onClick={() => router.push(LIST_PATH)}>
-            <ArrowLeft className="size-4" />
-            Back
-          </Button>
-          {/* Record actions live behind the gear, the same place every other
-              detail page in the system keeps them. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="Certificate options">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setMergeOpen(true)}>
-                <Split className="size-4" />
-                Merge as revision of...
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="size-4" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <DetailActions
+          pager={{
+            ...certificatesPagerQuery,
+            detailPath: LIST_PATH,
+            currentId: certificate.id,
+            ariaLabel: 'certificate',
+          }}
+          actions={[
+            {
+              key: 'certificate.merge',
+              label: 'Merge as revision of...',
+              icon: Split,
+              run: () => setMergeOpen(true),
+            },
+            {
+              key: 'certificate.delete',
+              label: 'Delete certificate',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setDeleteOpen(true),
+            },
+          ]}
+          gearLabel="Certificate options"
+          primary={
+            <Button onClick={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       {/*

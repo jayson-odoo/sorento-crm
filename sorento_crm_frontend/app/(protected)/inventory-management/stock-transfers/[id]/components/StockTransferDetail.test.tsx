@@ -131,9 +131,9 @@ describe('StockTransferDetail - header', () => {
     expect(screen.queryByRole('button', { name: 'Mark moved' })).toBeNull();
     // Cancel sits behind the gear, not on the header. Radix opens on pointerdown, which
     // jsdom does not synthesise from a click, so the keyboard opens it.
-    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
-    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'Enter' });
-    expect(await screen.findByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel transfer' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Stock transfer options' }), { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'Cancel transfer' })).toBeInTheDocument();
   });
 
   it('offers prev/next over the same filtered list the reader came from', async () => {
@@ -156,7 +156,7 @@ describe('StockTransferDetail - header', () => {
 
     expect(await screen.findByText('Moved, awaiting stock upload')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Stock transfer options' })).toBeNull();
   });
 });
 

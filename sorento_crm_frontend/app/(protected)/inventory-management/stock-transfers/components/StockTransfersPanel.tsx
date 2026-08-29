@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Check, MoreHorizontal, Search, Truck, X } from 'lucide-react';
+import { Check, Search, Truck, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,12 +30,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -57,6 +52,8 @@ import {
   type TransferAction,
 } from './StockTransferActions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { stockTransferActions } from '../actions';
 
 // Both option lists are derived from the label maps rather than retyped, so a word can only
 // ever be changed in one place. The filter and the badge cannot say `moved` two ways.
@@ -433,40 +430,14 @@ export function StockTransfersPanel({
         enableSorting: false,
         enableHiding: false,
         cell: ({ row }) => {
-          const can = availableActions(row.original.state);
-          if (!can.approve && !can.markMoved && !can.cancel) return null;
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  mode="icon"
-                  size="sm"
-                  aria-label={`Actions for ${row.original.transfer_no}`}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {can.approve ? (
-                  <DropdownMenuItem
-                    onSelect={() => setActing({ transfer: row.original, action: 'approve' })}
-                  >
-                    Approve
-                  </DropdownMenuItem>
-                ) : null}
-                {can.cancel ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => setActing({ transfer: row.original, action: 'cancel' })}
-                  >
-                    Cancel
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+          // The record's own set, in the row's "..." (D15). A row has no primary
+          // slot, so Approve leads the menu here and is a button on the record.
+          const set = stockTransferActions(row.original, (action) =>
+            setActing({ transfer: row.original, action }),
           );
+          const actions = [...(set.approve ? [set.approve] : []), ...set.actions];
+          if (actions.length === 0) return null;
+          return <RowActionsMenu actions={actions} ariaLabel="stock transfer" />;
         },
       },
     );

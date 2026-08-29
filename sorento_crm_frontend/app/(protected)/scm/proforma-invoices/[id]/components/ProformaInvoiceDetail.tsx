@@ -37,6 +37,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -65,7 +66,7 @@ import {
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
@@ -1072,27 +1073,15 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <ListPager
-                  {...proformaInvoicesPagerQuery}
-                  detailPath="/scm/proforma-invoices"
-                  currentId={id}
-                  ariaLabel="proforma invoice"
-                />
-                {/* The main action on this page, so it wears the main colour. Everything
-                    else is a secondary action and lives in the menu beside it. */}
-                {showConvert ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() => setConvertOpen(true)}
-                    disabled={convertToDraftShipment.isPending}
-                  >
-                    <Boxes className="size-4" />
-                    {convertLabel}
-                  </Button>
-                ) : null}
+              <DetailActions
+                pager={{
+                  ...proformaInvoicesPagerQuery,
+                  detailPath: '/scm/proforma-invoices',
+                  currentId: id,
+                  ariaLabel: 'proforma invoice',
+                }}
+                gearLabel="Proforma invoice options"
+                gear={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="icon" aria-label="More actions">
@@ -1117,22 +1106,44 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                       </DropdownMenuItem>
                     ) : null}
                     {canAdjust ? (
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        disabled={converted}
-                        // A disabled item's reason travels as a native `title` - Radix has no
-                        // room for a Tooltip wrapper here, and a control that refuses without
-                        // saying why reads as a defect.
-                        title={deleteBlockedReason}
-                        onClick={converted ? undefined : () => setDeleteOpen(true)}
-                      >
-                        <Trash2 className="size-4" />
-                        Delete invoice
-                      </DropdownMenuItem>
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          disabled={converted}
+                          // A disabled item's reason travels as a native `title` - Radix has
+                          // no room for a Tooltip wrapper here, and a control that refuses
+                          // without saying why reads as a defect.
+                          title={deleteBlockedReason}
+                          onClick={converted ? undefined : () => setDeleteOpen(true)}
+                        >
+                          <Trash2 className="size-4" />
+                          Delete invoice
+                        </DropdownMenuItem>
+                      </>
                     ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </div>
+                }
+                primary={
+                  <>
+                {/* The main action on this page, so it wears the main colour. Everything
+                    else is a secondary action and lives in the menu beside it. */}
+                {showConvert ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setConvertOpen(true)}
+                    disabled={convertToDraftShipment.isPending}
+                  >
+                    <Boxes className="size-4" />
+                    {convertLabel}
+                  </Button>
+                ) : null}
+                  </>
+                }
+              />
             )}
           </div>
         </CardHeader>

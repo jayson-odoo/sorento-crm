@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -30,14 +30,15 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
 import {
   integrationLogsPagerQuery,
   useIntegrationLog,
   useRetryIntegrationLog,
 } from '../hooks/useIntegrationLogs';
+import { RefreshCw } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 
@@ -53,7 +54,6 @@ const formatJsonPayload = (payload?: string | null) => {
 export default function IntegrationLogDetailPage() {
   const params = useParams();
   const id = params.id as string;
-  const router = useRouter();
   const { data: log, isLoading } = useIntegrationLog(id);
   const retryMutation = useRetryIntegrationLog();
 
@@ -174,17 +174,25 @@ export default function IntegrationLogDetailPage() {
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <ListPager
-              {...integrationLogsPagerQuery}
-              detailPath="/integration-management/integration-logs"
-              currentId={id}
-              ariaLabel="integration log"
+            <BackToList
+              listPath="/integration-management/integration-logs"
+              label="Back to integration logs"
             />
-            <Button variant="ghost" size="sm" onClick={() => router.back()}>
-              <ArrowLeft className="size-4 mr-2" />
-              Back
-            </Button>
-            {log.status === 'failed' && log.retry_count < log.max_retry_allowed && (
+          </ToolbarActions>
+        </Toolbar>
+
+        {/* The record's own actions: pager, gear, primary (D6). They sit under the
+            toolbar rather than on it, and wrap at 375. */}
+        <DetailActions
+          className="mb-4"
+          pager={{
+            ...integrationLogsPagerQuery,
+            detailPath: '/integration-management/integration-logs',
+            currentId: id,
+            ariaLabel: 'integration log',
+          }}
+          primary={
+            log.status === 'failed' && log.retry_count < log.max_retry_allowed ? (
               <Button
                 onClick={() => {
                   retryMutation.mutate(log.id, {
@@ -201,9 +209,9 @@ export default function IntegrationLogDetailPage() {
                 <RefreshCw className="size-4 mr-2" />
                 Retry
               </Button>
-            )}
-          </ToolbarActions>
-        </Toolbar>
+            ) : null
+          }
+        />
       </Container>
 
       <Container>

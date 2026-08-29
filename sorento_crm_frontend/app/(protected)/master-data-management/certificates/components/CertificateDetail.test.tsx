@@ -411,7 +411,7 @@ describe('CertificateDetail - delete confirmation (FE-8)', () => {
     });
     renderDetail();
     openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete certificate$/ }));
     expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -427,7 +427,7 @@ describe('CertificateDetail - delete confirmation (FE-8)', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
     renderDetail();
     openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete certificate$/ }));
     const dialog = await screen.findByRole('dialog');
     const confirm = Array.from(dialog.querySelectorAll('button')).find(
       (b) => (b.textContent ?? '').trim() === 'Delete',

@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
@@ -344,32 +344,19 @@ export default function ConversationSLATrackingDetail({
             </span>
           </p>
         </div>
-        <div className="flex gap-2">
-          {isConversationContext && (
-            <ListPager
-              {...conversationSlaPagerQuery}
-              detailPath="/sla-management/conversation-sla-tracking"
-              currentId={trackingId}
-              ariaLabel="conversation"
-            />
-          )}
-          {respondInboxUrl && (
-            <Button
-              variant="outline"
-              onClick={() => setConversationSheetOpen(true)}
-            >
-              <MessageSquare className="size-4 mr-2" />
-              Chat Records
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isRefreshing || isLoading}
-          >
-            <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+        <DetailActions
+          pager={
+            isConversationContext
+              ? {
+                  ...conversationSlaPagerQuery,
+                  detailPath: '/sla-management/conversation-sla-tracking',
+                  currentId: trackingId,
+                  ariaLabel: 'conversation',
+                }
+              : undefined
+          }
+          gearLabel="Conversation SLA options"
+          gear={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" title="Actions">
@@ -377,6 +364,13 @@ export default function ConversationSLATrackingDetail({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={handleRefresh}
+                disabled={isRefreshing || isLoading}
+              >
+                <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => syncAssigneeMutation.mutate(trackingId)}
                 disabled={syncAssigneeMutation.isPending}
@@ -445,17 +439,28 @@ export default function ConversationSLATrackingDetail({
                   </DropdownMenuItem>
                 </>
               )}
+              {/* The one irreversible action: last, in red, behind a separator (D6). */}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setDeleteDialogOpen(true)}
+                disabled={deleteMutation.isPending}
+              >
+                <Trash2 className="size-4 mr-2" />
+                Delete tracking
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-            disabled={deleteMutation.isPending}
-          >
-            <Trash2 className="size-4 mr-2" />
-            Delete
-          </Button>
-        </div>
+          }
+          primary={
+            respondInboxUrl ? (
+              <Button onClick={() => setConversationSheetOpen(true)}>
+                <MessageSquare className="size-4 mr-2" />
+                Chat Records
+              </Button>
+            ) : null
+          }
+        />
       </div>
 
       <Dialog open={assigneeDialogOpen} onOpenChange={setAssigneeDialogOpen}>

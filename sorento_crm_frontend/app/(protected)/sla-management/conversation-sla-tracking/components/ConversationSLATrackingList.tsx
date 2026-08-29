@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle, ChevronRight, Clock, Search, UserRound, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Search, UserRound, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -27,7 +27,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
@@ -38,6 +38,7 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 import { slaHandler } from '../lib/slaHandler';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -463,30 +464,23 @@ export default function ConversationSLATrackingList() {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={syncAssigneeMutation.isPending}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    syncAssigneeMutation.mutate(row.original.id);
-                  }}
-                >
-                  <UserRound className="size-4 text-muted-foreground" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                Sync assignee from Respond.io (match contact’s assignee in Respond.io to CRM user)
-              </TooltipContent>
-            </Tooltip>
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </div>
+          // The record's gear also carries the tier verbs (escalate, mark
+          // responded/resolved, the test overrides), which read the tracking
+          // detail the row does not hold. What a row can do, it does here.
+          <RowActionsMenu
+            ariaLabel="conversation"
+            actions={[
+              {
+                key: 'conversation_sla.sync_assignee',
+                label: 'Sync assignee',
+                icon: UserRound,
+                disabled: syncAssigneeMutation.isPending,
+                run: () => syncAssigneeMutation.mutate(row.original.id),
+              },
+            ]}
+          />
         ),
-        size: 80,
+        size: 60,
         enableHiding: false,
       },
     ],

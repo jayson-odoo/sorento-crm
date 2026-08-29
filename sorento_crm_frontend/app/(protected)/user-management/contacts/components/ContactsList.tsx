@@ -11,7 +11,7 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Copy, LoaderCircleIcon, MessageCircle, MessageCircleOff, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
+import { Copy, MessageCircle, MessageCircleOff, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -38,20 +38,14 @@ import ContactOutboundCell from '@/components/contacts/ContactOutboundCell';
 import ContactOutboundDisableDialog from '@/components/contacts/ContactOutboundDisableDialog';
 import ContactOutboundSummary from '@/components/contacts/ContactOutboundSummary';
 import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOutbound';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { startContactImpersonation } from '@/services/contactImpersonationService';
+
+
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { contactActions } from '../actions';
+import { ContactImpersonateDialog } from './ContactImpersonateDialog';
 
 export default function ContactsList() {
   const queryClient = useQueryClient();
@@ -73,7 +67,6 @@ export default function ContactsList() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
   const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
-  const [impersonateStarting, setImpersonateStarting] = useState(false);
   const [bulkDisableOutboundOpen, setBulkDisableOutboundOpen] = useState(false);
 
   // The list query, built through the shared key + fetch so the detail shell's
@@ -180,11 +173,6 @@ export default function ContactsList() {
     return `/user-management/contacts/${contact.id}${search ? `?${search}` : ''}`;
   };
 
-  const handleDeleteClick = (e: React.MouseEvent, contact: RespondContact) => {
-    e.stopPropagation();
-    setContactToDelete(contact);
-    setDeleteDialogOpen(true);
-  };
 
   const columns = useMemo<ColumnDef<RespondContact>[]>(
     () => [
@@ -293,32 +281,24 @@ export default function ContactsList() {
         header: '',
         enableHiding: false,
         cell: ({ row }) => (
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
             <PortalLinkButton
               contactId={row.original.id}
               contactLabel={row.original.name ?? row.original.phone_number ?? row.original.id}
               canSendViaRespondIo={!!row.original.respond_io_id}
               variant="icon"
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Impersonate in portal"
-              onClick={(e) => {
-                e.stopPropagation();
-                setImpersonateTarget(row.original);
-              }}
-            >
-              <UserCog className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Delete contact"
-              onClick={(e) => handleDeleteClick(e, row.original)}
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
+            {/* The record's own set, in the row's "..." (D15). */}
+            <RowActionsMenu
+              ariaLabel="contact"
+              actions={contactActions(row.original, {
+                impersonate: () => setImpersonateTarget(row.original),
+                remove: () => {
+                  setContactToDelete(row.original);
+                  setDeleteDialogOpen(true);
+                },
+              })}
+            />
           </div>
         ),
         size: 90,
@@ -491,67 +471,10 @@ export default function ContactsList() {
         onSuccess={clearSelection}
       />
 
-      <AlertDialog
-        open={!!impersonateTarget}
-        onOpenChange={(open) => {
-          if (!open && !impersonateStarting) setImpersonateTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will browse the portal as{' '}
-              <strong>
-                {impersonateTarget?.name ||
-                  impersonateTarget?.phone_number ||
-                  impersonateTarget?.id ||
-                  ''}
-              </strong>{' '}
-              with their access rights. All records you create or modify will
-              still be attributed to you. Continue?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={impersonateStarting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={impersonateStarting}
-              onClick={async (e) => {
-                e.preventDefault();
-                if (!impersonateTarget) return;
-                setImpersonateStarting(true);
-                try {
-                  const session = await startContactImpersonation(impersonateTarget.id);
-                  toast.success(
-                    `Now impersonating ${
-                      impersonateTarget.name || impersonateTarget.phone_number || impersonateTarget.id
-                    }`,
-                  );
-                  setImpersonateTarget(null);
-                  if (typeof window !== 'undefined') {
-                    window.open(session.portalUrl, '_blank', 'noopener,noreferrer');
-                  }
-                } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : 'Failed to start impersonation',
-                  );
-                } finally {
-                  setImpersonateStarting(false);
-                }
-              }}
-            >
-              {impersonateStarting ? (
-                <>
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                  Starting...
-                </>
-              ) : (
-                'Impersonate'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ContactImpersonateDialog
+        contact={impersonateTarget}
+        onClose={() => setImpersonateTarget(null)}
+      />
     </DataGrid>
   );
 }

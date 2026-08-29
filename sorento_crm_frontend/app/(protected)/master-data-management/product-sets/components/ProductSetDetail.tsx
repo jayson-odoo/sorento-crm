@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { productSetsPagerQuery } from '../hooks/useProductSets';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useProductSet, useUpdateProductSet } from '../hooks/useProductSets';
@@ -368,17 +368,19 @@ export default function ProductSetDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <ListPager
-                  {...productSetsPagerQuery}
-                  detailPath={LIST_PATH}
-                  currentId={set.id}
-                  ariaLabel="product set"
-                />
-                <Button variant="outline" onClick={startEdit}>
-                  <Pencil className="size-4" /> Edit
-                </Button>
-              </div>
+              <DetailActions
+                pager={{
+                  ...productSetsPagerQuery,
+                  detailPath: LIST_PATH,
+                  currentId: set.id,
+                  ariaLabel: 'product set',
+                }}
+                primary={
+                  <Button onClick={startEdit}>
+                    <Pencil className="size-4" /> Edit
+                  </Button>
+                }
+              />
             )}
           </div>
         </CardContent>

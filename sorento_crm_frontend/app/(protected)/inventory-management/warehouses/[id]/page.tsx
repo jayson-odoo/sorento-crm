@@ -18,7 +18,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { warehousesPagerQuery } from '../hooks/useWarehouses';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
@@ -171,25 +171,32 @@ export default function WarehouseDetailPage({
                 </span>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <ListPager
-                {...warehousesPagerQuery}
-                detailPath={"/inventory-management/warehouses"}
-                currentId={id}
-                ariaLabel="warehouse"
-              />
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
-              >
-                <Edit className="size-4" />
-                Edit
-              </Button>
-              <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
-            </div>
+            <DetailActions
+              pager={{
+                ...warehousesPagerQuery,
+                detailPath: '/inventory-management/warehouses',
+                currentId: id,
+                ariaLabel: 'warehouse',
+              }}
+              actions={[
+                {
+                  key: 'warehouse.delete',
+                  label: 'Delete warehouse',
+                  icon: Trash2,
+                  kind: 'destructive' as const,
+                  run: () => setDeleteOpen(true),
+                },
+              ]}
+              gearLabel="Warehouse options"
+              primary={
+                <Button
+                  onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              }
+            />
           </div>
 
           {/* Same tab set, same field order, and the same grid spans as the edit view: a

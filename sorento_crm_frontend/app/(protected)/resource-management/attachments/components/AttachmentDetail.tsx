@@ -6,7 +6,7 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Download, Eye, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
+import { Download, ExternalLink, Eye, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -18,7 +18,7 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import {
   useDeleteAttachment,
   useDownloadAttachment,
@@ -292,54 +292,55 @@ export default function AttachmentDetail({
             Uploaded: {formatDate(new Date(attachment.uploaded_at))}
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <ListPager
-            {...attachmentsPagerQuery}
-            detailPath="/resource-management/attachments"
-            currentId={attachmentId}
-            ariaLabel="attachment"
-          />
-          <Button variant="outline" onClick={() => setPreviewOpen(true)}>
-            <Eye className="size-4" />
-            Preview
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => handleDownload(attachment)}
-            disabled={downloadMutation.isPending}
-          >
-            <Download className="size-4" />
-            Download
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => resubmitMutation.mutate(attachment.id)}
-            disabled={resubmitMutation.isPending || attachment.is_deleted}
-          >
-            <RefreshCw className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`} />
-            Resubmit
-          </Button>
-          {attachment.is_deleted ? (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => restoreMutation.mutate(attachment.id)}
-                disabled={restoreMutation.isPending}
-              >
-                Restore
-              </Button>
-              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-                <Trash2 className="size-4" />
-                Permanently Delete
-              </Button>
-            </>
-          ) : (
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="size-4" />
-              Move to Trash
+        <DetailActions
+          pager={{
+            ...attachmentsPagerQuery,
+            detailPath: '/resource-management/attachments',
+            currentId: attachmentId,
+            ariaLabel: 'attachment',
+          }}
+          actions={[
+            {
+              key: 'attachment.download',
+              label: 'Download',
+              icon: Download,
+              disabled: downloadMutation.isPending,
+              run: () => handleDownload(attachment),
+            },
+            {
+              key: 'attachment.resubmit',
+              label: 'Resubmit',
+              icon: RefreshCw,
+              disabled: resubmitMutation.isPending || attachment.is_deleted,
+              run: () => resubmitMutation.mutate(attachment.id),
+            },
+            ...(attachment.is_deleted
+              ? [
+                  {
+                    key: 'attachment.restore',
+                    label: 'Restore',
+                    icon: RotateCcw,
+                    disabled: restoreMutation.isPending,
+                    run: () => restoreMutation.mutate(attachment.id),
+                  },
+                ]
+              : []),
+            {
+              key: 'attachment.delete',
+              label: attachment.is_deleted ? 'Permanently delete' : 'Move to trash',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setDeleteDialogOpen(true),
+            },
+          ]}
+          gearLabel="Attachment options"
+          primary={
+            <Button onClick={() => setPreviewOpen(true)}>
+              <Eye className="size-4" />
+              Preview
             </Button>
-          )}
-        </div>
+          }
+        />
       </div>
 
       <Card>

@@ -66,7 +66,7 @@ import {
   searchProductOptions,
 } from '../../../services/scmOptionsService';
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
 import { salesOrdersPagerQuery } from '../../../hooks/useSalesOrders';
 import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../services/salesOrderService';
 import { fmtDate, fmtInt } from '../../../lib/format';
@@ -1160,20 +1160,25 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <ListPager
-                  {...salesOrdersPagerQuery}
-                  detailPath="/scm/sales-orders"
-                  currentId={id}
-                  ariaLabel="sales order"
-                />
+              <DetailActions
+                pager={{
+                  ...salesOrdersPagerQuery,
+                  detailPath: '/scm/sales-orders',
+                  currentId: id,
+                  ariaLabel: 'sales order',
+                }}
+                gearLabel="Sales order options"
+                primary={
+                  <>
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-              </div>
+                  </>
+                }
+              />
             )}
           </div>
           {isEditing && error ? (

@@ -1,9 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { MoveLeft, Settings2, Trash2 } from 'lucide-react';
+import { Settings2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Breadcrumb,
@@ -43,6 +42,7 @@ import { useProjectSeries, useSeriesMutations } from '../../../_shared/hooks/use
 import type { ProjectSeries } from '../../../_shared/types/project.types';
 import { SeriesProductsTable } from './SeriesProductsTable';
 import { SeriesSheetLoader } from './SeriesSheetLoader';
+import BackToList from '@/components/common/BackToList';
 
 const NEW = 'new';
 
@@ -175,11 +175,17 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
           </Breadcrumb>
         </ToolbarHeading>
         <ToolbarActions>
-          {/* Step through the series without going back to the list, the way the users
-              detail does. List mode rather than a neighbours endpoint: the whole series
-              list is already in memory here (it is what resolves this page's row), so
-              asking the server for two ids would be a round trip to learn what we hold. */}
-          {!isNew && row && (series.data ?? []).length > 1 && (
+          <BackToList listPath="/project-sales/series" label="Back to series" />
+        </ToolbarActions>
+      </Toolbar>
+
+      {/* The record's own actions: pager, gear, primary (D6). Step through the series
+          without going back to the list, the way the users detail does; the whole
+          series list is already in memory here, so the pager is presentational and
+          asks the server for nothing. Delete lives behind the gear, not beside Back. */}
+      {!isNew && row ? (
+        <div className="mb-5 flex flex-wrap items-center justify-end gap-2">
+          {(series.data ?? []).length > 1 ? (
             <RecordNavigation
               index={seriesIndex >= 0 ? seriesIndex + 1 : null}
               total={(series.data ?? []).length}
@@ -195,39 +201,30 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
               }
               ariaLabel="series"
             />
-          )}
-          <Button asChild variant="outline">
-            <Link href="/project-sales/series">
-              <MoveLeft /> Back to series
-            </Link>
-          </Button>
-          {/* Destructive actions live behind the gear, not beside Back: Delete sat one
-              button away from the thing people click to leave the page. */}
-          {!isNew && row && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" mode="icon" aria-label="Series actions">
-                  <Settings2 className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={(event) => {
-                    // The menu closes on select and would unmount the dialog's trigger
-                    // context mid-open; defer so the confirmation actually appears.
-                    event.preventDefault();
-                    setConfirmingDelete(true);
-                  }}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" mode="icon" aria-label="Series actions">
+                <Settings2 className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={(event) => {
+                  // The menu closes on select and would unmount the dialog's trigger
+                  // context mid-open; defer so the confirmation actually appears.
+                  event.preventDefault();
+                  setConfirmingDelete(true);
+                }}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Delete series
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : null}
 
       <div className="space-y-6">
         <Card>

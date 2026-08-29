@@ -106,8 +106,10 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
  * Radix opens on pointerdown, which jsdom does not synthesize from a click, so drive it by
  * keyboard instead (ArrowDown opens and focuses the first item).
  */
-async function openRowMenu(transferNo = 'TR-000001') {
-  const trigger = await screen.findByRole('button', { name: `Actions for ${transferNo}` });
+async function openRowMenu() {
+  // One menu per row, named for the record type (RowActionsMenu); the fixtures
+  // render a single row, so there is exactly one.
+  const trigger = await screen.findByRole('button', { name: 'stock transfer actions' });
   trigger.focus();
   fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
   return screen.findByRole('menu');
@@ -177,7 +179,7 @@ describe('StockTransfersPanel - row actions', () => {
     const menu = await openRowMenu();
 
     expect(within(menu).getByRole('menuitem', { name: 'Approve' })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Cancel transfer' })).toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Mark moved' })).toBeNull();
   });
 
@@ -195,7 +197,7 @@ describe('StockTransfersPanel - row actions', () => {
     renderPanel();
 
     await screen.findByText('TR-000001');
-    expect(screen.queryByRole('button', { name: 'Actions for TR-000001' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'stock transfer actions' })).toBeNull();
   });
 
   it('confirms before approving, and only then posts', async () => {
@@ -215,7 +217,7 @@ describe('StockTransfersPanel - row actions', () => {
     cancelStockTransfer.mockResolvedValue(transfer({ state: 'cancelled' }));
     renderPanel();
     const menu = await openRowMenu();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cancel' }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cancel transfer' }));
 
     expect(await screen.findByText('Cancel TR-000001?')).toBeInTheDocument();
     const confirm = screen.getByRole('button', { name: 'Cancel transfer' });
