@@ -422,6 +422,14 @@ function LinkableBodyRow({
       role="link"
       tabIndex={0}
       onClick={(event) => {
+        // The PRIMARY button only. A real middle click fires auxclick alone, but a
+        // synthetic dispatch, assistive tech and Firefox autoscroll also deliver a
+        // `click` carrying button 1 - and React's onClick does not filter by
+        // button. Without this the row opened the record in a new tab from
+        // auxclick AND pushed the current tab to the same record from the click,
+        // so the user lost the list they were reading. Opening on both would be
+        // no better: two tabs. auxclick owns the new tab, click owns this one.
+        if (event.button !== 0) return;
         // A control in a cell keeps its own click.
         if ((event.target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR)) return;
         // Same modifiers an anchor honours, so the row behaves like the link it claims to be.
