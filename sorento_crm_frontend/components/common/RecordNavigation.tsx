@@ -12,6 +12,10 @@ import { Button } from '@/components/ui/button';
  * rather than a row id - the caller computes the position from the rows it
  * already holds and hands it here directly.
  *
+ * Both chevrons are `type="button"`: the five edit forms render the pager inside
+ * their `<form>`, and an untyped `<button>` there is a SUBMIT button, so Next
+ * saved the record and followed the form's onSuccess instead of stepping.
+ *
  * Until S3 this component also knew how to fetch neighbours from the backend and
  * how to walk a whole list itself. Both went with the `/neighbours` endpoints:
  * a pager that resolves its own set is a pager that can disagree with the list
@@ -60,6 +64,7 @@ export default function RecordNavigation({
       aria-label={`${ariaLabel} navigation`}
     >
       <Button
+        type="button"
         variant="outline"
         size="icon"
         aria-label={`Previous ${ariaLabel}`}
@@ -81,6 +86,7 @@ export default function RecordNavigation({
         </span>
       )}
       <Button
+        type="button"
         variant="outline"
         size="icon"
         aria-label={`Next ${ariaLabel}`}

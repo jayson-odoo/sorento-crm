@@ -73,6 +73,37 @@ describe('RecordNavigation', () => {
     expect(onPrevious).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * The five edit forms render the pager INSIDE their `<form>`, and a `<button>`
+   * with no `type` submits it. Next therefore saved the record and ran the form's
+   * `onSuccess`, which pushes the read-only route for the SAME id: the reader
+   * landed back on the view of the customer they were editing, with the counter
+   * unmoved, and the step they asked for never happened.
+   */
+  it('does not submit the form it is rendered inside', () => {
+    const onSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <RecordNavigation
+          index={1}
+          total={50}
+          hasPrevious
+          hasNext
+          onPrevious={onPrevious}
+          onNext={onNext}
+          ariaLabel="customer"
+        />
+      </form>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next customer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous customer' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onNext).toHaveBeenCalledTimes(1);
+    expect(onPrevious).toHaveBeenCalledTimes(1);
+  });
+
   it('names the record type in the chevrons, for a screen reader', () => {
     renderPager({ ariaLabel: 'purchase order' });
 

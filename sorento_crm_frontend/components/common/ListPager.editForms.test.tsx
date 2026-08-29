@@ -10,12 +10,13 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { useListPager, type ListPagerPage } from '@/hooks/useListPager';
+import ListPager from './ListPager';
 
 const push = vi.fn();
 let search = '';
@@ -120,6 +121,38 @@ describe('the edit forms keep the edit route when the pager steps', () => {
 
     expect(props).toContain('hrefFor');
     expect(props).toContain('/edit');
+  });
+
+  /**
+   * All five render the pager INSIDE their `<form>`, so the step has to survive
+   * that. It did not: the chevrons were untyped `<button>`s, which submit, so
+   * Next saved the record and the form's onSuccess pushed the read-only route for
+   * the SAME id - the reader landed back on the view of the customer they were
+   * editing, counter unmoved. The hook was never reached, which is why the
+   * hook-level table above stayed green through two rounds of the bug.
+   */
+  it.each(EDIT_FORMS)('$form steps without submitting its form', ({ detailPath, hrefFor, expected }) => {
+    cleanup();
+    const onSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());
+    render(
+      <QueryClientProvider client={client}>
+        <form onSubmit={onSubmit}>
+          <ListPager
+            listQueryKey={listQueryKey}
+            fetchPage={fetchPage}
+            detailPath={detailPath}
+            currentId="r1"
+            hrefFor={hrefFor}
+            ariaLabel="record"
+          />
+        </form>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next record' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith(expected);
   });
 
   it('without hrefFor the same step lands on the read-only record', () => {
