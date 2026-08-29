@@ -43,6 +43,7 @@ import {
 } from '@/components/common/onboarding/types';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { useOnboardingRequests } from '../hooks/useOnboardingRequests';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
@@ -62,6 +63,15 @@ export function OnboardingRequestList() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status_key ?? 'all');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const firstPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));

@@ -40,6 +40,7 @@ import { useBulkAnnotateSalesAgents, useSalesAgents } from '../hooks/useSalesAge
 import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
 import { salesAgentSourceLabel } from '../lib/salesAgentSource';
 import type { SalesAgent } from '../types/salesAgent.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /** Which annotation a bulk dialog is setting. One field at a time, deliberately: a dialog
  *  that sets two at once has to answer "did I mean to clear the other one" every time. */
@@ -63,6 +64,15 @@ export default function SalesAgentsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sales_agent', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setDebouncedSearch(state.searchQuery);
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkField, setBulkField] = useState<BulkField | null>(null);
   const [bulkValue, setBulkValue] = useState('');

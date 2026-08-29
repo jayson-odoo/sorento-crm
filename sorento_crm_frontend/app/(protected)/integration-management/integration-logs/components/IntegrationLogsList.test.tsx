@@ -23,6 +23,15 @@ vi.mock('next/navigation', () => ({
       if (v == null) return [];
       return Array.isArray(v) ? v : [v];
     },
+    // `useListStateFromUrl` reads the whole query string (S3-01), so the stand-in
+    // has to answer that too, not just `get`/`getAll`.
+    toString: () => {
+      const out = new URLSearchParams();
+      for (const [k, v] of Object.entries(searchParams)) {
+        for (const one of Array.isArray(v) ? v : [v]) out.append(k, one);
+      }
+      return out.toString();
+    },
   }),
 }));
 

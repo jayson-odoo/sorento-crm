@@ -37,6 +37,7 @@ import { apiFetch } from '@/lib/api';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 import { slaHandler } from '../lib/slaHandler';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -68,6 +69,15 @@ export default function ConversationSLATrackingList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [assignedToFilter, setAssignedToFilter] = useState('__all__');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+  });
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));

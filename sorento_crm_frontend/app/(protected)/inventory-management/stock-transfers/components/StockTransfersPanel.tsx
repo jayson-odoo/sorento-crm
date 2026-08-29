@@ -56,6 +56,7 @@ import {
   availableActions,
   type TransferAction,
 } from './StockTransferActions';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 // Both option lists are derived from the label maps rather than retyped, so a word can only
 // ever be changed in one place. The filter and the badge cannot say `moved` two ways.
@@ -152,6 +153,20 @@ export function StockTransfersPanel({
   const [fromWarehouseId, setFromWarehouseId] = React.useState('');
   const [toWarehouseId, setToWarehouseId] = React.useState('');
   const [productId, setProductId] = React.useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearch(state.searchQuery);
+    setDebounced(state.searchQuery);
+    setState(state.filters.state ?? '');
+    setKind(state.filters.kind ?? '');
+    setFromWarehouseId(state.filters.from_warehouse_id ?? '');
+    setToWarehouseId(state.filters.to_warehouse_id ?? '');
+    setProductId(state.filters.product_id ?? '');
+  });
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'proposed_at', desc: true },
   ]);

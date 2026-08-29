@@ -41,6 +41,7 @@ import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -157,6 +158,16 @@ export default function PurchaseRequestsList({
   );
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.approval_status ?? 'all');
+    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data: assigneeOptions = [] } = useQuery({

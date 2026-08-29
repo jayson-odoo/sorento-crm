@@ -39,6 +39,7 @@ import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function ComplaintsList() {
   const router = useRouter();
@@ -54,6 +55,18 @@ export default function ComplaintsList() {
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
   const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
   const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+    setStatusFilter(state.filters.status ?? '__all__');
+    setRootCauseFilter(state.filters.root_cause_ids ? state.filters.root_cause_ids.split(',') : []);
+    setResolutionFilter(state.filters.resolution_ids ? state.filters.resolution_ids.split(',') : []);
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 

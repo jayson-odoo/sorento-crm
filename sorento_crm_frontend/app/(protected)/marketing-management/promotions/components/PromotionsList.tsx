@@ -47,6 +47,7 @@ import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
 import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function PromotionsList() {
   const router = useRouter();
@@ -79,6 +80,19 @@ export default function PromotionsList() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
   const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setFilterStatus(state.filters.status ?? 'all');
+    setFilterAccessLevel(state.filters.user_type ?? 'all');
+    setFilterAttachmentState(
+      (state.filters.attachment_state as typeof filterAttachmentState) ?? 'all',
+    );
+  });
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 

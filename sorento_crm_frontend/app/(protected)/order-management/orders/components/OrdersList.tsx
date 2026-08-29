@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -52,14 +52,13 @@ import {
   buildDetailSearch,
   decodeAdvancedFilter,
   encodeAdvancedFilter,
-  parseDetailSearch,
 } from '@/lib/listNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function OrdersList() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -76,18 +75,17 @@ export default function OrdersList() {
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
 
-  /** Restore list state when returning from order detail/edit (same query string as detail URLs). */
-  const listNavSearchKey = useMemo(() => searchParams.toString(), [searchParams]);
-  useEffect(() => {
-    const parsed = parseDetailSearch(new URLSearchParams(listNavSearchKey));
-    setPagination({ pageIndex: parsed.pageIndex, pageSize: parsed.pageSize });
-    setSorting(parsed.sorting);
-    setSearchQuery(parsed.searchQuery);
-    setStatusFilter(parsed.filters.order_status_id ?? 'all');
-    const hol = parsed.filters.has_order_lines;
-    setLinesFilter(hol === 'yes' || hol === 'no' ? hol : 'all');
-    setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(parsed.filters.advFilter));
-  }, [listNavSearchKey]);
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.order_status_id ?? 'all');
+    const lines = state.filters.has_order_lines;
+    setLinesFilter(lines === 'yes' || lines === 'no' ? lines : 'all');
+    setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter));
+  });
 
   const { data, isLoading, isError, error, refetch } = useOrders({
     pageIndex: pagination.pageIndex,

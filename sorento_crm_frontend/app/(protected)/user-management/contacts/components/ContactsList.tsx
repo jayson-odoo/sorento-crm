@@ -18,7 +18,7 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -51,19 +51,21 @@ import {
 import { startContactImpersonation } from '@/services/contactImpersonationService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
-
-interface ContactsListProps {
-  pageIndex?: number;
-  pageSize?: number;
-  sorting?: SortingState;
-  searchQuery?: string;
-}
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function ContactsList() {
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);

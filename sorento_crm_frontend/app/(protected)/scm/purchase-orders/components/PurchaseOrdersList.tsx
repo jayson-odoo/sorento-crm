@@ -50,6 +50,7 @@ import {
   purchaseOrderStatusPill,
 } from '../../lib/purchaseOrderStatus';
 import type { PurchaseOrder } from '../../types/scm.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /** All / Outstanding / Completed - the buyer's "at a glance" read (the captain, 20 Aug: "how
  *  do i know the open PO / outstanding PO"). Maps straight onto the list's `outstanding`
@@ -96,6 +97,23 @@ export default function PurchaseOrdersList() {
   // "Have we ever bought this item, and for how much." The plan now takes its cost from
   // this book, so when a plan line shows no cost, this is where the buyer finds out why.
   const [productFilter, setProductFilter] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? '');
+    setProductFilter(state.filters.product_code ?? '');
+    setOutstandingFilter(
+      state.filters.outstanding === 'true'
+        ? 'outstanding'
+        : state.filters.outstanding === 'false'
+          ? 'completed'
+          : 'all',
+    );
+  });
   // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
   // book by line, and firing it on every character is a query per letter typed.
   const [productDraft, setProductDraft] = useState('');

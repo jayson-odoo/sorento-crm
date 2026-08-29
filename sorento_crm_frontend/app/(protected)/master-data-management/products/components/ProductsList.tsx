@@ -64,6 +64,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
 import type { ColumnOption } from '@/lib/excel-utils';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -118,80 +119,56 @@ const ProductsList = () => {
     hasActiveFilters,
   } = useProductFilters();
 
-  // Initialize filters and pagination from URL (e.g. when navigating back from detail)
+  // A hard refresh is a clean slate: the persisted params only exist to restore
+  // state when coming BACK from a detail page, so they are stripped rather than
+  // read. A "products discontinued" deep link survives it - that is an explicit
+  // navigation intent, and dropping its brand slice would widen the list to
+  // products the recipient was never notified about.
   useEffect(() => {
-    // On a hard refresh, strip the persisted params so the list opens clean.
-    if (isReloadRef.current) {
-      isReloadRef.current = false;
-      if (searchParams.toString()) {
-        // Preserve a "products discontinued" deep link through the reload-clean - 
-        // it is an explicit navigation intent, not persisted list state. The link
-        // carries the recipient's brand filter too (brand_id=a,b), and dropping it
-        // would widen the list to products they were never notified about.
-        const batch = searchParams.get('discontinued_batch_id');
-        const batchBrands = searchParams.get('brand_id');
-        if (batch) {
-          const kept = new URLSearchParams({ discontinued_batch_id: batch });
-          if (batchBrands) kept.set('brand_id', batchBrands);
-          router.replace(`${pathname}?${kept.toString()}`);
-        } else {
-          router.replace(pathname);
-        }
-      }
-      return;
+    if (!isReloadRef.current) return;
+    isReloadRef.current = false;
+    if (!searchParams.toString()) return;
+    const batch = searchParams.get('discontinued_batch_id');
+    const batchBrands = searchParams.get('brand_id');
+    if (batch) {
+      const kept = new URLSearchParams({ discontinued_batch_id: batch });
+      if (batchBrands) kept.set('brand_id', batchBrands);
+      router.replace(`${pathname}?${kept.toString()}`);
+    } else {
+      router.replace(pathname);
     }
-    // Param names match the list GET (written by buildDetailSearch on row-click):
-    // query / category_id / brand_id / status / sort+dir / page (1-based) + limit.
-    const search = searchParams.get('query') ?? '';
-    const category = searchParams.get('category_id') ?? null;
-    const brand = searchParams.get('brand_id') ?? null;
-    const status = searchParams.get('status') ?? 'all';
-    const sortField = searchParams.get('sort');
-    const sortDir = searchParams.get('dir');
-    const pageParam = searchParams.get('page');
-    const pageSizeParam = searchParams.get('limit');
-    if (search) {
-      setSearchQuery(search);
-      setSearchInput(search);
-      setSearch(search);
-    }
-    if (category) {
+  }, [searchParams, router, pathname]);
+
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl(
+    (state) => {
+      setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+      setSorting(state.sorting);
+      setSearchQuery(state.searchQuery);
+      setSearchInput(state.searchQuery);
+      setSearch(state.searchQuery || undefined);
+      const category = state.filters.category_id ?? null;
       setSelectedCategory(category);
-      setCategoryId(category);
-    }
-    // A multi-brand deep link (brand_id=a,b) has no single-select equivalent, so
-    // the dropdown stays on "All brands" while the param still filters the grid.
-    if (brand && !brand.includes(',')) {
-      setSelectedBrand(brand);
-      setBrandId(brand);
-    }
-    if (status) {
+      setCategoryId(category ?? undefined);
+      // A multi-brand deep link (brand_id=a,b) has no single-select equivalent, so
+      // the dropdown stays on "All brands" while the param still filters the grid.
+      const brand = state.filters.brand_id ?? null;
+      if (!brand || !brand.includes(',')) {
+        setSelectedBrand(brand);
+        setBrandId(brand ?? undefined);
+      }
+      const status = state.filters.status ?? 'all';
       setSelectedStatus(status);
       setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
-    }
-    const variant = searchParams.get('variant_filter');
-    if (variant === 'base' || variant === 'variant') {
-      setSelectedVariantFilter(variant);
-    }
-    // The advanced filter narrows the list, so it rides in the detail URL too -
-    // without it the pager would walk a wider set than the user was looking at.
-    const advanced = decodeAdvancedFilter<ListQueryFilterGroup>(
-      searchParams.get('advFilter') ?? undefined,
-    );
-    if (advanced) setAdvancedFilter(advanced);
-    if (sortField) {
-      setSorting([{ id: sortField, desc: sortDir === 'desc' }]);
-    }
-    if (pageParam != null || pageSizeParam != null) {
-      // buildDetailSearch writes page as 1-based; convert back to 0-based pageIndex.
-      const page = parseInt(pageParam ?? '1', 10);
-      const pageSize = parseInt(pageSizeParam ?? '50', 10);
-      setPagination({
-        pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
-        pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
-      });
-    }
-  }, [searchParams, setSearch, setCategoryId, setBrandId, setStatus, router, pathname]);
+      const variant = state.filters.variant_filter;
+      setSelectedVariantFilter(variant === 'base' || variant === 'variant' ? variant : 'all');
+      setAdvancedFilter(
+        decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter),
+      );
+    },
+    { enabled: !isReloadRef.current },
+  );
 
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);

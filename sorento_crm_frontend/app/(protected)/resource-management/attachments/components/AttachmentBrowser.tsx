@@ -52,6 +52,7 @@ import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function AttachmentBrowser() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -73,6 +74,22 @@ export default function AttachmentBrowser() {
   const [uploadedBy, setUploadedBy] = useState('');
   const [uploadedAtFrom, setUploadedAtFrom] = useState('');
   const [uploadedAtTo, setUploadedAtTo] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setDirectoryId(state.filters.directory_id ?? null);
+    setAttachmentTypeId(state.filters.attachment_type_id ?? '__all__');
+    setLinkStatus(
+      (state.filters.link_status as 'linked' | 'unlinked') ?? '__all__',
+    );
+    setUploadedBy(state.filters.uploaded_by ?? '');
+    setUploadedAtFrom(state.filters.uploaded_at_from ?? '');
+    setUploadedAtTo(state.filters.uploaded_at_to ?? '');
+  });
   const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();

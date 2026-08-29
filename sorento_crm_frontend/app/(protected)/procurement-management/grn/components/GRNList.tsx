@@ -38,6 +38,7 @@ import GRNBulkDeleteDialog from './GRNBulkDeleteDialog';
 import { importGRNListing, importGRNLines, validateGRNListing, validateGRNLines } from '../services/grnService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useQueryClient } from '@tanstack/react-query';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function GRNList() {
   const router = useRouter();
@@ -59,6 +60,15 @@ export default function GRNList() {
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.picking_status ?? 'all');
+  });
 
   const { data, isLoading } = useGRNs({
     pageIndex: pagination.pageIndex,

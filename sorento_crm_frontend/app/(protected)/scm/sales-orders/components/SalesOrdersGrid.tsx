@@ -74,6 +74,7 @@ import { SalesOrderFormModal } from './SalesOrderFormModal';
 // it, so the same dialog (never forked) is reused here too.
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /**
  * THE sales-order table. One component, two places: the Sales Orders list (`SalesOrdersList`,
@@ -247,6 +248,23 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const [demandClassFilter, setDemandClassFilter] = useState('');
   const [agentFilter, setAgentFilter] = useState('');
   const [outstandingOnly, setOutstandingOnly] = useState(false);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? '');
+    setPriorityFilter(state.filters.priority ?? '');
+    setSourceFilter(state.filters.source ?? '');
+    setDateFrom(state.filters.date_from ?? '');
+    setDateTo(state.filters.date_to ?? '');
+    setCustomerFilter(state.filters.customer_id ?? '');
+    setAgentFilter(state.filters.sales_agent_id ?? '');
+    setDemandClassFilter(state.filters.demand_class ?? '');
+    setOutstandingOnly(state.filters.outstanding === 'true');
+  });
 
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
   // project sales order screen, and the row click is the way there.

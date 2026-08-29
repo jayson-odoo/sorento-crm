@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -42,7 +42,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
-import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { UserRowActions } from '../actions';
 import {
   fetchUsersListPage,
@@ -54,6 +54,7 @@ import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const UserList = () => {
   const queryClient = useQueryClient();
@@ -74,26 +75,20 @@ const UserList = () => {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
   const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
-  const searchParams = useSearchParams();
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
 
-  // Restore the list state when returning from a user's detail page - Back hands
-  // back the same query string the row click wrote, so the list reopens on the
-  // page, sort, search and filters the user left (and the pager's cached page is
-  // the one this query fills).
-  const listNavSearchKey = useMemo(() => searchParams.toString(), [searchParams]);
-  useEffect(() => {
-    if (!listNavSearchKey) return;
-    const parsed = parseDetailSearch(new URLSearchParams(listNavSearchKey));
-    setPagination({ pageIndex: parsed.pageIndex, pageSize: parsed.pageSize });
-    setSorting(parsed.sorting);
-    setSearchQuery(parsed.searchQuery);
-    setSelectedRole(parsed.filters.roleId ?? 'all');
-    setSelectedStatus(parsed.filters.status ?? 'all');
-    setSelectedTrashed(parsed.filters.trashed ?? 'exclude');
-  }, [listNavSearchKey]);
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setSelectedRole(state.filters.roleId ?? 'all');
+    setSelectedStatus(state.filters.status ?? 'all');
+    setSelectedTrashed(state.filters.trashed ?? 'exclude');
+  });
 
   const updateDailySummarySubscription = async (userId: string, subscribed: boolean) => {
     setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: true }));

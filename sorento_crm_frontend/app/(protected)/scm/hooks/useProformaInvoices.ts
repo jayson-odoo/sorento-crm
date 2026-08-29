@@ -25,11 +25,10 @@ const KEY = ['scm', 'proforma-invoices'] as const;
  * The list's React Query key. The detail page's pager rebuilds the SAME key from
  * the URL, so it reads the page the list already fetched.
  *
- * The list endpoint caps `limit` at 100, so the page size is clamped here rather
- * than trusted from the URL: a higher value 422s the whole fetch.
+ * The list endpoint caps `limit` at 100; the list's own page-size control is
+ * capped to match (`ProformaInvoicesView`), so the URL can only ever name a size
+ * the endpoint accepts and the pager's arithmetic agrees with the fetch.
  */
-const MAX_LIMIT = 100;
-
 export function proformaInvoicesListQueryKey(
   options: ListProformaInvoicesOptions,
 ): QueryKey {
@@ -48,13 +47,12 @@ export function proformaInvoicesListQueryKey(
 export function proformaInvoicesListParamsFromUrl(
   params: ListPagerParams,
 ): ListProformaInvoicesOptions {
-  const limit = Math.min(params.pageSize, MAX_LIMIT);
   return {
     supplierId: params.filters.supplier_id || null,
     placement: (params.filters.placement as ProformaPlacement) || null,
     query: params.searchQuery || null,
-    limit,
-    offset: params.pageIndex * limit,
+    limit: params.pageSize,
+    offset: params.pageIndex * params.pageSize,
   };
 }
 

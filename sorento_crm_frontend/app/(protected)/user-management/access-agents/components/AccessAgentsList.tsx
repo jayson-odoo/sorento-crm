@@ -29,11 +29,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useAccessAgents } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function AccessAgentsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 

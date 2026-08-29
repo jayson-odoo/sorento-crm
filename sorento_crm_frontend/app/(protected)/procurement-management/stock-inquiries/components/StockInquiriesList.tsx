@@ -40,6 +40,7 @@ import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /**
  * The listing's shipped default, used until the user has left one behind.
@@ -89,6 +90,15 @@ export default function StockInquiriesList() {
     () => viewFilters?.statuses ?? [],
     [viewFilters],
   );
+
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). One hook, every list. Sorting and the
+  // status filter are remembered per user by `useListingViewPreferences`, which
+  // is the stronger memory, so the URL only restores the page and the search.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSearchQuery(state.searchQuery);
+  });
 
   const { data, isLoading, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,

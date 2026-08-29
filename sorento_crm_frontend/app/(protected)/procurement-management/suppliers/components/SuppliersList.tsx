@@ -41,8 +41,9 @@ import { useSuppliers } from '../hooks/useSuppliers';
 import { bulkUpdateSuppliers } from '../services/supplierBulkUpdateService';
 import type { Supplier } from '../types/supplier.types';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
-import { buildDetailSearch, encodeAdvancedFilter } from '@/lib/listNavQuery';
+import { buildDetailSearch, decodeAdvancedFilter, encodeAdvancedFilter } from '@/lib/listNavQuery';
 import { SupplierRowActions } from '../actions';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 // Whitelist of bulk-editable fields for suppliers (the safety boundary - mirrors
 // the backend registry in app/services/bulk_update_registry.py). Only these
@@ -69,6 +70,17 @@ export default function SuppliersList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setAdvancedFilter(
+      decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter),
+    );
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useEffect(() => {
