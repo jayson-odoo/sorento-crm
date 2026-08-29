@@ -158,9 +158,11 @@ describe('Tabs inventory (S4-01)', () => {
   });
 
   it('S4-01: every trigger in a migrated strip has an icon beside its label', () => {
-    // The Users style is icon + label. A trigger is a component element
-    // (`<Icon />`, `<History />`) somewhere inside the trigger body; a bare
-    // label is what this rejects.
+    // The Users style is icon + label. A trigger holds a component element
+    // somewhere in its body: a capitalised tag (`<History />`) or a member
+    // expression off the row it maps (`<tab.icon />`). A bare label is what
+    // this rejects.
+    const icon = /<([A-Z][A-Za-z0-9]*|[A-Za-z][A-Za-z0-9]*\.[A-Za-z0-9]+)\s*\/?>/;
     const offenders: string[] = [];
     for (const file of LINE_MIGRATED) {
       const src = fs.readFileSync(file, 'utf8');
@@ -168,7 +170,7 @@ describe('Tabs inventory (S4-01)', () => {
       for (const chunk of triggers) {
         const end = chunk.indexOf('</TabsTrigger>');
         const body = end === -1 ? chunk.slice(0, 400) : chunk.slice(0, end);
-        if (!/<[A-Z][A-Za-z0-9]*\s*\/?>/.test(body)) {
+        if (!icon.test(body)) {
           offenders.push(`${file}: ${body.slice(0, 60).replace(/\s+/g, ' ')}`);
         }
       }

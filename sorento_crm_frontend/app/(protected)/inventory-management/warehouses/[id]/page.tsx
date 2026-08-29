@@ -3,7 +3,7 @@
 import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft, Edit, Trash2 } from 'lucide-react';
+import { CalendarRange, Edit, Info, MoveLeft, Trash2 } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -205,9 +205,15 @@ export default function WarehouseDetailPage({
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
           <Tabs defaultValue="basic">
-            <TabsList variant="default">
-              <TabsTrigger value="basic">Basic Information</TabsTrigger>
-              <TabsTrigger value="planning">Planning</TabsTrigger>
+            <TabsList>
+              <TabsTrigger value="basic">
+                <Info />
+                <span>Basic Information</span>
+              </TabsTrigger>
+              <TabsTrigger value="planning">
+                <CalendarRange />
+                <span>Planning</span>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-6">

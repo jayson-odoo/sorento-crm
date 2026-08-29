@@ -11,6 +11,8 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  History,
+  Info,
   RefreshCw,
   Settings,
   UserCog,
@@ -351,9 +353,15 @@ export default function FormSLATrackerDetail({
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList variant="default">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="event-log">Event Log</TabsTrigger>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">
+            <Info />
+            <span>Overview</span>
+          </TabsTrigger>
+          <TabsTrigger value="event-log">
+            <History />
+            <span>Event Log</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">

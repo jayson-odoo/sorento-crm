@@ -28,7 +28,7 @@ import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, History, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -752,9 +752,15 @@ export default function ConversationSLATrackingDetail({
 
 
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList variant="default">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="event-log">Event Log</TabsTrigger>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">
+            <Info />
+            <span>Overview</span>
+          </TabsTrigger>
+          <TabsTrigger value="event-log">
+            <History />
+            <span>Event Log</span>
+          </TabsTrigger>
         </TabsList>
 
         {/* Tab 1: Overview */}

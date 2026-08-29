@@ -4,7 +4,15 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import {
+  Banknote,
+  Factory,
+  Info,
+  ListChecks,
+  LoaderCircleIcon,
+  Paperclip,
+  Save,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -258,12 +266,29 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
             ? (searchParams.get('tab') as string)
             : 'basic'} className="w-full">
-          <TabsList variant="default" className="grid w-full grid-cols-5">
-            <TabsTrigger value="basic">Basic Information</TabsTrigger>
-            <TabsTrigger value="pricing">Pricing</TabsTrigger>
-            <TabsTrigger value="specifications">Specifications</TabsTrigger>
-            <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
-            <TabsTrigger value="attachments">Attachments</TabsTrigger>
+          {/* The strip scrolls (S1), so it needs no grid: five equal columns at
+              375 gave each tab 66px and every label overlapped its neighbour. */}
+          <TabsList className="mb-5">
+            <TabsTrigger value="basic">
+              <Info />
+              <span>Basic Information</span>
+            </TabsTrigger>
+            <TabsTrigger value="pricing">
+              <Banknote />
+              <span>Pricing</span>
+            </TabsTrigger>
+            <TabsTrigger value="specifications">
+              <ListChecks />
+              <span>Specifications</span>
+            </TabsTrigger>
+            <TabsTrigger value="suppliers">
+              <Factory />
+              <span>Suppliers</span>
+            </TabsTrigger>
+            <TabsTrigger value="attachments">
+              <Paperclip />
+              <span>Attachments</span>
+            </TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Basic Information */}

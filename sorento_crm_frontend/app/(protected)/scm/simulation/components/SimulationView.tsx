@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Database, DatabaseZap, Play, ShieldCheck } from 'lucide-react';
+import { Database, DatabaseZap, GitCompare, LayoutGrid, Play, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -118,9 +118,15 @@ export function SimulationView() {
       </Card>
 
       <Tabs defaultValue="diff" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="diff">Baseline diff</TabsTrigger>
-          <TabsTrigger value="planning">Planning view</TabsTrigger>
+        <TabsList className="mb-4">
+          <TabsTrigger value="diff">
+            <GitCompare />
+            <span>Baseline diff</span>
+          </TabsTrigger>
+          <TabsTrigger value="planning">
+            <LayoutGrid />
+            <span>Planning view</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="diff" className="mt-0 space-y-4 focus-visible:outline-none">

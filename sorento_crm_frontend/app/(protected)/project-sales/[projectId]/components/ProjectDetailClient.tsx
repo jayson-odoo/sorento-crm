@@ -3,7 +3,23 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Clock, Flame, Trash2 } from 'lucide-react';
+import {
+  CalendarRange,
+  Clock,
+  FileText,
+  Flame,
+  HandCoins,
+  History,
+  Info,
+  ListChecks,
+  Package,
+  Paperclip,
+  Receipt,
+  ShoppingCart,
+  Trash2,
+  Users,
+} from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
@@ -52,17 +68,17 @@ import { TasksPanel } from './TasksPanel';
  * "arrives with quotations" beats a stub that looks broken.
  */
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'stakeholders', label: 'Stakeholders' },
-  { id: 'tasks', label: 'Tasks' },
-  { id: 'quotations', label: 'Quotations' },
-  { id: 'samples', label: 'Samples' },
-  { id: 'sponsorships', label: 'Sponsorships' },
-  { id: 'pos', label: 'POs' },
-  { id: 'schedules', label: 'Delivery schedules' },
-  { id: 'sales-orders', label: 'Sales orders' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'documents', label: 'Documents' },
+  { id: 'overview', label: 'Overview', icon: Info },
+  { id: 'stakeholders', label: 'Stakeholders', icon: Users },
+  { id: 'tasks', label: 'Tasks', icon: ListChecks },
+  { id: 'quotations', label: 'Quotations', icon: FileText },
+  { id: 'samples', label: 'Samples', icon: Package },
+  { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
+  { id: 'pos', label: 'POs', icon: ShoppingCart },
+  { id: 'schedules', label: 'Delivery schedules', icon: CalendarRange },
+  { id: 'sales-orders', label: 'Sales orders', icon: Receipt },
+  { id: 'activity', label: 'Activity', icon: History },
+  { id: 'documents', label: 'Documents', icon: Paperclip },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -240,28 +256,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* Horizontal scroll on the tab strip only, so nine tabs never make the page
-          itself scroll sideways. */}
-      <nav
-        className="-mx-1 flex gap-1 overflow-x-auto border-b border-border px-1"
-        aria-label="Project sections"
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => selectTab(tab.id)}
-            aria-current={activeTab === tab.id ? 'page' : undefined}
-            className={
-              activeTab === tab.id
-                ? 'shrink-0 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
-                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
-            }
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {/* The shared strip, not a hand-rolled `<nav>` of buttons: it already owns
+          the scroller, the underline, the pressed state and the roving-focus
+          keyboard behaviour this reimplemented without. The panels stay outside
+          `<Tabs>` because each one is its own routed section keyed off the URL. */}
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
+        <TabsList aria-label="Project sections">
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id}>
+              <tab.icon />
+              <span>{tab.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       {activeTab === 'overview' && (
         // Four titled sections rather than one fifteen-field grid. The old single

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Edit } from 'lucide-react';
+import { Banknote, Edit, Info, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -95,10 +95,21 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
       </div>
 
       <Tabs defaultValue="information" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="information">Delivery order information</TabsTrigger>
-          <TabsTrigger value="financial">Financial summary</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery &amp; tracking</TabsTrigger>
+        {/* `overflow-x-auto` is the list's own since S1; the icons are what make
+            a scrolled strip readable when a label is half off the edge. */}
+        <TabsList className="mb-4">
+          <TabsTrigger value="information">
+            <Info />
+            <span>Delivery order information</span>
+          </TabsTrigger>
+          <TabsTrigger value="financial">
+            <Banknote />
+            <span>Financial summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck />
+            <span>Delivery &amp; tracking</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
