@@ -335,13 +335,14 @@ describe('deleting a batch of drafts', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await waitFor(() => expect(bulkDeleteProjectSalesOrders).toHaveBeenCalled());
+
+    // The confirmation stays open on a refusal, and dialogs are modal since UAC
+    // S1-01, so the operator dismisses it before doing anything else - which is
+    // also the real flow: read the refusal, close it, un-tick the one it named.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+
     // Un-tick the two named and retry is only possible if the selection survived.
-    // The confirmation stays open on a refusal and dialogs are modal since UAC
-    // S1-01, so the panel behind it is inerted - hence `hidden`, which is what
-    // "still there, underneath the dialog" means to the accessibility tree.
-    expect(
-      await screen.findByRole('button', { name: 'Delete 2 sales orders', hidden: true }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Delete 2 sales orders' })).toBeInTheDocument();
   });
 
   it('offers no selection at all to a reader', async () => {
