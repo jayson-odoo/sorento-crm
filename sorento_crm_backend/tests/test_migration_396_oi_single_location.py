@@ -75,7 +75,8 @@ def db():
 
 def _warehouse(db, code: str) -> Warehouse:
     row = Warehouse(
-        id=_uid(), company_id=SORENTO, warehouse_code=code, warehouse_name=f"{MARKER} {code}"
+        id=_uid(), company_id=SORENTO, warehouse_code=code, warehouse_name=f"{MARKER} {code}",
+        fulfilment_planning=True,
     )
     db.add(row)
     db.flush()

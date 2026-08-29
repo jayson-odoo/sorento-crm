@@ -39,6 +39,7 @@ def _warehouse(db, *, segment: str | None = None) -> Warehouse:
         warehouse_name=f"{MARKER} warehouse",
         is_active=True,
         segment=segment,
+        fulfilment_planning=True,
     )
     db.add(wh)
     db.flush()

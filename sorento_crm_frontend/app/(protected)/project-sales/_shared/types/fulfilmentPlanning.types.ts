@@ -360,9 +360,6 @@ export interface BorrowCandidate {
   lower_ranked?: boolean;
   /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
   same_agent?: boolean;
-  /** Outside the small-quantity cap - shown, but not selectable without an override. */
-  over_cap?: boolean;
-  cap_reason?: string | null;
 }
 
 /** The components as they were frozen at confirmation, read back on a confirmed order. */
@@ -1269,9 +1266,6 @@ export interface BoardBorrowCandidate {
   lower_ranked?: boolean;
   /** The donor shares this line's own sales agent (section 8) - offered at any rank. */
   same_agent?: boolean;
-  /** Outside the small-quantity cap - shown, but not selectable without an override. */
-  over_cap?: boolean;
-  cap_reason?: string | null;
 }
 
 /** One incoming purchase leg at a location, with the document that carries it. */

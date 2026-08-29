@@ -106,8 +106,15 @@ def put_fulfilment_priority(
         factors=body.factors,
         demand_class_weights=body.demand_class_weights,
         reorder_coverage_until=body.reorder_coverage_until,
-        cross_group_borrow_max_qty=body.cross_group_borrow_max_qty,
-        cross_group_borrow_max_pct=body.cross_group_borrow_max_pct,
+        # An omitted `tba_date_from` keeps the date the active revision already carries -
+        # the same "the body did not say, so nothing changes" the name and notes above get.
+        # The column is NOT NULL, so `create_revision` supplies the default only when there
+        # is no active revision to copy from.
+        tba_date_from=(
+            body.tba_date_from
+            if body.tba_date_from is not None
+            else (current.tba_date_from if current is not None else None)
+        ),
         notes=current.notes if current is not None else None,
     )
     db.commit()

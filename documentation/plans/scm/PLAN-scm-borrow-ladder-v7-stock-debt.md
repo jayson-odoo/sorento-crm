@@ -91,9 +91,9 @@ On Confirm of a `supply_borrow`: an `order_inquiry_links` row for the asker's OR
 
 ### 3.5 Flag and policy (S1, R17, R20)
 
-Migration `443_fulfilment_planning_flag_tba_date`: `warehouses.fulfilment_planning boolean not null default false`, seeded true where `is_active and warehouse_code ~ '-(BB|IB|IR|NTC|AM)$'`; `scm.priority_policy.tba_date_from date not null default '2029-01-01'`; drop the two cap columns; permission row + sweep. Downgrade mirrors. Bootstrap_env mirrors the seed (CI DB is bootstrap, not migrations; lesson from #363).
+Migration `443_fulfilment_planning_flag_tba_date`: `warehouses.fulfilment_planning boolean not null default false`, seeded true where `is_active and warehouse_code ~ '-(BB|IB|IR|NTC|AM)$'`; `scm.priority_policy.tba_date_from date not null default '2029-01-01'`; drop the two cap columns; permission row + sweep. Downgrade mirrors. Bootstrap_env mirrors the seed (CI DB is bootstrap, not migrations; lesson from #363). Both seed ONCE - the migration inside its `add_column` branch, bootstrap only on a database `alembic_version` has never been stamped for - because from there the flag is configuration and a replay would turn back on every bin an admin turned off.
 
-Warehouse schema + `PUT /warehouses/{id}` gain the field; the Warehouses list gains the column and the edit modal the switch. `FulfilmentPriorityPanel` swaps the two cap inputs for the date input; policy schema + `priority.py` expose `tba_date_from`.
+Warehouse schema + `PUT /warehouses/{id}` gain the field; the Warehouses list gains the column and the edit modal the switch. `FulfilmentPriorityPanel` swaps the two cap inputs for the date input; policy schema + `priority.py` expose `tba_date_from`. It is OPTIONAL on the PUT body (an omitted field keeps the active revision's date, the way `name` and `notes` already do) and the freshness check lives on the write schema only - the response model is a sibling, or a stored date that has since passed would 500 every GET.
 
 ### 3.6 What is deliberately NOT built
 
