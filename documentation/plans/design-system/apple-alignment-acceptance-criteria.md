@@ -44,7 +44,7 @@ instead of overlapping. Nothing is asked of them that the screen already knew.
 | D12 | Typeface stays Inter, wired through `--font-sans` with a type scale that bakes tracking and leading per step. Dark tokens are defined; no dark toggle in this run. |
 | D13 | Mobile nav drawer and bottom sheets move to `vaul`; desktop side sheets stay Radix. |
 | D14 | Undo toasts only where no confirmation exists today; nothing that confirms today stops confirming until D7 replaces it. |
-| D15 | One action set per entity, shown in two places: the list row's "..." menu and the record page's gear. Same items, same order, same permissions (Impersonate on a user is the first case: list-only today). The 79 icon-button action columns become a "..." menu. Primary (Edit/open) stays a button on the record page and is the row click on the list; there is no Edit item in the row menu (confirmed 29 Aug). |
+| D15 | One action set per entity, shown in two places: the list row's "..." menu and the record page's gear. Same items, same order, same permissions (Impersonate on a user is the first case: list-only today). The 79 icon-button action columns become a "..." menu. Primary (Edit/open) stays a button on the record page and is the row click on the list; there is no Edit item in the row menu (confirmed 29 Aug). Items that need the fetched record (workflow overrides, escalate, mark responded or resolved, a credential link the list payload omits) are outside the declared set and appear on the record only; everything else is identical on both surfaces (30 Aug). |
 | D16 | Grace windows are configurable in System Settings > General (two fields: destructive seconds, reversible seconds), defaults 10 / 5. |
 
 ---
