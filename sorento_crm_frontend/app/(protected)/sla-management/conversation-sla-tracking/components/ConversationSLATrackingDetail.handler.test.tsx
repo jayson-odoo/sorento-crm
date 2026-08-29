@@ -38,6 +38,9 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
