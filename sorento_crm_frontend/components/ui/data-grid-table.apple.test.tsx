@@ -300,6 +300,37 @@ describe('A row is a link (S1-06)', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it('S1-06: a middle click opens ONE tab and leaves the current one alone', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    const row = screen.getByText('Alpha').closest('tr') as HTMLTableRowElement;
+
+    // A real middle click fires auxclick only. Some paths - a synthetic dispatch,
+    // assistive tech, Firefox autoscroll - also deliver a `click` carrying
+    // button 1, and the row used to treat that as a plain click and push the
+    // current tab to the same record. The user got the record twice: once in a
+    // new tab and once over the list they were reading.
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    fireEvent(row, new MouseEvent('click', { bubbles: true, cancelable: true, button: 1 }));
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S1-06: a click that is not the primary button does nothing at all', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    const row = screen.getByText('Alpha').closest('tr') as HTMLTableRowElement;
+
+    // Middle and right. Opening on the click as WELL as the auxclick would give
+    // two tabs, so the click side stays silent and auxclick owns the new tab.
+    fireEvent(row, new MouseEvent('click', { bubbles: true, cancelable: true, button: 1 }));
+    fireEvent(row, new MouseEvent('click', { bubbles: true, cancelable: true, button: 2 }));
+
+    expect(push).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('S1-06: a control inside the row keeps its own click - the row does not steal it', () => {
     render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
 
