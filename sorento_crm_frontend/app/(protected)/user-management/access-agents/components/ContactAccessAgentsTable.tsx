@@ -146,10 +146,13 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading contact access agents...</div>
         ) : (
+          // A grant is edited in a lightbox and has no page of its own, so the
+          // row opens that lightbox (D3, second clause).
           <DataGrid
             table={table}
             recordCount={contactAccesses?.length || 0}
             isLoading={isLoading}
+            onRowClick={handleEdit}
             emptyMessage={
               <div className="text-center py-8 text-muted-foreground">
                 <p>No contact access agents yet.</p>

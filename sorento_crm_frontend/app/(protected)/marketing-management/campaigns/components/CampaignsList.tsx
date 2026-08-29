@@ -32,6 +32,7 @@ import type { Campaign } from '../types/campaign.types';
 import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function CampaignsList() {
   const router = useRouter();
@@ -52,6 +53,19 @@ export default function CampaignsList() {
     searchQuery,
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
+
+  // D3: the row opens the campaign, chevron or no chevron - the chevron was
+  // decoration on a row nothing could open. The href carries the list state the
+  // detail page's Back and pager read back out of the URL.
+  const rowHref = (row: Campaign) => {
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    return `/marketing-management/campaigns/${row.id}${search ? `?${search}` : ''}`;
+  };
 
   const columns = useMemo<ColumnDef<Campaign>[]>(
     () => [
@@ -157,6 +171,7 @@ export default function CampaignsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

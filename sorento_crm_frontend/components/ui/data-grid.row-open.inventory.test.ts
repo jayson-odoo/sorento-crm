@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 /** Lists that navigate to a detail route. */
 const ROW_HREF = [
   'app/(protected)/marketing-management/campaigns/components/CampaignsList.tsx',
-  'app/(protected)/procurement-management/spo-allocations/components/SPOAllocationsList.tsx',
+  'app/(protected)/master-data-management/units-of-measure/components/UOMList.tsx',
 ];
 
 /**
@@ -30,7 +30,6 @@ const ROW_HREF = [
  */
 const ROW_LIGHTBOX = [
   'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
-  'app/(protected)/master-data-management/units-of-measure/components/UOMList.tsx',
   'app/(protected)/user-management/access-agents/components/ContactAccessAgentsTable.tsx',
   'app/(protected)/user-management/contacts/[id]/components/ContactAccessAgentsTable.tsx',
 ];
