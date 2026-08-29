@@ -33,40 +33,45 @@
    * referenced by 250+ files and, until now, defined nowhere, so every `text-mono`
    * silently inherited body colour. `-foreground` is the ink that sits ON the solid
    * fill (never on a tint).
+   *
+   * Every base/foreground pair clears WCAG AA (4.5:1), and every base also clears it
+   * as INK on --background, because `text-warning` / `text-success` / `text-info` are
+   * used as body text (stock dashboard, budget tracker, spec registry) as well as
+   * fills. That is what pushes light warning to the 700 step: yellow-500 reads 1.9:1
+   * on a white card. css/design-tokens.test.ts asserts both directions.
    */
   --mono: var(--color-zinc-950);
   --mono-foreground: var(--color-white);
-  --success: var(--color-green-500);
+  --success: var(--color-green-700);
   --success-foreground: var(--color-white);
   --info: var(--color-violet-600);
   --info-foreground: var(--color-white);
-  --warning: var(--color-yellow-500);
+  --warning: var(--color-yellow-700);
   --warning-foreground: var(--color-white);
 
   /**
    * Materials. A translucent surface tinted by whatever is behind it, paired with a
    * blur in the `.material-*` utilities (css/styles.css). `--scrim` is the lightbox
    * backdrop; the preference blocks raise it to 72% and drop the blur.
+   *
+   * Only the steps with a consumer are here: regular = header, thick = sidebar. A
+   * thinner step, and the --elev-* shadow steps, go in when a consumer arrives.
    */
-  --material-thin: color-mix(in oklab, var(--background) 55%, transparent);
   --material-regular: color-mix(in oklab, var(--background) 72%, transparent);
   --material-thick: color-mix(in oklab, var(--background) 88%, transparent);
   --material-blur: 24px;
   --material-edge: color-mix(in oklab, var(--foreground) 8%, transparent);
   --scrim: color-mix(in oklab, black 50%, transparent);
-  --elev-1: 0 1px 2px 0 color-mix(in oklab, black 5%, transparent);
-  --elev-3: 0 12px 32px -12px color-mix(in oklab, black 22%, transparent);
 
   /**
    * Named z-scale. Every fixed layer of the shell names its step here instead of
-   * inventing a `z-[N]`, so "what covers what" is answered in one place.
+   * inventing a `z-[N]`, so "what covers what" is answered in one place. Steps
+   * without a consumer (an overlay step, a toast step) go in when one arrives.
    */
   --z-header: 10;
   --z-sidebar: 20;
   --z-banner: 30;
-  --z-overlay: 40;
   --z-modal: 50;
-  --z-toast: 60;
 
   /** Motion. One curve, three steps; every components/ui transition uses them. */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -109,7 +114,7 @@
   --secondary: var(--color-zinc-800);
   --secondary-foreground: var(--color-zinc-50);
   --muted: var(--color-zinc-900);
-  --muted-foreground: var(--color-zinc-500);
+  --muted-foreground: var(--color-zinc-400);
   --accent: var(--color-zinc-800);
   --accent-foreground: var(--color-zinc-50);
   --destructive: var(--color-red-600);
@@ -125,21 +130,18 @@
 
   --mono: var(--color-white);
   --mono-foreground: var(--color-zinc-950);
-  --success: var(--color-green-600);
-  --success-foreground: var(--color-white);
-  --info: var(--color-violet-500);
-  --info-foreground: var(--color-white);
-  --warning: var(--color-yellow-600);
+  --success: var(--color-green-400);
+  --success-foreground: var(--color-zinc-950);
+  --info: var(--color-violet-400);
+  --info-foreground: var(--color-zinc-950);
+  --warning: var(--color-yellow-400);
   --warning-foreground: var(--color-zinc-950);
 
-  --material-thin: color-mix(in oklab, var(--background) 60%, transparent);
   --material-regular: color-mix(in oklab, var(--background) 76%, transparent);
   --material-thick: color-mix(in oklab, var(--background) 90%, transparent);
   --material-blur: 24px;
   --material-edge: color-mix(in oklab, var(--foreground) 12%, transparent);
   --scrim: color-mix(in oklab, black 62%, transparent);
-  --elev-1: 0 1px 2px 0 color-mix(in oklab, black 45%, transparent);
-  --elev-3: 0 12px 32px -12px color-mix(in oklab, black 60%, transparent);
 
   /* SCM health-state ramp (dark) — brighter ink for contrast on zinc-950,
      soft tints are low-lightness tinted fills. Kept contrast-checked >=4.5:1. */
@@ -231,6 +233,7 @@
 
   --text-2sm: 0.8125rem;
   --text-2sm--line-height: calc(1.075 / 0.8125);
+  --text-2sm--letter-spacing: 0em;
 
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: calc(0.825 / 0.6875);

@@ -4,6 +4,15 @@ import { Button } from '@/components/ui/button';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 
+/**
+ * `--color-<semantic>-accent` is the ink that sits on a TINT (as opposed to
+ * `-foreground`, which sits on the solid fill). S2 defined the base and foreground
+ * tokens only, so every `-accent`, `-soft` and `-alpha` below still resolves to its
+ * inline fallback: the per-site fallbacks disagree with each other (`-soft` falls
+ * back to green-50, -100, -200, -600, -900 and -950 at different call sites), so
+ * defining one value would flip several of them to an invisible fill. The names are
+ * in place for the slice that reconciles them.
+ */
 const alertVariants = cva('flex items-stretch w-full gap-2 group-[.toaster]:w-(--width)', {
   variants: {
     variant: {

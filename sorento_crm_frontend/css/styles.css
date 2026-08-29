@@ -73,17 +73,11 @@
 }
 
 /**
- * Materials - a translucent surface tinted by what is behind it. Thin is the most
- * see-through, thick the most opaque; every one of them collapses to a flat surface
- * under the reduced-transparency and high-contrast preferences at the bottom of this
- * file. Tokens live in config.reui.css.
+ * Materials - a translucent surface tinted by what is behind it. Regular is the
+ * header, thick the sidebar; both collapse to a flat surface under the
+ * reduced-transparency and high-contrast preferences at the bottom of this file.
+ * A thinner step goes in when a consumer arrives. Tokens live in config.reui.css.
  */
-@utility material-thin {
-  background-color: var(--material-thin);
-  -webkit-backdrop-filter: saturate(180%) blur(var(--material-blur));
-  backdrop-filter: saturate(180%) blur(var(--material-blur));
-}
-
 @utility material-regular {
   background-color: var(--material-regular);
   -webkit-backdrop-filter: saturate(180%) blur(var(--material-blur));
@@ -143,12 +137,10 @@
   :root,
   .dark {
     --scrim: color-mix(in oklab, black 72%, transparent);
-    --material-thin: var(--background);
     --material-regular: var(--background);
     --material-thick: var(--background);
   }
 
-  .material-thin,
   .material-regular,
   .material-thick,
   [data-slot='dialog-overlay'],
@@ -167,9 +159,14 @@
     background-color: var(--scrim) !important;
   }
 
-  /* A pinned grid column has rows sliding under it, so it has to be opaque. */
-  [data-pinned] {
+  /* A pinned grid column has rows sliding under it, so it has to be opaque - and
+     the header cell keeps reading as a header rather than as one more body row. */
+  td[data-pinned] {
     background-color: var(--background) !important;
+  }
+
+  th[data-pinned] {
+    background-color: var(--muted) !important;
   }
 }
 
@@ -180,7 +177,6 @@
     --border: var(--color-zinc-400);
     --input: var(--color-zinc-400);
     --muted-foreground: var(--color-zinc-700);
-    --material-thin: var(--background);
     --material-regular: var(--background);
     --material-thick: var(--background);
     --material-edge: var(--color-zinc-400);
@@ -193,7 +189,6 @@
     --material-edge: var(--color-zinc-500);
   }
 
-  .material-thin,
   .material-regular,
   .material-thick,
   [data-slot='dialog-overlay'],
@@ -205,7 +200,11 @@
     backdrop-filter: none !important;
   }
 
-  [data-pinned] {
+  td[data-pinned] {
     background-color: var(--background) !important;
+  }
+
+  th[data-pinned] {
+    background-color: var(--muted) !important;
   }
 }

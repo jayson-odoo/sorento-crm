@@ -68,6 +68,67 @@ function step(value: string): number {
   return Number(match[1]);
 }
 
+/**
+ * WCAG contrast between two palette tokens.
+ *
+ * Tailwind ships its palette as OKLCH, so getting to a luminance means converting
+ * OKLCH -> OKLab -> LMS -> linear sRGB, which is what the two functions below do.
+ * The palette is read from the installed Tailwind rather than copied here, so the
+ * assertion tracks the real values rather than a snapshot of them.
+ */
+const palette: Record<string, string> = (() => {
+  const theme = fs.readFileSync(path.join(root, 'node_modules/tailwindcss/theme.css'), 'utf8');
+  const out: Record<string, string> = {};
+  for (const [, name, value] of theme.matchAll(/(--color-[a-z0-9-]+):\s*([^;]+);/g)) {
+    out[name] = value.trim();
+  }
+  return out;
+})();
+
+/** Linear-light sRGB channels of a palette value (`oklch(...)`, `#fff` or `#000`). */
+function linearRgb(value: string): [number, number, number] {
+  const hex = /^#([0-9a-f]{3,6})$/i.exec(value.trim());
+  if (hex) {
+    const digits = hex[1].length === 3 ? [...hex[1]].map((d) => d + d).join('') : hex[1];
+    return [0, 2, 4].map((i) => {
+      const channel = parseInt(digits.slice(i, i + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+  }
+
+  const oklch = /oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s*\)/.exec(value);
+  if (!oklch) throw new Error(`unsupported colour: ${value}`);
+  const L = Number(oklch[1]) / 100;
+  const C = Number(oklch[2]);
+  const h = (Number(oklch[3]) * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s2 = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s2,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s2,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s2,
+  ];
+}
+
+/** Resolves `var(--color-x)` against the Tailwind palette, then returns luminance. */
+function luminance(tokenValue: string): number {
+  const ref = /var\((--color-[a-z0-9-]+)\)/.exec(tokenValue);
+  const raw = ref ? palette[ref[1]] : tokenValue;
+  if (!raw) throw new Error(`palette miss: ${tokenValue}`);
+  const [r, g, b] = linearRgb(raw).map((c) => Math.min(1, Math.max(0, c)));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 const rootVars = declarations(block(configCss, ':root'));
 const darkVars = declarations(block(configCss, '.dark'));
 const themeInline = declarations(block(configCss, '@theme inline'));
@@ -86,6 +147,27 @@ describe('S2-01 semantic colour tokens', () => {
   it.each(semantic)('exposes --%s through @theme inline so the utility exists', (name) => {
     expect(themeInline[`--color-${name}`]).toBe(`var(--${name})`);
     expect(themeInline[`--color-${name}-foreground`]).toBe(`var(--${name}-foreground)`);
+  });
+
+  it.each(semantic)('pairs --%s with a foreground at 4.5:1 or better in light mode', (name) => {
+    expect(contrast(rootVars[`--${name}`], rootVars[`--${name}-foreground`])).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(semantic)('pairs --%s with a foreground at 4.5:1 or better in dark mode', (name) => {
+    expect(contrast(darkVars[`--${name}`], darkVars[`--${name}-foreground`])).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('keeps semantic ink legible as text on the page background', () => {
+    // text-success / text-info / text-destructive are used as toast ink, so the
+    // token has to work as ink on --background, not only as a solid fill.
+    for (const name of ['success', 'info', 'warning', 'mono']) {
+      expect(contrast(rootVars[`--${name}`], rootVars['--background']), `${name} light`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(darkVars[`--${name}`], darkVars['--background']), `${name} dark`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('keeps secondary ink legible on the dark card', () => {
+    expect(contrast(darkVars['--muted-foreground'], darkVars['--card'])).toBeGreaterThanOrEqual(4.5);
   });
 
   it('renders text-mono darker than body text in light mode', () => {
@@ -177,6 +259,14 @@ describe('S2-04 accessibility preference blocks', () => {
     expect(reduced).toMatch(/animation-duration:\s*150ms/);
   });
 
+  it('gives every -content slot the reduced-motion rule to bite on', () => {
+    // The rule keys off [data-slot$='-content'], so a primitive without the attribute
+    // keeps sliding under prefers-reduced-motion.
+    for (const file of ['dialog.tsx', 'alert-dialog.tsx', 'sheet.tsx']) {
+      expect(read(`components/ui/${file}`), file).toMatch(/data-slot="[a-z-]+-content"/);
+    }
+  });
+
   it('stops pulse and bounce but keeps spinners spinning', () => {
     const reduced = reducedMotion();
     expect(reduced).toContain('.animate-pulse');
@@ -201,8 +291,10 @@ describe('S2-04 accessibility preference blocks', () => {
 });
 
 describe('S2-05 materials and the z-scale', () => {
-  const materialTokens = ['--material-thin', '--material-regular', '--material-thick', '--scrim', '--elev-1', '--elev-3'];
-  const zTokens = ['--z-header', '--z-sidebar', '--z-banner', '--z-overlay', '--z-modal', '--z-toast'];
+  // Only the steps with a consumer are defined; a thin material, the --elev-* shadow
+  // steps and an overlay/toast z step go in when one arrives.
+  const materialTokens = ['--material-regular', '--material-thick', '--scrim'];
+  const zTokens = ['--z-header', '--z-sidebar', '--z-banner', '--z-modal'];
 
   it.each(materialTokens)('defines %s in :root and .dark', (token) => {
     expect(rootVars[token]).toBeTruthy();
@@ -216,13 +308,11 @@ describe('S2-05 materials and the z-scale', () => {
   it('orders the z-scale so the banner sits above the shell and below the lightbox', () => {
     expect(Number(rootVars['--z-header'])).toBeLessThan(Number(rootVars['--z-sidebar']));
     expect(Number(rootVars['--z-sidebar'])).toBeLessThan(Number(rootVars['--z-banner']));
-    expect(Number(rootVars['--z-banner'])).toBeLessThan(Number(rootVars['--z-overlay']));
-    expect(Number(rootVars['--z-overlay'])).toBeLessThan(Number(rootVars['--z-modal']));
-    expect(Number(rootVars['--z-modal'])).toBeLessThan(Number(rootVars['--z-toast']));
+    expect(Number(rootVars['--z-banner'])).toBeLessThan(Number(rootVars['--z-modal']));
   });
 
   it('ships the material utilities and the hairline edge', () => {
-    for (const name of ['material-thin', 'material-regular', 'material-thick', 'material-edge']) {
+    for (const name of ['material-regular', 'material-thick', 'material-edge']) {
       expect(stylesCss).toContain(`@utility ${name}`);
     }
   });
