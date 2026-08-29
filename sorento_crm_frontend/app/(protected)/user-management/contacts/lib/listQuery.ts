@@ -8,11 +8,11 @@
  */
 
 import type { QueryKey } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api';
-import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
-import type { RespondContact } from '../types/contact.types';
+import {
+  getContacts,
+  type RespondContactListResponse,
+} from '../[id]/services/contactService';
 
 export type ContactsListParams = ListPagerParams;
 
@@ -26,10 +26,10 @@ export function contactsListQueryKey(params: ContactsListParams): QueryKey {
   ];
 }
 
-export async function fetchContactsPage(
+export function fetchContactsPage(
   params: ContactsListParams,
-): Promise<DataGridApiResponse<RespondContact>> {
-  const search = buildDataGridParams({
+): Promise<RespondContactListResponse> {
+  return getContacts({
     pageIndex: params.pageIndex,
     pageSize: params.pageSize,
     // The list GET wants a sort even when the grid has none, and `created_at`
@@ -37,9 +37,6 @@ export async function fetchContactsPage(
     sorting: params.sorting.length ? params.sorting : [{ id: 'created_at', desc: true }],
     searchQuery: params.searchQuery,
   });
-  const response = await apiFetch(`/api/user-management/contacts?${search.toString()}`);
-  if (!response.ok) throw new Error('Failed to fetch contacts');
-  return response.json();
 }
 
 /** The pager's two hooks into the contacts list. */

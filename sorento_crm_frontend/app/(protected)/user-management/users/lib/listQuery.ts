@@ -12,17 +12,12 @@
  */
 
 import type { QueryKey } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api';
-import { buildDataGridParams } from '@/lib/api-client';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
-import type { User } from '@/app/models/user';
+import { getUsers, type UserListResponse } from '../services/userService';
 
 export type UsersListParams = ListPagerParams;
 
-export interface UsersListPage extends ListPagerPage {
-  data: User[];
-  pagination: { total: number; page: number };
-}
+export type UsersListPage = UserListResponse & ListPagerPage;
 
 /** The list's filters as the URL carries them (defaults dropped). */
 export function usersListFilters({
@@ -52,26 +47,8 @@ export function usersListQueryKey(params: UsersListParams): QueryKey {
   ];
 }
 
-export async function fetchUsersListPage(
+export function fetchUsersListPage(
   params: UsersListParams,
 ): Promise<UsersListPage> {
-  const search = buildDataGridParams(params, params.filters);
-  const response = await apiFetch(`/api/user-management/users?${search.toString()}`);
-
-  if (!response.ok) {
-    throw new Error(
-      'Oops! Something didn’t go as planned. Please try again in a moment.',
-    );
-  }
-
-  const json = await response.json();
-  if (json.data?.length) {
-    json.data = json.data.map((u: Record<string, unknown>) => ({
-      ...u,
-      isTrashed: u.is_trashed ?? u.isTrashed,
-      dailySlaSummarySubscribed:
-        u.daily_sla_summary_subscribed ?? u.dailySlaSummarySubscribed ?? true,
-    }));
-  }
-  return json as UsersListPage;
+  return getUsers(params, params.filters);
 }

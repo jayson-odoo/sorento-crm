@@ -316,7 +316,7 @@ export default function ContactsList() {
   const table = useReactTable({
     columns,
     data: data?.data || [],
-    pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
+    pageCount: Math.ceil((data?.pagination?.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
     state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
@@ -341,7 +341,7 @@ export default function ContactsList() {
     <DataGrid
       table={table}
       tableLayout={{ columnsVisibility: true }}
-      recordCount={data?.pagination.total || 0}
+      recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
     >
