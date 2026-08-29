@@ -578,7 +578,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             )}
             {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={() => setVoidDialogOpen(true)}
               >
                 <Ban className="size-4" />
@@ -587,7 +587,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             )}
             {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={() => setDeleteDialogOpen(true)}
               >
                 <Trash2 className="size-4" />

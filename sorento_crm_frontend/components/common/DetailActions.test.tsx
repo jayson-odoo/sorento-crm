@@ -20,6 +20,8 @@ vi.mock('./ListPager', () => ({
 }));
 
 import { RowActionsMenu } from './RowActionsMenu';
+import { DetailActionsMenu } from './DetailActionsMenu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import type { RecordAction } from './recordActions';
 
 const impersonate = vi.fn();
@@ -123,6 +125,75 @@ describe('DetailActions', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Send invitation link' }));
 
     expect(invite).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DetailActionsMenu, children mode', () => {
+  /**
+   * The fifteen workflow gears pass menu items rather than a `RecordAction[]`,
+   * because their secondary actions are a status graph, not a record action set.
+   * They must still look like every other gear, and that cannot be left to
+   * fifteen call sites remembering it.
+   */
+  function workflowGear() {
+    return (
+      <DetailActions
+        gear={
+          <DetailActionsMenu ariaLabel="Actions">
+            <DropdownMenuItem onSelect={() => {}}>Send for approval</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => {}}>
+              Void
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => {}}>Export to Excel</DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => {}}>
+              Delete
+            </DropdownMenuItem>
+          </DetailActionsMenu>
+        }
+      />
+    );
+  }
+
+  it('S3-02: the destructive children go last, behind a separator the menu adds itself', () => {
+    render(workflowGear());
+
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+
+    expect(menuItemLabels()).toEqual([
+      'Send for approval',
+      'Export to Excel',
+      'Void',
+      'Delete',
+    ]);
+
+    const menu = screen.getByRole('menu');
+    const rows = Array.from(menu.children);
+    const separators = rows.filter((el) => el.getAttribute('role') === 'separator');
+    expect(separators).toHaveLength(1);
+    expect(rows.indexOf(separators[0])).toBe(
+      rows.indexOf(screen.getByRole('menuitem', { name: 'Void' })) - 1,
+    );
+  });
+
+  it('S3-02: a gear with no destructive child gets no separator', () => {
+    render(
+      <DetailActions
+        gear={
+          <DetailActionsMenu ariaLabel="Actions">
+            <DropdownMenuItem onSelect={() => {}}>Send for approval</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => {}}>Export to Excel</DropdownMenuItem>
+          </DetailActionsMenu>
+        }
+      />,
+    );
+
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+
+    expect(
+      Array.from(screen.getByRole('menu').children).filter(
+        (el) => el.getAttribute('role') === 'separator',
+      ),
+    ).toHaveLength(0);
   });
 });
 

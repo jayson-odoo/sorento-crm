@@ -270,7 +270,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
               Issue a new link
             </DropdownMenuItem>
             <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
+              variant="destructive"
               onSelect={(e) => {
                 e.preventDefault();
                 setDeleteOpen(true);

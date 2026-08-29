@@ -778,7 +778,7 @@ export default function PurchaseRequestDetail({
             )}
             {canVoid && !isVoided && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={() => setVoidDialogOpen(true)}
               >
                 <Ban className="size-4" />

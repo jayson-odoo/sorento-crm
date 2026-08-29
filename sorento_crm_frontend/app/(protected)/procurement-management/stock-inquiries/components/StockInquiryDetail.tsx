@@ -655,7 +655,7 @@ export default function StockInquiryDetail({
             </DropdownMenuItem>
             {canVoid && !isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={() => setVoidDialogOpen(true)}
               >
                 <Ban className="size-4" />
@@ -664,7 +664,7 @@ export default function StockInquiryDetail({
             )}
             {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={() => setDeleteDialogOpen(true)}
               >
                 <Trash2 className="size-4" />
