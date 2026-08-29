@@ -5,10 +5,6 @@ import * as React from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
   addStakeholder,
   changeProjectStatus,
   changeTaskStatus,
@@ -57,7 +53,6 @@ import {
   updateSample,
   deleteSample,
   listPurchaseOrders,
-  purchaseOrderNeighboursPath,
   createPurchaseOrder,
   updatePurchaseOrder,
   deletePurchaseOrder,
@@ -1335,22 +1330,6 @@ export function usePurchaseOrders(projectId: string | undefined) {
   });
 }
 
-/**
- * Prev/next within the project's purchase orders, so a reviewer can walk them one by one
- * rather than going back to the tab between each.
- *
- * No list params are sent: the PO list is a project tab rather than a filtered grid, so the
- * sequence is the project's own order (PO date newest first), which is what the tab shows.
- */
-export function usePurchaseOrderNeighbours(
-  projectId: string | undefined,
-  poId: string | undefined,
-): RecordNeighboursResult {
-  return useRecordNeighbours(
-    purchaseOrderNeighboursPath(projectId ?? ''),
-    projectId ? (poId ?? null) : null,
-  );
-}
 
 export function usePurchaseOrderLines(poId: string | undefined) {
   return useQuery({

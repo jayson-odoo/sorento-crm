@@ -33,7 +33,6 @@ from app.schemas.project_schedule import (
     ScheduleProductResolve,
 )
 from app.services import project_po_service as po_svc
-from app.services import project_record_navigation as record_nav
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_schedule_service import ProjectScheduleService
@@ -227,25 +226,6 @@ def _page_count(content: bytes, mime: str) -> Optional[int]:
     except Exception:  # noqa: BLE001 - a page count is information, not a gate
         logger.warning("could not count pages on the uploaded schedule", exc_info=True)
         return None
-
-
-@router.get("/delivery-schedule-versions/neighbours")
-async def get_delivery_schedule_version_neighbours(
-    id: str = Query(..., description="Schedule version id to resolve neighbours for"),
-    _user: dict = Depends(require_permission(VIEW)),
-    db: Session = Depends(get_db),
-):
-    """Prev/next of one version within its own schedule's revision history.
-
-    BEFORE `/delivery-schedule-versions/{version_id}`, or that route captures `neighbours`
-    as a version id. The same set, in the same order, `/delivery-schedules/{id}/versions`
-    lists: newest first, circular, `{total, index, prev_id, next_id}`.
-    """
-    try:
-        validate_uuid_path(id, resource="Delivery schedule version")
-        return record_nav.schedule_version_neighbours(db, version_id=id)
-    except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get(

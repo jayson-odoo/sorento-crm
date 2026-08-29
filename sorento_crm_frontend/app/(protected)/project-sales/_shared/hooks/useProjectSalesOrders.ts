@@ -2,42 +2,10 @@
 
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
 import { allocationsKey } from './useProjectAllocations';
-import {
-  acknowledgeFinding,
-  acknowledgeScheduleFinding,
-  buildSalesOrders,
-  bulkDeleteProjectSalesOrders,
-  bulkSetLinesStockLocation,
-  createAmendment,
-  deleteProjectSalesOrder,
-  downloadAmendmentAutocountChangeListXlsx,
-  downloadSalesOrderImportFile,
-  getAmendment,
-  getAmendmentAutocountChangeList,
-  getProjectSalesOrder,
-  getSalesOrderWorksheet,
-  listPoVersions,
-  listProjectSalesOrders,
-  listScheduleFindings,
-  listScheduleVersions,
-  previewAmendment,
-  publishAmendment,
-  publishSalesOrder,
-  regroupSalesOrder,
-  reorderSalesOrderLines,
-  salesOrderNeighboursPath,
-  saveSalesOrderDocument,
-  unpublishSalesOrder,
-  updateAmendmentRowDecisions,
-  updateSalesOrderLine,
-} from '../services/projectSalesOrderService';
+import { acknowledgeFinding, acknowledgeScheduleFinding, buildSalesOrders, bulkDeleteProjectSalesOrders, bulkSetLinesStockLocation, createAmendment, deleteProjectSalesOrder, downloadAmendmentAutocountChangeListXlsx, downloadSalesOrderImportFile, getAmendment, getAmendmentAutocountChangeList, getProjectSalesOrder, getSalesOrderWorksheet, listPoVersions, listProjectSalesOrders, listScheduleFindings, listScheduleVersions, previewAmendment, publishAmendment, publishSalesOrder, regroupSalesOrder, reorderSalesOrderLines, saveSalesOrderDocument, unpublishSalesOrder, updateAmendmentRowDecisions, updateSalesOrderLine } from '../services/projectSalesOrderService';
 import type {
   AmendmentCreateBody,
   AmendmentDetail,
@@ -117,23 +85,6 @@ export function useProjectSalesOrder(psoId: string | undefined) {
   });
 }
 
-/**
- * Prev/next within the project's sales orders, so a reviewer can walk them one by one
- * rather than going back to the list between each.
- *
- * No list params are sent: the detail page is reached from a tab rather than from a
- * filtered grid, so the sequence is the project's own default order (newest first), which
- * is what the tab shows.
- */
-export function useProjectSalesOrderNeighbours(
-  projectId: string | undefined,
-  psoId: string | undefined,
-): RecordNeighboursResult {
-  return useRecordNeighbours(
-    salesOrderNeighboursPath(projectId ?? ''),
-    projectId ? (psoId ?? null) : null,
-  );
-}
 
 /**
  * The AutoCount worksheet for one order. Separate from the draft query rather than a field

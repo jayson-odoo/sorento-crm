@@ -1,12 +1,8 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import {
   getPromotions,
   getPromotion,
@@ -23,30 +19,11 @@ import {
   updatePromotionGroup,
   deletePromotionGroup,
   compilePromotionsPdf,
-  PROMOTION_NEIGHBOURS_PATH,
   type PromotionsListParams,
 } from '../services/promotionService';
 import { resubmitAttachmentWebhook } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import type { PromotionFormData } from '../types/promotion.types';
 
-/**
- * Prev/next neighbours of a promotion within the active filtered+sorted list set.
- * Serializes the list query (search/sort/status/user_type/attachment_state) with
- * `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by the
- * neighbours endpoint.
- */
-export function usePromotionNeighbours(
-  promotionId: string | null,
-  listParams: PromotionsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    status: listParams.status,
-    user_type: listParams.user_type,
-    attachment_state: listParams.attachment_state,
-  });
-  return useRecordNeighbours(PROMOTION_NEIGHBOURS_PATH, promotionId, params);
-}
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from

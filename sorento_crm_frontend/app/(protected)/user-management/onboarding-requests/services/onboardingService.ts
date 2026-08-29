@@ -37,8 +37,6 @@ import type {
 
 const BASE = '/api/user-management/onboarding';
 
-/** Where the detail page's prev/next pager reads its neighbours from. */
-export const ONBOARDING_NEIGHBOURS_PATH = `${BASE}/requests/neighbours`;
 
 export type OnboardingRequestListParams = DataGridApiFetchParams & {
   /** A single `onboarding_request` status code, or undefined for all. */

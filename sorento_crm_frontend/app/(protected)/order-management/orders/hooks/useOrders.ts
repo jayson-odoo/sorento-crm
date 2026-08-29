@@ -1,13 +1,8 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
-  ORDER_NEIGHBOURS_PATH,
   getOrders,
   getOrder,
   createOrder,
@@ -31,29 +26,6 @@ export type OrderNeighboursListParams = DataGridApiFetchParams & {
   has_order_lines?: 'all' | 'yes' | 'no';
 };
 
-/**
- * Prev/next neighbours of an order within the active filtered+sorted list set.
- * Serializes the list query (search/sort) with `buildDataGridParams` - the same
- * serialization the list page uses - and threads the order-specific filters
- * (order_status_id, has_order_lines) so the backend honours filters identically.
- * `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useOrderNeighbours(
-  orderId: string | null,
-  listParams: OrderNeighboursListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    order_status_id:
-      listParams.order_status_id && listParams.order_status_id !== 'all'
-        ? listParams.order_status_id
-        : undefined,
-    has_order_lines:
-      listParams.has_order_lines && listParams.has_order_lines !== 'all'
-        ? listParams.has_order_lines
-        : undefined,
-  });
-  return useRecordNeighbours(ORDER_NEIGHBOURS_PATH, orderId, params);
-}
 
 /** Everything the orders list filters by. */
 export type OrdersListParams = DataGridApiFetchParams & {

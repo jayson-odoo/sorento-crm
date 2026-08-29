@@ -1,33 +1,11 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions, FORM_NEIGHBOURS_PATH } from '../services/formService';
+
+import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions } from '../services/formService';
 import type { FormsListParams } from '../services/formService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import type { FormFormData } from '../types/form.types';
 
-/**
- * Prev/next neighbours of a form within the active filtered+sorted list set.
- * Serializes the list query (search/sort/language/status/form_type) with
- * `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by
- * the neighbours endpoint.
- */
-export function useFormNeighbours(
-  formId: string | null,
-  listParams: FormsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    language: listParams.language,
-    status: listParams.status,
-    form_type: listParams.form_type,
-  });
-  return useRecordNeighbours(FORM_NEIGHBOURS_PATH, formId, params);
-}
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from

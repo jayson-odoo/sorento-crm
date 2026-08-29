@@ -1,12 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import { STOCK_INQUIRY_NEIGHBOURS_PATH } from '../services/stockInquiryService';
 import {
   getStockInquiries,
   getStockInquiry,
@@ -38,22 +33,6 @@ export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
 };
 
-/**
- * Prev/next neighbours of a stock inquiry within the active filtered+sorted list
- * set. Serializes the list query (search/sort/status) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useStockInquiryNeighbours(
-  inquiryId: string | null,
-  listParams: StockInquiriesListParams,
-): RecordNeighboursResult {
-  const statuses = listParams.statuses?.filter(Boolean) ?? [];
-  const params = buildDataGridParams(listParams, {
-    status: statuses.length ? statuses.join(',') : undefined,
-  });
-  return useRecordNeighbours(STOCK_INQUIRY_NEIGHBOURS_PATH, inquiryId, params);
-}
 
 /**
  * `enabled` lets the list hold the fetch until the user's remembered sort and filter

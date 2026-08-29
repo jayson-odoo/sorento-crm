@@ -1,16 +1,8 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
-  COMPLAINT_NEIGHBOURS_PATH,
-  complaintListExtraParams,
-  type ComplaintsListParams,
-} from '../services/complaintService';
+
+import { type ComplaintsListParams } from '../services/complaintService';
 import {
   getComplaints,
   getComplaint,
@@ -37,22 +29,6 @@ import {
 import type { ComplaintFormData } from '../types/complaint.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-/**
- * Prev/next neighbours of a complaint within the active filtered+sorted list set.
- * Serializes the list query (search/sort/assignee/status) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useComplaintNeighbours(
-  complaintId: string | null,
-  listParams: ComplaintsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(
-    listParams,
-    complaintListExtraParams(listParams),
-  );
-  return useRecordNeighbours(COMPLAINT_NEIGHBOURS_PATH, complaintId, params);
-}
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from

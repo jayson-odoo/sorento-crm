@@ -58,18 +58,6 @@ export async function listDeliveryScheduleVersions(
   return body.data;
 }
 
-/**
- * Prev/next neighbours of a schedule VERSION within its own schedule's revision history -
- * the same set, in the same order, that `/delivery-schedules/{id}/versions` lists (newest
- * first). Read by the generic `useRecordNeighbours` hook.
- *
- *   GET /api/v1/project-sales/delivery-schedule-versions/neighbours?id=<version_id>
- *   200 { total, index, prev_id, next_id }
- *     - index is 1-based, null when the version is not in the set.
- *     - prev_id/next_id wrap circularly; null only when total <= 1.
- *   404 when the version id names nothing.
- */
-export const DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH = `${BASE}/delivery-schedule-versions/neighbours`;
 
 export async function getDeliveryScheduleVersion(
   versionId: string,

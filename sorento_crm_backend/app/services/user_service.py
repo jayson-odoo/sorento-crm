@@ -1292,29 +1292,6 @@ class AccessAgentService:
             "empty": total == 0
         }
 
-    def neighbours(self, agent_id: str, query: Optional[str] = None) -> dict:
-        """Resolve prev/next neighbours for ``agent_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(AccessAgent.id).all()]
-
-        filtered_q = self._build_list_query(query=query)
-        result = compute_neighbours(_ordered_ids(filtered_q), agent_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all agents.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), agent_id)
-
     def get_agent(self, agent_id: str):
         """Get an access agent by ID."""
         agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()

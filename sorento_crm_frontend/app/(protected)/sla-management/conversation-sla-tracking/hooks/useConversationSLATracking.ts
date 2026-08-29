@@ -1,11 +1,7 @@
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
 import {
   getConversationSLATracking,
@@ -21,40 +17,12 @@ import {
   getSlaTrackingConversationPage,
   searchSlaTrackingConversation,
   postSlaTrackingConversationReply,
-  CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
   type ConversationSLATestOverridesBody,
   type ConversationSLATrackingListParams,
 } from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-/**
- * Prev/next neighbours of a conversation SLA tracking row within the active
- * filtered+sorted list set. Serializes the list query (search/sort/policy/assignee)
- * with `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by the
- * neighbours endpoint; `scope` is fixed to conversation server-side.
- */
-export function useConversationSLATrackingNeighbours(
-  trackingId: string | null,
-  listParams: ConversationSLATrackingListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    policy_id: listParams.policy_id,
-    assigned_to: listParams.assigned_to,
-    // AC-M2: the pager must walk the same pre-filtered history set the user
-    // landed on, or "next" silently leaves it.
-    contact: listParams.contact,
-    is_resolved:
-      listParams.is_resolved === undefined ? undefined : String(listParams.is_resolved),
-    resolved_by: listParams.resolved_by,
-  });
-  return useRecordNeighbours(
-    CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
-    trackingId,
-    params,
-  );
-}
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from

@@ -1,39 +1,14 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { decodeAdvancedFilter } from '@/lib/listNavQuery';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
-  getSuppliers,
-  getSupplier,
-  createSupplier,
-  updateSupplier,
-  deleteSupplier,
-  SUPPLIER_NEIGHBOURS_PATH,
-  type SuppliersListParams,
-} from '../services/supplierService';
+import { getSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier } from '../services/supplierService';
 import type { Supplier, SupplierFormData } from '../types/supplier.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
-/**
- * Prev/next neighbours of a supplier within the active filtered+sorted list set.
- * Serializes the list query (search/sort) with `buildDataGridParams` - the same
- * serialization the list page uses - so the backend honours the filter/sort
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useSupplierNeighbours(
-  supplierId: string | null,
-  listParams: SuppliersListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams);
-  return useRecordNeighbours(SUPPLIER_NEIGHBOURS_PATH, supplierId, params);
-}
 
 export type SuppliersListQueryParams = DataGridApiFetchParams & {
   country?: string;

@@ -70,29 +70,6 @@ async def get_access_agents(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_access_agent_neighbours(
-    id: str = Query(..., description="Access agent id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("user_management.access_agents.view")),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of an access agent within the active filtered list set.
-
-    Accepts the same search param as the list GET (page/limit are irrelevant and
-    ignored). Returns ``{total, index, prev_id, next_id}`` with the 1-based ``index``
-    and circular wrap-around neighbours. If the record is not in the filtered set,
-    falls back to the unfiltered, default-sorted set.
-    """
-    try:
-        service = AccessAgentService(db)
-        return service.neighbours(agent_id=id, query=query)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{agent_id}", response_model=AccessAgentResponse)
 async def get_access_agent(
     agent_id: str,

@@ -13,19 +13,14 @@
 
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
+
 import {
   applyPersonPatch,
   type OnboardingPersonPatch,
   type OnboardingRequestDetail,
 } from '@/components/common/onboarding/types';
 import {
-  ONBOARDING_NEIGHBOURS_PATH,
   approveOnboardingPerson,
   approveOnboardingRequest,
   createOnboardingRequest,
@@ -102,18 +97,6 @@ export function useOnboardingRequest(id: string | null) {
   });
 }
 
-/**
- * Prev/next within the list query the reviewer navigated from. Serialized with
- * `buildDataGridParams`, the same way the list page sends it, so the backend
- * walks the identical filtered+sorted set.
- */
-export function useOnboardingRequestNeighbours(
-  requestId: string | null,
-  listParams: DataGridApiFetchParams & { statusKey?: string },
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, { status_key: listParams.statusKey });
-  return useRecordNeighbours(ONBOARDING_NEIGHBOURS_PATH, requestId, params);
-}
 
 export function useCreateOnboardingRequest() {
   const queryClient = useQueryClient();

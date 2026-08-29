@@ -36,23 +36,6 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   discontinued_batch_id?: string;
 }
 
-/**
- * Path of the products neighbours endpoint. Consumed by `useProductNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract (see docs/plans/PLAN-record-navigation-standardization.md §7):
- *   GET /api/v1/master-data/products/neighbours
- *   Query params: id=<uuid|sku> + the SAME params the list GET accepts
- *                 (query, category_id, brand_id, status, discontinued_batch_id,
- *                 price_min, price_max, item_type, sort, dir). page/limit ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const PRODUCT_NEIGHBOURS_PATH =
-  '/api/v1/master-data/products/neighbours';
 
 /**
  * Get products with pagination, sorting, and filtering

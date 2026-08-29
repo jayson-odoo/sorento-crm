@@ -1,10 +1,6 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import {
   getGRNs,
   getGRN,
@@ -12,7 +8,6 @@ import {
   updateGRN,
   deleteGRN,
   bulkDeleteGRNs,
-  GRN_NEIGHBOURS_PATH,
   type GRNListParams,
 } from '../services/grnService';
 import type { GRNFormData } from '../types/grn.types';
@@ -67,25 +62,6 @@ export function useGRNs(params: GRNListParams) {
   });
 }
 
-/**
- * Prev/next neighbours of a GRN within the active filtered+sorted list set.
- * Serializes the list query (search/sort/status filters) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useGRNNeighbours(
-  grnId: string | null,
-  listParams: GRNListParams,
-): RecordNeighboursResult {
-  // Only forward filters the list GET actually honours (picking/inspection status).
-  // `spo_allocation_id` is not a server-side filter on the GRN list, so it is
-  // intentionally not threaded into neighbours.
-  const params = buildDataGridParams(listParams, {
-    picking_status: listParams.picking_status,
-    inspection_status: listParams.inspection_status,
-  });
-  return useRecordNeighbours(GRN_NEIGHBOURS_PATH, grnId, params);
-}
 
 export function useGRN(id: string | null) {
   return useQuery({

@@ -1,11 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
 import {
   getPurchaseRequests,
   getPurchaseRequest,
@@ -17,41 +13,14 @@ import {
   updatePurchaseRequestAndReply,
   deletePurchaseRequestAttachment,
   getPurchaseRequestConversation,
-  PURCHASE_REQUEST_NEIGHBOURS_PATH,
   exportPurchaseRequestPdf,
 } from '../services/purchaseRequestService';
-import type {
-  PurchaseRequestUpdateAndReplyData,
-  PurchaseRequestsListParams,
-} from '../services/purchaseRequestService';
+import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-/**
- * Prev/next neighbours of a purchase request / sponsorship form within the active
- * filtered+sorted list set. Serializes the list query (search/sort/request_type/
- * approval_status/assigned_to) with `buildDataGridParams` - the same serialization
- * the list page uses - so the backend honours filters identically. `request_type`
- * is forwarded so PR navigation stays within PRs and SF within SFs. `page`/`limit`
- * are sent but ignored by the neighbours endpoint.
- */
-export function usePurchaseRequestNeighbours(
-  requestId: string | null,
-  listParams: PurchaseRequestsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    request_type: listParams.request_type,
-    approval_status: listParams.approval_status,
-    assigned_to: listParams.assigned_to,
-  });
-  return useRecordNeighbours(
-    PURCHASE_REQUEST_NEIGHBOURS_PATH,
-    requestId,
-    params,
-  );
-}
 
 export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
   requestType?: string;

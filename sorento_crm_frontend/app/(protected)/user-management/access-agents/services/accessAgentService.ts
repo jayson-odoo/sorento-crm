@@ -4,22 +4,6 @@ import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentA
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import { getTeams } from '@/app/(protected)/user-management/teams/services/teamService';
 
-/**
- * Path of the access-agents neighbours endpoint. Consumed by `useAccessAgentNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
- *   GET /api/v1/user-management/access-agents/neighbours
- *   Query params: id=<uuid> + the SAME param the list GET accepts (query).
- *                 page/limit are ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const ACCESS_AGENT_NEIGHBOURS_PATH =
-  '/api/v1/user-management/access-agents/neighbours';
 
 export async function getAccessAgents(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<AccessAgent>> {
   const queryParams = buildDataGridParams(params, { status: params.status });

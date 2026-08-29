@@ -148,16 +148,6 @@ def test_complaints_with_no_root_cause_are_excluded_when_filtering(db: Session, 
     assert f"{_MARK}-NONE" not in numbers
 
 
-def test_neighbours_honours_the_same_filter(db: Session, seeded) -> None:
-    """The detail pager must walk the filtered set, not the whole table."""
-    svc = ComplaintService(db)
-    target = (
-        db.query(Complaint).filter(Complaint.complaint_number == f"{_MARK}-A1").first()
-    )
-    out = svc.neighbours(complaint_id=target.id, root_cause_ids=[seeded["rc_a"].id])
-    assert out["total"] == 2
-
-
 class TestCsvIds:
     """The route-level parser for the comma-separated query params."""
 

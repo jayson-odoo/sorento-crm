@@ -1,29 +1,12 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
-import { ACCESS_AGENT_NEIGHBOURS_PATH, getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
-/**
- * Prev/next neighbours of an access agent within the active filtered+sorted list set.
- * Serializes the list query (search) with `buildDataGridParams` - the same
- * serialization the list page uses - so the backend honours filters identically.
- * `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useAccessAgentNeighbours(
-  agentId: string | null,
-  listParams: DataGridApiFetchParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams);
-  return useRecordNeighbours(ACCESS_AGENT_NEIGHBOURS_PATH, agentId, params);
-}
 
 export type AccessAgentsListParams = DataGridApiFetchParams & { status?: string };
 

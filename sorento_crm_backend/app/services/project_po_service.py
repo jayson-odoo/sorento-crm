@@ -565,7 +565,7 @@ def list_pos(db: Session, *, project_id: str) -> List[ProjectPurchaseOrder]:
             ProjectPurchaseOrder.created_at.desc(),
             # The number breaks the tie, so two POs imported in one pass cannot come back
             # in a different order each time - the detail pager
-            # (project_record_navigation.purchase_order_neighbours) carries the same
+            # (the record page's pager, which walks the same
             # tie-breaker and has to walk the list it came from.
             ProjectPurchaseOrder.po_number.asc(),
         )
