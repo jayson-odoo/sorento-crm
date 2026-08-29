@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import DetailActions from '@/components/common/DetailActions';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
@@ -97,6 +98,9 @@ export default function ConversationSLATrackingDetail({
   // own backHref; its records live in the form scope, so it gets no conversation pager.
   const isConversationContext =
     backHref === '/sla-management/conversation-sla-tracking';
+  // Delete lands where Back lands: the list page, sort, search and filters the
+  // reader left, which the row click wrote into this URL.
+  const backListHref = useBackToListHref(backHref);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -197,7 +201,7 @@ export default function ConversationSLATrackingDetail({
   const handleDelete = () => {
     deleteMutation.mutate(trackingId, {
       onSuccess: () => {
-        router.push(backHref);
+        router.push(backListHref);
       },
     });
   };
@@ -215,7 +219,7 @@ export default function ConversationSLATrackingDetail({
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">SLA tracking not found</p>
-        <Button variant="outline" onClick={() => router.push(backHref)} className="mt-4">
+        <Button variant="outline" onClick={() => router.push(backListHref)} className="mt-4">
           Back to {backLabel}
         </Button>
       </div>

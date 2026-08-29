@@ -20,6 +20,22 @@ export interface BackToListProps {
 }
 
 /**
+ * The href this page's Back button points at.
+ *
+ * Deleting a record from its own page has to land where Back would have landed
+ * (the page, sort, search and filters the reader left the list on), so both read
+ * the same function rather than each rebuilding the string.
+ */
+export function useBackToListHref(
+  listPath: string,
+  appendListState = true,
+): string {
+  const searchParams = useSearchParams();
+  const search = appendListState ? searchParams.toString() : '';
+  return search ? `${listPath}?${search}` : listPath;
+}
+
+/**
  * The ONLY thing on a detail page's toolbar action row (D6, S3-01).
  *
  * The list wrote its state into the detail URL when the row was clicked; this
@@ -32,9 +48,7 @@ export default function BackToList({
   appendListState = true,
   className,
 }: BackToListProps) {
-  const searchParams = useSearchParams();
-  const search = appendListState ? searchParams.toString() : '';
-  const href = search ? `${listPath}?${search}` : listPath;
+  const href = useBackToListHref(listPath, appendListState);
 
   return (
     <Button asChild variant="outline" className={className}>

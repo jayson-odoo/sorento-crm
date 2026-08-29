@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -83,6 +84,7 @@ interface PromotionDetailProps {
 
 export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/marketing-management/promotions');
   const { data: promotion, isLoading } = usePromotion(promotionId);
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
@@ -98,7 +100,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const deleteGroupMutation = useDeletePromotionGroup();
 
   const { actions, dialogs } = usePromotionActions(promotionId, {
-    onDeleted: () => router.push('/marketing-management/promotions'),
+    onDeleted: () => router.push(backHref),
   });
   const [addProductDialogOpen, setAddProductDialogOpen] = useState(false);
   const [addProductGroupId, setAddProductGroupId] = useState<string>('');

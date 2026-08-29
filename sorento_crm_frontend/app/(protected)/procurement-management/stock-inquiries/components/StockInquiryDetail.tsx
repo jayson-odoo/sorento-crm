@@ -17,6 +17,7 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { RevisionBanner } from '@/components/common/RevisionBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -88,6 +89,7 @@ export default function StockInquiryDetail({
   inquiryId,
 }: StockInquiryDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/stock-inquiries');
   const isValidId = inquiryId && inquiryId !== 'new' && inquiryId !== 'edit';
   const { data: inquiry, isLoading } = useStockInquiry(
     isValidId ? inquiryId : null,
@@ -891,7 +893,7 @@ export default function StockInquiryDetail({
           closeDialog={() => setDeleteDialogOpen(false)}
           inquiry={inquiry}
           onSuccess={() => {
-            router.push('/procurement-management/stock-inquiries');
+            router.push(backHref);
           }}
         />
       )}

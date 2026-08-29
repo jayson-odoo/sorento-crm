@@ -13,6 +13,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -98,6 +99,7 @@ export default function WarehouseDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const backHref = useBackToListHref('/inventory-management/warehouses');
   const { data: warehouse, isLoading } = useWarehouse(id);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -263,7 +265,7 @@ export default function WarehouseDetailPage({
         onDelete={async () => {
           await deleteWarehouse(id);
         }}
-        onSuccess={() => router.push('/inventory-management/warehouses')}
+        onSuccess={() => router.push(backHref)}
         queryKeysToInvalidate={[['warehouses']]}
       />
     </>

@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,9 +18,10 @@ interface CustomerDetailProps {
 
 export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/order-management/customers');
   const { data: customer, isLoading } = useCustomer(customerId);
   const { actions, dialogs } = useCustomerActions(customer, {
-    onDeleted: () => router.push('/order-management/customers'),
+    onDeleted: () => router.push(backHref),
   });
 
   if (isLoading) {

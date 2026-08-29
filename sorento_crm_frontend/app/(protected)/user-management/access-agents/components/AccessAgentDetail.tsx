@@ -6,6 +6,7 @@ import { Edit, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from '
 import AccessAgentFormModal from './AccessAgentFormModal';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -111,6 +112,7 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
 
 export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/user-management/access-agents');
   const { data: accessAgent, isLoading } = useAccessAgent(accessAgentId);
   const {
     data: agentTeamsData,
@@ -120,7 +122,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   const { data: teamsList = [] } = useTeams();
   const { activeCompany } = useCompany();
   const { actions, dialogs } = useAccessAgentActions(accessAgent, {
-    onDeleted: () => router.push('/user-management/access-agents'),
+    onDeleted: () => router.push(backHref),
   });
   const [editModalOpen, setEditModalOpen] = useState(false);
 

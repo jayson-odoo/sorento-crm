@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Download, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,6 +26,7 @@ interface FormDetailProps {
 
 export default function FormDetail({ formId }: FormDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/forms-management/forms');
   const { data: form, isLoading } = useForm(formId);
   const downloadMutation = useDownloadAttachment();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
@@ -36,7 +38,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const { actions, dialogs } = useFormActions(
     form ? { id: form.id, name: form.name, code: form.code } : null,
-    { onDeleted: () => router.push('/forms-management/forms') },
+    { onDeleted: () => router.push(backHref) },
   );
 
   // Fetch attachment metadata if attachment_id exists

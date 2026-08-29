@@ -15,6 +15,7 @@ import {
   Truck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -49,6 +50,7 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/master-data-management/products');
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -103,7 +105,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           created_at: product.created_at,
         }
       : null,
-    { onDeleted: () => router.push('/master-data-management/products') },
+    { onDeleted: () => router.push(backHref) },
   );
 
   if (isLoading) {

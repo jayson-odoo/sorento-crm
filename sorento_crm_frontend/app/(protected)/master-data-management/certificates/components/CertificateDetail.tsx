@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, CopyCheck, FileText, History, Package, Pencil, Split, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -38,6 +39,7 @@ const LIST_PATH = '/master-data-management/certificates';
 
 export default function CertificateDetail({ certificateId }: { certificateId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref(LIST_PATH);
   const { data: certificate, isLoading } = useCertificate(certificateId);
   const deleteMutation = useDeleteCertificate();
 
@@ -338,7 +340,7 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
         onDelete={async () => {
           await deleteMutation.mutateAsync(certificate.id);
         }}
-        onSuccess={() => router.push(LIST_PATH)}
+        onSuccess={() => router.push(backHref)}
         queryKeysToInvalidate={[['certificates']]}
       />
     </div>

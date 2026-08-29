@@ -42,7 +42,7 @@ import { useProjectSeries, useSeriesMutations } from '../../../_shared/hooks/use
 import type { ProjectSeries } from '../../../_shared/types/project.types';
 import { SeriesProductsTable } from './SeriesProductsTable';
 import { SeriesSheetLoader } from './SeriesSheetLoader';
-import BackToList from '@/components/common/BackToList';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const NEW = 'new';
 
@@ -59,6 +59,7 @@ const NEW = 'new';
  */
 export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/series');
   const isNew = seriesId === NEW;
   const series = useProjectSeries(true);
   // The whole series book is in memory (it is short and unpaged), so the pager is
@@ -336,7 +337,7 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
           description={`Delete the series "${row.name}"? This action cannot be undone. A series still used by a quotation cannot be deleted, so deactivate it instead.`}
           onDelete={async () => {
             await remove.mutateAsync(row.id);
-            router.push('/project-sales/series');
+            router.push(backHref);
           }}
         />
       )}

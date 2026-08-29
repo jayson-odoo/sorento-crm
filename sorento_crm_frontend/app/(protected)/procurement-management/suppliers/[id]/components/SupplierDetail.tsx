@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,9 +18,10 @@ interface SupplierDetailProps {
 
 export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/suppliers');
   const { data: supplier, isLoading } = useSupplier(supplierId);
   const { actions, dialogs } = useSupplierActions(supplier, {
-    onDeleted: () => router.push('/procurement-management/suppliers'),
+    onDeleted: () => router.push(backHref),
   });
 
   if (isLoading) {

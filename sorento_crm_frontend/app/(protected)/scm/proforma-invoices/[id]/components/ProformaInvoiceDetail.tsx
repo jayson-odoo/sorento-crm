@@ -71,7 +71,7 @@ import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
 import { ProformaVolumeFill } from './ProformaVolumeFill';
-import BackToList from '@/components/common/BackToList';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
 const ADJUST_PERMISSION = 'scm.proforma_invoice.upload';
@@ -185,6 +185,7 @@ function perUnitCbm(row: DraftLine): number | null {
 
 export function ProformaInvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/scm/proforma-invoices');
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
@@ -1442,7 +1443,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         description={`This action cannot be undone. This deletes proforma invoice ${invoice.pi_number} and every line it carries.`}
         onDelete={async () => {
           await deleteInvoice.mutateAsync(id);
-          router.push('/scm/proforma-invoices');
+          router.push(backHref);
         }}
         successMessage="Proforma invoice deleted."
       />

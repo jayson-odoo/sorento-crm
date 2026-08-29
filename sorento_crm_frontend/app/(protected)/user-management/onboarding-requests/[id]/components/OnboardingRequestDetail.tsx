@@ -64,7 +64,7 @@ import {
 } from '../../hooks/useOnboardingRequests';
 import ListPager from '@/components/common/ListPager';
 import { onboardingPagerQuery } from '../../hooks/useOnboardingRequests';
-import BackToList from '@/components/common/BackToList';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const BASE_PATH = '/user-management/onboarding-requests';
 
@@ -131,6 +131,7 @@ function BackToQueue() {
 
 export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref(BASE_PATH);
   const [rejecting, setRejecting] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -475,7 +476,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
         queryKeysToInvalidate={[['onboarding-requests']]}
         successMessage="Onboarding request deleted"
         onSuccess={() => {
-          router.push(BASE_PATH);
+          router.push(backHref);
         }}
       />
     </>

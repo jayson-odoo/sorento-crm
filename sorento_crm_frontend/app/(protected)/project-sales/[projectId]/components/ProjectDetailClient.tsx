@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Clock, Flame, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -66,6 +67,7 @@ type TabId = (typeof TABS)[number]['id'];
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/pipeline');
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab') as TabId | null;
   const activeTab: TabId =
@@ -360,7 +362,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
-        onSuccess={() => router.push('/project-sales/pipeline')}
+        onSuccess={() => router.push(backHref)}
         successMessage="Project deleted"
       />
     </div>

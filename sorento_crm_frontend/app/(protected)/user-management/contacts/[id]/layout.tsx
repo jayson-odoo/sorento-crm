@@ -21,7 +21,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import DetailActions from '@/components/common/DetailActions';
-import BackToList from '@/components/common/BackToList';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { contactsPagerQuery } from '../lib/listQuery';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
@@ -53,6 +53,7 @@ export default function ContactLayout({
   const { id } = use(params);
   const pathname = usePathname();
   const router = useRouter();
+  const backHref = useBackToListHref('/user-management/contacts');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Impersonate is on the record now as well as the row (D15), through the one
   // dialog both surfaces share.
@@ -211,7 +212,7 @@ export default function ContactLayout({
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         contact={contact ?? null}
-        onSuccess={() => router.push('/user-management/contacts')}
+        onSuccess={() => router.push(backHref)}
       />
     </ContactProvider>
   );

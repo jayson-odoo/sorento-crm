@@ -6,6 +6,7 @@ import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -113,6 +114,7 @@ export default function PurchaseRequestDetail({
   basePath = DEFAULT_BASE_PATH,
 }: PurchaseRequestDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref(basePath);
   const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
   const queryClient = useQueryClient();
   // Triage a SUBMITTED request: change to pending approval, or reject it.
@@ -1017,7 +1019,7 @@ export default function PurchaseRequestDetail({
         closeDialog={() => setDeleteDialogOpen(false)}
         request={request}
         entityLabel={typeLabel}
-        onSuccess={() => router.push(basePath)}
+        onSuccess={() => router.push(backHref)}
       />
 
       {request.approval_status === 'rejected' && (

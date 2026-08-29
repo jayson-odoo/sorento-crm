@@ -33,7 +33,15 @@ import { useImpersonation } from '@/hooks/useImpersonation';
 import { User, UserStatus } from '@/app/models/user';
 import UserDeleteDialog from './[id]/components/user-delete-dialog';
 
-export function useUserActions(user: User | undefined | null): RecordActionSet {
+export interface UseUserActionsOptions {
+  /** Where to go once the record is gone (the record page returns to the list). */
+  onDeleted?: () => void;
+}
+
+export function useUserActions(
+  user: User | undefined | null,
+  { onDeleted }: UseUserActionsOptions = {},
+): RecordActionSet {
   const queryClient = useQueryClient();
   const { data: nextAuthSession } = useSession();
   const currentUserId = nextAuthSession?.user?.id;
@@ -160,6 +168,7 @@ export function useUserActions(user: User | undefined | null): RecordActionSet {
         open={deleteOpen}
         closeDialog={() => setDeleteOpen(false)}
         user={user}
+        onSuccess={onDeleted}
       />
     </>
   );

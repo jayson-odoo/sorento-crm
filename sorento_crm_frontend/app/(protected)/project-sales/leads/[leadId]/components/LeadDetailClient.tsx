@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { RotateCcw, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -74,6 +75,7 @@ type HeaderAction = {
 
 export function LeadDetailClient({ leadId }: { leadId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/leads');
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab') as TabId | null;
   const activeTab: TabId =
@@ -396,7 +398,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         onDelete={async () => {
           await remove.mutateAsync(lead.id);
         }}
-        onSuccess={() => router.push('/project-sales/leads')}
+        onSuccess={() => router.push(backHref)}
         successMessage="Lead deleted"
       />
 

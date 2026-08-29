@@ -47,7 +47,7 @@ import {
 import { formatDate } from '@/lib/helpers';
 import { downloadPackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
 import DetailActions from '@/components/common/DetailActions';
-import BackToList from '@/components/common/BackToList';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { packingListsPagerQuery } from '../hooks/usePackingLists';
 import PackingListDeleteDialog from '../components/packing-list-delete-dialog';
 import ContainerStatusImportDialog from '../components/ContainerStatusImportDialog';
@@ -91,6 +91,7 @@ const LEGACY_TAB_SEGMENT: Record<string, string> = {
 
 function PackingListToolbar({ id }: { id: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/packing-lists');
   const {
     packingList,
     isLoading,
@@ -241,7 +242,7 @@ function PackingListToolbar({ id }: { id: string }) {
           open={deleteOpen}
           closeDialog={() => setDeleteOpen(false)}
           packingList={packingList}
-          onSuccess={() => router.push('/procurement-management/packing-lists')}
+          onSuccess={() => router.push(backHref)}
         />
       )}
       <ContainerStatusImportDialog open={importOpen} onOpenChange={setImportOpen} />

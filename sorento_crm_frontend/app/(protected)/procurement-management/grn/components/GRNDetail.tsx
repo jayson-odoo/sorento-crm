@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,9 +37,10 @@ const GRN_SOURCE_LABELS: Record<string, string> = {
 
 export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/grn');
   const { data: grn, isLoading } = useGRN(grnId);
   const { actions, dialogs } = useGrnActions(grn, {
-    onDeleted: () => router.push('/procurement-management/grn'),
+    onDeleted: () => router.push(backHref),
   });
   const [lineSearch, setLineSearch] = useState('');
   const allLines = grn?.picking_lines ?? [];
