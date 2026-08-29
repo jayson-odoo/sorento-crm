@@ -15,7 +15,14 @@ import type { ConversationSLATracking } from '../types/conversationSLATracking.t
 
 const useConversationSLATrackingDetail = vi.fn();
 
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useConversationSLATracking', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  conversationSlaPagerQuery: {
+    listQueryKey: () => ['conversation-sla-tracking'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useConversationSLATrackingDetail: (...a: unknown[]) =>
     useConversationSLATrackingDetail(...a),
   useDeleteConversationSLATracking: () => ({ mutate: vi.fn(), isPending: false }),

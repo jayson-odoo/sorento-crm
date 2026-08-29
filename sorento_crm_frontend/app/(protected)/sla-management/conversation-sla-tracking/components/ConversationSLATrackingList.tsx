@@ -103,10 +103,9 @@ export default function ConversationSLATrackingList() {
 
   const syncAssigneeMutation = useSyncAssigneeFromRespond();
 
-  const handleRowClick = (row: ConversationSLATracking) => {
-    const trackingId = row.id;
-    // Carry the active list query (search/sort/filters) into the detail URL so the
-    // detail pager walks the exact same filtered+sorted set the user is viewing.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: ConversationSLATracking) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -124,9 +123,7 @@ export default function ConversationSLATrackingList() {
         resolved_by: resolvedByFilter,
       },
     );
-    router.push(
-      `/sla-management/conversation-sla-tracking/${trackingId}${search ? `?${search}` : ''}`,
-    );
+    return `/sla-management/conversation-sla-tracking/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const getTimeRemaining = (dueAt: string | Date, backendSeconds?: number | null) => {
@@ -541,7 +538,7 @@ export default function ConversationSLATrackingList() {
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
     >
       <Card>
         <CardHeader className="block">

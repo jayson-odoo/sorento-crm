@@ -19,7 +19,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
-import ConversationSLATrackingNavigation from './ConversationSLATrackingNavigation';
+import ListPager from '@/components/common/ListPager';
+import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
@@ -345,7 +346,12 @@ export default function ConversationSLATrackingDetail({
         </div>
         <div className="flex gap-2">
           {isConversationContext && (
-            <ConversationSLATrackingNavigation trackingId={trackingId} />
+            <ListPager
+              {...conversationSlaPagerQuery}
+              detailPath="/sla-management/conversation-sla-tracking"
+              currentId={trackingId}
+              ariaLabel="conversation"
+            />
           )}
           {respondInboxUrl && (
             <Button
