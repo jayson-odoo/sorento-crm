@@ -471,6 +471,8 @@ needed a manual `scrollIntoView({inline:'center'})` on the target cell before th
    modal-based with plain buttons (Preview/Download/Resubmit/Move to Trash), no Rename anywhere,
    unchanged since earlier rounds.
 
+Failures 1-5 fixed in the round-4 commits (f4d7ef0a1..e9549b0cb); confirmed in Run 5.
+
 ### Fixed since Run 3
 
 Series (Project Sales) now has a working gear with Delete, was fully unconverted before. Stock
@@ -489,3 +491,48 @@ correctly - Run 3C's fixes hold. Users list Back is a clean single/zero-fetch re
 ### Browser session
 
 `agent-browser@0.27.0`, session `s3-run4`, closed cleanly at the end of this run (not `close --all`).
+
+## Run 5 - spot-check after the final fix pass
+
+`agent-browser@0.27.0`, session `s3-run5` on `:3090`, closed by name at the end. No record
+created, saved or deleted; the one Delete dialog opened for inspection (Complaints, 375px) was
+closed with Escape, never confirmed.
+
+### Result table
+
+| Check | Pass/Fail | Screenshot | Note |
+|---|---|---|---|
+| 1. Conversation SLA Tracking gear | Pass | run5-slatracking-gear-1280.png | Gear = Refresh, Sync assignee, Portal link, Escalate, separator, Overwrite assignee..Reopen for retest, separator, "Delete tracking" red, last. |
+| 2. Stock Transfers: search + row 2 + Back | Pass | run5-stocktransfers-back-liststate-1280.png | Set search "SRTWCY7405", opened row 2 (TR-000057), Back returned to the list with no error overlay and `query=SRTWCY7405` restored (same 4 filtered rows visible). |
+| 3. Edit pager - Supplier | Pass | run5-supplier-edit-afternext-1280.png | Edit -> Next landed on `/suppliers/<next-id>/edit`, counter "1/50" -> "2/50", no toast. |
+| 3. Edit pager - Promotion | **Fail** | run5-promotion-edit-nopager-1280.png | Promotion detail and Edit Promotion both carry zero pager (no Previous/Next, no counter) - the whole S3 pager feature is absent from Promotions, not just broken. Nothing to click "Next" on. |
+| 3. Edit pager - Complaint | Pass | run5-complaint-edit-afternext-1280.png | Edit (via gear's "Edit" item, since this record is Closed) -> Next landed on `/complaints/<next-id>/edit`, counter "1/50" -> "2/50", no toast. |
+| 4. Project detail toolbar + pager/gear/primary + Back | Pass | run5-project-detail-1280.png, run5-project-back-pipeline-1280.png | Toolbar = crumbs + one "Back to pipeline" (fixed since Run 4's missing-Back finding). Card = pager (2/5), gear, primary "Spec in" - correct order (fixed since Run 4's reversed order). Back returns to `/project-sales/pipeline`; note: the board's client-side "Kepong" search text itself resets (all 5 projects reappear across columns), so "state" restore is partial - board filters are not carried across the round-trip the way list-page query params are. |
+| 5. Complaints list "..." + Delete, 375 reachable | Pass | run5-complaints-rowmenu-1280.png, run5-complaints-list-375-scrolled.png, run5-complaints-deleteconfirm-375.png | Row "..." now exists (fixed since Run 4's structural fail) = Download PDF, Delete (red, last). At 375, "..." fully visible/tappable after horizontal scroll; Delete opens a proper `AlertDialog` ("Are you sure you want to delete this complaint?"); closed with Escape, no request fired. |
+| 6. Sales Orders (SCM) gear + list Delete | Pass | run5-so-gear-1280.png, run5-so-rowmenu-1280.png | Detail: pager (1/25), gear, primary "Edit"; gear = "Delete" only, red. List row "..." = "Delete" only, red - matches the gear exactly. |
+
+### Ranked failures
+
+1. **Promotion detail/edit carries no record pager at all** - not a Next-button bug, the
+   Previous/Next controls and the "n / total" counter are entirely absent from both the Promotion
+   view page and its Edit page. Suppliers and Complaints (checked this run) and Users/Products/DOs
+   (Run 1) all have it; Promotions never got it. Blocks the "Edit > Next keeps you in edit mode"
+   contract for this entity outright.
+
+Promotions pager fixed in 6db1e24e1.
+
+### Fixed since Run 4
+
+Project detail now has "Back to pipeline" (was missing entirely) and the correct pager/gear/primary
+order (primary was before the gear). Complaints list now has a row "..." menu (was structural-absent,
+list had only a print-count icon).
+
+### Unreachable / not exercised
+
+- Project pipeline board's search-state round-trip through Back was only partially checked (URL has
+  no query params for the board at all, so "state" here is client-side only); not scored as a hard
+  fail given the check's primary ask (Back navigates correctly) passed.
+
+### Browser session
+
+`agent-browser@0.27.0`, session `s3-run5`, closed cleanly at the end of this run (not `close --all`).
