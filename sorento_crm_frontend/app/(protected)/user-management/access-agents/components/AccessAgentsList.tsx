@@ -30,6 +30,7 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useAccessAgents } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import Link from 'next/link';
 
 export default function AccessAgentsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -71,6 +72,18 @@ export default function AccessAgentsList() {
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        cell: ({ row }) => (
+          // The row opens the agent, and the code is the same link said out loud:
+          // copyable, middle-clickable, and visibly the way in.
+          <Link
+            href={rowHref(row.original)}
+            className="truncate font-medium text-primary hover:underline"
+            title={row.original.code}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {row.original.code}
+          </Link>
+        ),
         size: 150,
         meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },

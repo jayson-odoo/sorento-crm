@@ -35,6 +35,7 @@ import { formatDate } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import FormBulkDeleteDialog from './FormBulkDeleteDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import Link from 'next/link';
 
 export default function FormsList() {
   const router = useRouter();
@@ -91,9 +92,16 @@ export default function FormsList() {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Form Code" column={column} />,
         cell: ({ row }) => (
-          <div className="truncate" title={row.original.code}>
+          // The row opens the form, and the code is the same link said out loud:
+          // copyable, middle-clickable, and visibly the way in.
+          <Link
+            href={rowHref(row.original)}
+            className="truncate font-medium text-primary hover:underline"
+            title={row.original.code}
+            onClick={(event) => event.stopPropagation()}
+          >
             {row.original.code}
-          </div>
+          </Link>
         ),
         size: 180,
         minSize: 120,
