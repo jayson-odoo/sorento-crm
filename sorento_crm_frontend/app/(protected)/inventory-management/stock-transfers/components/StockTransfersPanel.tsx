@@ -151,25 +151,31 @@ export function StockTransfersPanel({
   const [toWarehouseId, setToWarehouseId] = React.useState('');
   const [productId, setProductId] = React.useState('');
 
-  // Back hands the list its own query string back, and the pager keeps
-  // rewriting it, so the list reads it (S3-01). One hook, every list.
-  useListStateFromUrl((state) => {
-    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSorting(state.sorting);
-    setSearch(state.searchQuery);
-    setDebounced(state.searchQuery);
-    setState(state.filters.state ?? '');
-    setKind(state.filters.kind ?? '');
-    setFromWarehouseId(state.filters.from_warehouse_id ?? '');
-    setToWarehouseId(state.filters.to_warehouse_id ?? '');
-    setProductId(state.filters.product_id ?? '');
-  });
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'proposed_at', desc: true },
   ]);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
+  });
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  //
+  // Below the state it writes, not above it: the hook applies DURING the render,
+  // and a `const` read before its own line throws rather than reading undefined.
+  // Declared first, this threw on every arrival from a record and never from the
+  // sidebar, where the query string is empty and the callback never runs.
+  useListStateFromUrl((urlState) => {
+    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
+    setSorting(urlState.sorting);
+    setSearch(urlState.searchQuery);
+    setDebounced(urlState.searchQuery);
+    setState(urlState.filters.state ?? '');
+    setKind(urlState.filters.kind ?? '');
+    setFromWarehouseId(urlState.filters.from_warehouse_id ?? '');
+    setToWarehouseId(urlState.filters.to_warehouse_id ?? '');
+    setProductId(urlState.filters.product_id ?? '');
   });
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [acting, setActing] = React.useState<{

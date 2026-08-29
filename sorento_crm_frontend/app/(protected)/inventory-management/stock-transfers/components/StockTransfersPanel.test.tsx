@@ -22,10 +22,11 @@ if (!window.matchMedia) {
 }
 
 const push = vi.fn();
+let listSearch = '';
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/inventory-management/stock-transfers',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(listSearch),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -132,6 +133,7 @@ function renderPanel(props: Partial<React.ComponentProps<typeof StockTransfersPa
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listSearch = '';
   listStockTransfers.mockResolvedValue(envelope([transfer()]));
 });
 
@@ -303,5 +305,33 @@ describe('StockTransfersPanel - empty state', () => {
     expect(
       screen.getByText('Confirming supply from another location raises the movement here.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('StockTransfersPanel - the state Back hands back', () => {
+  /**
+   * The apply callback sets pagination and sorting, so it has to run BELOW their
+   * declarations: `useListStateFromUrl` applies during the render, and a `const`
+   * read before its line throws a ReferenceError rather than reading undefined.
+   * The panel mounted fine from the sidebar (empty query string, callback never
+   * called) and blew up on every arrival from a record.
+   */
+  it('restores the page, sort, search and filters from the query string', async () => {
+    listSearch = 'page=2&limit=10&sort=transfer_no&dir=asc&query=TR-0000&state=approved';
+
+    renderPanel();
+
+    await waitFor(() =>
+      expect(listStockTransfers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          page: 2,
+          limit: 10,
+          sort: 'transfer_no',
+          dir: 'asc',
+          query: 'TR-0000',
+          state: 'approved',
+        }),
+      ),
+    );
   });
 });
